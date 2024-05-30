@@ -1,0 +1,2 @@
+[registries]
+RustTools = { index = "sparse+https://sqlclientdrivers.pkgs.visualstudio.com/SqlDevX/_packaging/RustTools/Cargo/index/" }
