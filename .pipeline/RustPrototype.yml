@@ -1,0 +1,75 @@
+name: Rust Prototype build for ${{parameters.builtType}} platform
+trigger: none
+pool:
+  name: Hosted Windows 2019 with VS2019
+
+parameters:
+- name: builtType
+  displayName: Type of the build to produce
+  type: string
+  values:
+  - Both
+  - Debug
+  - Release
+  default: Both
+
+variables:
+    # For details on this CARGO_TARGET_DIR setting, see https://eng.ms/docs/more/rust/topics/onebranch-workaround
+    CARGO_TARGET_DIR: C:\cargo_target_dir
+
+jobs:
+- job: Build
+  displayName: Rust Build
+  steps:
+  - task: RustInstaller@1
+    displayName: Install Rust Toolchain
+    inputs:
+      toolchainFeed: https://sqlclientdrivers.pkgs.visualstudio.com/SqlDevX/_packaging/RustTools/nuget/v3/index.json
+
+  - task: CargoAuthenticate@0
+    displayName: Authenticate with Azure Artifacts
+    inputs:
+      configFile: '.cargo/config.toml'
+
+  - script: cargo fetch
+    displayName: Fetch Crates
+    env:
+      CARGO_REGISTRIES_ONELAKECLIENT_TOKEN: $(OneLakeClientSecret)
+
+  - script: cargo build --frozen 2>&1
+    displayName: Debug Build
+    condition: or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both'))
+
+  - script: cargo build --frozen --release 2>&1
+    displayName: Release Build
+    condition: or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both'))
+
+  - task: CopyFiles@2
+    displayName: Copy Files
+    inputs:
+      SourceFolder: '$(CARGO_TARGET_DIR)'
+      Contents: '*'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+  - task: CopyFiles@2
+    displayName: Copy Debug Build
+    condition: or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both'))
+    inputs:
+      SourceFolder: '$(CARGO_TARGET_DIR)\Debug'
+      Contents: '*'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)\Debug'
+
+  - task: CopyFiles@2
+    displayName: Copy Release Build
+    condition: or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both'))
+    inputs:
+      SourceFolder: '$(CARGO_TARGET_DIR)\Release'
+      Contents: '*'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)\Release'
+
+  - task: PublishBuildArtifacts@1
+    displayName: Publish Build Drop
+    inputs:
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+      ArtifactName: drop
+      publishLocation: Container

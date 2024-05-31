@@ -2,6 +2,7 @@
 [MSRustup from MS]: https://aka.ms/msrustup
 [Personal Access Tokens]: https://sqlclientdrivers.visualstudio.com/_usersSettings/tokens
 [Connect to feed]: https://sqlclientdrivers.visualstudio.com/SqlDevX/_artifacts/feed/RustTools/connect
+[Rust build pipeline]: https://dev.azure.com/SqlClientDrivers/SqlDevX/_build?definitionId=1869
 
 # Rust prototype project
 Rust prototype project is intended to be a starting and learning point for a new TDS library project.
@@ -53,10 +54,12 @@ cargo build
 
 ## Build pipeline
 
-TODO: Describe and show how to build in ADO pipeline.
+There is a build pipeline in the Azure DevOps that is configured to build the project.
+The pipeline can be triggered manually from this link:
+
+[Rust build pipeline]
 
 ## Test
-
 TODO: Describe and show how to run the tests for your software.
 
 ## Contribute
