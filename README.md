@@ -1,36 +1,75 @@
-# Introduction
+[Rust in Microsoft]: https://aka.ms/rust
+[MSRustup from MS]: https://aka.ms/msrustup
+[Personal Access Tokens]: https://sqlclientdrivers.visualstudio.com/_usersSettings/tokens
+[Connect to feed]: https://sqlclientdrivers.visualstudio.com/SqlDevX/_artifacts/feed/RustTools/connect
 
-TODO: Give a short introduction of your project. Let this section explain the objectives or the motivation behind this project.
+# Rust prototype project
+Rust prototype project is intended to be a starting and learning point for a new TDS library project.
+It allows to try, and explore features, components and techniques for TDS implementation in Rust.
+The repo is not intended to be a production ready code, but rather a playground for learning and exploration.
 
-# Getting Started
+## Getting Started
+Prototypes are developed in Rust, therefore, the dev environment will require IDE and Rust toolchain. More details on installation are available further in the document.
 
-TODO: Guide users through getting your code up and running on their own system. In this section you can talk about:
+[Rust in Microsoft] article is the great overview of guidelines and learning resources for any Rust developer. It's highly recommended as reading material. 
 
-1. Installation process
-2. Software dependencies
-3. Latest releases
-4. API references
+### Tools and Prerequisites
+These tools made the Rust development easier:
+- Rust from MS internal setup [MSRustup from MS]
+- Visual Studio Code 
+- Extensions for Visual Studio Code
+  - rust-analyzer
+  - C/C++ - Visual Studio Marketplace
+  - CodeLLDB - Visual Studio Marketplace
+
+#### Setting up the environment
+To get a development environment running, please do the following:
+1. Clone *RustProject* repo by running
+
+```powershell
+git clone https://sqlclientdrivers.visualstudio.com/SqlDevX/_git/RustPrototype
+```
+
+2. RustPrototype repo is configured to use Azure Artifacts as a package source and the build environment requires a login to the Azure Artifacts.
+Repo is already setup with proper path, but it's necessary to generate *Personal Access Token* which allows access to the mirror.
+To do that, navigate to [Personal Access Tokens] and create a new token which will include *Packaging read & write* scopes.
+Make sure to copy the PAT token since it will be needed later.
+
+3. Open PowerShell at the root of the project folder and run:
+
+```powershell
+"Basic " + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("PAT:" + (Read-Host -MaskInput "Enter PAT"))) | cargo login --registry RustTools
+```
+This script will prompt for PAT, paste the token generated in the previous step and press Enter.
+In case to setup other environments, it's possible to find more instructions [Connect to feed],
+and select Cargo on that page.
+
+## Local build
+To build the project locally, run the following command in the project root directory:
+
+```
+cargo build
+```
+
+## Build pipeline
+
+TODO: Describe and show how to build in ADO pipeline.
+
+## Test
+
+TODO: Describe and show how to run the tests for your software.
+
+## Contribute
+Rust prototype repo is for experimenting and learning.
+There are Rust projects located in `prototype` directory.
+When creating a new prototype, please create a new directory in the `prototype` and add a README.md file with the description of the new prototype.
+
+Ensure builds are still successful prior to submitting the pull request.
 
 # Central Feed Services (CFS) - Engineering Systems Standard Requirement
+The project uses Rust (Cargo) crates and CFS onboarding required configuring this project to only consume packages through Azure Artifacts.
+This is an engineering system standard which is required company-wide.
 
-CFS onboarding required configuring your project to only consume packages through Azure Artifacts. This is an engineering system standard which is required company-wide.
-
-1. If your project uses NuGet packages, update the nuget.config file placed at the root of this reposiroty to use your preferred feed.
-2. If your project uses npm packages, consult [this section of the CFS documentation](https://aka.ms/cfs). Feel free to delete the nuget.config file in this repository.
-3. If your project uses Maven packages, consult [this section of the CFS documentation](https://aka.ms/cfs). Feel free to delete the nuget.config file in this repository.
-4. If your project uses Pip packages, consult [this section of the CFS documentation](https://aka.ms/cfs). Feel free to delete the nuget.config file in this repository.
-5. If your project uses Rust (Cargo) crates, consult [this section of the CFS documentation](https://aka.ms/cfs). Feel free to delete the nuget.config file in this repository.
-
-# Build and Test
-
-TODO: Describe and show how to build your code and run the tests.
-
-# Contribute
-
-TODO: Explain how other users and developers can contribute to make your code better.
-
-If you want to learn more about creating good readme files then refer the following [guidelines](https://docs.microsoft.com/en-us/azure/devops/repos/git/create-a-readme?view=azure-devops). You can also seek inspiration from the below readme files:
-
--   [ASP.NET Core](https://github.com/aspnet/Home)
--   [Visual Studio Code](https://github.com/Microsoft/vscode)
--   [Chakra Core](https://github.com/Microsoft/ChakraCore)
+The repo is configured to use Azure Artifacts as a package source.
+There is an artifact feed RustTools in the project that is used to store the cargo crates.
+The configuration is done in the `.cargo/config.toml` file.

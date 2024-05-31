@@ -1,0 +1,20 @@
+[package]
+name = "tdslibrary"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+uuid = "0.8"
+bytes = "1.0"
+byteorder = "1.0"
+thiserror = "1.0"
+native-tls = "0.2.11"
+enumflags2 = "0.7.9"
+asynchronous-codec = "0.6"
+tracing = "0.1"
+futures-util = { version = "0.3", features = ["io", "sink"] }
+futures = "0.3.30"
+async-std = "1.12.0"
+async-native-tls = "0.5.0"
