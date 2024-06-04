@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-  # Find all Rust projects using wildcard.
-  # More: https://doc.rust-lang.org/cargo/reference/workspaces.html#the-members-and-exclude-fields
-  "prototype/*/src/.."
+  "prototype/connect-async/connect-async-lib",
+  "prototype/connect-async/connect-async-app",
 ]

@@ -1,5 +1,5 @@
-use tdslibrary::connection::Connection;
-use tdslibrary::error::Error;
+use connect_async_lib::connection::Connection;
+use connect_async_lib::error::Error;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -11,7 +11,7 @@ async fn main() -> std::result::Result<(), Error> {
 
     let host = std::env::args().nth(3).unwrap_or(String::from("localhost:1433"));
     let user = std::env::args().nth(2).unwrap_or(String::from("sa"));
-    let password = std::env::args().nth(1).expect("No password parameter.\n\nUsage: tdsapp Password [User] [Host]");
+    let password = std::env::args().nth(1).expect("No password parameter.\n\nUsage: connect-async-app Password [User] [Host]");
 
     let _connection = Connection::connect(&host, &user, &password).await?;
     Ok(())
