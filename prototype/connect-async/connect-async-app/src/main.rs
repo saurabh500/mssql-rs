@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use connect_async_lib::connection::Connection;
 use connect_async_lib::error::Error;
-use tracing::Level;
+use tracing::{Level, event};
 use tracing_subscriber::FmtSubscriber;
 
 #[async_std::main]
@@ -18,6 +18,7 @@ async fn main() -> std::result::Result<(), Error> {
         .unwrap_or_else(|| std::env::var("CONNECT_PASSWORD")
         .expect("No password provided.\nYou can set the password on the command line or with the CONNECT_PASSWORD environment variable.\n\nUsage: connect-sync-app Password [User] [Host]"));
 
+    event!(Level::INFO, "Connecting to {}.", host);
     let _connection = Connection::connect(&host, &user, &password).await?;
     Ok(())
 }
