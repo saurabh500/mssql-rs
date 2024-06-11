@@ -10,7 +10,7 @@ use crate::prelogin::PreloginMessage;
 use crate::transport::{TransportStream,TdsTransport, create_tls_stream};
 use crate::token::decode_token;
 use crate::login::LoginMessage;
-use crate::packet::{Packet, PacketHeader, PacketType};
+use crate::packet::{Packet, PacketHeader, PacketType,HEADER_BYTES};
 use crate::Result;
 
 pub(crate) trait Encode<B: BufMut> {
@@ -39,12 +39,14 @@ impl Connection {
         let transport = TransportStream::new_tcp_stream(stream);
     
         let mut connection = Connection::new(transport);
+        event!(Level::INFO, "Sending Prelogin message.");
         let prelogin = connection.prelogin()?;
         event!(Level::INFO, "Prelogin: {:?}", prelogin);
         let bytes = prelogin.version.to_be_bytes();
         event!(Level::INFO, "Server version: {}.{}.{}", bytes[0], bytes[1], bytes[2] as u16 * 265 + bytes[3] as u16);
         let connection = connection.tls_handshake(&host)?;
         event!(Level::INFO, "TLS handshake complete!");
+        event!(Level::INFO, "Sending login message.");
         let mut connection = connection.login( &user, &password)?;
     
         let packet = connection.collect_packet()?;
@@ -90,6 +92,11 @@ impl Connection {
         let packet = Packet::new(header, data);
         let mut payload = BytesMut::new();
         packet.encode(&mut payload)?;
+        event!(
+            Level::DEBUG,
+            "Sending a packet ({} bytes)",
+            payload.len() + HEADER_BYTES,
+        );
         self.transport.write(&payload)?;
         self.transport.flush()?;
         Ok(())
@@ -121,7 +128,7 @@ impl Connection {
         let mut buffer = [0; 4096];
         let mut size = self.transport.read(&mut buffer[..])?;
         while size == 0 {
-            event!(Level::INFO, "Sleeping");
+            event!(Level::TRACE, "Sleeping");
             thread::sleep(Duration::from_secs(1));
             size = self.transport.read(&mut buffer[..])?;
         }
@@ -129,7 +136,7 @@ impl Connection {
         let mut buf = BytesMut::new();
         buf.put(&buffer[..size]);
 
-        event!(Level::INFO, "Collected packet {} bytes", buf.len());
+        event!(Level::DEBUG, "Collected packet {} bytes", buf.len());
         let packet: Packet = Packet::decode(&mut buf)?;
         Ok(packet)
     }

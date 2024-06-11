@@ -81,8 +81,8 @@ impl<S: Read + Write> Read for TdsTransport<S> {
         if self.pending_handshake {
             if self.read_remaining == 0 {
                 let mut header_buf = [0u8; HEADER_BYTES];
-                let read_header = self.stream.as_mut().unwrap().read(&mut header_buf[..])?;
-                event!(Level::INFO, "Read header {} bytes.", read_header);
+                let read_header: usize = self.stream.as_mut().unwrap().read(&mut header_buf[..])?;
+                event!(Level::DEBUG, "Read header {} bytes.", read_header);
                 let header = PacketHeader::decode(&mut BytesMut::from(&header_buf[..])).unwrap();
                 self.read_remaining = header.length() as usize - HEADER_BYTES;
             }
@@ -91,7 +91,7 @@ impl<S: Read + Write> Read for TdsTransport<S> {
         let read = self.stream.as_mut().unwrap().read(&mut buf[..])?;
         if self.pending_handshake {
             self.read_remaining -= read;
-            event!(Level::INFO, "Read remaining of TLS handshake {} bytes.", self.read_remaining);
+            event!(Level::DEBUG, "Read remaining of TLS handshake {} bytes.", self.read_remaining);
         }
         Ok(read)
     }

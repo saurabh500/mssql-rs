@@ -29,7 +29,7 @@ impl Decoder for PacketCodec {
         }
 
         event!(
-            Level::INFO,
+            Level::DEBUG,
             "Reading a {:?} ({} bytes)",
             header.r#type(),
             length,

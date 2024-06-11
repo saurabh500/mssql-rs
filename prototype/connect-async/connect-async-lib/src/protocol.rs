@@ -147,7 +147,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncRead for TlsPreloginWrapper<
             inner.read_remaining = header.length() as usize - HEADER_BYTES;
 
             event!(
-                Level::INFO,
+                Level::DEBUG,
                 "TLS handshake. Reading packet of {} bytes",
                 inner.read_remaining,
             );
@@ -213,7 +213,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for TlsPreloginWrapper
 
             while !inner.wr_buf.is_empty() {
                 event!(
-                    Level::INFO,
+                    Level::DEBUG,
                     "TLS handshake. Writing a packet of {} bytes",
                     inner.wr_buf.len(),
                 );
@@ -243,7 +243,7 @@ pub(crate) async fn create_tls_stream<S: AsyncRead + AsyncWrite + Unpin + Send>(
 ) -> crate::Result<TlsStream<S>> {
     let mut builder = TlsConnector::new();
 
-    event!(Level::WARN, "Trusting the server certificate without validation.");
+    event!(Level::INFO, "Trusting the server certificate without validation.");
 
     builder = builder.danger_accept_invalid_certs(true);
     builder = builder.danger_accept_invalid_hostnames(true);

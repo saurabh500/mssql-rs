@@ -37,6 +37,11 @@ pub(crate) fn decode_token(src: &mut BytesMut) -> Result<()> {
                 event!(Level::INFO, "Server token type: {:?}, flags {}", ty, status);
                 size = 10;
             }
+            TokenType::LoginAck => {
+                size = src.get_u16_le();
+                event!(Level::INFO, "Server token type: {:?}", ty);
+                event!(Level::INFO, "Login acknowledged!");
+            }
             _ => {
                 size = src.get_u16_le();
                 event!(Level::INFO, "Server token type: {:?}, length {}", ty, size);

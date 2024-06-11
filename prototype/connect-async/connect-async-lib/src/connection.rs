@@ -34,18 +34,20 @@ impl Connection  {
             protocol,
         };
 
+        event!(Level::INFO, "Sending Prelogin message.");
         let prelogin = connection.prelogin().await?;
         event!(Level::INFO, "Prelogin done: {:?}", prelogin);
         let bytes = prelogin.version.to_be_bytes();
         event!(Level::INFO, "Server version: {}.{}.{}", bytes[0], bytes[1], bytes[2] as u16 * 265 + bytes[3] as u16);
 
         let connection = connection.tls_handshake(&host).await?;
+        event!(Level::INFO, "TLS handshake completed.");
+        event!(Level::INFO, "Sending login message.");
         let mut connection = connection.login(prelogin, &user, &password).await?;
 
         let packet = connection.collect_packet().await?;
         let (_, mut payload) = packet.into_parts();
         decode_token(&mut payload)?;
-        event!(Level::INFO, "Login acknowledged!");
 
         Ok(connection)
     }
@@ -81,8 +83,6 @@ impl Connection  {
 
         self.send(PacketHeader::login(2), login_message).await?;
 
-        event!(Level::INFO, "Login sent. Using TCP stream directly.");
-
         // We do not support encryption yet. Use the TCP stream directly.        
         let Self { protocol, .. } = self;
         let tcp = protocol.into_inner().into_inner();
@@ -106,7 +106,6 @@ impl Connection  {
 
         stream.get_mut().handshake_complete();
 
-        event!(Level::INFO, "TLS handshake completed.");
         let protocol = Framed::new(Protocol::Tls(stream), PacketCodec);
 
         Ok(Self {
@@ -129,7 +128,7 @@ impl Connection  {
 
         header.set_status(PacketStatus::EndOfMessage);
         event!(
-            Level::INFO,
+            Level::DEBUG,
             "Sending a packet ({} bytes)",
             payload.len() + HEADER_BYTES,
         );
