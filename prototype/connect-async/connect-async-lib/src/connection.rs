@@ -38,7 +38,7 @@ impl Connection  {
         let prelogin = connection.prelogin().await?;
         event!(Level::INFO, "Prelogin done: {:?}", prelogin);
         let bytes = prelogin.version.to_be_bytes();
-        event!(Level::INFO, "Server version: {}.{}.{}", bytes[0], bytes[1], bytes[2] as u16 * 265 + bytes[3] as u16);
+        event!(Level::INFO, "Server version: {}.{}.{}", bytes[0], bytes[1], ((bytes[2] as u16) << 8) + (bytes[3] as u16));
 
         let connection = connection.tls_handshake(&host).await?;
         event!(Level::INFO, "TLS handshake completed.");
