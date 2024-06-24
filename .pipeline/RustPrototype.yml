@@ -1,4 +1,4 @@
-name: Rust Prototype build for ${{parameters.builtType}} platform
+name: Rust and C++ Prototype build for ${{parameters.builtType}} platform
 trigger: none
 pool:
   name: Hosted Windows 2019 with VS2019
@@ -37,12 +37,30 @@ jobs:
       CARGO_REGISTRIES_ONELAKECLIENT_TOKEN: $(OneLakeClientSecret)
 
   - script: cargo build --frozen 2>&1
-    displayName: Debug Build
-    condition: or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both'))
+    displayName: Rust Debug Build
+    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both')))
 
   - script: cargo build --frozen --release 2>&1
-    displayName: Release Build
-    condition: or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both'))
+    displayName: Rust Release Build
+    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both')))
+
+  - task: MSBuild@1
+    displayName: C++ Debug Build
+    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both')))
+    inputs:
+      solution: '**/*.sln'
+      msbuildArchitecture: 'x64'
+      platform: 'x64'
+      configuration: 'Debug'
+
+  - task: MSBuild@1
+    displayName: C++ Release Build
+    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both')))
+    inputs:
+      solution: '**/*.sln'
+      msbuildArchitecture: 'x64'
+      platform: 'x64'
+      configuration: 'Release'
 
   - task: CopyFiles@2
     displayName: Copy Files
@@ -52,19 +70,35 @@ jobs:
       TargetFolder: '$(Build.ArtifactStagingDirectory)'
 
   - task: CopyFiles@2
-    displayName: Copy Debug Build
-    condition: or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both'))
+    displayName: Copy Rust Debug Build
+    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both')))
     inputs:
       SourceFolder: '$(CARGO_TARGET_DIR)\Debug'
       Contents: '*'
       TargetFolder: '$(Build.ArtifactStagingDirectory)\Debug'
 
   - task: CopyFiles@2
-    displayName: Copy Release Build
-    condition: or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both'))
+    displayName: Copy Rust Release Build
+    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both')))
     inputs:
       SourceFolder: '$(CARGO_TARGET_DIR)\Release'
       Contents: '*'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)\Release'
+
+  - task: CopyFiles@2
+    displayName: Copy C++ Debug Build
+    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both')))
+    inputs:
+      SourceFolder: '$(Build.SourcesDirectory)\prototype\ffi-prototype\x64\Debug'
+      Contents: 'ffi-app.*'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)\Debug'
+
+  - task: CopyFiles@2
+    displayName: Copy C++ Release Build
+    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both')))
+    inputs:
+      SourceFolder: '$(Build.SourcesDirectory)\prototype\ffi-prototype\x64\Release'
+      Contents: 'ffi-app.*'
       TargetFolder: '$(Build.ArtifactStagingDirectory)\Release'
 
   - task: PublishBuildArtifacts@1
