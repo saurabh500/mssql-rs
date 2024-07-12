@@ -6,4 +6,6 @@ members = [
   "prototype/connect-sync/connect-sync-lib",
   "prototype/connect-sync/connect-sync-app",
   "prototype/ffi-prototype/ffi-library",
+  "prototype/transport/transport-lib",
+  "prototype/transport/transport-app",
 ]
