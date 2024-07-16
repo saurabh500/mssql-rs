@@ -1,6 +1,6 @@
 use crate::TdsError;
+use super::super::TransportBuffer;
 use byteorder::{LittleEndian, ReadBytesExt};
-use bytes::{Buf, BytesMut};
 use fmt::Debug;
 use std::{
     convert::TryFrom,
@@ -104,11 +104,13 @@ impl fmt::Display for TokenEnvChange {
 }
 
 impl TokenEnvChange {
-    pub(crate) fn decode(src: &mut BytesMut) -> crate::Result<Self>
+    pub(crate) fn decode<T>(src: &mut T) -> crate::Result<Self>
+    where
+        T: TransportBuffer,
     {
-        let len = src.get_u16_le() as usize;
+        let len = src.get_u16_le()? as usize;
 
-        let mut buf = Cursor::new(src.split_to(len));
+        let mut buf = Cursor::new(src.split_to(len)?);
         let ty_byte = buf.read_u8()?;
 
         let ty = EnvChangeTy::try_from(ty_byte)

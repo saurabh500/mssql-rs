@@ -1,6 +1,6 @@
 use crate::TdsError;
-use bytes::{Buf, BytesMut};
 use std::convert::TryFrom;
+use super::super::TransportBuffer;
 
 uint_enum! {
     #[repr(u32)]
@@ -32,24 +32,26 @@ pub struct TokenLoginAck {
 }
 
 impl TokenLoginAck {
-    pub(crate) fn decode(src: &mut BytesMut) -> crate::Result<Self>
+    pub(crate) fn decode<T>(src: &mut T) -> crate::Result<Self>
+    where
+        T: TransportBuffer,
     {
-        let _length = src.get_u16_le();
+        let _length = src.get_u16_le()?;
 
-        let interface = src.get_u8();
+        let interface = src.get_u8()?;
 
-        let tds_version = FeatureLevel::try_from(src.get_u32())
+        let tds_version = FeatureLevel::try_from(src.get_u32()?)
             .map_err(|_| TdsError::Message("Login ACK: Invalid TDS version".into()))?;
 
-        let len = src.get_u8() as usize;
+        let len = src.get_u8()? as usize;
         let mut bytes = vec![0; len];
 
         for item in bytes.iter_mut().take(len) {
-            *item = src.get_u16_le();
+            *item = src.get_u16_le()?;
         }
 
         let prog_name = String::from_utf16(&bytes[..])?;
-        let version = src.get_u32_le();
+        let version = src.get_u32_le()?;
 
         Ok(TokenLoginAck {
             interface,

@@ -3,7 +3,7 @@ use bytes::{BytesMut, BufMut};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Cursor, Read};
 
-use crate::connection::{Encode,Decode};
+use crate::parser::{Encode,Decode};
 use crate::{TdsError,EncryptionLevel,Result};
 
 const PRELOGIN_VERSION: u8 = 0;

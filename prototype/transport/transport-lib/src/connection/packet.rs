@@ -1,4 +1,4 @@
-use super::{Decode, Encode};
+use super::super::parser::{Decode, Encode};
 use crate::TdsError;
 use bytes::{BytesMut, BufMut, Buf};
 
@@ -56,6 +56,10 @@ impl PacketHeader {
 
     pub fn get_type(&self) -> PacketType{
         self.ty
+    }
+
+    pub fn is_last(&self) -> bool {
+        self.status == 1
     }
 }
 

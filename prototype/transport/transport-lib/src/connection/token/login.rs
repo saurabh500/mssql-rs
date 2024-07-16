@@ -3,7 +3,7 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use enumflags2::{bitflags, BitFlags};
 use std::io::{Cursor, Write};
 use std::borrow::Cow;
-use crate::connection::Encode;
+use crate::parser::Encode;
 
 uint_enum! {
     #[repr(u32)]

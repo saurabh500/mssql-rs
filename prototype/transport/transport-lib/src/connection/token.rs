@@ -1,14 +1,18 @@
 mod env_change;
 mod login_ack;
+mod column_metadata;
+mod row_data;
 pub(crate) mod login;
 pub(crate) mod pre_login;
 
-use bytes::{Buf, BytesMut};
 use env_change::TokenEnvChange;
 use login_ack::TokenLoginAck;
+use column_metadata::TokenColumnMetadata;
+use row_data::TokenRowData;
 use tracing::{event, Level};
 use crate::TdsError;
 use crate::Result;
+use super::TransportBuffer;
 
 uint_enum! {
     /// TokenType is a single byte identifier that is used to describe the data.
@@ -32,16 +36,18 @@ uint_enum! {
     }
 }
 
-pub(crate) fn decode_token(src: &mut BytesMut) -> Result<()> {
-
-    //let mut index = 0;
-    while src.len() > 3 {
-        let ty_byte = src.get_u8();
+pub(crate) fn decode_token<T>(src: &mut T) -> Result<()> 
+where 
+    T: TransportBuffer
+{
+    let mut column_metadata: Option<TokenColumnMetadata> = None;
+    while !src.is_eof() {
+        let ty_byte = src.get_u8()?;
         let ty = TokenType::try_from(ty_byte).map_err(|_| TdsError::Message(format!("invalid token type {:x}", ty_byte).into()))?;
         let size;
         match ty {
             TokenType::Done | TokenType::DoneInProc | TokenType::DoneProc => {
-                let status = src.get_u16_le();
+                let status = src.get_u16_le()?;
                 event!(Level::INFO, "Server token type: {:?}, flags {}", ty, status);
                 size = 10;
             }
@@ -57,26 +63,25 @@ pub(crate) fn decode_token(src: &mut BytesMut) -> Result<()> {
                 let env_change = TokenEnvChange::decode(src)?;
                 event!(Level::INFO, "TokenEnvChange: {}", env_change);
             }
-            TokenType::ColInfo => {
+            TokenType::ColMetaData => {
                 size = 0;
-                let len = src.get_u16_le() as usize;
-                let _bytes = src.split_to(len);
-                // Now handle _bytes
+                column_metadata = Some(TokenColumnMetadata::decode(src)?);
+            }
+            TokenType::Row => {
+                size = 0;
+                match column_metadata {
+                    Some(ref metadata) => TokenRowData::decode(src, metadata)?,
+                    None => return Err(TdsError::Message("Getting row before column".into())),
+                };
             }
             _ => {
-                size = src.get_u16_le();
+                size = src.get_u16_le()?;
                 event!(Level::INFO, "Server token type: {:?}, length {}", ty, size);
             }
         }
 
-        if src.len() < size as usize {
-            return Err(TdsError::Message(format!("Invalid token {:?}, expected size {} but only {} bytes left", ty, size, src.len()).into()));
-        }
-        src.advance(size as usize);
+        src.advance(size as usize)?;
     }
 
-    if src.len() > 0 {
-        return Err(TdsError::Message(format!("Invalid packet. There are still {} bytes left", src.len()).into()));
-    }
     Ok(())
 }
