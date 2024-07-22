@@ -1,10 +1,8 @@
-name: Rust and C++ Prototype build for ${{parameters.builtType}} platform
+name: Rust and C++ Prototype build for ${{parameters.buildType}} platform
 trigger: none
-pool:
-  name: Hosted Windows 2019 with VS2019
 
 parameters:
-- name: builtType
+- name: buildType
   displayName: Type of the build to produce
   type: string
   values:
@@ -13,13 +11,26 @@ parameters:
   - Release
   default: Both
 
-variables:
-    # For details on this CARGO_TARGET_DIR setting, see https://eng.ms/docs/more/rust/topics/onebranch-workaround
-    CARGO_TARGET_DIR: C:\cargo_target_dir
-
 jobs:
 - job: Build
-  displayName: Rust Build
+  strategy:
+    matrix:
+      Windows:
+        poolName: Hosted Windows 2019 with VS2019
+        vmImage:
+        cargoTargetDir: C:\cargo_target_dir
+        buildTarget: Windows
+      Linux:
+        poolName: Azure Pipelines
+        vmImage: ubuntu-latest
+        cargoTargetDir: $(Build.SourcesDirectory)
+        buildTarget: Linux
+  pool:
+    name: $(poolName)
+    vmImage: $(vmImage)
+  variables:
+    # For details on this CARGO_TARGET_DIR setting, see https://eng.ms/docs/more/rust/topics/onebranch-workaround
+    CARGO_TARGET_DIR: $(cargoTargetDir)
   steps:
   - task: RustInstaller@1
     displayName: Install Rust Toolchain
@@ -38,15 +49,15 @@ jobs:
 
   - script: cargo build --frozen 2>&1
     displayName: Rust Debug Build
-    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both')))
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
 
   - script: cargo build --frozen --release 2>&1
     displayName: Rust Release Build
-    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both')))
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
 
   - task: MSBuild@1
     displayName: C++ Debug Build
-    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both')))
+    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
     inputs:
       solution: '**/*.sln'
       msbuildArchitecture: 'x64'
@@ -55,7 +66,7 @@ jobs:
 
   - task: MSBuild@1
     displayName: C++ Release Build
-    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both')))
+    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
     inputs:
       solution: '**/*.sln'
       msbuildArchitecture: 'x64'
@@ -63,31 +74,28 @@ jobs:
       configuration: 'Release'
 
   - task: CopyFiles@2
-    displayName: Copy Files
-    inputs:
-      SourceFolder: '$(CARGO_TARGET_DIR)'
-      Contents: '*'
-      TargetFolder: '$(Build.ArtifactStagingDirectory)'
-
-  - task: CopyFiles@2
     displayName: Copy Rust Debug Build
-    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both')))
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
     inputs:
-      SourceFolder: '$(CARGO_TARGET_DIR)\Debug'
-      Contents: '*'
-      TargetFolder: '$(Build.ArtifactStagingDirectory)\Debug'
+      SourceFolder: '$(CARGO_TARGET_DIR)/debug'
+      Contents: |
+        *
+        !.cargo-lock
+      TargetFolder: '$(Build.ArtifactStagingDirectory)/debug'
 
   - task: CopyFiles@2
     displayName: Copy Rust Release Build
-    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both')))
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
     inputs:
-      SourceFolder: '$(CARGO_TARGET_DIR)\Release'
-      Contents: '*'
-      TargetFolder: '$(Build.ArtifactStagingDirectory)\Release'
+      SourceFolder: '$(CARGO_TARGET_DIR)/release'
+      Contents: |
+        *
+        !.cargo-lock
+      TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
 
   - task: CopyFiles@2
     displayName: Copy C++ Debug Build
-    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Debug'), eq('${{parameters.builtType}}', 'Both')))
+    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
     inputs:
       SourceFolder: '$(Build.SourcesDirectory)\prototype\ffi-prototype\x64\Debug'
       Contents: 'ffi-app.*'
@@ -95,7 +103,7 @@ jobs:
 
   - task: CopyFiles@2
     displayName: Copy C++ Release Build
-    condition: and(succeeded(), or(eq('${{parameters.builtType}}', 'Release'), eq('${{parameters.builtType}}', 'Both')))
+    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
     inputs:
       SourceFolder: '$(Build.SourcesDirectory)\prototype\ffi-prototype\x64\Release'
       Contents: 'ffi-app.*'
@@ -105,5 +113,5 @@ jobs:
     displayName: Publish Build Drop
     inputs:
       PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-      ArtifactName: drop
+      ArtifactName: $(buildTarget)
       publishLocation: Container
