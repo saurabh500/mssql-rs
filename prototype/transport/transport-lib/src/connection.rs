@@ -2,6 +2,7 @@ pub mod builder;
 mod transport;
 pub(crate) mod packet;
 pub(crate) mod token;
+pub(crate) mod buffer_traits;
 
 use crate::TdsError;
 use super::{Result,EncryptionLevel};

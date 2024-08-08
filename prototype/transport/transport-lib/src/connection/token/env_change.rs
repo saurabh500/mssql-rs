@@ -1,4 +1,4 @@
-use crate::TdsError;
+use crate::{connection::buffer_traits::BufferStringDecode, TdsError};
 use super::super::TransportBuffer;
 use byteorder::{LittleEndian, ReadBytesExt};
 use fmt::Debug;
@@ -119,44 +119,24 @@ impl TokenEnvChange {
         let token = match ty {
             EnvChangeTy::Database => {
                 let len = buf.read_u8()? as usize;
-                let mut bytes = vec![0; len];
-
-                for item in bytes.iter_mut().take(len) {
-                    *item = buf.read_u16::<LittleEndian>()?;
-                }
-
-                let new_value = String::from_utf16(&bytes[..])?;
+                
+                let new_value = buf.get_utf16_string(len as usize)?;
 
                 let len = buf.read_u8()? as usize;
-                let mut bytes = vec![0; len];
 
-                for item in bytes.iter_mut().take(len) {
-                    *item = buf.read_u16::<LittleEndian>()?;
-                }
-
-                let old_value = String::from_utf16(&bytes[..])?;
+                let old_value = buf.get_utf16_string(len as usize)?;
 
                 TokenEnvChange::Database(new_value, old_value)
             }
             EnvChangeTy::PacketSize => {
                 let len = buf.read_u8()? as usize;
-                let mut bytes = vec![0; len];
 
-                for item in bytes.iter_mut().take(len) {
-                    *item = buf.read_u16::<LittleEndian>()?;
-                }
-
-                let new_value = String::from_utf16(&bytes[..])?;
+                let new_value = buf.get_utf16_string(len as usize)?;
 
                 let len = buf.read_u8()? as usize;
-                let mut bytes = vec![0; len];
-
-                for item in bytes.iter_mut().take(len) {
-                    *item = buf.read_u16::<LittleEndian>()?;
-                }
-
-                let old_value = String::from_utf16(&bytes[..])?;
-
+                
+                let old_value = buf.get_utf16_string(len as usize)?;
+                
                 TokenEnvChange::PacketSize(new_value.parse()?, old_value.parse()?)
             }
             EnvChangeTy::SqlCollation => {

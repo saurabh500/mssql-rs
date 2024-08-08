@@ -2,6 +2,7 @@ mod env_change;
 mod login_ack;
 mod column_metadata;
 mod row_data;
+mod error_token;
 pub(crate) mod login;
 pub(crate) mod pre_login;
 
@@ -9,6 +10,7 @@ use env_change::TokenEnvChange;
 use login_ack::TokenLoginAck;
 use column_metadata::TokenColumnMetadata;
 use row_data::TokenRowData;
+use error_token::TokenError;
 use tracing::{event, Level};
 use crate::TdsError;
 use crate::Result;
@@ -73,6 +75,11 @@ where
                     Some(ref metadata) => TokenRowData::decode(src, metadata)?,
                     None => return Err(TdsError::Message("Getting row before column".into())),
                 };
+            }
+            TokenType::Error => {
+                size = 0;
+                let server_error = TokenError::decode(src)?;
+                event!(Level::ERROR, "Error token with message {:?} {:?} {:?} {:?}", server_error.error_number, server_error.error_state, server_error.error_class, server_error.error_message);
             }
             _ => {
                 size = src.get_u16_le()?;
