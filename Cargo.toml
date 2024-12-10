@@ -8,4 +8,5 @@ members = [
   "prototype/ffi-prototype/ffi-library",
   "prototype/transport/transport-lib",
   "prototype/transport/transport-app",
+  "tds-x",
 ]
