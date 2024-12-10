@@ -1,6 +1,6 @@
-use std::io::Cursor;
-use byteorder::{LittleEndian, ReadBytesExt};
 use crate::connection::buffer_traits::BufferStringDecode;
+use byteorder::{LittleEndian, ReadBytesExt};
+use std::io::Cursor;
 
 use super::super::TransportBuffer;
 use tracing::{event, Level};
@@ -31,12 +31,16 @@ impl TokenError {
             line: 0,
         };
         let token_length = src.get_u16_le()? as usize;
-        event!(Level::DEBUG, "The length of error token  {:?}", token_length);
+        event!(
+            Level::DEBUG,
+            "The length of error token  {:?}",
+            token_length
+        );
 
         let token_payload = src.split_to(token_length)?;
         let mut payload_cursor = Cursor::new(token_payload);
         token_error.error_number = payload_cursor.read_u32::<LittleEndian>()?;
-        
+
         token_error.error_state = payload_cursor.read_u8()?;
         token_error.error_class = payload_cursor.read_u8()?;
         let message_len = payload_cursor.read_u16::<LittleEndian>()?;
@@ -56,7 +60,7 @@ impl TokenError {
         }
 
         token_error.line = payload_cursor.read_u32::<LittleEndian>()?;
-        
+
         Ok(token_error)
     }
 }

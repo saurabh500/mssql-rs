@@ -1,6 +1,6 @@
-use tracing::{event, Level};
 use super::super::TransportBuffer;
 use crate::TdsError;
+use tracing::{event, Level};
 
 pub(crate) struct TokenColumnMetadata {
     column_count: u16,
@@ -25,12 +25,10 @@ impl TokenColumnMetadata {
         let mut column_metadata = TokenColumnMetadata {
             column_count,
             column_types: Vec::new(),
-
         };
 
         if column_count > 0 && column_count < 0xffff {
             for i in 0..column_count {
-                
                 let _user_ty = src.get_u32_le()?;
                 let _flag = src.get_u16_le()?;
                 let ty = src.get_u8()?;
@@ -38,7 +36,10 @@ impl TokenColumnMetadata {
                 // The code can only handle SQL results with VarChar SQL type.
                 // It is not a extensive implementation, but it is a proof of concept to parse query result.
                 if ty != 0xA7 {
-                    return Err(TdsError::Message(format!("Unsuported column type {:#X}", ty)));
+                    return Err(TdsError::Message(format!(
+                        "Unsuported column type {:#X}",
+                        ty
+                    )));
                 }
 
                 let shiloh_collation_size = 7;
@@ -52,14 +53,12 @@ impl TokenColumnMetadata {
                 let col_name = String::from_utf16(&wchars[..])?;
                 event!(Level::INFO, "Column {} : name {}", i, col_name);
 
-                column_metadata.column_types.push(
-                ColumnMetadata {
+                column_metadata.column_types.push(ColumnMetadata {
                     _column_type: ty,
                     _column_name: col_name,
                 });
             }
         }
-
 
         Ok(column_metadata)
     }

@@ -1,44 +1,32 @@
-mod builder_tcp;
-mod builder_pre_login;
-mod builder_tls;
 mod builder_login;
-mod builder_no_encryption;
 mod builder_login_ack;
+mod builder_no_encryption;
+mod builder_pre_login;
+mod builder_tcp;
+mod builder_tls;
 
-use builder_tls::BuilderTls;
-use builder_login_ack::BuilderLoginAck;
-use builder_tcp::BuilderTcp;
-use builder_login::BuilderLogin;
-use builder_pre_login::BuilderPreLogin;
-use builder_no_encryption::BuilderNoEncryption;
-use super::{Connection,Result,LoginState};
-pub use crate::Config;
 pub(crate) use super::token::login::LoginMessage;
 pub(crate) use super::token::pre_login::PreloginMessage;
+use super::{Connection, LoginState, Result};
+pub use crate::Config;
+use builder_login::BuilderLogin;
+use builder_login_ack::BuilderLoginAck;
+use builder_no_encryption::BuilderNoEncryption;
+use builder_pre_login::BuilderPreLogin;
+use builder_tcp::BuilderTcp;
+use builder_tls::BuilderTls;
 
-pub struct ConnectionBuilder
-{
-
-}
+pub struct ConnectionBuilder {}
 
 impl ConnectionBuilder {
     pub fn new() -> ConnectionBuilder {
-        ConnectionBuilder {
-        }
+        ConnectionBuilder {}
     }
 
     pub fn create(&self, connection: &mut Connection, config: &Config) -> Result<()> {
-        let mut validate = BuilderTcp::new(
-            BuilderPreLogin::new(
-                BuilderTls::new(
-                    BuilderLogin::new(
-                        BuilderNoEncryption::new(
-                            BuilderLoginAck::default()
-                        )
-                    )
-                )
-            )
-        );
+        let mut validate = BuilderTcp::new(BuilderPreLogin::new(BuilderTls::new(
+            BuilderLogin::new(BuilderNoEncryption::new(BuilderLoginAck::default())),
+        )));
 
         validate.execute(connection, &config)?;
         Ok(())

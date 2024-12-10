@@ -1,7 +1,7 @@
-use std::io::{Read, Write,Result};
+use crate::connection::{Decode, Encode, Packet, PacketHeader, PacketType, HEADER_BYTES};
 use bytes::{BufMut, BytesMut};
+use std::io::{Read, Result, Write};
 use tracing::{event, Level};
-use crate::connection::{PacketHeader, PacketType, Packet, HEADER_BYTES,Decode,Encode};
 
 pub(crate) struct TlsTransport<S> {
     pub(crate) stream: Option<S>,
@@ -38,15 +38,18 @@ impl<S: Read + Write> Read for TlsTransport<S> {
         let read = self.stream.as_mut().unwrap().read(&mut buf[..])?;
         if self.pending_handshake {
             self.read_remaining -= read;
-            event!(Level::DEBUG, "Read remaining of TLS handshake {} bytes.", read);
+            event!(
+                Level::DEBUG,
+                "Read remaining of TLS handshake {} bytes.",
+                read
+            );
         }
         Ok(read)
     }
 }
 
-impl<S: Read + Write> Write for TlsTransport<S> {  
+impl<S: Read + Write> Write for TlsTransport<S> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-
         if self.pending_handshake {
             event!(Level::DEBUG, "Write header for TLS.");
             let mut data = BytesMut::new();

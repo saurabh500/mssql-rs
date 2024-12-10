@@ -351,4 +351,3 @@ impl<'a> Encode<BytesMut> for LoginMessage<'a> {
         Ok(())
     }
 }
-

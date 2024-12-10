@@ -1,9 +1,9 @@
-use bytes::BytesMut;
-use byteorder::{LittleEndian, WriteBytesExt};
-use enumflags2::{bitflags, BitFlags};
-use std::io::{Cursor, Write};
-use std::borrow::Cow;
 use crate::parser::Encode;
+use byteorder::{LittleEndian, WriteBytesExt};
+use bytes::BytesMut;
+use enumflags2::{bitflags, BitFlags};
+use std::borrow::Cow;
+use std::io::{Cursor, Write};
 
 uint_enum! {
     #[repr(u32)]

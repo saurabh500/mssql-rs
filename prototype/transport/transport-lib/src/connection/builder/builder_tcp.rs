@@ -1,4 +1,4 @@
-use super::{into_next,BuilderAction,Connection,Result,Config};
+use super::{into_next, BuilderAction, Config, Connection, Result};
 use crate::connection::Transport;
 use std::net::TcpStream;
 use tracing::{event, Level};
@@ -17,7 +17,7 @@ impl BuilderTcp {
 }
 
 impl BuilderAction for BuilderTcp {
-    fn handle(&mut self, connection: &mut Connection, config: &Config) -> Result<()>  {
+    fn handle(&mut self, connection: &mut Connection, config: &Config) -> Result<()> {
         if config.is_tcp() && matches!(connection.transport, Transport::None) {
             event!(Level::TRACE, "No trasport creating TCP stream.");
             let tcp_stream = TcpStream::connect(config.get_host())?;

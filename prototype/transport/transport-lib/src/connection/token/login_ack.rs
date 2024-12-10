@@ -1,6 +1,6 @@
+use super::super::TransportBuffer;
 use crate::TdsError;
 use std::convert::TryFrom;
-use super::super::TransportBuffer;
 
 uint_enum! {
     #[repr(u32)]

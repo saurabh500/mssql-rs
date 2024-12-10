@@ -1,5 +1,5 @@
-use crate::{decode::Decode, encode::Encode};
 use crate::Error;
+use crate::{decode::Decode, encode::Encode};
 use bytes::{Buf, BufMut, BytesMut};
 use std::convert::TryFrom;
 

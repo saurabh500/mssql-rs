@@ -1,22 +1,21 @@
 mod tls_transport;
 mod transport_buffer;
 
+use super::super::parser::Decode;
+use crate::TdsError;
+use bytes::BytesMut;
+use native_tls::TlsStream;
+use std::io::{Read, Result, Write};
+use std::net::TcpStream;
 pub(crate) use tls_transport::TlsTransport;
 pub(crate) use transport_buffer::TransportBuffer;
-use crate::TdsError;
-use std::net::TcpStream;
-use native_tls::TlsStream;
-use std::io::{Read, Write,Result};
-use bytes::BytesMut;
-use super::super::parser::Decode;
 
-use super::packet::{Packet,PacketHeader,HEADER_BYTES};
+use super::packet::{Packet, PacketHeader, HEADER_BYTES};
 
-pub(crate) enum Transport
-{
+pub(crate) enum Transport {
     TcpStream(TcpStream),
     TlsStream(TlsStream<TlsTransport<TcpStream>>),
-    None
+    None,
 }
 
 impl Transport {
@@ -28,8 +27,7 @@ impl Transport {
         }
     }
 
-    pub fn collect_packet(&mut self) -> crate::Result<Packet>
-    {
+    pub fn collect_packet(&mut self) -> crate::Result<Packet> {
         let mut buf = BytesMut::zeroed(HEADER_BYTES);
         let size = self.read(buf.as_mut())?;
 

@@ -1,19 +1,19 @@
+pub(crate) mod buffer_traits;
 pub mod builder;
-mod transport;
 pub(crate) mod packet;
 pub(crate) mod token;
-pub(crate) mod buffer_traits;
+mod transport;
 
+use super::parser::{Decode, Encode};
+use super::{EncryptionLevel, Result};
 use crate::TdsError;
-use super::{Result,EncryptionLevel};
-use super::parser::{Encode,Decode};
+use packet::{Packet, PacketHeader, PacketType, HEADER_BYTES};
 use transport::Transport;
 use transport::TransportBuffer;
-use packet::{PacketHeader, PacketType, Packet, HEADER_BYTES};
 
-use tracing::{event, Level};
-use std::io::Write;
 use bytes::{Buf, BytesMut};
+use std::io::Write;
+use tracing::{event, Level};
 
 enum LoginState {
     None,
@@ -22,8 +22,7 @@ enum LoginState {
     LoginAck,
 }
 
-pub(crate) struct Connection
-{
+pub(crate) struct Connection {
     transport: Transport,
     server_encryption: Option<EncryptionLevel>,
     fed_auth_required: bool,
@@ -49,7 +48,7 @@ impl Connection {
     }
 
     fn encryption_required(&self) -> bool {
-        match  self.server_encryption.unwrap_or(EncryptionLevel::Off) {
+        match self.server_encryption.unwrap_or(EncryptionLevel::Off) {
             EncryptionLevel::Off => false,
             EncryptionLevel::On => true,
             EncryptionLevel::NotSupported => false,
@@ -64,7 +63,8 @@ impl Connection {
     }
 
     pub(crate) fn send<E>(&mut self, ty: PacketType, item: E) -> Result<()>
-        where E: Encode<BytesMut>
+    where
+        E: Encode<BytesMut>,
     {
         let packet_id = self.next_packet_id();
         let header = PacketHeader::new(ty, packet_id);
@@ -84,29 +84,34 @@ impl Connection {
         Ok(())
     }
 
-    fn collect_packet(&mut self) -> Result<Packet>
-    {
+    fn collect_packet(&mut self) -> Result<Packet> {
         self.transport.collect_packet()
     }
 
-    pub(crate) fn collect_token_packet(&mut self) -> Result<()>
-    {
+    pub(crate) fn collect_token_packet(&mut self) -> Result<()> {
         if !self.buf.is_empty() {
-            event!(Level::WARN, "Loading a packet when bufer has not been parsed.");
+            event!(
+                Level::WARN,
+                "Loading a packet when bufer has not been parsed."
+            );
         }
 
         self.buf.truncate(0);
         event!(Level::TRACE, "Collecting packet.");
         let packet = self.transport.collect_packet()?;
         let (header, payload) = packet.into_parts();
-        event!(Level::TRACE, "Received packet {:?} with size {}.", header, payload.len());
+        event!(
+            Level::TRACE,
+            "Received packet {:?} with size {}.",
+            header,
+            payload.len()
+        );
         self.buf.extend(payload);
         self.is_last = header.is_last();
         Ok(())
     }
 
     fn esure_bytes(&mut self, size: usize) -> Result<()> {
-
         while self.buf.len() < size {
             let packet = self.transport.collect_packet()?;
             let (header, payload) = packet.into_parts();
@@ -119,7 +124,9 @@ impl Connection {
         }
 
         if self.buf.len() < size {
-            return Err(TdsError::Message(format!("No bytes {} != {}", self.buf.len(), size).into()));
+            return Err(TdsError::Message(
+                format!("No bytes {} != {}", self.buf.len(), size).into(),
+            ));
         }
 
         Ok(())
@@ -134,7 +141,7 @@ macro_rules! buf_get {
         let b: [u8; SIZE] = $this.buf[..SIZE].try_into().unwrap();
         $this.buf.advance(SIZE);
         return Ok($typ::$conv(b));
-    }}
+    }};
 }
 
 impl TransportBuffer for Connection {
@@ -162,7 +169,7 @@ impl TransportBuffer for Connection {
     fn advance(&mut self, size: usize) -> Result<()> {
         self.esure_bytes(size)?;
         self.buf.advance(size);
-        Ok(())   
+        Ok(())
     }
 
     fn is_eof(&self) -> bool {

@@ -1,5 +1,5 @@
-use crate::{connection::buffer_traits::BufferStringDecode, TdsError};
 use super::super::TransportBuffer;
+use crate::{connection::buffer_traits::BufferStringDecode, TdsError};
 use byteorder::{LittleEndian, ReadBytesExt};
 use fmt::Debug;
 use std::{
@@ -70,10 +70,7 @@ pub enum TokenEnvChange {
     CommitTransaction,
     RollbackTransaction,
     DefectTransaction,
-    Routing {
-        host: String,
-        port: u16,
-    },
+    Routing { host: String, port: u16 },
     ChangeMirror(String),
     Ignored(EnvChangeTy),
 }
@@ -113,13 +110,14 @@ impl TokenEnvChange {
         let mut buf = Cursor::new(src.split_to(len)?);
         let ty_byte = buf.read_u8()?;
 
-        let ty = EnvChangeTy::try_from(ty_byte)
-            .map_err(|_| TdsError::Message(format!("invalid envchange type {:x}", ty_byte).into()))?;
+        let ty = EnvChangeTy::try_from(ty_byte).map_err(|_| {
+            TdsError::Message(format!("invalid envchange type {:x}", ty_byte).into())
+        })?;
 
         let token = match ty {
             EnvChangeTy::Database => {
                 let len = buf.read_u8()? as usize;
-                
+
                 let new_value = buf.get_utf16_string(len as usize)?;
 
                 let len = buf.read_u8()? as usize;
@@ -134,9 +132,9 @@ impl TokenEnvChange {
                 let new_value = buf.get_utf16_string(len as usize)?;
 
                 let len = buf.read_u8()? as usize;
-                
+
                 let old_value = buf.get_utf16_string(len as usize)?;
-                
+
                 TokenEnvChange::PacketSize(new_value.parse()?, old_value.parse()?)
             }
             EnvChangeTy::SqlCollation => {

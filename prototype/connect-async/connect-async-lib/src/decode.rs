@@ -1,5 +1,5 @@
-use crate::{packet::Packet, PacketCodec, header::PacketHeader, HEADER_BYTES};
 use crate::Error;
+use crate::{header::PacketHeader, packet::Packet, PacketCodec, HEADER_BYTES};
 use asynchronous_codec::Decoder;
 use bytes::{Buf, BytesMut};
 use tracing::{event, Level};

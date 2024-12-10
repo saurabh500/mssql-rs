@@ -1,16 +1,16 @@
-use std::io::{Read, Write,Result};
-use std::net::TcpStream;
-use native_tls::TlsStream;
-use native_tls::TlsConnector;
-use crate::TdsError;
+use super::packet::{Packet, PacketHeader, PacketType, HEADER_BYTES};
 use crate::connection::{Decode, Encode};
-use super::packet::{Packet, PacketHeader, PacketType,HEADER_BYTES};
+use crate::TdsError;
 use bytes::{BufMut, BytesMut};
+use native_tls::TlsConnector;
+use native_tls::TlsStream;
+use std::io::{Read, Result, Write};
+use std::net::TcpStream;
 use tracing::{event, Level};
 
 pub(crate) enum TransportStream {
     TcpStream(TcpStream),
-    TlsStream(TlsStream<TdsTransport<TcpStream>>),   
+    TlsStream(TlsStream<TdsTransport<TcpStream>>),
 }
 
 impl TransportStream {
@@ -73,8 +73,6 @@ impl<S> TdsTransport<S> {
     pub(crate) fn handshake_complete(&mut self) {
         self.pending_handshake = false;
     }
-
-
 }
 impl<S: Read + Write> Read for TdsTransport<S> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
@@ -91,17 +89,19 @@ impl<S: Read + Write> Read for TdsTransport<S> {
         let read = self.stream.as_mut().unwrap().read(&mut buf[..])?;
         if self.pending_handshake {
             self.read_remaining -= read;
-            event!(Level::DEBUG, "Read remaining of TLS handshake {} bytes.", self.read_remaining);
+            event!(
+                Level::DEBUG,
+                "Read remaining of TLS handshake {} bytes.",
+                self.read_remaining
+            );
         }
         Ok(read)
     }
 }
 
-impl<S: Read + Write> Write for TdsTransport<S> {  
+impl<S: Read + Write> Write for TdsTransport<S> {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-
         if self.pending_handshake {
-            
             let mut data = BytesMut::new();
             data.put(buf);
             let header = PacketHeader::new(PacketType::PreLogin, 0);
@@ -127,15 +127,15 @@ pub(crate) fn create_tls_stream<S: Read + Write>(
     stream: S,
 ) -> crate::Result<TlsStream<S>> {
     let connector = TlsConnector::builder()
-    .danger_accept_invalid_certs(true)
-    .danger_accept_invalid_hostnames(true)
-    .use_sni(false)
-    .build()
-    .unwrap();
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .use_sni(false)
+        .build()
+        .unwrap();
 
     let result = connector.connect(host, stream);
     match result {
         Ok(stream) => Ok(stream),
-        Err(_e) => Err(TdsError::Message("Handshake failed".to_string())),        
+        Err(_e) => Err(TdsError::Message("Handshake failed".to_string())),
     }
 }

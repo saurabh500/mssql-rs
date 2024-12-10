@@ -1,7 +1,7 @@
-use std::io::Cursor;
+use crate::Result;
 use byteorder::{LittleEndian, ReadBytesExt};
 use bytes::BytesMut;
-use crate::Result;
+use std::io::Cursor;
 
 pub(crate) trait BufferStringDecode {
     /// Reads a UTF-16 string of specified `length` from the buffer.
@@ -9,9 +9,7 @@ pub(crate) trait BufferStringDecode {
 }
 
 impl BufferStringDecode for Cursor<BytesMut> {
-
     fn get_utf16_string(&mut self, string_len: usize) -> Result<String> {
-
         let mut bytes: Vec<u16> = vec![0; string_len];
 
         for item in bytes.iter_mut().take(string_len) {

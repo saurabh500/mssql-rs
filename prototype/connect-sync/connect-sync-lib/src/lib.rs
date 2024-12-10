@@ -13,15 +13,14 @@
 //! 1. Receive the server response and decode tokens.
 #[macro_use]
 mod macros;
+pub mod connection;
+mod login;
 mod packet;
 mod prelogin;
-mod login;
-mod transport;
 mod token;
-pub mod connection;
+mod transport;
 
 use thiserror::Error;
-
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum TdsError {

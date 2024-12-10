@@ -1,6 +1,6 @@
 use super::super::parser::{Decode, Encode};
 use crate::TdsError;
-use bytes::{BytesMut, BufMut, Buf};
+use bytes::{Buf, BufMut, BytesMut};
 
 pub const HEADER_BYTES: usize = 8;
 
@@ -25,7 +25,7 @@ uint_enum! {
 #[derive(Debug, Clone)]
 pub(crate) struct PacketHeader {
     ty: PacketType,
-    status: u8,//PacketStatus,
+    status: u8, //PacketStatus,
     /// [BE] the length of the packet (including the 8 header bytes)
     /// must match the negotiated size sending from client to server [since TDSv7.3] after login
     /// (only if not EndOfMessage)
@@ -42,7 +42,7 @@ impl PacketHeader {
     pub fn new(ty: PacketType, id: u8) -> PacketHeader {
         PacketHeader {
             ty,
-            status: 1, // EndOfMessage = 1 
+            status: 1, // EndOfMessage = 1
             length: 0,
             spid: 0,
             id,
@@ -54,7 +54,7 @@ impl PacketHeader {
         self.length
     }
 
-    pub fn get_type(&self) -> PacketType{
+    pub fn get_type(&self) -> PacketType {
         self.ty
     }
 
@@ -86,9 +86,11 @@ impl Decode<BytesMut> for PacketHeader {
     {
         let raw_ty = src.get_u8();
 
-        let ty = PacketType::try_from(raw_ty).map_err(|_| {TdsError::Message(format!("header: invalid packet type: {}", raw_ty).into())})?;
+        let ty = PacketType::try_from(raw_ty).map_err(|_| {
+            TdsError::Message(format!("header: invalid packet type: {}", raw_ty).into())
+        })?;
 
-        let status = src.get_u8();//PacketStatus::try_from(src.get_u8()).map_err(|_| Error::Protocol("header: invalid packet status".into()))?;
+        let status = src.get_u8(); //PacketStatus::try_from(src.get_u8()).map_err(|_| Error::Protocol("header: invalid packet status".into()))?;
 
         let header = PacketHeader {
             ty,

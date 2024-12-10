@@ -1,20 +1,20 @@
-mod env_change;
-mod login_ack;
 mod column_metadata;
-mod row_data;
+mod env_change;
 mod error_token;
 pub(crate) mod login;
+mod login_ack;
 pub(crate) mod pre_login;
+mod row_data;
 
-use env_change::TokenEnvChange;
-use login_ack::TokenLoginAck;
-use column_metadata::TokenColumnMetadata;
-use row_data::TokenRowData;
-use error_token::TokenError;
-use tracing::{event, Level};
-use crate::TdsError;
-use crate::Result;
 use super::TransportBuffer;
+use crate::Result;
+use crate::TdsError;
+use column_metadata::TokenColumnMetadata;
+use env_change::TokenEnvChange;
+use error_token::TokenError;
+use login_ack::TokenLoginAck;
+use row_data::TokenRowData;
+use tracing::{event, Level};
 
 uint_enum! {
     /// TokenType is a single byte identifier that is used to describe the data.
@@ -38,14 +38,15 @@ uint_enum! {
     }
 }
 
-pub(crate) fn decode_token<T>(src: &mut T) -> Result<()> 
-where 
-    T: TransportBuffer
+pub(crate) fn decode_token<T>(src: &mut T) -> Result<()>
+where
+    T: TransportBuffer,
 {
     let mut column_metadata: Option<TokenColumnMetadata> = None;
     while !src.is_eof() {
         let ty_byte = src.get_u8()?;
-        let ty = TokenType::try_from(ty_byte).map_err(|_| TdsError::Message(format!("invalid token type {:x}", ty_byte).into()))?;
+        let ty = TokenType::try_from(ty_byte)
+            .map_err(|_| TdsError::Message(format!("invalid token type {:x}", ty_byte).into()))?;
         let size;
         match ty {
             TokenType::Done | TokenType::DoneInProc | TokenType::DoneProc => {
@@ -79,7 +80,14 @@ where
             TokenType::Error => {
                 size = 0;
                 let server_error = TokenError::decode(src)?;
-                event!(Level::ERROR, "Error token with message {:?} {:?} {:?} {:?}", server_error.error_number, server_error.error_state, server_error.error_class, server_error.error_message);
+                event!(
+                    Level::ERROR,
+                    "Error token with message {:?} {:?} {:?} {:?}",
+                    server_error.error_number,
+                    server_error.error_state,
+                    server_error.error_class,
+                    server_error.error_message
+                );
             }
             _ => {
                 size = src.get_u16_le()?;

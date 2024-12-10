@@ -1,9 +1,9 @@
-use uuid::Uuid;
 use crate::connection::{Decode, Encode};
 use crate::Result;
-use bytes::{BytesMut, BufMut};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use bytes::{BufMut, BytesMut};
 use std::io::{Cursor, Read};
+use uuid::Uuid;
 
 const PRELOGIN_VERSION: u8 = 0;
 const PRELOGIN_ENCRYPTION: u8 = 1;
@@ -28,7 +28,6 @@ pub struct ActivityId {
     id: Uuid,
     sequence: u32,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct PreloginMessage {

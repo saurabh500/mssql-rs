@@ -1,6 +1,6 @@
 use tracing::{event, Level};
 
-use super::{BuilderAction,Connection,Result,Config,LoginState};
+use super::{BuilderAction, Config, Connection, LoginState, Result};
 use crate::connection::{token::decode_token, transport::TransportBuffer, Transport};
 
 #[derive(Default)]
@@ -9,9 +9,10 @@ pub(crate) struct BuilderLoginAck {
 }
 
 impl BuilderAction for BuilderLoginAck {
-    fn handle(&mut self, connection: &mut Connection, _config: &Config) -> Result<()>  {
-
-        if !matches!(connection.transport, Transport::None) && matches!(connection.login_state, LoginState::Login) {
+    fn handle(&mut self, connection: &mut Connection, _config: &Config) -> Result<()> {
+        if !matches!(connection.transport, Transport::None)
+            && matches!(connection.login_state, LoginState::Login)
+        {
             connection.collect_token_packet()?;
             decode_token(connection)?;
             event!(Level::INFO, "Login completed.");
@@ -24,7 +25,7 @@ impl BuilderAction for BuilderLoginAck {
         } else {
             event!(Level::INFO, "Login alredy acknowledged.");
         }
-    
+
         Ok(())
     }
 

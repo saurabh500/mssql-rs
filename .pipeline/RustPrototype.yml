@@ -69,6 +69,10 @@ jobs:
     displayName: Test Debug and create Junit report
     condition: and(succeeded(), ne(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
 
+  - script: cargo fmt --check
+    displayName: Check Format
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+
 
   - script: |
       set RUSTC_BOOTSTRAP=1 

@@ -1,7 +1,7 @@
-use bytes::{Buf, BytesMut};
-use tracing::{event, Level};
 use crate::error::Error;
 use crate::Result;
+use bytes::{Buf, BytesMut};
+use tracing::{event, Level};
 
 uint_enum! {
     /// TokenType is a single byte identifier that is used to describe the data.
@@ -26,10 +26,10 @@ uint_enum! {
 }
 
 pub(crate) fn decode_token(src: &mut BytesMut) -> Result<()> {
-
     while src.len() > 3 {
         let ty_byte = src.get_u8();
-        let ty = TokenType::try_from(ty_byte).map_err(|_| Error::Protocol(format!("invalid token type {:x}", ty_byte).into()))?;
+        let ty = TokenType::try_from(ty_byte)
+            .map_err(|_| Error::Protocol(format!("invalid token type {:x}", ty_byte).into()))?;
         let size;
         match ty {
             TokenType::Done | TokenType::DoneInProc | TokenType::DoneProc => {
@@ -49,13 +49,23 @@ pub(crate) fn decode_token(src: &mut BytesMut) -> Result<()> {
         }
 
         if src.len() < size as usize {
-            return Err(Error::Protocol(format!("Invalid token {:?}, expected size {} but only {} bytes left", ty, size, src.len()).into()));
+            return Err(Error::Protocol(
+                format!(
+                    "Invalid token {:?}, expected size {} but only {} bytes left",
+                    ty,
+                    size,
+                    src.len()
+                )
+                .into(),
+            ));
         }
         src.advance(size as usize);
     }
 
     if src.len() > 0 {
-        return Err(Error::Protocol(format!("Invalid packet. There are still {} bytes left", src.len()).into()));
+        return Err(Error::Protocol(
+            format!("Invalid packet. There are still {} bytes left", src.len()).into(),
+        ));
     }
     Ok(())
 }

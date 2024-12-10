@@ -1,8 +1,8 @@
 // This code is called from ..\..\ffi-app\PullBuffer.cpp
 
-use libc::{c_int,c_uchar,c_ushort,c_uint};
+use super::{parse_all, Parse};
 use bytes::BytesMut;
-use super::{parse_all,Parse};
+use libc::{c_int, c_uchar, c_uint, c_ushort};
 
 type ParseCallback = unsafe extern "C" fn(ptr: *mut ParseReader) -> c_int;
 
@@ -12,9 +12,7 @@ pub struct ParseReader {
 
 impl ParseReader {
     fn new(buffer: BytesMut) -> Self {
-        Self {
-            buffer
-        }
+        Self { buffer }
     }
 
     pub fn get_buffer(&mut self, size: c_ushort, ptr: *mut c_uchar) -> c_uint {
@@ -42,29 +40,26 @@ pub extern "C" fn get_buffer(reader_ptr: *mut ParseReader, size: c_ushort, ptr: 
 }
 
 pub struct PullParser {
-    pub call_back: Option<ParseCallback>
+    pub call_back: Option<ParseCallback>,
 }
 
 impl PullParser {
-    fn new() -> Self{
-        Self {
-            call_back: None,
-        }
+    fn new() -> Self {
+        Self { call_back: None }
     }
 }
 
 impl Parse for PullParser {
     fn parse(&self, buf: BytesMut) -> crate::Result<()> {
-
         let mut readed = ParseReader::new(buf);
 
         if let Some(cb) = self.call_back {
             unsafe {
                 cb(&mut readed as *mut ParseReader);
-            }        
+            }
         }
 
-        Ok(())    
+        Ok(())
     }
 }
 

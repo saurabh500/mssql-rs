@@ -1,9 +1,9 @@
-use async_std::net::TcpStream;
-use async_native_tls::{TlsStream, TlsConnector};
-use crate::HEADER_BYTES;
 use crate::decode::Decode;
 use crate::encode::Encode;
 use crate::header::{PacketHeader, PacketStatus, PacketType};
+use crate::HEADER_BYTES;
+use async_native_tls::{TlsConnector, TlsStream};
+use async_std::net::TcpStream;
 use bytes::BytesMut;
 use futures_util::io::{AsyncRead, AsyncWrite};
 use futures_util::ready;
@@ -27,7 +27,6 @@ impl Protocol {
         }
     }
 }
-
 
 impl AsyncRead for Protocol {
     fn poll_read(
@@ -114,7 +113,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncRead for TlsPreloginWrapper<
         cx: &mut task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-
         // Normal operation does not need any extra treatment, we handle packets
         // in the codec.
         if !self.pending_handshake {
@@ -239,11 +237,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for TlsPreloginWrapper
 
 pub(crate) async fn create_tls_stream<S: AsyncRead + AsyncWrite + Unpin + Send>(
     stream: S,
-    host: &str
+    host: &str,
 ) -> crate::Result<TlsStream<S>> {
     let mut builder = TlsConnector::new();
 
-    event!(Level::INFO, "Trusting the server certificate without validation.");
+    event!(
+        Level::INFO,
+        "Trusting the server certificate without validation."
+    );
 
     builder = builder.danger_accept_invalid_certs(true);
     builder = builder.danger_accept_invalid_hostnames(true);

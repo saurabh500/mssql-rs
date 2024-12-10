@@ -13,16 +13,16 @@
 //! 1. Receive the server response and decode tokens.
 #[macro_use]
 mod macros;
-mod packet;
-mod header;
+pub mod connection;
 mod decode;
 mod encode;
-mod protocol;
-mod pre_login;
-mod login;
-mod token;
-pub mod connection;
 pub mod error;
+mod header;
+mod login;
+mod packet;
+mod pre_login;
+mod protocol;
+mod token;
 
 pub(crate) use error::Error;
 pub type Result<T> = std::result::Result<T, Error>;

@@ -1,20 +1,18 @@
 // This code is called from ..\..\ffi-app\PushBuffer.cpp
 
-use libc::{c_int,c_uchar,c_ushort};
-use bytes::{BytesMut,Buf};
-use super::{parse_all,Parse};
+use super::{parse_all, Parse};
+use bytes::{Buf, BytesMut};
+use libc::{c_int, c_uchar, c_ushort};
 
 type EnvCallback = unsafe extern "C" fn(size: c_ushort, buf: *const c_uchar) -> c_int;
 
 pub struct PushParser {
-    pub call_back: Option<EnvCallback>
+    pub call_back: Option<EnvCallback>,
 }
 
 impl PushParser {
-    fn new() -> Self{
-        Self {
-            call_back: None,
-        }
+    fn new() -> Self {
+        Self { call_back: None }
     }
 }
 
@@ -28,10 +26,10 @@ impl Parse for PushParser {
         if let Some(cb) = self.call_back {
             unsafe {
                 cb(token_size, buf.as_ptr());
-            }        
+            }
         }
-    
-        Ok(())    
+
+        Ok(())
     }
 }
 

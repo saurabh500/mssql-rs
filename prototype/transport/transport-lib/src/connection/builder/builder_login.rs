@@ -1,8 +1,8 @@
-use tracing::{event, Level};
 use super::LoginMessage;
+use tracing::{event, Level};
 
-use super::{into_next,BuilderAction,Connection,Result,Config,LoginState};
-use crate::connection::{PacketType,Transport};
+use super::{into_next, BuilderAction, Config, Connection, LoginState, Result};
+use crate::connection::{PacketType, Transport};
 
 #[derive(Default)]
 pub(crate) struct BuilderLogin {
@@ -18,11 +18,11 @@ impl BuilderLogin {
 }
 
 impl BuilderAction for BuilderLogin {
-    fn handle(&mut self, connection: &mut Connection, config: &Config) -> Result<()>  {
-
+    fn handle(&mut self, connection: &mut Connection, config: &Config) -> Result<()> {
         if let Transport::TlsStream(_) = &connection.transport {
             if !matches!(connection.transport, Transport::None)
-                && matches!(connection.login_state, LoginState::PreLogin) {
+                && matches!(connection.login_state, LoginState::PreLogin)
+            {
                 let mut login_message = LoginMessage::new();
 
                 login_message.user_name(config.get_user());
@@ -35,7 +35,7 @@ impl BuilderAction for BuilderLogin {
                 event!(Level::INFO, "Login already sent.");
             }
         }
-        
+
         Ok(())
     }
 

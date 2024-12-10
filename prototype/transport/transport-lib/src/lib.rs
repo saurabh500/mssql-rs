@@ -2,20 +2,20 @@
 //! COR is used in `ConnectionBuilder` with individual steps for creating a connection.
 #[macro_use]
 mod macros;
-mod connection;
 mod config;
+mod connection;
 mod parser;
 
-pub use config::{Config,EncryptionLevel};
-pub use parser::Parser;
-pub(crate) use connection::Connection;
+pub use config::{Config, EncryptionLevel};
 pub(crate) use connection::builder::ConnectionBuilder;
+pub(crate) use connection::Connection;
+pub use parser::Parser;
 
 use thiserror::Error;
 
-/// `TdsError` is an error used in the library. 
+/// `TdsError` is an error used in the library.
 /// Any other error is converted to `TdsError`.
-/// When the code is integrated to API calls 
+/// When the code is integrated to API calls
 /// each error should have a error code as return value from APIs.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum TdsError {

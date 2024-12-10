@@ -1,13 +1,13 @@
 mod sql_request;
 
-use crate::Connection;
-use crate::Config;
-use crate::ConnectionBuilder;
-use bytes::{Buf, BufMut};
-use sql_request::SqlRequest;
 use super::Result;
 use crate::connection::packet::PacketType;
 use crate::connection::token::decode_token;
+use crate::Config;
+use crate::Connection;
+use crate::ConnectionBuilder;
+use bytes::{Buf, BufMut};
+use sql_request::SqlRequest;
 use tracing::{event, Level};
 
 const ALL_HEADERS_LEN_TX: u32 = 22;

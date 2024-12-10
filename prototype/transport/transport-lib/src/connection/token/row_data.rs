@@ -1,12 +1,14 @@
-use tracing::{event, Level};
 use super::super::TransportBuffer;
 use super::column_metadata::TokenColumnMetadata;
+use tracing::{event, Level};
 
-pub(crate) struct TokenRowData {
-}
+pub(crate) struct TokenRowData {}
 
 impl TokenRowData {
-    pub(crate) fn decode<T>(src: &mut T, column_metadata: &TokenColumnMetadata) -> crate::Result<TokenRowData>
+    pub(crate) fn decode<T>(
+        src: &mut T,
+        column_metadata: &TokenColumnMetadata,
+    ) -> crate::Result<TokenRowData>
     where
         T: TransportBuffer,
     {
@@ -22,6 +24,6 @@ impl TokenRowData {
             event!(Level::INFO, "Column {} value: {}", i, row_value);
         }
 
-        Ok(TokenRowData{})
+        Ok(TokenRowData {})
     }
 }

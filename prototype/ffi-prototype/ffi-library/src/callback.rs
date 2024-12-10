@@ -1,23 +1,21 @@
 // Caller is at ..\..\ffi-app\Callback.cpp
-use std::mem::ManuallyDrop;
-use bytes::{Buf, BytesMut};
-use std::io::{Cursor,Read};
-use byteorder::{LittleEndian, ReadBytesExt};
+use super::{parse_all, Parse};
 use crate::TdsError;
+use byteorder::{LittleEndian, ReadBytesExt};
+use bytes::{Buf, BytesMut};
 use libc::c_int;
-use super::{parse_all,Parse};
+use std::io::{Cursor, Read};
+use std::mem::ManuallyDrop;
 
 type Callback = unsafe extern "C" fn(&EnvChange) -> c_int;
 
 pub struct CallbackParser {
-    pub call_back: Option<Callback>
+    pub call_back: Option<Callback>,
 }
 
 impl CallbackParser {
-    fn new() -> Self{
-        Self {
-            call_back: None,
-        }
+    fn new() -> Self {
+        Self { call_back: None }
     }
 }
 
@@ -27,10 +25,10 @@ impl Parse for CallbackParser {
         if let Some(cb) = self.call_back {
             unsafe {
                 cb(&env_change);
-            }        
+            }
         }
-    
-        Ok(())    
+
+        Ok(())
     }
 }
 
@@ -73,8 +71,7 @@ pub extern "C" fn callback_parser_free(ptr: *mut CallbackParser) {
     }
 }
 
-fn decode(src: BytesMut) -> crate::Result<EnvChange>
-{
+fn decode(src: BytesMut) -> crate::Result<EnvChange> {
     let buf_size = src.len();
     let mut buf = Cursor::new(src);
     let token_size = buf.get_u16_le();
@@ -100,7 +97,7 @@ fn decode(src: BytesMut) -> crate::Result<EnvChange>
             EnvChange {
                 env_type: ty_byte,
                 env_change_data: EnvChangeData {
-                    database_name: ManuallyDrop::new(dn)
+                    database_name: ManuallyDrop::new(dn),
                 },
             }
         }
@@ -121,9 +118,9 @@ fn decode(src: BytesMut) -> crate::Result<EnvChange>
             EnvChange {
                 env_type: ty_byte,
                 env_change_data: EnvChangeData {
-                    packet_size:ManuallyDrop::new(PacketSize {
+                    packet_size: ManuallyDrop::new(PacketSize {
                         packet_size_new: new_value.parse()?,
-                    })
+                    }),
                 },
             }
         }
@@ -135,12 +132,8 @@ fn decode(src: BytesMut) -> crate::Result<EnvChange>
 
             if len == 5 {
                 collation.sortid = new_value[4];
-                collation.wcid = u32::from_le_bytes([
-                    new_value[0],
-                    new_value[1],
-                    new_value[2],
-                    new_value[3],
-                ]);
+                collation.wcid =
+                    u32::from_le_bytes([new_value[0], new_value[1], new_value[2], new_value[3]]);
             }
 
             // Old collation is not collected.
@@ -150,11 +143,16 @@ fn decode(src: BytesMut) -> crate::Result<EnvChange>
             EnvChange {
                 env_type: ty_byte,
                 env_change_data: EnvChangeData {
-                    collation:ManuallyDrop::new(collation)
-                }
+                    collation: ManuallyDrop::new(collation),
+                },
             }
         }
-        _ => return Err(TdsError::Message(format!("Unsuported ENV type {}", ty_byte))),
+        _ => {
+            return Err(TdsError::Message(format!(
+                "Unsuported ENV type {}",
+                ty_byte
+            )))
+        }
     };
 
     Ok(token)
@@ -194,10 +192,8 @@ const FILENAME_MAX: usize = 260;
 const MAX_PROT_SRVINSTANCE_LEN: usize = MAX_PROTOCOL_PREFIX_LEN + FILENAME_MAX + 1;
 const MAX_ALTERNATE_SERVER_LENGTH_IN_CHAR: usize = 1024;
 
-
 #[repr(C)]
-struct DatabaseName
-{
+struct DatabaseName {
     dbname_new_size: u16,
     dbname_new: [u16; SYSNAMELEN + 1],
 }
@@ -214,8 +210,7 @@ impl DatabaseName {
 }
 
 #[repr(C)]
-struct Language
-{
+struct Language {
     lang_new_size: u16,
     lang_new: [u16; SYSNAMELEN + 1],
 }
@@ -233,14 +228,12 @@ impl Language {
 
 #[derive(Default)]
 #[repr(C)]
-struct PacketSize
-{
+struct PacketSize {
     packet_size_new: u32,
 }
 
 #[repr(C)]
-struct CharSet
-{
+struct CharSet {
     char_set_new_size: u16,
     char_set_new: [u16; MAX_CHARSET_NAME + 1],
     case_sensitive: c_int,
@@ -260,22 +253,19 @@ impl CharSet {
 
 #[derive(Default)]
 #[repr(C)]
-struct Collation
-{
+struct Collation {
     wcid: u32,
     sortid: u8,
 }
 
 #[derive(Default)]
 #[repr(C)]
-struct Transaction
-{
+struct Transaction {
     xact_id: u64,
 }
 
 #[repr(C)]
-struct LogShipping
-{
+struct LogShipping {
     partner_node_size: u16,
     partner_node: [u16; MAX_PROT_SRVINSTANCE_LEN],
 }
@@ -292,8 +282,7 @@ impl LogShipping {
 }
 
 #[repr(C)]
-struct Routing
-{
+struct Routing {
     routing_data_length: u16,
     protocol: u8,
     protocol_property: u16,

@@ -1,11 +1,11 @@
-use super::{into_next,BuilderAction,Connection,Result,Config};
-use crate::connection::Transport;
+use super::{into_next, BuilderAction, Config, Connection, Result};
 use crate::connection::transport::TlsTransport;
+use crate::connection::Transport;
 use crate::TdsError;
-use native_tls::TlsStream;
 use native_tls::TlsConnector;
-use tracing::{event, Level};
+use native_tls::TlsStream;
 use std::io::{Read, Write};
+use tracing::{event, Level};
 
 #[derive(Default)]
 pub(crate) struct BuilderTls {
@@ -21,13 +21,17 @@ impl BuilderTls {
 }
 
 impl BuilderAction for BuilderTls {
-    fn handle(&mut self, connection: &mut Connection, config: &Config) -> Result<()>  {
-        if config.is_tcp() && connection.pending_handshake && matches!(connection.transport, Transport::TcpStream(_)) {
+    fn handle(&mut self, connection: &mut Connection, config: &Config) -> Result<()> {
+        if config.is_tcp()
+            && connection.pending_handshake
+            && matches!(connection.transport, Transport::TcpStream(_))
+        {
             event!(Level::TRACE, "No TLS handshake.");
 
             let transport = std::mem::replace(&mut connection.transport, Transport::None);
             if let Transport::TcpStream(stream) = transport {
-                let mut tls_stream = create_tls_stream(config.get_host(), TlsTransport::new(stream))?;
+                let mut tls_stream =
+                    create_tls_stream(config.get_host(), TlsTransport::new(stream))?;
                 tls_stream.get_mut().handshake_complete();
                 connection.transport = Transport::TlsStream(tls_stream);
                 connection.pending_handshake = false;
@@ -45,20 +49,17 @@ impl BuilderAction for BuilderTls {
     }
 }
 
-fn create_tls_stream<S: Read + Write>(
-    host: &str,
-    stream: S,
-) -> Result<TlsStream<S>> {
+fn create_tls_stream<S: Read + Write>(host: &str, stream: S) -> Result<TlsStream<S>> {
     let connector = TlsConnector::builder()
-    .danger_accept_invalid_certs(true)
-    .danger_accept_invalid_hostnames(true)
-    .use_sni(false)
-    .build()
-    .unwrap();
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .use_sni(false)
+        .build()
+        .unwrap();
 
     let result = connector.connect(host, stream);
     match result {
         Ok(stream) => Ok(stream),
-        Err(_e) => Err(TdsError::Message("Handshake failed".to_string())),        
+        Err(_e) => Err(TdsError::Message("Handshake failed".to_string())),
     }
 }
