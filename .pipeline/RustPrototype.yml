@@ -60,6 +60,27 @@ jobs:
     displayName: Rust Release Build
     condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
 
+  - script: cargo install junitify
+    displayName: Install JUnitify
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+
+
+  - script: RUSTC_BOOTSTRAP=1 cargo test -- --format=json -Z unstable-options --report-time | junitify --out testresults/
+    displayName: Test Debug and create Junit report
+    condition: and(succeeded(), ne(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+
+
+  - script: |
+      set RUSTC_BOOTSTRAP=1 
+      cargo test -- --format=json -Z unstable-options --report-time | junitify --out testresults/
+    displayName: Test Debug and create Junit report
+    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+
+  - task: PublishTestResults@2
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '**/testresults/*.xml'
+
   - task: MSBuild@1
     displayName: C++ Debug Build
     condition: and(succeeded(), eq(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
