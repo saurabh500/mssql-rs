@@ -21,6 +21,9 @@ These tools made the Rust development easier:
   - rust-analyzer
   - C/C++ - Visual Studio Marketplace
   - CodeLLDB - Visual Studio Marketplace
+  
+  Alternatively go to the the command palette "Ctrl + P" and type "Extensions: Show Recommended Extensions." This will bring up the flyout with the above extensions as workspace recommended extensions.
+ 
 - Download Rust MS internal setup (msrustup.exe) from [MSRustup from MS]
 
 #### Setting up the environment
