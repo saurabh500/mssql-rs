@@ -26,6 +26,14 @@ These tools made the Rust development easier:
  
 - Download Rust MS internal setup (msrustup.exe) from [MSRustup from MS]
 
+#### Linux users
+
+There are some special scripts created and tested for Developers on Ubuntu 22.04. Look at the [README](./scripts/README.md) for details on how to install the dependencies and `msrustup` for Linux.
+
+#### MacOS development 
+
+Coming soon.
+
 #### Setting up the environment
 To get a development environment running, please do the following:
 1. Clone *RustPrototype* repo by running
@@ -59,6 +67,12 @@ To build the project locally, run the following command in the project root dire
 ```
 cargo build
 ```
+
+### Other checks
+
+Run clippy and check for formatting before sending a PR. 
+
+This can be done using the [pre-commit-helper for Nix](./.githooks/pre-commit-checks.sh) or for [Powershell on Windows](./.githooks/pre-commit-checks.ps1)
 
 ## Build pipeline
 
