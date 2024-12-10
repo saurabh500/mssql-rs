@@ -110,30 +110,29 @@ impl TokenEnvChange {
         let mut buf = Cursor::new(src.split_to(len)?);
         let ty_byte = buf.read_u8()?;
 
-        let ty = EnvChangeTy::try_from(ty_byte).map_err(|_| {
-            TdsError::Message(format!("invalid envchange type {:x}", ty_byte).into())
-        })?;
+        let ty = EnvChangeTy::try_from(ty_byte)
+            .map_err(|_| TdsError::Message(format!("invalid envchange type {:x}", ty_byte)))?;
 
         let token = match ty {
             EnvChangeTy::Database => {
                 let len = buf.read_u8()? as usize;
 
-                let new_value = buf.get_utf16_string(len as usize)?;
+                let new_value = buf.get_utf16_string(len)?;
 
                 let len = buf.read_u8()? as usize;
 
-                let old_value = buf.get_utf16_string(len as usize)?;
+                let old_value = buf.get_utf16_string(len)?;
 
                 TokenEnvChange::Database(new_value, old_value)
             }
             EnvChangeTy::PacketSize => {
                 let len = buf.read_u8()? as usize;
 
-                let new_value = buf.get_utf16_string(len as usize)?;
+                let new_value = buf.get_utf16_string(len)?;
 
                 let len = buf.read_u8()? as usize;
 
-                let old_value = buf.get_utf16_string(len as usize)?;
+                let old_value = buf.get_utf16_string(len)?;
 
                 TokenEnvChange::PacketSize(new_value.parse()?, old_value.parse()?)
             }

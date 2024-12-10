@@ -79,7 +79,7 @@ fn decode(src: BytesMut) -> crate::Result<EnvChange> {
     let ty_byte = buf.read_u8()?;
 
     let ty = EnvChangeTy::try_from(ty_byte)
-        .map_err(|_| TdsError::Message(format!("invalid envchange type {:x}", ty_byte).into()))?;
+        .map_err(|_| TdsError::Message(format!("invalid envchange type {:x}", ty_byte)))?;
 
     let token = match ty {
         EnvChangeTy::Database => {

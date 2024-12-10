@@ -79,7 +79,7 @@ impl Connection {
             packet_id,
             payload.len() + HEADER_BYTES,
         );
-        self.transport.write(&payload)?;
+        self.transport.write_all(&payload)?;
         self.transport.flush()?;
         Ok(())
     }
@@ -124,9 +124,11 @@ impl Connection {
         }
 
         if self.buf.len() < size {
-            return Err(TdsError::Message(
-                format!("No bytes {} != {}", self.buf.len(), size).into(),
-            ));
+            return Err(TdsError::Message(format!(
+                "No bytes {} != {}",
+                self.buf.len(),
+                size
+            )));
         }
 
         Ok(())

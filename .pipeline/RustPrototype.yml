@@ -60,6 +60,11 @@ jobs:
     displayName: Rust Release Build
     condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
 
+
+  - script: cargo clippy --frozen -- -D warnings
+    displayName: Rust Clippy Lint
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+
   - script: cargo install junitify
     displayName: Install JUnitify
     condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))

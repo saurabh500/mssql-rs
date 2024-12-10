@@ -152,7 +152,7 @@ impl Decode<BytesMut> for PreloginMessage {
                 PRELOGIN_ENCRYPTION => {
                     let encrypt = cursor.read_u8()?;
                     ret.encryption = EncryptionLevel::try_from(encrypt).map_err(|_| {
-                        TdsError::Message(format!("invalid encryption value: {}", encrypt).into())
+                        TdsError::Message(format!("invalid encryption value: {}", encrypt))
                     })?;
                 }
                 // instance name

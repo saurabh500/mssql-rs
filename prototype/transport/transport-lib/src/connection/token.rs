@@ -46,7 +46,7 @@ where
     while !src.is_eof() {
         let ty_byte = src.get_u8()?;
         let ty = TokenType::try_from(ty_byte)
-            .map_err(|_| TdsError::Message(format!("invalid token type {:x}", ty_byte).into()))?;
+            .map_err(|_| TdsError::Message(format!("invalid token type {:x}", ty_byte)))?;
         let size;
         match ty {
             TokenType::Done | TokenType::DoneInProc | TokenType::DoneProc => {

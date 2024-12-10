@@ -42,10 +42,10 @@ impl Connection {
             ((bytes[2] as u16) << 8) + (bytes[3] as u16)
         );
 
-        let connection = connection.tls_handshake(&host).await?;
+        let connection = connection.tls_handshake(host).await?;
         event!(Level::INFO, "TLS handshake completed.");
         event!(Level::INFO, "Sending login message.");
-        let mut connection = connection.login(prelogin, &user, &password).await?;
+        let mut connection = connection.login(prelogin, user, password).await?;
 
         let packet = connection.collect_packet().await?;
         let (_, mut payload) = packet.into_parts();
@@ -116,7 +116,7 @@ impl Connection {
     where
         E: Sized + Encode<BytesMut>,
     {
-        let packet_size = (4096 as usize) - HEADER_BYTES;
+        let packet_size = 4096_usize - HEADER_BYTES;
 
         let mut payload = BytesMut::new();
         item.encode(&mut payload)?;

@@ -28,23 +28,23 @@ impl ConnectionBuilder {
             BuilderLogin::new(BuilderNoEncryption::new(BuilderLoginAck::default())),
         )));
 
-        validate.execute(connection, &config)?;
+        validate.execute(connection, config)?;
         Ok(())
     }
 
     pub fn build(&self, config: &Config) -> Result<Connection> {
         let mut connection = Connection::new();
-        self.create(&mut connection, &config)?;
+        self.create(&mut connection, config)?;
         Ok(connection)
     }
 }
 
 pub trait BuilderAction {
     fn execute(&mut self, connection: &mut Connection, config: &Config) -> Result<()> {
-        self.handle(connection, &config)?;
+        self.handle(connection, config)?;
 
         if let Some(next) = &mut self.next() {
-            next.execute(connection, &config)?;
+            next.execute(connection, config)?;
         }
 
         Ok(())

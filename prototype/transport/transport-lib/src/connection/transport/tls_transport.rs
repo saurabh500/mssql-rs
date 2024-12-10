@@ -24,15 +24,13 @@ impl<S> TlsTransport<S> {
 }
 impl<S: Read + Write> Read for TlsTransport<S> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        if self.pending_handshake {
-            if self.read_remaining == 0 {
-                let mut header_buf = [0u8; HEADER_BYTES];
-                let read_header: usize = self.stream.as_mut().unwrap().read(&mut header_buf[..])?;
-                event!(Level::DEBUG, "Read header {} bytes.", read_header);
-                let header = PacketHeader::decode(&mut BytesMut::from(&header_buf[..])).unwrap();
-                event!(Level::DEBUG, "TLS PacketHeader {:?}.", header);
-                self.read_remaining = header.length() as usize - HEADER_BYTES;
-            }
+        if self.pending_handshake && self.read_remaining == 0 {
+            let mut header_buf = [0u8; HEADER_BYTES];
+            let read_header: usize = self.stream.as_mut().unwrap().read(&mut header_buf[..])?;
+            event!(Level::DEBUG, "Read header {} bytes.", read_header);
+            let header = PacketHeader::decode(&mut BytesMut::from(&header_buf[..])).unwrap();
+            event!(Level::DEBUG, "TLS PacketHeader {:?}.", header);
+            self.read_remaining = header.length() as usize - HEADER_BYTES;
         }
 
         let read = self.stream.as_mut().unwrap().read(&mut buf[..])?;
@@ -59,11 +57,11 @@ impl<S: Read + Write> Write for TlsTransport<S> {
             let mut payload = BytesMut::new();
             packet.encode(&mut payload).unwrap();
 
-            self.stream.as_mut().unwrap().write(&payload)?;
+            self.stream.as_mut().unwrap().write_all(&payload)?;
             event!(Level::DEBUG, "Wrote TLS stream {} bytes.", buf.len());
             Ok(buf.len())
         } else {
-            self.stream.as_mut().unwrap().write(buf)?;
+            self.stream.as_mut().unwrap().write_all(buf)?;
             Ok(buf.len())
         }
     }

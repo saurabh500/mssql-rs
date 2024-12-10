@@ -61,7 +61,7 @@ where
 {
     fn encode(self, dst: &mut B) -> crate::Result<()> {
         dst.put_u8(self.ty as u8);
-        dst.put_u8(self.status as u8);
+        dst.put_u8(self.status);
         dst.put_u16(self.length);
         dst.put_u16(self.spid);
         dst.put_u8(self.id);
@@ -78,9 +78,8 @@ impl Decode<BytesMut> for PacketHeader {
     {
         let raw_ty = src.get_u8();
 
-        let ty = PacketType::try_from(raw_ty).map_err(|_| {
-            TdsError::Message(format!("header: invalid packet type: {}", raw_ty).into())
-        })?;
+        let ty = PacketType::try_from(raw_ty)
+            .map_err(|_| TdsError::Message(format!("header: invalid packet type: {}", raw_ty)))?;
 
         let status = src.get_u8(); //PacketStatus::try_from(src.get_u8()).map_err(|_| Error::Protocol("header: invalid packet status".into()))?;
 

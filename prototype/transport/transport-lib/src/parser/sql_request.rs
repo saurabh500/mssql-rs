@@ -13,7 +13,7 @@ impl SqlRequest {
     }
 }
 
-impl<'a> Encode<BytesMut> for SqlRequest {
+impl Encode<BytesMut> for SqlRequest {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
         dst.put_u32_le(ALL_HEADERS_LEN_TX);
         dst.put_u32_le(ALL_HEADERS_LEN_TX - 4);

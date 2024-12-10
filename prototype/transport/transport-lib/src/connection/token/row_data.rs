@@ -20,7 +20,7 @@ impl TokenRowData {
                 *char = src.get_u8()?;
             }
 
-            let row_value = String::from_utf8((&chars[..]).to_vec()).expect("Found invalid UTF-8");
+            let row_value = String::from_utf8(chars[..].to_vec()).expect("Found invalid UTF-8");
             event!(Level::INFO, "Column {} value: {}", i, row_value);
         }
 

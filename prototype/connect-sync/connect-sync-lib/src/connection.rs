@@ -33,7 +33,7 @@ impl Connection {
     }
 
     pub fn connect(host: &str, user: &str, password: &str) -> crate::Result<Connection> {
-        let stream: TcpStream = TcpStream::connect(&host)?;
+        let stream: TcpStream = TcpStream::connect(host)?;
         let transport = TransportStream::new_tcp_stream(stream);
 
         let mut connection = Connection::new(transport);
@@ -48,10 +48,10 @@ impl Connection {
             bytes[1],
             ((bytes[2] as u16) << 8) + (bytes[3] as u16)
         );
-        let connection = connection.tls_handshake(&host)?;
+        let connection = connection.tls_handshake(host)?;
         event!(Level::INFO, "TLS handshake complete!");
         event!(Level::INFO, "Sending login message.");
-        let mut connection = connection.login(&user, &password)?;
+        let mut connection = connection.login(user, password)?;
 
         let packet = connection.collect_packet()?;
         let (_, mut payload) = packet.into_parts();
@@ -95,12 +95,12 @@ impl Connection {
             "Sending a packet ({} bytes)",
             payload.len() + HEADER_BYTES,
         );
-        self.transport.write(&payload)?;
+        self.transport.write_all(&payload)?;
         self.transport.flush()?;
         Ok(())
     }
 
-    fn login<'a>(mut self, user: &str, password: &str) -> crate::Result<Self> {
+    fn login(mut self, user: &str, password: &str) -> crate::Result<Self> {
         let mut login_message = LoginMessage::new();
 
         login_message.user_name(user);

@@ -62,7 +62,7 @@ pub(crate) fn decode_token(src: &mut BytesMut) -> Result<()> {
         src.advance(size as usize);
     }
 
-    if src.len() > 0 {
+    if !src.is_empty() {
         return Err(Error::Protocol(
             format!("Invalid packet. There are still {} bytes left", src.len()).into(),
         ));
