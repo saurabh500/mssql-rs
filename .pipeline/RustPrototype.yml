@@ -25,6 +25,11 @@ jobs:
         vmImage: ubuntu-latest
         cargoTargetDir: $(Build.SourcesDirectory)
         buildTarget: Linux
+      MacOS:
+        poolName: Azure Pipelines
+        vmImage: macOS-latest
+        cargoTargetDir: $(Build.SourcesDirectory)
+        buildTarget: MacOS
   pool:
     name: $(poolName)
     vmImage: $(vmImage)
