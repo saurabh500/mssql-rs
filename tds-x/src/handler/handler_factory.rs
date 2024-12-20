@@ -1,6 +1,11 @@
 use crate::connection::client_context::ClientContext;
 use crate::connection::transport::network_transport::NetworkTransport;
-use crate::connection::transport::packet::PacketWriter;
+use crate::core::{SQLServerVersion, Version};
+use crate::message::login::{
+    EnvChangeProperties, FeaturesRequest, LoginResponse, LoginResponseModel, RoutingInfo,
+    SqlCollation,
+};
+use crate::message::prelogin::{EncryptionType, PreloginResponse, PreloginResponseModel};
 
 pub struct HandlerFactory<'a> {
     context: &'a ClientContext,
@@ -27,7 +32,14 @@ impl<'a> PreloginHandler<'a> {
         // Serialize it.
         // Return result (which contains data model).
         PreloginResponse {
-            model: &PreloginResponseModel {},
+            model: PreloginResponseModel {
+                encryption: EncryptionType::Off,
+                federated_auth_supported: false,
+                dbinstance_valid: None,
+                mars_enabled: None,
+                server_version: Version {},
+                sql_server_version: SQLServerVersion::SqlServerNotsupported,
+            },
         }
     }
 }
@@ -39,53 +51,21 @@ pub struct LoginHandler<'a> {
 impl<'a> LoginHandler<'a> {
     fn execute(&self) -> LoginResponse {
         LoginResponse {
-            model: &LoginResponseModel {},
+            model: LoginResponseModel {
+                change_properties: EnvChangeProperties {
+                    database_collation: SqlCollation {},
+                    packet_size: 0,
+                    language: "".to_string(),
+                    database: "".to_string(),
+                    char_set: None,
+                    routing_information: RoutingInfo {},
+                },
+                features: FeaturesRequest {
+                    features: Default::default(),
+                },
+                tds_error: None,
+                login_ack_token: 0,
+            },
         }
-    }
-}
-
-pub struct PreloginRequestModel {}
-
-pub struct PreloginResponseModel {}
-
-pub struct PreloginRequest<'a> {
-    pub packet_generator: &'a PacketWriter,
-    pub model: &'a PreloginRequestModel,
-}
-
-impl<'a> PreloginRequest<'a> {
-    fn serialize(&self, _transport: &dyn NetworkTransport) {}
-}
-
-pub struct PreloginResponse<'a> {
-    pub model: &'a PreloginResponseModel,
-}
-
-impl<'a> PreloginResponse<'a> {
-    fn deserialize(_transport: &dyn NetworkTransport) -> PreloginResponseModel {
-        PreloginResponseModel {}
-    }
-}
-
-pub struct LoginRequestModel {}
-
-pub struct LoginResponseModel {}
-
-pub struct LoginRequest<'a> {
-    pub packet_generator: &'a PacketWriter,
-    pub model: &'a LoginRequestModel,
-}
-
-impl<'a> LoginRequest<'a> {
-    fn serialize(&self, _transport: &dyn NetworkTransport) {}
-}
-
-pub struct LoginResponse<'a> {
-    pub model: &'a LoginResponseModel,
-}
-
-impl<'a> LoginResponse<'a> {
-    fn deserialize(&self, _transport: &dyn NetworkTransport) -> LoginResponseModel {
-        LoginResponseModel {}
     }
 }
