@@ -1,5 +1,6 @@
 pub enum TdsVersion {
-    //TODO:
+    V7_4 = 0x74000004,
+    V8_0 = 0x08000000,
 }
 
 pub struct LoginOptions {

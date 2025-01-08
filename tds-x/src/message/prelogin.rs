@@ -66,7 +66,7 @@ pub struct PreloginRequest<'a> {
 }
 
 impl<'a> PreloginRequest<'a> {
-    fn serialize(&self, _transport: &dyn NetworkTransport) {}
+    fn serialize(&self, _transport: &NetworkTransport) {}
 }
 
 #[async_trait(?Send)]

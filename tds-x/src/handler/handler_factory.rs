@@ -9,7 +9,7 @@ use crate::message::prelogin::{EncryptionType, PreloginResponse, PreloginRespons
 
 pub struct HandlerFactory<'a> {
     context: &'a ClientContext,
-    transport: &'a dyn NetworkTransport,
+    transport: &'a NetworkTransport<'a>,
 }
 
 impl<'a> HandlerFactory<'a> {

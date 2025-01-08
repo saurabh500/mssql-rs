@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1.83"
+tokio = { version = "1.42", features = ["full"] }
 
 [dependencies.uuid]
 version = "1.11.0"
