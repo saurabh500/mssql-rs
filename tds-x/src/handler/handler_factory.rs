@@ -3,9 +3,9 @@ use crate::connection::transport::network_transport::NetworkTransport;
 use crate::core::{SQLServerVersion, Version};
 use crate::message::login::{
     EnvChangeProperties, FeaturesRequest, LoginResponse, LoginResponseModel, RoutingInfo,
-    SqlCollation,
 };
 use crate::message::prelogin::{EncryptionType, PreloginResponse, PreloginResponseModel};
+use crate::token::tokens::SqlCollation;
 
 pub struct HandlerFactory<'a> {
     context: &'a ClientContext,
@@ -53,7 +53,7 @@ impl<'a> LoginHandler<'a> {
         LoginResponse {
             model: LoginResponseModel {
                 change_properties: EnvChangeProperties {
-                    database_collation: SqlCollation {},
+                    database_collation: SqlCollation::new(&Vec::new()).unwrap(),
                     packet_size: 0,
                     language: "".to_string(),
                     database: "".to_string(),

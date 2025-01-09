@@ -4,12 +4,9 @@ use crate::message::login_options::{
 use crate::message::messages::{PacketType, Request, Response, TdsError, TypedResponse};
 use crate::read_write::packet_writer::PacketWriter;
 use crate::read_write::writer::{NetworkReader, NetworkWriter};
+use crate::token::tokens::SqlCollation;
 use async_trait::async_trait;
 use std::collections::HashMap;
-
-pub struct SqlCollation {
-    //TODO:
-}
 
 pub struct RoutingInfo {
     //TODO:

@@ -4,6 +4,7 @@ pub mod connection_provider;
 pub mod core;
 pub mod handler;
 pub mod message;
+pub mod query;
 pub mod read_write;
 pub mod token;
 
