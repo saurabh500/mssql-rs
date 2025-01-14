@@ -4,6 +4,7 @@ use crate::read_write::{
 };
 use async_trait::async_trait;
 
+#[derive(Copy, Clone)]
 pub enum PacketType {
     Unknown = 0x00,
     SqlBatch = 0x01,
@@ -16,6 +17,24 @@ pub enum PacketType {
     Login7 = 0x10,
     SSPI = 0x11,
     PreLogin = 0x12,
+}
+
+/// Represents the status flags for a packet.
+pub(crate) enum PacketStatusFlags {
+    /// Normal Packet.
+    Normal = 0x00,
+
+    /// End of Message. The last packet in the message.
+    Eom = 0x01,
+
+    /// Packet/Message to be ignored.
+    Ignore = 0x02,
+
+    /// Reset connection.
+    ResetConnection = 0x08,
+
+    /// Reset connection but keep transaction state.
+    ResetConnectionSkipTran = 0x10,
 }
 
 #[async_trait(?Send)]
