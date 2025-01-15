@@ -3,9 +3,12 @@ use crate::connection::transport::ssl_handler::{SslHandler, Tds8SslHandler};
 use crate::core::EncryptionSetting;
 use crate::message::login_options::TdsVersion;
 use async_trait::async_trait;
+use bytes::Bytes;
+use futures::SinkExt;
 use std::io::Error;
 use tokio::io::{split, AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
+use tokio_util::codec::{BytesCodec, FramedWrite};
 
 pub async fn create_transport(context: &ClientContext) -> Result<Box<NetworkTransport>, Error> {
     let connect_result = TcpStream::connect((context.server_name.as_str(), context.port)).await;
@@ -76,14 +79,35 @@ impl StreamRecoverer for TcpStreamRecoverer {
 
 pub struct NetworkTransport<'a> {
     context: &'a ClientContext,
-    reader: Box<dyn AsyncRead + 'a>,
-    writer: Box<dyn AsyncWrite + 'a>,
+    reader: Box<dyn AsyncRead + Unpin + 'a>,
+    writer: Box<dyn AsyncWrite + Unpin + 'a>,
     ssl_handler: Box<dyn SslHandler + 'a>,
     stream_recoverer: Box<dyn StreamRecoverer + 'a>,
 }
 
 impl NetworkTransport<'_> {
-    async fn send(&self, _data: &[u8], _start: i32, _end: i32) {}
+    async fn send(&mut self, data: &[u8], start: i32, end: i32) {
+        if start < 0 || end < start || end as usize > data.len() {
+            panic!(
+                "Invalid range: start={} end={} data_len={}",
+                start,
+                end,
+                data.len()
+            );
+        }
+
+        // Extract slice of data
+        let slice = &data[start as usize..end as usize];
+
+        let mut framed = FramedWrite::new(&mut self.writer, BytesCodec::new());
+
+        // TODO: Handle exceptions better.
+        framed
+            .send(Bytes::copy_from_slice(slice))
+            .await
+            .expect("Failed to write data");
+    }
+
     async fn receive(&self, _data: &[u8]) -> i64 {
         0
     }

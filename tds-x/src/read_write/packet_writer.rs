@@ -125,14 +125,16 @@ impl<'a> PacketWriter<'a> {
         let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, self.packet_id);
         let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, 0);
 
-        todo!("Need to flush to the network.");
-        // self.network_writer.send_data_to_network_stream(RawPacket {
-        //     buffer: self.payload_cursor.into_inner(),
-        //     length: self.payload_cursor.position() as i32,
-        //     offset: 0,
-        // });
+        // todo!("Need to flush to the network.");
+        let data_slice = &self.payload_cursor.get_ref().as_slice()[..packet_length];
+        self.network_writer
+            .send(data_slice, 0, self.payload_cursor.position() as i32)
+            .await;
 
-        // self.packet_id = self.packet_id.wrapping_add(1);
+        // Add the counter for the packet and increment by 1 for the next packet.
+        self.packet_id = self.packet_id.wrapping_add(1);
+        self.payload_cursor
+            .set_position(Self::PACKET_HEADER_SIZE as u64);
     }
 }
 
@@ -140,12 +142,14 @@ impl<'a> PacketWriter<'a> {
 mod tests {
     use super::*;
     use crate::read_write::raw_packet::RawPacket;
+    use async_trait::async_trait;
     use futures::executor::block_on;
 
     struct MockNetworkWriter {
         size: u32,
     }
 
+    #[async_trait(?Send)]
     impl NetworkWriter for MockNetworkWriter {
         fn packet_size(&self) -> u32 {
             self.size
@@ -162,6 +166,12 @@ mod tests {
             Self: 'async_trait,
         {
             todo!()
+        }
+
+        #[must_use]
+        #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
+        async fn send(&self, _data: &[u8], _start: i32, _end: i32) {
+            // No op
         }
     }
 
@@ -204,5 +214,30 @@ mod tests {
             writer.payload_cursor.into_inner()[8..],
             0x1122334455667788i64.to_le_bytes()
         );
+    }
+
+    #[test]
+    fn test_finalize_with_data() {
+        let mock = MockNetworkWriter { size: 16 };
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mock);
+        block_on(writer.write_byte_async(0xAB));
+        block_on(writer.finalize());
+        assert_eq!(
+            writer.payload_cursor.position(),
+            PacketWriter::PACKET_HEADER_SIZE as u64
+        );
+        assert_eq!(writer.packet_id, 2);
+    }
+
+    #[test]
+    fn test_finalize_without_data() {
+        let mock = MockNetworkWriter { size: 16 };
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mock);
+        block_on(writer.finalize());
+        assert_eq!(
+            writer.payload_cursor.position(),
+            PacketWriter::PACKET_HEADER_SIZE as u64
+        );
+        assert_eq!(writer.packet_id, 1);
     }
 }

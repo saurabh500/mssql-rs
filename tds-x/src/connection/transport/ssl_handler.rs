@@ -10,7 +10,7 @@ pub trait SslHandler {
     async fn enable_ssl_async(
         &self,
         base_stream: Box<dyn Stream>,
-    ) -> Result<(Box<dyn AsyncRead>, Box<dyn AsyncWrite>), Error>;
+    ) -> Result<(Box<dyn AsyncRead + Unpin>, Box<dyn AsyncWrite + Unpin>), Error>;
     fn shutdown_ssl(&self);
 }
 
@@ -23,7 +23,7 @@ impl<'a> SslHandler for Tds8SslHandler<'a> {
     async fn enable_ssl_async(
         &self,
         base_stream: Box<dyn Stream>,
-    ) -> Result<(Box<dyn AsyncRead>, Box<dyn AsyncWrite>), Error> {
+    ) -> Result<(Box<dyn AsyncRead + Unpin>, Box<dyn AsyncWrite + Unpin>), Error> {
         // Build the native TlsConnector directly because tokio-native-tls's version
         // is missing some functionality.
         let connector = TlsConnector::builder()
