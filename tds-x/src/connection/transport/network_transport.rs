@@ -59,7 +59,7 @@ pub trait TransportSslHandler {
 
 pub trait Stream: AsyncRead + AsyncWrite + Unpin {}
 
-impl Stream for TcpStream {}
+impl<T> Stream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
 
 trait StreamRecoverer {
     fn recover_base_stream(&self) -> Box<dyn Stream>;
@@ -86,26 +86,10 @@ pub struct NetworkTransport<'a> {
 }
 
 impl NetworkTransport<'_> {
-    async fn send(&mut self, data: &[u8], start: i32, end: i32) {
-        if start < 0 || end < start || end as usize > data.len() {
-            panic!(
-                "Invalid range: start={} end={} data_len={}",
-                start,
-                end,
-                data.len()
-            );
-        }
-
-        // Extract slice of data
-        let slice = &data[start as usize..end as usize];
-
+    async fn send(&mut self, data: &[u8]) -> Result<(), Error> {
         let mut framed = FramedWrite::new(&mut self.writer, BytesCodec::new());
-
-        // TODO: Handle exceptions better.
-        framed
-            .send(Bytes::copy_from_slice(slice))
-            .await
-            .expect("Failed to write data");
+        framed.send(Bytes::copy_from_slice(data)).await?;
+        Ok(())
     }
 
     async fn receive(&self, _data: &[u8]) -> i64 {
@@ -167,5 +151,94 @@ impl TransportSslHandler for NetworkTransport<'_> {
             self.disable_ssl_internal().await;
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*; // Brings in NetworkTransport, SslHandler, StreamRecoverer, etc.
+    use crate::connection::client_context::ClientContext;
+    use crate::connection::transport::network_transport::Stream; // Your custom trait
+    use crate::connection::transport::ssl_handler::SslHandler;
+    use async_trait::async_trait;
+    use futures::StreamExt;
+    use rand::Rng;
+    use tokio::io::{duplex, split, AsyncRead, AsyncWrite};
+    use tokio_util::codec::{BytesCodec, FramedRead};
+
+    /// A mock SslHandler that simply returns the same stream, no real TLS.
+    struct MockSslHandler;
+
+    #[async_trait(?Send)]
+    impl SslHandler for MockSslHandler {
+        async fn enable_ssl_async(
+            &self,
+            base_stream: Box<dyn Stream>,
+        ) -> Result<(Box<dyn AsyncRead + Unpin>, Box<dyn AsyncWrite + Unpin>), std::io::Error>
+        {
+            let (r, w) = tokio::io::split(base_stream);
+            Ok((Box::new(r), Box::new(w)))
+        }
+
+        fn shutdown_ssl(&self) {
+            // No-op
+        }
+    }
+
+    /// A mock StreamRecoverer that always returns the stored DuplexStream.
+    struct MockStreamRecoverer {}
+
+    impl StreamRecoverer for MockStreamRecoverer {
+        fn recover_base_stream(&self) -> Box<dyn Stream> {
+            // Take the DuplexStream out of the option, consuming it.
+            let (dummy_client, _) = duplex(1);
+            let stream = dummy_client;
+            Box::new(stream)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_network_transport_send() {
+        // The choice of 8192 is large enough for sending data. This stream should have a buffer large enough for send.
+        // The test would keep the payload lower than this size to make sure that the duplex stream can handle it.
+        let max_buffer_size = 8192;
+        let (client_side, server_side) = tokio::io::duplex(max_buffer_size);
+
+        let (reader, writer) = split(client_side);
+
+        let ssl_handler = Box::new(MockSslHandler);
+        let stream_recoverer = Box::new(MockStreamRecoverer {});
+
+        let context = ClientContext::default();
+
+        let mut transport = NetworkTransport {
+            context: &context,
+            reader: Box::new(reader),
+            writer: Box::new(writer),
+            ssl_handler,
+            stream_recoverer,
+        };
+
+        // Fill data_to_send with random values
+        let mut rng = rand::thread_rng();
+        let data_vector: Vec<u8> = (0..max_buffer_size).map(|_| rng.gen()).collect();
+
+        // Setup the reader to read the data.
+        let mut framed_reader = FramedRead::new(server_side, BytesCodec::new());
+
+        // Send the data and read it from the other end of the pipe.
+        let result = transport.send(&data_vector[..]).await;
+        match result {
+            Ok(_) => {}
+            Err(e) => panic!("Error sending data: {}", e),
+        }
+
+        let received = framed_reader
+            .next()
+            .await
+            .expect("No data")
+            .expect("Decode error");
+
+        assert_eq!(received.as_ref(), &data_vector[..]);
     }
 }
