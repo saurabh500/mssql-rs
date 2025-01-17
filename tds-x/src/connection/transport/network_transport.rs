@@ -3,12 +3,9 @@ use crate::connection::transport::ssl_handler::{SslHandler, Tds8SslHandler};
 use crate::core::EncryptionSetting;
 use crate::message::login_options::TdsVersion;
 use async_trait::async_trait;
-use bytes::Bytes;
-use futures::SinkExt;
 use std::io::Error;
-use tokio::io::{split, AsyncRead, AsyncWrite};
+use tokio::io::{split, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio_util::codec::{BytesCodec, FramedWrite};
 
 pub async fn create_transport(context: &ClientContext) -> Result<Box<NetworkTransport>, Error> {
     let connect_result = TcpStream::connect((context.server_name.as_str(), context.port)).await;
@@ -87,13 +84,40 @@ pub struct NetworkTransport<'a> {
 
 impl NetworkTransport<'_> {
     async fn send(&mut self, data: &[u8]) -> Result<(), Error> {
-        let mut framed = FramedWrite::new(&mut self.writer, BytesCodec::new());
-        framed.send(Bytes::copy_from_slice(data)).await?;
+        self.writer.write_all(data).await?;
         Ok(())
     }
 
-    async fn receive(&self, _data: &[u8]) -> i64 {
-        0
+    /// Asynchronously reads data from the underlying network transport
+    /// into the caller-provided buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer` - The mutable slice to store the data read from the stream.
+    ///
+    /// # Returns
+    ///
+    /// Returns the number of bytes actually read, or an [`std::io::Error`] if
+    /// something goes wrong. Reading fewer bytes than `buffer.len()` is common
+    /// (especially if only part of the data is available).
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use std::io::Error;
+    /// # use tokio::io::{AsyncReadExt, split};
+    /// # use tokio_util::codec::BytesCodec;
+    /// #
+    /// # async fn demo(mut transport: NetworkTransport<'_>) -> Result<(), Error> {
+    ///     let mut buf = [0u8; 1024];
+    ///     let bytes_read = transport.receive(&mut buf).await?;
+    ///     println!("Read {} bytes", bytes_read);
+    ///     Ok(())
+    /// # }
+    /// ```
+    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
+        let bytes_read = self.reader.read(buffer).await?;
+        Ok(bytes_read)
     }
 
     async fn enable_ssl_internal(&mut self) -> Result<(), Error> {
@@ -161,10 +185,12 @@ mod tests {
     use crate::connection::transport::network_transport::Stream; // Your custom trait
     use crate::connection::transport::ssl_handler::SslHandler;
     use async_trait::async_trait;
+    use bytes::Bytes;
+    use futures::SinkExt;
     use futures::StreamExt;
     use rand::Rng;
     use tokio::io::{duplex, split, AsyncRead, AsyncWrite};
-    use tokio_util::codec::{BytesCodec, FramedRead};
+    use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite};
 
     /// A mock SslHandler that simply returns the same stream, no real TLS.
     struct MockSslHandler;
@@ -240,5 +266,52 @@ mod tests {
             .expect("Decode error");
 
         assert_eq!(received.as_ref(), &data_vector[..]);
+    }
+
+    /// A basic test showing that `receive` can read data from the transport's reader.
+    #[tokio::test]
+    async fn test_network_transport_receive() -> Result<(), Error> {
+        // 1) Create an in-memory duplex stream (client_side, server_side).
+        // Data will be written on the server_side and the network transport will read from the client side.
+        let (client_side, server_side) = duplex(1024);
+
+        // 2) Split the client side into a reader and writer for the transport
+        let (reader, client_writer) = tokio::io::split(client_side);
+
+        // Mocks and defaults.
+        let ssl_handler = Box::new(MockSslHandler);
+        let stream_recoverer = Box::new(MockStreamRecoverer {});
+        let context = ClientContext::default();
+
+        // Optionally, shut down the writer so the reader sees EOF if all data is read
+        // client_writer.shutdown().await?;
+
+        // 4) Build our transport
+        //    (In a real scenario, you'll also set ssl_handler, stream_recoverer, etc.)
+        let mut transport = NetworkTransport {
+            reader: Box::new(reader),
+            writer: Box::new(client_writer),
+            ssl_handler,
+            stream_recoverer,
+            context: &context,
+        };
+
+        let mut rng = rand::thread_rng();
+        let data_size = 128;
+        let data_written: Vec<u8> = (0..data_size).map(|_| rng.gen()).collect();
+        let mut framed_writer = FramedWrite::new(server_side, BytesCodec::new());
+        framed_writer
+            .send(Bytes::copy_from_slice(&data_written[..]))
+            .await?;
+
+        // 5) Attempt to read from the transport into a buffer
+        let mut buffer = vec![0u8; data_size];
+        let bytes_read = transport.receive(&mut buffer).await?;
+
+        // Verify we read exactly `data_size` bytes and that they match what was written
+        assert_eq!(bytes_read, data_size);
+        assert_eq!(buffer, data_written);
+
+        Ok(())
     }
 }

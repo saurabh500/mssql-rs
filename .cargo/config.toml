@@ -10,4 +10,4 @@ replace-with = "RustTools"
 [alias]
 bfmt = "fmt -- --check"
 bclippy = "clippy --frozen --all-targets -- -D warnings"
-btest = "test -- --format=json -Z unstable-options --report-time"
+btest = "test --lib -- --format=json -Z unstable-options --report-time"
