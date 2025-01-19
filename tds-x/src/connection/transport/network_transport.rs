@@ -83,7 +83,7 @@ pub struct NetworkTransport<'a> {
 }
 
 impl NetworkTransport<'_> {
-    async fn send(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub(crate) async fn send(&mut self, data: &[u8]) -> Result<(), Error> {
         self.writer.write_all(data).await?;
         Ok(())
     }
@@ -179,7 +179,7 @@ impl TransportSslHandler for NetworkTransport<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*; // Brings in NetworkTransport, SslHandler, StreamRecoverer, etc.
     use crate::connection::client_context::ClientContext;
     use crate::connection::transport::network_transport::Stream; // Your custom trait
@@ -189,11 +189,15 @@ mod tests {
     use futures::SinkExt;
     use futures::StreamExt;
     use rand::Rng;
-    use tokio::io::{duplex, split, AsyncRead, AsyncWrite};
+    use tokio::io::{duplex, split, AsyncRead, AsyncWrite, DuplexStream};
     use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite};
 
+    // The choice of 8192 is large enough for sending data. This stream should have a buffer large enough for send.
+    // The test would keep the payload lower than this size to make sure that the duplex stream can handle it.
+    pub(crate) const MAX_BUFFER_SIZE: usize = 8192;
+
     /// A mock SslHandler that simply returns the same stream, no real TLS.
-    struct MockSslHandler;
+    pub(crate) struct MockSslHandler;
 
     #[async_trait(?Send)]
     impl SslHandler for MockSslHandler {
@@ -212,7 +216,7 @@ mod tests {
     }
 
     /// A mock StreamRecoverer that always returns the stored DuplexStream.
-    struct MockStreamRecoverer {}
+    pub(crate) struct MockStreamRecoverer {}
 
     impl StreamRecoverer for MockStreamRecoverer {
         fn recover_base_stream(&self) -> Box<dyn Stream> {
@@ -223,31 +227,36 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_network_transport_send() {
-        // The choice of 8192 is large enough for sending data. This stream should have a buffer large enough for send.
-        // The test would keep the payload lower than this size to make sure that the duplex stream can handle it.
-        let max_buffer_size = 8192;
-        let (client_side, server_side) = tokio::io::duplex(max_buffer_size);
+    pub(crate) fn create_readable_network_transport(
+        context: &ClientContext,
+    ) -> (NetworkTransport, DuplexStream) {
+        let (client_side, server_side) = duplex(MAX_BUFFER_SIZE);
 
         let (reader, writer) = split(client_side);
 
         let ssl_handler = Box::new(MockSslHandler);
         let stream_recoverer = Box::new(MockStreamRecoverer {});
 
-        let context = ClientContext::default();
+        (
+            NetworkTransport {
+                context,
+                reader: Box::new(reader),
+                writer: Box::new(writer),
+                ssl_handler,
+                stream_recoverer,
+            },
+            server_side,
+        )
+    }
 
-        let mut transport = NetworkTransport {
-            context: &context,
-            reader: Box::new(reader),
-            writer: Box::new(writer),
-            ssl_handler,
-            stream_recoverer,
-        };
+    #[tokio::test]
+    async fn test_network_transport_send() {
+        let context = ClientContext::default();
+        let (mut transport, server_side) = create_readable_network_transport(&context);
 
         // Fill data_to_send with random values
         let mut rng = rand::thread_rng();
-        let data_vector: Vec<u8> = (0..max_buffer_size).map(|_| rng.gen()).collect();
+        let data_vector: Vec<u8> = (0..MAX_BUFFER_SIZE).map(|_| rng.gen()).collect();
 
         // Setup the reader to read the data.
         let mut framed_reader = FramedRead::new(server_side, BytesCodec::new());

@@ -1,4 +1,3 @@
-use crate::read_write::raw_packet::RawPacket;
 use crate::read_write::writer::NetworkReader;
 
 pub struct PacketReader<'a> {
@@ -14,10 +13,6 @@ impl<'a> PacketReader<'a> {
     }
 
     async fn read_tds_packet(&self) {
-        todo!()
-    }
-
-    async fn get_new_tds_packet(&self) -> RawPacket {
         todo!()
     }
 

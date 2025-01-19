@@ -1,54 +1,133 @@
 use crate::connection::client_context::ClientContext;
-use crate::connection::transport::network_transport::NetworkTransport;
-use crate::core::{SQLServerVersion, Version};
+use crate::core::{EncryptionSetting, SQLServerVersion, Version};
 use crate::message::login::{
     EnvChangeProperties, FeaturesRequest, LoginResponse, LoginResponseModel, RoutingInfo,
 };
-use crate::message::prelogin::{EncryptionType, PreloginResponse, PreloginResponseModel};
+use crate::message::messages::Request;
+use crate::message::prelogin::{
+    EncryptionType, PreloginRequest, PreloginRequestModel, PreloginResponse, PreloginResponseModel,
+};
+use crate::read_write::writer::NetworkReaderWriter;
 use crate::token::tokens::SqlCollation;
+use uuid::Uuid;
 
-pub struct HandlerFactory<'a> {
-    context: &'a ClientContext,
-    transport: &'a NetworkTransport<'a>,
+pub(crate) struct HandlerFactory<'a> {
+    pub(crate) context: &'a ClientContext,
 }
 
-impl<'a> HandlerFactory<'a> {
-    fn prelogin_handler(&self) -> PreloginHandler {
+impl HandlerFactory<'_> {
+    pub(crate) fn prelogin_handler(&self) -> PreloginHandler<'_, '_> {
         PreloginHandler { factory: self }
     }
 
-    fn login_handler(&self) -> LoginHandler {
+    pub(crate) fn login_handler(&self) -> LoginHandler<'_, '_> {
         LoginHandler { factory: self }
+    }
+
+    pub(crate) fn session_handler(&self) -> SessionHandler<'_, '_> {
+        SessionHandler { factory: self }
     }
 }
 
-pub struct PreloginHandler<'a> {
-    factory: &'a HandlerFactory<'a>,
+pub(crate) struct SessionHandler<'a, 'n> {
+    pub(crate) factory: &'a HandlerFactory<'n>,
 }
 
-impl<'a> PreloginHandler<'a> {
-    fn execute(&self) -> PreloginResponse {
+pub(crate) struct SessionSettings {
+    // TODO
+}
+
+impl SessionHandler<'_, '_> {
+    pub(crate) async fn execute(
+        &self,
+        reader_writer: &mut impl NetworkReaderWriter,
+    ) -> SessionSettings {
+        let _ = self.factory.prelogin_handler().execute(reader_writer).await;
+        SessionSettings {}
+    }
+}
+
+pub struct PreloginResult {
+    pub encryption_setting: EncryptionSetting,
+    pub is_fed_auth_supported: bool,
+}
+
+impl PreloginResult {}
+
+pub struct PreloginHandler<'a, 'n> {
+    factory: &'a HandlerFactory<'n>,
+}
+
+impl<'a> PreloginHandler<'_, '_> {
+    async fn execute(&self, reader_writer: &mut impl NetworkReaderWriter) -> PreloginResult {
         // Create the request.
+        let request_model = PreloginRequestModel::new(
+            Uuid::new_v4(),
+            Option::from(self.factory.context.mars_enabled),
+            Option::from(self.factory.context.encryption),
+            Option::from(self.factory.context.database.as_str()),
+        );
+        let prelogin_request = PreloginRequest {
+            model: &request_model,
+        };
+
         // Serialize it.
+        prelogin_request.serialize(reader_writer).await;
+
         // Return result (which contains data model).
-        PreloginResponse {
+        let response = PreloginResponse {
             model: PreloginResponseModel {
                 encryption: EncryptionType::Off,
                 federated_auth_supported: false,
                 dbinstance_valid: None,
                 mars_enabled: None,
-                server_version: Version {},
+                server_version: Version::new(0, 0, 0, 0),
                 sql_server_version: SQLServerVersion::SqlServerNotsupported,
             },
+        };
+
+        // TODO: Convert panics to Error objects.
+        let response_model = &response.model;
+        if request_model.mars_enabled && !response_model.mars_enabled.unwrap() {
+            panic!("Server does not support MARS.")
+        }
+
+        if !response_model.dbinstance_valid.unwrap() {
+            panic!("Database instance validation failed.")
+        }
+
+        if request_model.encryption_setting == EncryptionSetting::Strict {
+            return PreloginResult {
+                encryption_setting: EncryptionSetting::Strict,
+                is_fed_auth_supported: response_model.federated_auth_supported,
+            };
+        }
+
+        if response_model.encryption == EncryptionType::NotSupported {
+            panic!("Encryption is not supported.")
+        }
+
+        if request_model.encryption_setting == EncryptionSetting::Optional
+            && response_model.encryption == EncryptionType::Off
+        {
+            return PreloginResult {
+                encryption_setting: EncryptionSetting::LoginOnly,
+                is_fed_auth_supported: response_model.federated_auth_supported,
+            };
+        }
+
+        PreloginResult {
+            encryption_setting: EncryptionSetting::Required,
+            is_fed_auth_supported: response_model.federated_auth_supported,
         }
     }
 }
 
-pub struct LoginHandler<'a> {
-    factory: &'a HandlerFactory<'a>,
+pub struct LoginHandler<'a, 'n> {
+    factory: &'a HandlerFactory<'n>,
 }
 
-impl<'a> LoginHandler<'a> {
+impl LoginHandler<'_, '_> {
     fn execute(&self) -> LoginResponse {
         LoginResponse {
             model: LoginResponseModel {

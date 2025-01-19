@@ -38,10 +38,10 @@ pub(crate) enum PacketStatusFlags {
 }
 
 #[async_trait(?Send)]
-pub trait Request {
+pub trait Request<'a> {
     fn packet_type(&self) -> PacketType;
-    fn create_packet_writer(&self, writer: &dyn NetworkWriter) -> PacketWriter;
-    async fn serialize(&self, _transport: &dyn NetworkWriter);
+    fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a>;
+    async fn serialize(&self, _transport: &mut dyn NetworkWriter);
 }
 
 #[async_trait(?Send)]

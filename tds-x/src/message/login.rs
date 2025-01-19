@@ -109,16 +109,16 @@ pub struct LoginRequest<'a> {
 }
 
 #[async_trait(?Send)]
-impl<'a> Request for LoginRequest<'a> {
+impl<'a> Request<'a> for LoginRequest<'a> {
     fn packet_type(&self) -> PacketType {
         todo!()
     }
 
-    fn create_packet_writer(&self, _writer: &dyn NetworkWriter) -> PacketWriter {
+    fn create_packet_writer(&self, _writer: &mut dyn NetworkWriter) -> PacketWriter<'a> {
         todo!()
     }
 
-    async fn serialize(&self, _transport: &dyn NetworkWriter) {
+    async fn serialize(&self, _transport: &mut dyn NetworkWriter) {
         todo!()
     }
 }

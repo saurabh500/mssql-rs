@@ -9,7 +9,7 @@ use super::writer::NetworkWriter;
 /// TODO: There is a bug right now, where the buffer may overflow. This needs to be fixed.
 pub struct PacketWriter<'a> {
     packet_type: PacketType,
-    network_writer: &'a dyn NetworkWriter,
+    network_writer: &'a mut dyn NetworkWriter,
     max_payload_size: usize,
     packet_id: u8,
     payload_cursor: Cursor<Vec<u8>>,
@@ -18,7 +18,10 @@ pub struct PacketWriter<'a> {
 impl<'a> PacketWriter<'a> {
     const PACKET_HEADER_SIZE: u16 = 8;
 
-    pub fn new(packet_type: PacketType, network_writer: &'a dyn NetworkWriter) -> PacketWriter<'a> {
+    pub fn new(
+        packet_type: PacketType,
+        network_writer: &'a mut dyn NetworkWriter,
+    ) -> PacketWriter<'a> {
         let packet_size: usize = network_writer.packet_size() as usize;
         let buffer: Vec<u8> = Vec::with_capacity(packet_size); // Adjust the capacity as needed
         let mut buffer_cursor = Cursor::new(buffer);
@@ -41,63 +44,63 @@ impl<'a> PacketWriter<'a> {
     ///
     /// * `value` - The byte value to write to the buffer.
     ///
-    async fn write_byte_async(&mut self, value: u8) {
+    pub(crate) async fn write_byte_async(&mut self, value: u8) {
         let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, value);
     }
 
-    async fn write_i16_async(&mut self, value: i16) {
+    pub(crate) async fn write_i16_async(&mut self, value: i16) {
         let _ = WriteBytesExt::write_i16::<LittleEndian>(&mut self.payload_cursor, value);
     }
 
-    async fn write_u16_async(&mut self, value: u16) {
+    pub(crate) async fn write_u16_async(&mut self, value: u16) {
         let _ = WriteBytesExt::write_u16::<LittleEndian>(&mut self.payload_cursor, value);
     }
 
-    async fn write_i32_async(&mut self, _value: i32) {
+    pub(crate) async fn write_i32_async(&mut self, _value: i32) {
         let _ =
             byteorder::WriteBytesExt::write_i32::<LittleEndian>(&mut self.payload_cursor, _value);
     }
 
-    async fn write_u32_async(&mut self, value: u32) {
+    pub(crate) async fn write_u32_async(&mut self, value: u32) {
         let _ =
             byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut self.payload_cursor, value);
     }
 
-    async fn write_i64_async(&mut self, value: i64) {
+    pub(crate) async fn write_i64_async(&mut self, value: i64) {
         let _ =
             byteorder::WriteBytesExt::write_i64::<LittleEndian>(&mut self.payload_cursor, value);
     }
 
-    async fn write_u64_async(&mut self, value: u64) {
+    pub(crate) async fn write_u64_async(&mut self, value: u64) {
         let _ =
             byteorder::WriteBytesExt::write_u64::<LittleEndian>(&mut self.payload_cursor, value);
     }
 
-    async fn write_i16_be_async(&mut self, value: i16) {
+    pub(crate) async fn write_i16_be_async(&mut self, value: i16) {
         let _ = byteorder::WriteBytesExt::write_i16::<BigEndian>(&mut self.payload_cursor, value);
     }
 
-    async fn write_i32_be_async(&mut self, value: i32) {
+    pub(crate) async fn write_i32_be_async(&mut self, value: i32) {
         let _ = byteorder::WriteBytesExt::write_i32::<BigEndian>(&mut self.payload_cursor, value);
     }
 
-    async fn write_i64_be_async(&mut self, value: i64) {
+    pub(crate) async fn write_i64_be_async(&mut self, value: i64) {
         let _ = byteorder::WriteBytesExt::write_i64::<BigEndian>(&mut self.payload_cursor, value);
     }
 
-    async fn write_string_ascii_async(&mut self, _value: &str) {
+    pub(crate) async fn write_string_ascii_async(&mut self, _value: &str) {
         todo!()
     }
 
-    async fn write_string_unicode_async(&mut self, _value: &str) {
+    pub(crate) async fn write_string_unicode_async(&mut self, _value: &str) {
         todo!()
     }
 
-    async fn write_async(&mut self, content: &[u8]) {
+    pub(crate) async fn write_async(&mut self, content: &[u8]) {
         let _ = self.payload_cursor.write_all(content);
     }
 
-    async fn finalize(&mut self) {
+    pub(crate) async fn finalize(&mut self) {
         if (self.payload_cursor.position()) > Self::PACKET_HEADER_SIZE as u64 {
             self.populate_header_and_send(true).await;
         }
@@ -127,9 +130,7 @@ impl<'a> PacketWriter<'a> {
 
         // todo!("Need to flush to the network.");
         let data_slice = &self.payload_cursor.get_ref().as_slice()[..packet_length];
-        self.network_writer
-            .send(data_slice, 0, self.payload_cursor.position() as i32)
-            .await;
+        self.network_writer.send(data_slice).await.unwrap();
 
         // Add the counter for the packet and increment by 1 for the next packet.
         self.packet_id = self.packet_id.wrapping_add(1);
@@ -139,14 +140,20 @@ impl<'a> PacketWriter<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::read_write::raw_packet::RawPacket;
     use async_trait::async_trait;
     use futures::executor::block_on;
 
-    struct MockNetworkWriter {
-        size: u32,
+    // Expose copy of internal buffer in PacketWriter for tests in other modules.
+    impl PacketWriter<'_> {
+        pub(crate) fn get_payload(&self) -> Cursor<Vec<u8>> {
+            self.payload_cursor.clone()
+        }
+    }
+
+    pub(crate) struct MockNetworkWriter {
+        pub(crate) size: u32,
     }
 
     #[async_trait(?Send)]
@@ -157,36 +164,24 @@ mod tests {
 
         #[must_use]
         #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
-        fn send_data_to_network_stream<'life0, 'async_trait>(
-            &'life0 self,
-            _packet: RawPacket,
-        ) -> ::core::pin::Pin<Box<dyn ::core::future::Future<Output = ()> + 'async_trait>>
-        where
-            'life0: 'async_trait,
-            Self: 'async_trait,
-        {
-            todo!()
-        }
-
-        #[must_use]
-        #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
-        async fn send(&self, _data: &[u8], _start: i32, _end: i32) {
+        async fn send(&mut self, _data: &[u8]) -> Result<(), std::io::Error> {
             // No op
+            Ok(())
         }
     }
 
     #[test]
     fn test_write_byte_async() {
-        let mock = MockNetworkWriter { size: 8 };
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mock);
+        let mut mock = MockNetworkWriter { size: 8 };
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
         block_on(writer.write_byte_async(0xAB));
         assert_eq!(writer.payload_cursor.into_inner()[8..], vec![0xAB]);
     }
 
     #[test]
     fn test_write_i16_async() {
-        let mock = MockNetworkWriter { size: 8 };
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mock);
+        let mut mock = MockNetworkWriter { size: 8 };
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
         block_on(writer.write_i16_async(0x1234));
         assert_eq!(
             writer.payload_cursor.into_inner()[8..],
@@ -196,8 +191,8 @@ mod tests {
 
     #[test]
     fn test_write_u32_async() {
-        let mock = MockNetworkWriter { size: 8 };
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mock);
+        let mut mock = MockNetworkWriter { size: 8 };
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
         block_on(writer.write_u32_async(0xDEADBEEF));
         assert_eq!(
             writer.payload_cursor.into_inner()[8..],
@@ -207,8 +202,8 @@ mod tests {
 
     #[test]
     fn test_write_i64_async() {
-        let mock = MockNetworkWriter { size: 16 };
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mock);
+        let mut mock = MockNetworkWriter { size: 16 };
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
         block_on(writer.write_i64_async(0x1122334455667788));
         assert_eq!(
             writer.payload_cursor.into_inner()[8..],
@@ -218,8 +213,8 @@ mod tests {
 
     #[test]
     fn test_finalize_with_data() {
-        let mock = MockNetworkWriter { size: 16 };
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mock);
+        let mut mock = MockNetworkWriter { size: 16 };
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
         block_on(writer.write_byte_async(0xAB));
         block_on(writer.finalize());
         assert_eq!(
@@ -231,8 +226,8 @@ mod tests {
 
     #[test]
     fn test_finalize_without_data() {
-        let mock = MockNetworkWriter { size: 16 };
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mock);
+        let mut mock = MockNetworkWriter { size: 16 };
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
         block_on(writer.finalize());
         assert_eq!(
             writer.payload_cursor.position(),
