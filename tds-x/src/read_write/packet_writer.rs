@@ -16,7 +16,7 @@ pub struct PacketWriter<'a> {
 }
 
 impl<'a> PacketWriter<'a> {
-    const PACKET_HEADER_SIZE: u16 = 8;
+    pub const PACKET_HEADER_SIZE: usize = 8;
 
     pub fn new(
         packet_type: PacketType,
@@ -32,7 +32,7 @@ impl<'a> PacketWriter<'a> {
         PacketWriter {
             packet_type,
             network_writer,
-            max_payload_size: packet_size - (Self::PACKET_HEADER_SIZE as usize),
+            max_payload_size: packet_size - (Self::PACKET_HEADER_SIZE),
             packet_id: 1,
             payload_cursor: buffer_cursor,
         }
@@ -128,7 +128,6 @@ impl<'a> PacketWriter<'a> {
         let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, self.packet_id);
         let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, 0);
 
-        // todo!("Need to flush to the network.");
         let data_slice = &self.payload_cursor.get_ref().as_slice()[..packet_length];
         self.network_writer.send(data_slice).await.unwrap();
 

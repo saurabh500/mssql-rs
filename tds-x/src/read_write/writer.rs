@@ -10,6 +10,7 @@ pub trait NetworkWriter {
 
 #[async_trait(?Send)]
 pub trait NetworkReader {
+    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error>;
     fn packet_size(&self) -> u32;
 }
 
@@ -24,6 +25,10 @@ pub struct NetworkReaderWriterImpl<'a, 'n> {
 #[async_trait(?Send)]
 impl NetworkReader for NetworkReaderWriterImpl<'_, '_> {
     fn packet_size(&self) -> u32 {
+        todo!()
+    }
+
+    async fn receive(&mut self, _: &mut [u8]) -> Result<usize, Error> {
         todo!()
     }
 }
