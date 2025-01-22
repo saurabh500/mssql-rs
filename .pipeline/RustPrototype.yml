@@ -47,6 +47,9 @@ jobs:
     inputs:
       configFile: '.cargo/config.toml'
 
+    # Execute cargo fetch at the start of the pipeline to pull down deps specified in the lockfile.
+    # Subsequent steps will always use --frozen that will use the pre-resolved dependency versions
+    # which are pinned in the lockfile
   - script: cargo fetch
     displayName: Fetch Crates
     env:
@@ -60,34 +63,45 @@ jobs:
     displayName: Rust Release Build
     condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
 
-
   - script: cargo bclippy
     displayName: Rust Clippy Lint
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
-
-  - script: cargo install junitify
-    displayName: Install JUnitify
     condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
 
   - script: cargo bfmt
     displayName: Check Format
     condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
 
+  - script: cargo install cargo-llvm-cov cargo-nextest
+    displayName: Install llvm-cov and nextest
+    condition: succeeded()
 
-  - script: RUSTC_BOOTSTRAP=1 cargo btest | junitify --out testresults/
-    displayName: Test Debug and create Junit report
-    condition: and(succeeded(), ne(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+  - bash: cargo llvm-cov clean --workspace
+    displayName: Clean up old coverage files
 
-  - script: |
-      set RUSTC_BOOTSTRAP=1 
-      cargo btest | junitify --out testresults/
-    displayName: Test Debug and create Junit report
-    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+  - bash: cargo llvm-cov nextest --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
+    displayName: Run tests
 
   - task: PublishTestResults@2
+    condition: succeededOrFailed()
+    displayName: "Publish test results"
     inputs:
-      testResultsFormat: 'JUnit'
-      testResultsFiles: '**/testresults/*.xml'
+      testResultsFormat: "JUnit"
+      testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
+      testRunTitle: unit_tests
+
+  - script: cargo llvm-cov report --cobertura --output-path "$(Build.SourcesDirectory)/target/coverage.xml"
+    condition: succeededOrFailed()
+    workingDirectory: "$(Build.SourcesDirectory)"
+    displayName: Save code coverage in cobertura format
+
+  - task: PublishCodeCoverageResults@2
+    displayName: "Publish coverage results"
+    condition: and(succeededOrFailed(), eq(variables.buildTarget, 'Linux'))
+    inputs:
+      codeCoverageTool: "Cobertura"
+      summaryFileLocation: "$(Build.SourcesDirectory)/target/coverage*.xml"
+      pathToSources: "$(Build.SourcesDirectory)"
+      reportDirectory: "$(Build.SourcesDirectory)/target/llvm-cov/html"
 
   - task: MSBuild@1
     displayName: C++ Debug Build

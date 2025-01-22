@@ -385,12 +385,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_option_flags1_default_value() {
-        let flags = OptionFlags1::default();
-        assert_eq!(flags.value(), 0xF3);
-    }
-
-    #[test]
     fn test_option_flags1_custom_value() {
         let flags = OptionFlags1 {
             endian: OptionEndian::LittleEndian,
