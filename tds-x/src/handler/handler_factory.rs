@@ -58,7 +58,7 @@ pub struct PreloginHandler<'a, 'n> {
     factory: &'a HandlerFactory<'n>,
 }
 
-impl<'a> PreloginHandler<'_, '_> {
+impl PreloginHandler<'_, '_> {
     async fn execute(&self, reader_writer: &mut impl NetworkReaderWriter) -> PreloginResult {
         // Create the request.
         let request_model = PreloginRequestModel::new(

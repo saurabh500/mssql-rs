@@ -19,7 +19,7 @@ pub struct Tds8SslHandler<'a> {
 }
 
 #[async_trait(?Send)]
-impl<'a> SslHandler for Tds8SslHandler<'a> {
+impl SslHandler for Tds8SslHandler<'_> {
     async fn enable_ssl_async(
         &self,
         base_stream: Box<dyn Stream>,
