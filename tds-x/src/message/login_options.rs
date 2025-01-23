@@ -14,17 +14,19 @@ pub struct LoginOptions {
     pub client_lcid: u32,
 }
 
+#[derive(PartialEq)]
 pub enum OptionSqlType {
     Default,
     TSQL,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ApplicationIntent {
     ReadWrite,
     ReadOnly,
 }
 
+#[derive(PartialEq)]
 pub enum OptionOleDb {
     Off,
     On,
@@ -34,12 +36,44 @@ pub struct TypeFlags {
     pub(crate) sql_type: OptionSqlType,
     pub(crate) ole_db: OptionOleDb,
     pub(crate) access_intent: ApplicationIntent,
-    pub(crate) value: u8,
+}
+impl TypeFlags {
+    const OPTION_SQL_TYPE_BIT_INDEX: u8 = 0x08;
+    const OPTION_OLE_DB_BIT_INDEX: u8 = 0x10;
+    const OPTION_ACCESS_INTENT_BIT_INDEX: u8 = 0x20;
+
+    fn set_sqltype_bit(&self, value: &mut u8) {
+        if self.sql_type == OptionSqlType::TSQL {
+            *value |= Self::OPTION_SQL_TYPE_BIT_INDEX;
+        } else {
+            *value &= u8::MAX - Self::OPTION_SQL_TYPE_BIT_INDEX;
+        }
+    }
+
+    fn set_oledb_bit(&self, value: &mut u8) {
+        if self.ole_db == OptionOleDb::On {
+            *value |= Self::OPTION_OLE_DB_BIT_INDEX;
+        } else {
+            *value &= u8::MAX - Self::OPTION_OLE_DB_BIT_INDEX;
+        }
+    }
+
+    fn set_accessintent_bit(&self, value: &mut u8) {
+        if self.access_intent == ApplicationIntent::ReadOnly {
+            *value |= Self::OPTION_ACCESS_INTENT_BIT_INDEX;
+        } else {
+            *value &= u8::MAX - Self::OPTION_ACCESS_INTENT_BIT_INDEX;
+        }
+    }
 }
 
-impl TypeFlags {
-    pub fn value(&self) -> u8 {
-        todo!()
+impl OptionsValue for TypeFlags {
+    fn value(&self) -> u8 {
+        let mut computed_value: u8 = 0;
+        self.set_sqltype_bit(&mut computed_value);
+        self.set_oledb_bit(&mut computed_value);
+        self.set_accessintent_bit(&mut computed_value);
+        computed_value
     }
 }
 
@@ -440,5 +474,16 @@ mod tests {
             unknown_collation_handling: false,
         };
         assert_eq!(flags.value(), 16);
+    }
+
+    #[test]
+    fn test_typeflags_custom_value() {
+        let type_flags = TypeFlags {
+            sql_type: OptionSqlType::Default,
+            ole_db: OptionOleDb::Off,
+            access_intent: ApplicationIntent::ReadWrite,
+        };
+
+        assert_eq!(type_flags.value(), 0);
     }
 }
