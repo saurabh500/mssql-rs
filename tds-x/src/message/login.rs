@@ -1,9 +1,9 @@
 use crate::message::login_options::{
     LoginOptions, OptionFlags1, OptionFlags2, OptionFlags3, TdsVersion, TypeFlags,
 };
-use crate::message::messages::{PacketType, Request, Response, TdsError, TypedResponse};
+use crate::message::messages::{PacketType, Request, TdsError, TypedResponse};
 use crate::read_write::packet_writer::PacketWriter;
-use crate::read_write::writer::{NetworkReader, NetworkWriter};
+use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
 use crate::token::tokens::SqlCollation;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -128,15 +128,8 @@ pub struct LoginResponse {
 }
 
 #[async_trait(?Send)]
-impl Response for LoginResponse {
-    async fn deserialize(&self, _transport: &dyn NetworkReader) {
-        todo!()
-    }
-}
-
-#[async_trait(?Send)]
 impl TypedResponse<LoginResponseModel> for LoginResponse {
-    async fn deserialize(&self, _transport: &dyn NetworkReader) -> LoginResponseModel {
+    async fn deserialize(&self, _reader: &mut dyn NetworkReader) -> LoginResponseModel {
         todo!()
     }
 }

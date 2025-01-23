@@ -5,12 +5,18 @@ use std::io::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_native_tls::native_tls::TlsConnector;
 
-#[async_trait(?Send)]
-pub trait SslHandler {
+#[async_trait]
+pub trait SslHandler: Send {
     async fn enable_ssl_async(
         &self,
         base_stream: Box<dyn Stream>,
-    ) -> Result<(Box<dyn AsyncRead + Unpin>, Box<dyn AsyncWrite + Unpin>), Error>;
+    ) -> Result<
+        (
+            Box<dyn AsyncRead + Send + Unpin>,
+            Box<dyn AsyncWrite + Send + Unpin>,
+        ),
+        Error,
+    >;
     fn shutdown_ssl(&self);
 }
 
@@ -18,12 +24,18 @@ pub struct Tds8SslHandler<'a> {
     pub settings: &'a ClientContext,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl SslHandler for Tds8SslHandler<'_> {
     async fn enable_ssl_async(
         &self,
         base_stream: Box<dyn Stream>,
-    ) -> Result<(Box<dyn AsyncRead + Unpin>, Box<dyn AsyncWrite + Unpin>), Error> {
+    ) -> Result<
+        (
+            Box<dyn AsyncRead + Send + Unpin>,
+            Box<dyn AsyncWrite + Send + Unpin>,
+        ),
+        Error,
+    > {
         // Build the native TlsConnector directly because tokio-native-tls's version
         // is missing some functionality.
         let connector = TlsConnector::builder()

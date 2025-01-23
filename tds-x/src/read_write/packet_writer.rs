@@ -2,7 +2,7 @@ use crate::message::messages::{PacketStatusFlags, PacketType};
 use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
 use std::io::{Cursor, Write};
 
-use super::writer::NetworkWriter;
+use super::reader_writer::NetworkWriter;
 
 /// A packet writer that writes data to a buffer and if needed flushes it to the network as needed.
 ///
@@ -155,7 +155,7 @@ pub(crate) mod tests {
         pub(crate) size: u32,
     }
 
-    #[async_trait(?Send)]
+    #[async_trait]
     impl NetworkWriter for MockNetworkWriter {
         fn packet_size(&self) -> u32 {
             self.size

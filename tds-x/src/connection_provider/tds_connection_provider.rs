@@ -2,7 +2,7 @@ use crate::connection::client_context::ClientContext;
 use crate::connection::tds_connection::TdsConnection;
 use crate::connection::transport::network_transport;
 use crate::handler::handler_factory::HandlerFactory;
-use crate::read_write::writer::NetworkReaderWriterImpl;
+use crate::read_write::reader_writer::NetworkReaderWriterImpl;
 use std::io::Error;
 
 pub struct TdsConnectionProvider {}

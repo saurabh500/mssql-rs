@@ -1,13 +1,13 @@
 use crate::connection::client_context::ClientContext;
-use crate::core::{EncryptionSetting, SQLServerVersion, Version};
+use crate::core::EncryptionSetting;
 use crate::message::login::{
     EnvChangeProperties, FeaturesRequest, LoginResponse, LoginResponseModel, RoutingInfo,
 };
-use crate::message::messages::Request;
+use crate::message::messages::{Request, TypedResponse};
 use crate::message::prelogin::{
-    EncryptionType, PreloginRequest, PreloginRequestModel, PreloginResponse, PreloginResponseModel,
+    EncryptionType, PreloginRequest, PreloginRequestModel, PreloginResponse,
 };
-use crate::read_write::writer::NetworkReaderWriter;
+use crate::read_write::reader_writer::NetworkReaderWriter;
 use crate::token::tokens::SqlCollation;
 use uuid::Uuid;
 
@@ -75,19 +75,10 @@ impl PreloginHandler<'_, '_> {
         prelogin_request.serialize(reader_writer).await;
 
         // Return result (which contains data model).
-        let response = PreloginResponse {
-            model: PreloginResponseModel {
-                encryption: EncryptionType::Off,
-                federated_auth_supported: false,
-                dbinstance_valid: None,
-                mars_enabled: None,
-                server_version: Version::new(0, 0, 0, 0),
-                sql_server_version: SQLServerVersion::SqlServerNotsupported,
-            },
-        };
+        let response = PreloginResponse {};
 
         // TODO: Convert panics to Error objects.
-        let response_model = &response.model;
+        let response_model = &response.deserialize(reader_writer).await;
         if request_model.mars_enabled && !response_model.mars_enabled.unwrap() {
             panic!("Server does not support MARS.")
         }

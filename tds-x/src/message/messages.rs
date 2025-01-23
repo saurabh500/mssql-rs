@@ -1,6 +1,6 @@
 use crate::read_write::{
     packet_writer::PacketWriter,
-    writer::{NetworkReader, NetworkWriter},
+    reader_writer::{NetworkReader, NetworkWriter},
 };
 use async_trait::async_trait;
 
@@ -45,13 +45,8 @@ pub trait Request<'a> {
 }
 
 #[async_trait(?Send)]
-pub trait Response {
-    async fn deserialize(&self, _transport: &dyn NetworkReader);
-}
-
-#[async_trait(?Send)]
-pub trait TypedResponse<T>: Response {
-    async fn deserialize(&self, _transport: &dyn NetworkReader) -> T;
+pub trait TypedResponse<T> {
+    async fn deserialize(&self, reader: &mut dyn NetworkReader) -> T;
 }
 
 pub struct TdsError {

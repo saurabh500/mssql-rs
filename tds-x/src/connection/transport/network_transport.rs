@@ -48,17 +48,17 @@ pub async fn create_transport(context: &ClientContext) -> Result<Box<NetworkTran
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait TransportSslHandler {
     async fn enable_ssl(&mut self) -> Result<(), Error>;
     async fn disable_ssl(&mut self) -> Result<(), Error>;
 }
 
-pub trait Stream: AsyncRead + AsyncWrite + Unpin {}
+pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
 
 impl<T> Stream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
 
-trait StreamRecoverer {
+trait StreamRecoverer: Send {
     fn recover_base_stream(&self) -> Box<dyn Stream>;
 }
 
@@ -76,8 +76,8 @@ impl StreamRecoverer for TcpStreamRecoverer {
 
 pub struct NetworkTransport<'a> {
     context: &'a ClientContext,
-    reader: Box<dyn AsyncRead + Unpin + 'a>,
-    writer: Box<dyn AsyncWrite + Unpin + 'a>,
+    reader: Box<dyn AsyncRead + Unpin + Send + 'a>,
+    writer: Box<dyn AsyncWrite + Unpin + Send + 'a>,
     ssl_handler: Box<dyn SslHandler + 'a>,
     stream_recoverer: Box<dyn StreamRecoverer + 'a>,
 }
@@ -115,7 +115,7 @@ impl NetworkTransport<'_> {
     ///     Ok(())
     /// # }
     /// ```
-    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
+    pub(crate) async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
         let bytes_read = self.reader.read(buffer).await?;
         Ok(bytes_read)
     }
@@ -148,7 +148,7 @@ impl NetworkTransport<'_> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl TransportSslHandler for NetworkTransport<'_> {
     async fn enable_ssl(&mut self) -> Result<(), Error> {
         self.enable_ssl_internal().await
@@ -199,13 +199,18 @@ pub(crate) mod tests {
     /// A mock SslHandler that simply returns the same stream, no real TLS.
     pub(crate) struct MockSslHandler;
 
-    #[async_trait(?Send)]
+    #[async_trait]
     impl SslHandler for MockSslHandler {
         async fn enable_ssl_async(
             &self,
             base_stream: Box<dyn Stream>,
-        ) -> Result<(Box<dyn AsyncRead + Unpin>, Box<dyn AsyncWrite + Unpin>), std::io::Error>
-        {
+        ) -> Result<
+            (
+                Box<dyn AsyncRead + Send + Unpin>,
+                Box<dyn AsyncWrite + Send + Unpin>,
+            ),
+            std::io::Error,
+        > {
             let (r, w) = tokio::io::split(base_stream);
             Ok((Box::new(r), Box::new(w)))
         }
@@ -246,6 +251,35 @@ pub(crate) mod tests {
                 stream_recoverer,
             },
             server_side,
+        )
+    }
+
+    pub(crate) fn create_client_server_network_transport(
+        context: &ClientContext,
+    ) -> (NetworkTransport, NetworkTransport) {
+        let (client_side, server_side) = duplex(MAX_BUFFER_SIZE);
+
+        let (reader, writer) = split(client_side);
+        let (server_reader, server_writer) = split(server_side);
+
+        let ssl_handler = Box::new(MockSslHandler);
+        let stream_recoverer = Box::new(MockStreamRecoverer {});
+
+        (
+            NetworkTransport {
+                context,
+                reader: Box::new(reader),
+                writer: Box::new(writer),
+                ssl_handler,
+                stream_recoverer,
+            },
+            NetworkTransport {
+                context,
+                reader: Box::new(server_reader),
+                writer: Box::new(server_writer),
+                ssl_handler: Box::new(MockSslHandler),
+                stream_recoverer: Box::new(MockStreamRecoverer {}),
+            },
         )
     }
 

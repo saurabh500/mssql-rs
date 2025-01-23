@@ -1,6 +1,6 @@
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 
-use crate::{message::messages::PacketStatusFlags, read_write::writer::NetworkReader};
+use crate::{message::messages::PacketStatusFlags, read_write::reader_writer::NetworkReader};
 use core::panic;
 use std::{
     cmp::min,
@@ -373,7 +373,7 @@ impl<'a> PacketReader<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::message::messages::PacketType;
 
     use super::*;
@@ -458,12 +458,12 @@ mod tests {
         }
     }
 
-    struct MockNetworkReader {
-        data: Vec<u8>,
-        position: usize,
+    pub(crate) struct MockNetworkReader {
+        pub(crate) data: Vec<u8>,
+        pub(crate) position: usize,
     }
 
-    #[async_trait(?Send)]
+    #[async_trait]
     impl NetworkReader for MockNetworkReader {
         async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
             let remaining = self.data.len() - self.position;
