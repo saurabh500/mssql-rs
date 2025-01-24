@@ -364,7 +364,9 @@ impl<'a, 'n> Serializer<'a, 'n> {
     }
 
     async fn write_terminator(&mut self) {
-        self.write_option_metadata(OptionType::Terminator, 1).await;
+        self.payload_writer
+            .write_byte_async(OptionType::Terminator as u8)
+            .await;
         self.content_next_offset += 1;
     }
 
