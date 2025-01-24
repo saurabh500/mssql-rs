@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TdsVersion {
     V7_4 = 0x74000004,
     V8_0 = 0x08000000,

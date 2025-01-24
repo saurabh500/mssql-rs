@@ -1,10 +1,5 @@
 use crate::core::EncryptionSetting;
-use crate::message::login_options::TdsVersion;
-
-pub enum ApplicationIntent {
-    ReadWrite,
-    ReadOnly,
-}
+use crate::message::login_options::{ApplicationIntent, TdsVersion};
 
 pub enum IPAddressPreference {
     IPv4First = 0,
@@ -17,6 +12,7 @@ pub enum NetworkTracerOutput {
     Console = 1,
 }
 
+#[derive(PartialEq)]
 pub enum TdsAuthenticationMethod {
     Password,
     SSPI, // Integrated Authentication with AD.
