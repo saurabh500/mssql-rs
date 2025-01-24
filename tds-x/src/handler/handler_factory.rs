@@ -65,7 +65,7 @@ impl PreloginHandler<'_, '_> {
             Uuid::new_v4(),
             Option::from(self.factory.context.mars_enabled),
             Option::from(self.factory.context.encryption),
-            Option::from(self.factory.context.database.as_str()),
+            Option::from(self.factory.context.database_instance.as_str()),
         );
         let prelogin_request = PreloginRequest {
             model: &request_model,
@@ -84,7 +84,8 @@ impl PreloginHandler<'_, '_> {
         }
 
         if !response_model.dbinstance_valid.unwrap() {
-            panic!("Database instance validation failed.")
+            // Non-fatal behaviour.
+            eprintln!("Database instance validation failed.")
         }
 
         if request_model.encryption_setting == EncryptionSetting::Strict {
