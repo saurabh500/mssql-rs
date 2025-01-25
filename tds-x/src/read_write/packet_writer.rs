@@ -38,6 +38,10 @@ impl<'a> PacketWriter<'a> {
         }
     }
 
+    pub(crate) fn position(&self) -> i32 {
+        (self.payload_cursor.position() - Self::PACKET_HEADER_SIZE as u64) as i32
+    }
+
     /// Writes a byte to the buffer.
     ///
     /// # Arguments
@@ -92,8 +96,24 @@ impl<'a> PacketWriter<'a> {
         todo!()
     }
 
-    pub(crate) async fn write_string_unicode_async(&mut self, _value: &str) {
-        todo!()
+    pub(crate) async fn write_string_unicode_async(&mut self, value: &str) {
+        // TODO: The performance of this might be terrible. There are allocations happening for every string.
+        // 1. Consider using the iterator on encode_utf16 directly and writing to the output buffer,
+        // fill up the buffer, send out the packet, rinse and repeat.
+        let unicode_bytes = value
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect::<Vec<u8>>();
+        let _ = self.write_async(&unicode_bytes[0..]).await;
+    }
+
+    pub(crate) fn write_i32_at_index(&mut self, index: usize, value: i32) {
+        let position = self.payload_cursor.position();
+        self.payload_cursor
+            .set_position((Self::PACKET_HEADER_SIZE + index) as u64);
+        let _ =
+            byteorder::WriteBytesExt::write_i32::<LittleEndian>(&mut self.payload_cursor, value);
+        self.payload_cursor.set_position(position);
     }
 
     pub(crate) async fn write_async(&mut self, content: &[u8]) {
@@ -233,5 +253,29 @@ pub(crate) mod tests {
             PacketWriter::PACKET_HEADER_SIZE as u64
         );
         assert_eq!(writer.packet_id, 1);
+    }
+
+    #[test]
+    fn test_write_at_index() {
+        let mut mock = MockNetworkWriter { size: 16 };
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
+
+        block_on(writer.write_byte_async(0xAB));
+        block_on(writer.write_byte_async(0xAB));
+        block_on(writer.write_byte_async(0xAB));
+        block_on(writer.write_byte_async(0xAB));
+        block_on(writer.write_byte_async(0xAB));
+        block_on(writer.write_byte_async(0xAB));
+        block_on(writer.write_byte_async(0xAB));
+        let value: i32 = 1234;
+        assert_eq!(
+            writer.payload_cursor.clone().into_inner()[8..12],
+            [0xAB, 0xAB, 0xAB, 0xAB]
+        );
+        writer.write_i32_at_index(0, value);
+        assert_eq!(
+            writer.payload_cursor.into_inner()[8..12],
+            value.to_le_bytes()
+        );
     }
 }

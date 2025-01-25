@@ -1,7 +1,10 @@
+use std::io::Error;
+
 use crate::connection::client_context::ClientContext;
 use crate::core::EncryptionSetting;
 use crate::message::login::{
-    EnvChangeProperties, FeaturesRequest, LoginResponse, LoginResponseModel, RoutingInfo,
+    EnvChangeProperties, Feature, FeaturesRequest, LoginRequest, LoginRequestModel, LoginResponse,
+    LoginResponseModel, RoutingInfo,
 };
 use crate::message::messages::{Request, TypedResponse};
 use crate::message::prelogin::{
@@ -21,11 +24,43 @@ impl HandlerFactory<'_> {
     }
 
     pub(crate) fn login_handler(&self) -> LoginHandler<'_, '_> {
-        LoginHandler { factory: self }
+        LoginHandler {
+            factory: self,
+            encryption: self.context.encryption,
+        }
     }
 
     pub(crate) fn session_handler(&self) -> SessionHandler<'_, '_> {
         SessionHandler { factory: self }
+    }
+
+    fn create_session_settings(
+        &self,
+        _supported_features: Vec<Box<dyn Feature>>,
+    ) -> SessionSettings {
+        SessionSettings {}
+    }
+
+    fn create_login_request(&self) -> LoginRequest {
+        let model = self.create_login_model();
+        LoginRequest { model }
+    }
+
+    fn create_login_model(&self) -> LoginRequestModel {
+        LoginRequestModel::from_context(self.context)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionSettings {
+    //TODO
+    // supported_features: Vec<&'a dyn Feature>,
+}
+
+impl SessionSettings {
+    fn update_settings(&self, _change_properties: &EnvChangeProperties) {
+        // todo!()
+        // Need to populate this information.
     }
 }
 
@@ -33,17 +68,60 @@ pub(crate) struct SessionHandler<'a, 'n> {
     pub(crate) factory: &'a HandlerFactory<'n>,
 }
 
-pub(crate) struct SessionSettings {
-    // TODO
-}
-
 impl SessionHandler<'_, '_> {
     pub(crate) async fn execute(
-        &self,
+        &mut self,
         reader_writer: &mut impl NetworkReaderWriter,
     ) -> SessionSettings {
-        let _ = self.factory.prelogin_handler().execute(reader_writer).await;
-        SessionSettings {}
+        let pre_login_result = self.get_pre_login_result(reader_writer).await;
+        self.validate_and_apply_prelogin_result(pre_login_result);
+        let login_result = self.get_login_result(reader_writer).await;
+        self.validate_and_apply_login_result(&login_result);
+
+        let settings = self
+            .factory
+            .create_session_settings(login_result.supported_features);
+        settings.update_settings(&login_result.change_properties);
+
+        settings
+    }
+
+    async fn get_pre_login_result(
+        &self,
+        reader_writer: &mut impl NetworkReaderWriter,
+    ) -> PreloginResult {
+        self.factory.prelogin_handler().execute(reader_writer).await
+    }
+
+    fn validate_and_apply_login_result(&self, _login_result: &LoginResult) {
+        // todo!("save the results from login response");
+        // var changeProps = loginResult.ChangeProperties;
+
+        // if (changeProps.PacketSize > 0)
+        // {
+        //     this.clientContext.PacketSize = (short)loginResult.ChangeProperties.PacketSize;
+        // }
+
+        // if (!string.IsNullOrEmpty(changeProps.Language))
+        // {
+        //     this.clientContext.Language = changeProps.Language;
+        // }
+
+        // if (!string.IsNullOrEmpty(changeProps.Database))
+        // {
+        //     this.clientContext.Database = changeProps.Database;
+        // }
+    }
+
+    fn validate_and_apply_prelogin_result(&self, _prelogin_result: PreloginResult) {
+        // todo!("save the encryption settings");
+    }
+
+    async fn get_login_result(
+        &mut self,
+        reader_writer: &mut impl NetworkReaderWriter,
+    ) -> LoginResult {
+        self.factory.login_handler().execute(reader_writer).await
     }
 }
 
@@ -115,16 +193,30 @@ impl PreloginHandler<'_, '_> {
     }
 }
 
+struct LoginResult {
+    supported_features: Vec<Box<dyn Feature>>,
+    change_properties: EnvChangeProperties,
+}
+
 pub struct LoginHandler<'a, 'n> {
     factory: &'a HandlerFactory<'n>,
+    encryption: EncryptionSetting,
 }
 
 impl LoginHandler<'_, '_> {
-    fn execute(&self) -> LoginResponse {
-        LoginResponse {
+    async fn execute(&self, reader_writer: &mut impl NetworkReaderWriter) -> LoginResult {
+        if self.encryption != EncryptionSetting::Strict
+            && self.encryption != EncryptionSetting::NotSupported
+        {
+            todo!("Handle TDS 7.4 login");
+        }
+
+        let _request_model = self.send_login7_request(reader_writer).await;
+
+        let response = LoginResponse {
             model: LoginResponseModel {
                 change_properties: EnvChangeProperties {
-                    database_collation: SqlCollation::new(&Vec::new()).unwrap(),
+                    database_collation: SqlCollation::new(&[0u8; 5]).unwrap(),
                     packet_size: 0,
                     language: "".to_string(),
                     database: "".to_string(),
@@ -137,6 +229,29 @@ impl LoginHandler<'_, '_> {
                 tds_error: None,
                 login_ack_token: 0,
             },
+        };
+        LoginResult {
+            supported_features: vec![],
+            change_properties: response.model.change_properties,
         }
+    }
+
+    async fn send_login7_request(
+        &self,
+        reader_writer: &mut impl NetworkReaderWriter,
+    ) -> Result<LoginRequestModel, Error> {
+        let request = self.factory.create_login_request();
+        let request_model = &request.model;
+
+        if request_model.user_input.integrated_security() {
+            todo!("Integrated security is not supported yet");
+        }
+
+        if self.encryption == EncryptionSetting::LoginOnly {
+            todo!("TDS 7.4 implementation");
+        } else {
+            request.serialize(reader_writer).await;
+        }
+        Ok(request.model)
     }
 }

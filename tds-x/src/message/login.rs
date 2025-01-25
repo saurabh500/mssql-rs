@@ -1,5 +1,6 @@
+use crate::connection::client_context::{ClientContext, TdsAuthenticationMethod};
 use crate::message::login_options::{
-    LoginOptions, OptionFlags1, OptionFlags2, OptionFlags3, TdsVersion, TypeFlags,
+    OptionFlags1, OptionFlags2, OptionFlags3, OptionsValue, TdsVersion, TypeFlags,
 };
 use crate::message::messages::{PacketType, Request, TdsError, TypedResponse};
 use crate::read_write::packet_writer::PacketWriter;
@@ -7,6 +8,12 @@ use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
 use crate::token::tokens::SqlCollation;
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::io::Error;
+
+use super::login_options::{
+    OptionChangePassword, OptionInitLang, OptionIntegratedSecurity, OptionOdbc, OptionOleDb,
+    OptionSqlType, OptionUser,
+};
 
 pub struct RoutingInfo {
     //TODO:
@@ -38,7 +45,7 @@ pub trait Feature {
     fn feature_identifier(&self) -> FeatureExtension;
     fn is_requested(&self) -> bool;
     fn data_length(&self) -> i32;
-    async fn serialize(&self, packet_writer: PacketWriter);
+    async fn serialize(&self, packet_writer: &PacketWriter);
     fn deserialize(&self, data: &[u8]);
     fn is_acknowledged(&self) -> bool;
 }
@@ -64,7 +71,7 @@ impl FeaturesRequest {
     }
 
     pub fn get_requested_features(&self) -> Vec<&dyn Feature> {
-        todo!()
+        Vec::new()
     }
 
     pub fn get_acknowledged_features(&self) -> Vec<&dyn Feature> {
@@ -76,17 +83,19 @@ impl FeaturesRequest {
     }
 }
 
+#[derive(Default)]
 pub struct PhysicalAddress {
-    // TODO:
+    address_bytes: [u8; 6],
 }
 
-pub struct LoginRequestModel {
+pub struct LoginRequestModel<'a> {
     pub option_flags1: OptionFlags1,
     pub option_flags2: OptionFlags2,
     pub option_flags3: OptionFlags3,
     pub type_flags: TypeFlags,
     pub tds_version: TdsVersion,
-    pub user_input: LoginOptions,
+    // TODO: user_input needs to be login specific user_input. Need to understand how to replicate the C# concept here.
+    pub user_input: &'a ClientContext,
     pub features_request: FeaturesRequest,
     pub client_prog_ver: i32,
     pub client_process_id: i32,
@@ -94,6 +103,64 @@ pub struct LoginRequestModel {
     pub client_time_zone_deprecated: i32,
     pub client_lcid_deprecated: i32,
     pub client_id: PhysicalAddress,
+}
+
+impl LoginRequestModel<'_> {
+    pub(crate) fn from_context(
+        context: &crate::connection::client_context::ClientContext,
+    ) -> LoginRequestModel {
+        let replication_option = match context.replication {
+            true => OptionUser::ReplicationLogin,
+            false => OptionUser::Normal,
+        };
+
+        let integrated_security = match context.integrated_security() {
+            true => OptionIntegratedSecurity::On,
+            false => OptionIntegratedSecurity::Off,
+        };
+
+        let option_flags2 = OptionFlags2 {
+            init_lang: OptionInitLang::Fatal,
+            odbc: OptionOdbc::On,
+            user: replication_option,
+            integrated_security,
+        };
+
+        let change_password_option = match context.change_password.is_empty() {
+            true => OptionChangePassword::No,
+            false => OptionChangePassword::Yes,
+        };
+        let option_flags3 = OptionFlags3 {
+            change_password: change_password_option,
+            binary_xml: false,
+            spawn_user_instance: context.user_instance,
+            unknown_collation_handling: false,
+            extension_used: true,
+        };
+        let type_flags = TypeFlags {
+            sql_type: OptionSqlType::Default,
+            ole_db: OptionOleDb::Off,
+            access_intent: context.application_intent,
+        };
+
+        LoginRequestModel {
+            option_flags1: OptionFlags1::default(),
+            option_flags2,
+            option_flags3,
+            type_flags,
+            tds_version: context.tds_version(),
+            features_request: FeaturesRequest {
+                features: HashMap::new(),
+            },
+            user_input: context,
+            client_prog_ver: 0,
+            client_process_id: 0,
+            connection_id_deprecated: 0,
+            client_time_zone_deprecated: 0,
+            client_lcid_deprecated: 0,
+            client_id: PhysicalAddress::default(),
+        }
+    }
 }
 
 pub struct LoginResponseModel {
@@ -104,22 +171,25 @@ pub struct LoginResponseModel {
 }
 
 pub struct LoginRequest<'a> {
-    pub packet_generator: &'a PacketWriter<'a>,
-    pub model: LoginRequestModel,
+    pub model: LoginRequestModel<'a>,
 }
 
 #[async_trait(?Send)]
 impl<'a> Request<'a> for LoginRequest<'a> {
     fn packet_type(&self) -> PacketType {
-        todo!()
+        PacketType::Login7
     }
 
-    fn create_packet_writer(&self, _writer: &mut dyn NetworkWriter) -> PacketWriter<'a> {
-        todo!()
+    fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a> {
+        PacketWriter::new(self.packet_type(), writer)
     }
 
-    async fn serialize(&self, _transport: &mut dyn NetworkWriter) {
-        todo!()
+    async fn serialize(&self, transport: &mut dyn NetworkWriter) {
+        // TODO: Log the datamodel.
+        let mut packet_writer = self.create_packet_writer(transport);
+        let _ = Serializer::new(&self.model, &mut packet_writer)
+            .serialize()
+            .await;
     }
 }
 
@@ -132,4 +202,417 @@ impl TypedResponse<LoginResponseModel> for LoginResponse {
     async fn deserialize(&self, _reader: &mut dyn NetworkReader) -> LoginResponseModel {
         todo!()
     }
+}
+
+struct Serializer<'a> {
+    model: &'a LoginRequestModel<'a>,
+    payload_writer: &'a mut PacketWriter<'a>,
+    features_request: &'a FeaturesRequest,
+    content_next_offset: i32,
+    deferred_actions_indicator: Vec<LoginDeferredPayload>,
+}
+
+impl Serializer<'_> {
+    pub fn new<'a>(
+        model: &'a LoginRequestModel<'a>,
+        payload_writer: &'a mut PacketWriter<'a>,
+    ) -> Serializer<'a> {
+        Serializer {
+            model,
+            payload_writer,
+            features_request: &model.features_request,
+            content_next_offset: 94,
+            deferred_actions_indicator: Vec::new(),
+            // TODO: Deferred actions.
+        }
+    }
+
+    pub(crate) async fn serialize(&mut self) -> Result<(), Error> {
+        // This is the place holder for the login packet. We will come back and repopulate it after constructing the login packet.
+        self.payload_writer.write_i32_async(0).await;
+
+        self.payload_writer
+            .write_u32_async(self.model.tds_version as u32)
+            .await;
+
+        self.payload_writer
+            .write_i32_async(self.model.user_input.packet_size as i32)
+            .await;
+
+        self.payload_writer
+            .write_i32_async(self.model.client_prog_ver)
+            .await;
+
+        self.payload_writer
+            .write_i32_async(self.model.client_process_id)
+            .await;
+
+        self.payload_writer
+            .write_i32_async(self.model.connection_id_deprecated)
+            .await;
+
+        self.payload_writer
+            .write_byte_async(self.model.option_flags1.value())
+            .await;
+
+        self.payload_writer
+            .write_byte_async(self.model.option_flags2.value())
+            .await;
+
+        self.payload_writer
+            .write_byte_async(self.model.type_flags.value())
+            .await;
+
+        self.payload_writer
+            .write_byte_async(self.model.option_flags3.value())
+            .await;
+
+        self.payload_writer
+            .write_i32_async(self.model.client_time_zone_deprecated)
+            .await;
+
+        self.payload_writer
+            .write_i32_async(self.model.client_lcid_deprecated)
+            .await;
+
+        self.write_variable_length_section().await?;
+
+        Ok(())
+    }
+
+    async fn write_variable_length_section(&mut self) -> Result<(), Error> {
+        /* Writing variable-length meta data section
+            Fixed-Length Metadata (58 bytes)
+            HostNameOffset: 2 bytes
+            HostNameLength: 2 bytes
+            UserNameOffset: 2 bytes
+            UserNameLength: 2 bytes
+            PasswordOffset: 2 bytes
+            PasswordLength: 2 bytes
+            AppNameOffset: 2 bytes
+            AppNameLength: 2 bytes
+            ServerNameOffset: 2 bytes
+            ServerNameLength: 2 bytes
+            FeatureExtOffset: 2 bytes
+            FeatureExtLength: 2 bytes
+            LibraryOffset: 2 bytes
+            LibraryLength: 2 bytes
+            LanguageOffset: 2 bytes
+            LanguageLength: 2 bytes
+            DatabaseOffset: 2 bytes
+            DatabaseLength: 2 bytes
+            ClientID: 6 bytes (fixed length)
+            SSPIOffset: 2 bytes
+            SSPILength: 2 bytes
+            AttachDBFileOffset: 2 bytes
+            AttachDBFileLength: 2 bytes
+            ChangePasswordOffset: 2 bytes
+            ChangePasswordLength: 2 bytes
+            cbSSPILong: 4 bytes (DWORD)
+        */
+
+        self.write_hostname().await?;
+        self.write_username().await?;
+        self.write_password().await?;
+        self.write_app_name().await?;
+        self.write_server_name().await?;
+        self.write_feature_ext().await?;
+        self.write_library().await?;
+        self.write_language().await?;
+        self.write_database().await?;
+        self.write_client_id().await?;
+        self.write_sspi_short().await?;
+        self.write_attach_db_file().await?;
+        self.write_change_password().await?;
+        self.write_cb_sspi_long().await?;
+
+        for indicator in &self.deferred_actions_indicator {
+            match indicator {
+                LoginDeferredPayload::HostName => {
+                    self.payload_writer
+                        .write_string_unicode_async(&self.model.user_input.workstation_id)
+                        .await;
+                }
+                LoginDeferredPayload::UserName => {
+                    self.payload_writer
+                        .write_string_unicode_async(&self.model.user_input.user_name)
+                        .await;
+                }
+                LoginDeferredPayload::Password => {
+                    let mut password_utf16_bytes = self
+                        .model
+                        .user_input
+                        .password
+                        .encode_utf16()
+                        .flat_map(|f| f.to_le_bytes())
+                        .collect::<Vec<u8>>();
+                    scramble_password(&mut password_utf16_bytes);
+                    self.payload_writer.write_async(&password_utf16_bytes).await;
+                }
+                LoginDeferredPayload::AppName => {
+                    self.payload_writer
+                        .write_string_unicode_async(&self.model.user_input.application_name)
+                        .await;
+                }
+                LoginDeferredPayload::ServerName => {
+                    self.payload_writer
+                        .write_string_unicode_async(&self.model.user_input.server_name)
+                        .await;
+                }
+                LoginDeferredPayload::FeatureExt => {
+                    self.payload_writer
+                        .write_i32_async(size_of::<i32>() as i32 + self.payload_writer.position())
+                        .await;
+
+                    for feature in self.features_request.features() {
+                        if feature.is_requested() {
+                            feature.serialize(self.payload_writer).await;
+                        }
+                    }
+
+                    self.payload_writer.write_byte_async(0xff).await;
+                }
+                LoginDeferredPayload::Library => {
+                    self.payload_writer
+                        .write_string_unicode_async(&self.model.user_input.library_name)
+                        .await;
+                }
+                LoginDeferredPayload::Language => {
+                    self.payload_writer
+                        .write_string_unicode_async(&self.model.user_input.language)
+                        .await;
+                }
+                LoginDeferredPayload::Database => {
+                    self.payload_writer
+                        .write_string_unicode_async(&self.model.user_input.database)
+                        .await;
+                }
+                LoginDeferredPayload::AttachDbFile => {
+                    self.payload_writer
+                        .write_string_unicode_async(&self.model.user_input.attach_db_file)
+                        .await;
+                }
+                LoginDeferredPayload::ChangePassword => {
+                    let mut password_utf16_bytes = self
+                        .model
+                        .user_input
+                        .change_password
+                        .encode_utf16()
+                        .flat_map(|f| f.to_le_bytes())
+                        .collect::<Vec<u8>>();
+                    scramble_password(&mut password_utf16_bytes);
+                    self.payload_writer.write_async(&password_utf16_bytes).await;
+                }
+            }
+        }
+
+        self.payload_writer
+            .write_i32_at_index(0, self.content_next_offset);
+
+        self.payload_writer.finalize().await;
+        Ok(())
+    }
+
+    async fn write_hostname(&mut self) -> Result<(), Error> {
+        if self
+            .write_metadata(self.model.user_input.workstation_id.len() as i16)
+            .await?
+        {
+            self.deferred_actions_indicator
+                .push(LoginDeferredPayload::HostName);
+        }
+        Ok(())
+    }
+
+    async fn write_username(&mut self) -> Result<(), Error> {
+        if self.model.user_input.tds_authentication_method == TdsAuthenticationMethod::Password {
+            if self
+                .write_metadata(self.model.user_input.user_name.len() as i16)
+                .await?
+            {
+                self.deferred_actions_indicator
+                    .push(LoginDeferredPayload::UserName);
+            }
+        } else {
+            self.payload_writer.write_i16_async(0).await;
+            self.payload_writer.write_i16_async(0).await;
+        }
+        Ok(())
+    }
+
+    async fn write_password(&mut self) -> Result<(), Error> {
+        if self.model.user_input.tds_authentication_method == TdsAuthenticationMethod::Password {
+            if self
+                .write_metadata(self.model.user_input.password.len() as i16)
+                .await?
+            {
+                self.deferred_actions_indicator
+                    .push(LoginDeferredPayload::Password);
+            }
+        } else {
+            self.payload_writer.write_i16_async(0).await;
+            self.payload_writer.write_i16_async(0).await;
+        }
+        Ok(())
+    }
+
+    async fn write_app_name(&mut self) -> Result<(), Error> {
+        if self
+            .write_metadata(self.model.user_input.application_name.len() as i16)
+            .await?
+        {
+            self.deferred_actions_indicator
+                .push(LoginDeferredPayload::AppName);
+        }
+        Ok(())
+    }
+
+    async fn write_server_name(&mut self) -> Result<(), Error> {
+        if self
+            .write_metadata(self.model.user_input.server_name.len() as i16)
+            .await?
+        {
+            self.deferred_actions_indicator
+                .push(LoginDeferredPayload::ServerName);
+        }
+        Ok(())
+    }
+
+    async fn write_feature_ext(&mut self) -> Result<(), Error> {
+        self.payload_writer
+            .write_i16_async(self.content_next_offset as i16)
+            .await;
+
+        self.payload_writer.write_i16_async(4).await;
+
+        let feature_data_length = 0;
+
+        // TODO: Uncomment when features are implemented.
+        // for feature in self.features_request.get_requested_features() {
+        //     feature_data_length += feature.data_length();
+        // }
+
+        self.content_next_offset +=
+            (size_of::<i32>() as i32) + feature_data_length + (size_of::<u8>() as i32);
+
+        self.deferred_actions_indicator
+            .push(LoginDeferredPayload::FeatureExt);
+
+        Ok(())
+    }
+
+    async fn write_library(&mut self) -> Result<(), Error> {
+        if self
+            .write_metadata(self.model.user_input.library_name.len() as i16)
+            .await?
+        {
+            self.deferred_actions_indicator
+                .push(LoginDeferredPayload::Library);
+        }
+        Ok(())
+    }
+
+    async fn write_language(&mut self) -> Result<(), Error> {
+        if self
+            .write_metadata(self.model.user_input.language.len() as i16)
+            .await?
+        {
+            self.deferred_actions_indicator
+                .push(LoginDeferredPayload::Language);
+        }
+        Ok(())
+    }
+
+    async fn write_database(&mut self) -> Result<(), Error> {
+        if self
+            .write_metadata(self.model.user_input.database.len() as i16)
+            .await?
+        {
+            self.deferred_actions_indicator
+                .push(LoginDeferredPayload::Database);
+        }
+        Ok(())
+    }
+
+    async fn write_client_id(&mut self) -> Result<(), Error> {
+        self.payload_writer
+            .write_async(&self.model.client_id.address_bytes)
+            .await;
+        Ok(())
+    }
+
+    async fn write_sspi_short(&mut self) -> Result<(), Error> {
+        let _ = self.write_metadata(0).await;
+        Ok(())
+    }
+
+    async fn write_attach_db_file(&mut self) -> Result<(), Error> {
+        if self
+            .write_metadata(self.model.user_input.attach_db_file.len() as i16)
+            .await?
+        {
+            self.deferred_actions_indicator
+                .push(LoginDeferredPayload::AttachDbFile);
+        }
+        Ok(())
+    }
+
+    async fn write_change_password(&mut self) -> Result<(), Error> {
+        if self
+            .write_metadata(self.model.user_input.change_password.len() as i16)
+            .await?
+        {
+            self.deferred_actions_indicator
+                .push(LoginDeferredPayload::ChangePassword);
+        }
+        Ok(())
+    }
+
+    async fn write_cb_sspi_long(&mut self) -> Result<(), Error> {
+        self.payload_writer.write_i32_async(0).await;
+        Ok(())
+    }
+
+    async fn write_metadata(&mut self, char_length: i16) -> Result<bool, Error> {
+        if char_length == 0 {
+            self.payload_writer
+                .write_i16_async(self.content_next_offset as i16)
+                .await;
+            self.payload_writer.write_i16_async(0).await;
+            return Ok(false);
+        }
+
+        self.payload_writer
+            .write_i16_async(self.content_next_offset as i16)
+            .await;
+        self.payload_writer.write_i16_async(char_length).await;
+
+        self.content_next_offset += (char_length * 2) as i32;
+        Ok(true)
+    }
+}
+
+#[allow(clippy::manual_rotate)]
+fn scramble_password(password_utf16_bytes: &mut [u8]) {
+    for b in password_utf16_bytes.iter_mut() {
+        *b = (*b >> 4) | (*b << 4); // Swap the nibbles
+        *b ^= 0xA5; // XOR with 0xA5
+    }
+}
+
+/// The deferred actions that are not yet serialized.
+/// These values are used to point out the actual payload, that needs to be serialized.
+#[derive(Clone, Copy)]
+enum LoginDeferredPayload {
+    HostName,
+    UserName,
+    Password,
+    AppName,
+    ServerName,
+    FeatureExt,
+    Library,
+    Language,
+    Database,
+    AttachDbFile,
+    ChangePassword,
 }

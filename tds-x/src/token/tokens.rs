@@ -55,7 +55,10 @@ impl SqlCollation {
     /// Creates a new SqlCollation from a 5-byte array.
     pub fn new(collation_bytes: &[u8]) -> Result<Self, String> {
         if collation_bytes.len() != 5 {
-            return Err("Collation must be exactly 5 bytes long.".to_string());
+            return Err(format!(
+                "Collation must be exactly 5 bytes long. Found {}",
+                collation_bytes.len()
+            ));
         }
 
         let info = u32::from_le_bytes([
