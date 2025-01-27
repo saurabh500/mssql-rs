@@ -216,7 +216,7 @@ impl LoginHandler<'_, '_> {
         let response = LoginResponse {
             model: LoginResponseModel {
                 change_properties: EnvChangeProperties {
-                    database_collation: SqlCollation::new(&[0u8; 5]).unwrap(),
+                    database_collation: SqlCollation::new(&[0u8; 5]),
                     packet_size: 0,
                     language: "".to_string(),
                     database: "".to_string(),

@@ -1,7 +1,6 @@
-use crate::read_write::packet_reader::PacketReader;
-use async_trait::async_trait;
 use std::fmt;
 
+#[derive(Eq, PartialEq, Hash, Debug)]
 pub enum TokenType {
     AltMetadata = 0x88,
     AltRow = 0xD3,
@@ -10,7 +9,7 @@ pub enum TokenType {
     Done = 0xFD,
     DoneProc = 0xFE,
     DoneInProc = 0xFF,
-    EnvCange = 0xE3,
+    EnvChange = 0xE3,
     Error = 0xAA,
     FeatureExtAck = 0xAE,
     FedAuthInfo = 0xEE,
@@ -26,6 +25,35 @@ pub enum TokenType {
     TabName = 0xA4,
 }
 
+impl From<u8> for TokenType {
+    fn from(value: u8) -> Self {
+        match value {
+            0x88 => TokenType::AltMetadata,
+            0xD3 => TokenType::AltRow,
+            0x81 => TokenType::ColMetadata,
+            0xA5 => TokenType::ColInfo,
+            0xFD => TokenType::Done,
+            0xFE => TokenType::DoneProc,
+            0xFF => TokenType::DoneInProc,
+            0xE3 => TokenType::EnvChange,
+            0xAA => TokenType::Error,
+            0xAE => TokenType::FeatureExtAck,
+            0xEE => TokenType::FedAuthInfo,
+            0xAB => TokenType::Info,
+            0xAD => TokenType::LoginAck,
+            0xD2 => TokenType::NbcRow,
+            0x78 => TokenType::Offset,
+            0xA9 => TokenType::Order,
+            0x79 => TokenType::ReturnStatus,
+            0xAC => TokenType::ReturnValue,
+            0xD1 => TokenType::Row,
+            0xED => TokenType::SSPI,
+            0xA4 => TokenType::TabName,
+            _ => panic!("Unknown token type: {:#X}", value),
+        }
+    }
+}
+
 pub trait Token {
     fn token_type(&self) -> TokenType;
 }
@@ -35,12 +63,7 @@ pub struct TokenEvent<'a> {
     pub exit: bool,
 }
 
-#[async_trait]
-pub trait TokenParser {
-    async fn parse(&self, token_type: TokenType, packet_reader: &PacketReader) -> Box<dyn Token>;
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SqlCollation {
     pub info: u32,
     pub lcid: i32,
@@ -53,14 +76,14 @@ pub struct SqlCollation {
 
 impl SqlCollation {
     /// Creates a new SqlCollation from a 5-byte array.
-    pub fn new(collation_bytes: &[u8]) -> Result<Self, String> {
-        if collation_bytes.len() != 5 {
-            return Err(format!(
-                "Collation must be exactly 5 bytes long. Found {}",
-                collation_bytes.len()
-            ));
+    pub fn new(collation_bytes: &[u8]) -> Self {
+        let byte_len = collation_bytes.len();
+        if byte_len != 5 && byte_len != 0 {
+            panic!("Collation must be exactly 5 bytes long or none.");
         }
-
+        if byte_len == 0 {
+            return Self::default();
+        }
         let info = u32::from_le_bytes([
             collation_bytes[0],
             collation_bytes[1],
@@ -73,13 +96,13 @@ impl SqlCollation {
 
         let encoding = Self::get_encoding(lcid, sort_id);
 
-        Ok(SqlCollation {
+        SqlCollation {
             info,
             lcid,
             comparison_style,
             sort_id,
             encoding,
-        })
+        }
     }
 
     /// TODO: Encoding handling needs to be thought of. How do we go from lcid / sort id to encoding?.
@@ -358,3 +381,356 @@ pub static CODE_PAGE_FROM_SORT_ID: [Option<u16>; 256] = [
     None,       // 254
     None,       // 255
 ];
+
+pub(crate) struct ErrorToken {
+    pub number: u32,
+    pub state: u8,
+    pub severity: u8,
+    pub message: String,
+    pub server_name: String,
+    pub proc_name: String,
+    pub line_number: u32,
+}
+
+impl Token for ErrorToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::Error
+    }
+}
+
+pub(crate) struct InfoToken {
+    pub number: u32,
+    pub state: u8,
+    pub severity: u8,
+    pub message: String,
+    pub server_name: String,
+    pub proc_name: String,
+    pub line_number: u32,
+}
+
+impl Token for InfoToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::Info
+    }
+}
+
+pub(crate) struct DoneToken {
+    pub status: DoneStatus,
+    pub cur_cmd: CurrentCommand,
+    pub row_count: u64,
+}
+
+impl Token for DoneToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::Done
+    }
+}
+
+pub(crate) struct DoneInProcToken {
+    pub status: DoneStatus,
+    pub cur_cmd: CurrentCommand,
+    pub row_count: u64,
+}
+
+impl Token for DoneInProcToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::DoneInProc
+    }
+}
+
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct DoneStatus: u16 {
+        /// Final.
+        const FINAL = 0x0000;
+
+        /// More.
+        const MORE = 0x0001;
+
+        /// Error.
+        const ERROR = 0x0002;
+
+        /// In Transaction.
+        const IN_XACT = 0x0004;
+
+        /// Count.
+        const COUNT = 0x0010;
+
+        /// Attention.
+        const ATTN = 0x0020;
+
+        /// Server Error.
+        const SERVER_ERROR = 0x0100;
+    }
+}
+
+impl From<u16> for DoneStatus {
+    fn from(value: u16) -> Self {
+        DoneStatus::from_bits_truncate(value)
+    }
+}
+
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurrentCommand {
+    None = 0x00,
+    Select = 0xc1,
+    Insert = 0xc3,
+    Delete = 0xc4,
+    Update = 0xc5,
+    Abort = 0xd2,
+    BeginXact = 0xd4,
+    EndXact = 0xd5,
+    BulkInsert = 0xf0,
+    OpenCursor = 0x20,
+    Merge = 0x117,
+}
+
+impl TryFrom<u16> for CurrentCommand {
+    type Error = &'static str;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            0xc1 => Ok(CurrentCommand::Select),
+            0xc3 => Ok(CurrentCommand::Insert),
+            0xc4 => Ok(CurrentCommand::Delete),
+            0xc5 => Ok(CurrentCommand::Update),
+            0xd2 => Ok(CurrentCommand::Abort),
+            0xd4 => Ok(CurrentCommand::BeginXact),
+            0xd5 => Ok(CurrentCommand::EndXact),
+            0xf0 => Ok(CurrentCommand::BulkInsert),
+            0x20 => Ok(CurrentCommand::OpenCursor),
+            0x117 => Ok(CurrentCommand::Merge),
+            // All unknown values are treated as None, and considered valid.
+            _ => Ok(CurrentCommand::None),
+        }
+    }
+}
+
+/// Represents the different sub-types of environment change tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EnvChangeTokenSubType {
+    Database = 1,
+    Language = 2,
+    CharacterSet = 3,
+    PacketSize = 4,
+    UnicodeDataSortingLocalId = 5,
+    UnicodeDataSortingComparisonFlags = 6,
+    SqlCollation = 7,
+    BeginTransaction = 8,
+    CommitTransaction = 9,
+    RollbackTransaction = 10,
+    EnlistDtcTransaction = 11,
+    DefectTransaction = 12,
+    DatabaseMirroringPartner = 13,
+    PromoteTransaction = 15,
+    TransactionManagerAddress = 16,
+    TransactionEnded = 17,
+    ResetConnection = 18,
+    UserInstanceName = 19,
+    Routing = 20,
+}
+
+impl From<u8> for EnvChangeTokenSubType {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => EnvChangeTokenSubType::Database,
+            2 => EnvChangeTokenSubType::Language,
+            3 => EnvChangeTokenSubType::CharacterSet,
+            4 => EnvChangeTokenSubType::PacketSize,
+            5 => EnvChangeTokenSubType::UnicodeDataSortingLocalId,
+            6 => EnvChangeTokenSubType::UnicodeDataSortingComparisonFlags,
+            7 => EnvChangeTokenSubType::SqlCollation,
+            8 => EnvChangeTokenSubType::BeginTransaction,
+            9 => EnvChangeTokenSubType::CommitTransaction,
+            10 => EnvChangeTokenSubType::RollbackTransaction,
+            11 => EnvChangeTokenSubType::EnlistDtcTransaction,
+            12 => EnvChangeTokenSubType::DefectTransaction,
+            13 => EnvChangeTokenSubType::DatabaseMirroringPartner,
+            15 => EnvChangeTokenSubType::PromoteTransaction,
+            16 => EnvChangeTokenSubType::TransactionManagerAddress,
+            17 => EnvChangeTokenSubType::TransactionEnded,
+            18 => EnvChangeTokenSubType::ResetConnection,
+            19 => EnvChangeTokenSubType::UserInstanceName,
+            20 => EnvChangeTokenSubType::Routing,
+            // Panic on unknown values, since From must be infallible.
+            _ => panic!("Invalid value for EnvChangeTokenSubType: {}", value),
+        }
+    }
+}
+
+/// A generic struct that stores the old/new values of an environment change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvChangeTokenValue<T> {
+    old_value: T,
+    new_value: T,
+}
+
+impl<T> EnvChangeTokenValue<T> {
+    /// Creates a new instance of EnvChangeTokenValue.
+    pub fn new(old_value: T, new_value: T) -> Self {
+        Self {
+            old_value,
+            new_value,
+        }
+    }
+
+    /// Gets a reference to the old value.
+    pub fn old_value(&self) -> &T {
+        &self.old_value
+    }
+
+    /// Gets a reference to the new value.
+    pub fn new_value(&self) -> &T {
+        &self.new_value
+    }
+}
+
+/// Database change token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseEnvChangeToken {
+    /// We use composition instead of inheritance.
+    inner: EnvChangeTokenValue<String>,
+}
+
+impl DatabaseEnvChangeToken {
+    /// Create a new instance of this token.
+    pub fn new(old_value: String, new_value: String) -> Self {
+        Self {
+            inner: EnvChangeTokenValue::new(old_value, new_value),
+        }
+    }
+
+    /// EnvChange token sub type, always Database for this struct.
+    pub fn sub_type(&self) -> EnvChangeTokenSubType {
+        EnvChangeTokenSubType::Database
+    }
+
+    /// Gets a reference to the old value.
+    pub fn old_value(&self) -> &str {
+        self.inner.old_value()
+    }
+
+    /// Gets a reference to the new value.
+    pub fn new_value(&self) -> &str {
+        self.inner.new_value()
+    }
+}
+
+impl Token for DatabaseEnvChangeToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::EnvChange
+    }
+}
+
+/// SqlCollation env change token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqlCollationEnvChangeToken {
+    /// We use composition instead of inheritance.
+    inner: EnvChangeTokenValue<SqlCollation>,
+}
+
+impl SqlCollationEnvChangeToken {
+    /// Create a new instance of this token.
+    pub fn new(old_value: SqlCollation, new_value: SqlCollation) -> Self {
+        Self {
+            inner: EnvChangeTokenValue::new(old_value, new_value),
+        }
+    }
+
+    /// EnvChange token sub type, always Database for this struct.
+    pub fn sub_type(&self) -> EnvChangeTokenSubType {
+        EnvChangeTokenSubType::SqlCollation
+    }
+
+    /// Gets a reference to the old value.
+    pub fn old_value(&self) -> &SqlCollation {
+        self.inner.old_value()
+    }
+
+    /// Gets a reference to the new value.
+    pub fn new_value(&self) -> &SqlCollation {
+        self.inner.new_value()
+    }
+}
+
+impl Token for SqlCollationEnvChangeToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::EnvChange
+    }
+}
+
+/// Database change token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguageEnvChangeToken {
+    /// We use composition instead of inheritance.
+    inner: EnvChangeTokenValue<String>,
+}
+
+impl LanguageEnvChangeToken {
+    /// Create a new instance of this token.
+    pub fn new(old_value: String, new_value: String) -> Self {
+        Self {
+            inner: EnvChangeTokenValue::new(old_value, new_value),
+        }
+    }
+
+    /// EnvChange token sub type, always Database for this struct.
+    pub fn sub_type(&self) -> EnvChangeTokenSubType {
+        EnvChangeTokenSubType::Database
+    }
+
+    /// Gets a reference to the old value.
+    pub fn old_value(&self) -> &str {
+        self.inner.old_value()
+    }
+
+    /// Gets a reference to the new value.
+    pub fn new_value(&self) -> &str {
+        self.inner.new_value()
+    }
+}
+
+impl Token for LanguageEnvChangeToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::EnvChange
+    }
+}
+
+/// Packet Size change token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PacketSizeEnvChangeToken {
+    /// We use composition instead of inheritance.
+    inner: EnvChangeTokenValue<u32>,
+}
+
+impl PacketSizeEnvChangeToken {
+    /// Create a new instance of this token.
+    pub fn new(old_value: u32, new_value: u32) -> Self {
+        Self {
+            inner: EnvChangeTokenValue::new(old_value, new_value),
+        }
+    }
+
+    /// EnvChange token sub type, always Database for this struct.
+    pub fn sub_type(&self) -> EnvChangeTokenSubType {
+        EnvChangeTokenSubType::PacketSize
+    }
+
+    /// Gets a reference to the old value.
+    pub fn old_value(&self) -> &u32 {
+        self.inner.old_value()
+    }
+
+    /// Gets a reference to the new value.
+    pub fn new_value(&self) -> &u32 {
+        self.inner.new_value()
+    }
+}
+
+impl Token for PacketSizeEnvChangeToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::EnvChange
+    }
+}
