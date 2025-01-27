@@ -1,6 +1,7 @@
 use crate::message::messages::{PacketStatusFlags, PacketType};
 use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
 use std::io::{Cursor, Write};
+use tracing::event;
 
 use super::reader_writer::NetworkWriter;
 
@@ -143,7 +144,7 @@ impl<'a> PacketWriter<'a> {
         let _ =
             WriteBytesExt::write_u16::<BigEndian>(&mut self.payload_cursor, packet_length as u16);
 
-        let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, 0);
+        let _ = WriteBytesExt::write_u16::<BigEndian>(&mut self.payload_cursor, 0);
 
         let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, self.packet_id);
         let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, 0);
@@ -151,6 +152,12 @@ impl<'a> PacketWriter<'a> {
         let data_slice = &self.payload_cursor.get_ref().as_slice()[..packet_length];
         self.network_writer.send(data_slice).await.unwrap();
 
+        event!(
+            tracing::Level::DEBUG,
+            "Sending packet of size: {:?}",
+            packet_length
+        );
+        event!(tracing::Level::DEBUG, "Packet content: {:?}", data_slice);
         // Add the counter for the packet and increment by 1 for the next packet.
         self.packet_id = self.packet_id.wrapping_add(1);
         self.payload_cursor

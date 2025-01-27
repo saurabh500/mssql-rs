@@ -1,4 +1,5 @@
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
+use tracing::event;
 
 use crate::{message::messages::PacketStatusFlags, read_write::reader_writer::NetworkReader};
 use core::panic;
@@ -123,8 +124,7 @@ impl<'a> PacketReader<'a> {
                 .receive(&mut packet_buffer[base_offset_to_write + new_packet_byte_length..])
                 .await?;
         }
-        println!("{:?}", &packet_buffer[0..8]);
-        // [0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x01, 0x00]
+
         let length_from_packet_header = BigEndian::read_u16(&packet_buffer[2..4]);
 
         self.last_packet = (packet_buffer[1] & PacketStatusFlags::Eom as u8) != 0;
@@ -138,7 +138,16 @@ impl<'a> PacketReader<'a> {
                 .receive(&mut packet_buffer[base_offset_to_write + new_packet_byte_length..])
                 .await?;
         }
-
+        event!(
+            tracing::Level::DEBUG,
+            "Received packet of size: {:?}",
+            new_packet_byte_length
+        );
+        event!(
+            tracing::Level::DEBUG,
+            "Packet content: {:?}",
+            &packet_buffer[base_offset_to_write..base_offset_to_write + new_packet_byte_length]
+        );
         Ok(new_packet_byte_length)
     }
 
