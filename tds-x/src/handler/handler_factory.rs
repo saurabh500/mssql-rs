@@ -3,15 +3,14 @@ use std::io::Error;
 use crate::connection::client_context::ClientContext;
 use crate::core::EncryptionSetting;
 use crate::message::login::{
-    EnvChangeProperties, Feature, FeaturesRequest, LoginRequest, LoginRequestModel, LoginResponse,
-    LoginResponseModel, RoutingInfo,
+    EnvChangeProperties, Feature, LoginRequest, LoginRequestModel, LoginResponse,
+    LoginResponseModel,
 };
 use crate::message::messages::{Request, TypedResponse};
 use crate::message::prelogin::{
     EncryptionType, PreloginRequest, PreloginRequestModel, PreloginResponse,
 };
 use crate::read_write::reader_writer::NetworkReaderWriter;
-use crate::token::tokens::SqlCollation;
 use uuid::Uuid;
 
 pub(crate) struct HandlerFactory<'a> {
@@ -48,6 +47,10 @@ impl HandlerFactory<'_> {
 
     fn create_login_model(&self) -> LoginRequestModel {
         LoginRequestModel::from_context(self.context)
+    }
+
+    fn create_login_response(&self) -> LoginResponse {
+        LoginResponse::default()
     }
 }
 
@@ -212,27 +215,27 @@ impl LoginHandler<'_, '_> {
         }
 
         let _request_model = self.send_login7_request(reader_writer).await;
-
-        let response = LoginResponse {
-            model: LoginResponseModel {
-                change_properties: EnvChangeProperties {
-                    database_collation: SqlCollation::new(&[0u8; 5]),
-                    packet_size: 0,
-                    language: "".to_string(),
-                    database: "".to_string(),
-                    char_set: None,
-                    routing_information: RoutingInfo {},
-                },
-                features: FeaturesRequest {
-                    features: Default::default(),
-                },
-                tds_error: None,
-                login_ack_token: 0,
-            },
-        };
+        let login_response = self.get_login_response(reader_writer).await;
+        // let response = LoginResponse {
+        //     model: LoginResponseModel {
+        //         change_properties: EnvChangeProperties {
+        //             database_collation: SqlCollation::new(&[0u8; 5]).unwrap(),
+        //             packet_size: 0,
+        //             language: "".to_string(),
+        //             database: "".to_string(),
+        //             char_set: None,
+        //             routing_information: RoutingInfo {},
+        //         },
+        //         features: FeaturesRequest {
+        //             features: Default::default(),
+        //         },
+        //         tds_error: None,
+        //         login_ack_token: 0,
+        //     },
+        // };
         LoginResult {
             supported_features: vec![],
-            change_properties: response.model.change_properties,
+            change_properties: login_response.change_properties,
         }
     }
 
@@ -253,5 +256,13 @@ impl LoginHandler<'_, '_> {
             request.serialize(reader_writer).await;
         }
         Ok(request.model)
+    }
+
+    async fn get_login_response(
+        &self,
+        reader_writer: &mut impl NetworkReaderWriter,
+    ) -> LoginResponseModel {
+        let response = self.factory.create_login_response();
+        response.deserialize(reader_writer).await
     }
 }

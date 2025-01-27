@@ -3,9 +3,10 @@ use crate::message::login_options::{
     OptionFlags1, OptionFlags2, OptionFlags3, OptionsValue, TdsVersion, TypeFlags,
 };
 use crate::message::messages::{PacketType, Request, TdsError, TypedResponse};
+use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::packet_writer::PacketWriter;
 use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
-use crate::token::tokens::SqlCollation;
+use crate::token::tokens::{SqlCollation, TokenType};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io::Error;
@@ -14,11 +15,18 @@ use super::login_options::{
     OptionChangePassword, OptionInitLang, OptionIntegratedSecurity, OptionOdbc, OptionOleDb,
     OptionSqlType, OptionUser,
 };
+use tracing::{event, Level};
 
+use crate::read_write::token_stream::{LoginTokenRegistry, TokenStreamReader};
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct RoutingInfo {
-    //TODO:
+    pub protocol: u8,
+    pub port: u16,
+    pub server: String,
 }
 
+#[derive(Default)]
 pub struct EnvChangeProperties {
     pub database_collation: SqlCollation,
     pub packet_size: i32,
@@ -50,6 +58,7 @@ pub trait Feature {
     fn is_acknowledged(&self) -> bool;
 }
 
+#[derive(Default)]
 pub struct FeaturesRequest {
     pub features: HashMap<FeatureExtension, Box<dyn Feature>>,
 }
@@ -163,6 +172,7 @@ impl LoginRequestModel<'_> {
     }
 }
 
+#[derive(Default)]
 pub struct LoginResponseModel {
     pub change_properties: EnvChangeProperties,
     pub features: FeaturesRequest,
@@ -193,14 +203,77 @@ impl<'a> Request<'a> for LoginRequest<'a> {
     }
 }
 
+#[derive(Default)]
 pub struct LoginResponse {
     pub model: LoginResponseModel,
 }
 
 #[async_trait(?Send)]
 impl TypedResponse<LoginResponseModel> for LoginResponse {
-    async fn deserialize(&self, _reader: &mut dyn NetworkReader) -> LoginResponseModel {
-        todo!()
+    async fn deserialize(&self, reader: &mut dyn NetworkReader) -> LoginResponseModel {
+        let packet_reader = PacketReader::new(reader);
+        let login_token_registry = LoginTokenRegistry::default();
+        let mut token_stream_reader = TokenStreamReader {
+            packet_reader,
+            parser_registry: Box::new(login_token_registry),
+        };
+
+        let response_model = LoginResponseModel::default();
+        let mut token = token_stream_reader.receive_token().await;
+
+        loop {
+            match token {
+                Ok(token) => {
+                    let token_type = token.token_type();
+                    event!(
+                        Level::DEBUG,
+                        "Received token: {:?} during login response parsing",
+                        token_type
+                    );
+                    match token_type {
+                        TokenType::EnvChange => {}
+                        TokenType::LoginAck => {}
+                        TokenType::Done => {
+                            break;
+                        }
+                        TokenType::DoneProc => {}
+                        TokenType::DoneInProc => {}
+                        TokenType::Error => {
+                            event!(
+                                Level::ERROR,
+                                "Received Error token during login response parsing."
+                            );
+                        }
+                        TokenType::FeatureExtAck => todo!(),
+                        TokenType::FedAuthInfo => todo!(),
+                        TokenType::Info => {
+                            event!(
+                                Level::INFO,
+                                "Received {:?} during login response parsing.",
+                                token_type
+                            );
+                        }
+
+                        TokenType::SSPI => todo!(),
+
+                        _ => {
+                            event!(
+                                Level::ERROR,
+                                "Received unexpected token during login response parsing. Check to make sure that all the tokens from
+                                the registry are handled."
+                            );
+                        }
+                    }
+                }
+                Err(_e) => {
+                    // Handle the error
+                    break;
+                }
+            }
+            token = token_stream_reader.receive_token().await;
+        }
+
+        response_model
     }
 }
 

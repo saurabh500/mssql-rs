@@ -4,6 +4,16 @@ pub enum TdsVersion {
     V8_0 = 0x08000000,
 }
 
+impl From<i32> for TdsVersion {
+    fn from(value: i32) -> Self {
+        match value {
+            0x74000004 => TdsVersion::V7_4,
+            0x08000000 => TdsVersion::V8_0,
+            _ => panic!("Invalid value for TdsVersion"),
+        }
+    }
+}
+
 pub struct LoginOptions {
     pub tds_version: TdsVersion,
     pub packet_size: u32,

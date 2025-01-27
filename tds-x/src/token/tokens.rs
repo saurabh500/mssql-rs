@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::message::login::RoutingInfo;
+
 #[derive(Eq, PartialEq, Hash, Debug)]
 pub enum TokenType {
     AltMetadata = 0x88,
@@ -437,6 +439,17 @@ impl Token for DoneInProcToken {
         TokenType::DoneInProc
     }
 }
+pub(crate) struct DoneProcToken {
+    pub status: DoneStatus,
+    pub cur_cmd: CurrentCommand,
+    pub row_count: u64,
+}
+
+impl Token for DoneProcToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::DoneProc
+    }
+}
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -587,150 +600,93 @@ impl<T> EnvChangeTokenValue<T> {
     }
 }
 
-/// Database change token.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DatabaseEnvChangeToken {
-    /// We use composition instead of inheritance.
-    inner: EnvChangeTokenValue<String>,
-}
-
-impl DatabaseEnvChangeToken {
-    /// Create a new instance of this token.
-    pub fn new(old_value: String, new_value: String) -> Self {
-        Self {
-            inner: EnvChangeTokenValue::new(old_value, new_value),
+macro_rules! env_change_token {
+    ($name:ident, $sub_type:expr, $value_type:ty) => {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct $name {
+            inner: EnvChangeTokenValue<$value_type>,
         }
-    }
 
-    /// EnvChange token sub type, always Database for this struct.
-    pub fn sub_type(&self) -> EnvChangeTokenSubType {
-        EnvChangeTokenSubType::Database
-    }
+        impl $name {
+            pub fn new(old_value: $value_type, new_value: $value_type) -> Self {
+                Self {
+                    inner: EnvChangeTokenValue::new(old_value, new_value),
+                }
+            }
 
-    /// Gets a reference to the old value.
-    pub fn old_value(&self) -> &str {
-        self.inner.old_value()
-    }
+            pub fn sub_type(&self) -> EnvChangeTokenSubType {
+                $sub_type
+            }
 
-    /// Gets a reference to the new value.
-    pub fn new_value(&self) -> &str {
-        self.inner.new_value()
-    }
-}
+            pub fn old_value(&self) -> &$value_type {
+                self.inner.old_value()
+            }
 
-impl Token for DatabaseEnvChangeToken {
-    fn token_type(&self) -> TokenType {
-        TokenType::EnvChange
-    }
-}
-
-/// SqlCollation env change token.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SqlCollationEnvChangeToken {
-    /// We use composition instead of inheritance.
-    inner: EnvChangeTokenValue<SqlCollation>,
-}
-
-impl SqlCollationEnvChangeToken {
-    /// Create a new instance of this token.
-    pub fn new(old_value: SqlCollation, new_value: SqlCollation) -> Self {
-        Self {
-            inner: EnvChangeTokenValue::new(old_value, new_value),
+            pub fn new_value(&self) -> &$value_type {
+                self.inner.new_value()
+            }
         }
-    }
 
-    /// EnvChange token sub type, always Database for this struct.
-    pub fn sub_type(&self) -> EnvChangeTokenSubType {
-        EnvChangeTokenSubType::SqlCollation
-    }
-
-    /// Gets a reference to the old value.
-    pub fn old_value(&self) -> &SqlCollation {
-        self.inner.old_value()
-    }
-
-    /// Gets a reference to the new value.
-    pub fn new_value(&self) -> &SqlCollation {
-        self.inner.new_value()
-    }
-}
-
-impl Token for SqlCollationEnvChangeToken {
-    fn token_type(&self) -> TokenType {
-        TokenType::EnvChange
-    }
-}
-
-/// Database change token.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LanguageEnvChangeToken {
-    /// We use composition instead of inheritance.
-    inner: EnvChangeTokenValue<String>,
-}
-
-impl LanguageEnvChangeToken {
-    /// Create a new instance of this token.
-    pub fn new(old_value: String, new_value: String) -> Self {
-        Self {
-            inner: EnvChangeTokenValue::new(old_value, new_value),
+        impl Token for $name {
+            fn token_type(&self) -> TokenType {
+                TokenType::EnvChange
+            }
         }
-    }
-
-    /// EnvChange token sub type, always Database for this struct.
-    pub fn sub_type(&self) -> EnvChangeTokenSubType {
-        EnvChangeTokenSubType::Database
-    }
-
-    /// Gets a reference to the old value.
-    pub fn old_value(&self) -> &str {
-        self.inner.old_value()
-    }
-
-    /// Gets a reference to the new value.
-    pub fn new_value(&self) -> &str {
-        self.inner.new_value()
-    }
+    };
 }
 
-impl Token for LanguageEnvChangeToken {
-    fn token_type(&self) -> TokenType {
-        TokenType::EnvChange
-    }
-}
-
-/// Packet Size change token.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PacketSizeEnvChangeToken {
-    /// We use composition instead of inheritance.
-    inner: EnvChangeTokenValue<u32>,
-}
-
-impl PacketSizeEnvChangeToken {
-    /// Create a new instance of this token.
-    pub fn new(old_value: u32, new_value: u32) -> Self {
-        Self {
-            inner: EnvChangeTokenValue::new(old_value, new_value),
-        }
-    }
-
-    /// EnvChange token sub type, always Database for this struct.
-    pub fn sub_type(&self) -> EnvChangeTokenSubType {
-        EnvChangeTokenSubType::PacketSize
-    }
-
-    /// Gets a reference to the old value.
-    pub fn old_value(&self) -> &u32 {
-        self.inner.old_value()
-    }
-
-    /// Gets a reference to the new value.
-    pub fn new_value(&self) -> &u32 {
-        self.inner.new_value()
-    }
-}
-
-impl Token for PacketSizeEnvChangeToken {
-    fn token_type(&self) -> TokenType {
-        TokenType::EnvChange
-    }
-}
+env_change_token!(
+    LanguageEnvChangeToken,
+    EnvChangeTokenSubType::Language,
+    String
+);
+env_change_token!(
+    DatabaseEnvChangeToken,
+    EnvChangeTokenSubType::Database,
+    String
+);
+env_change_token!(
+    SqlCollationEnvChangeToken,
+    EnvChangeTokenSubType::SqlCollation,
+    SqlCollation
+);
+env_change_token!(
+    PacketSizeEnvChangeToken,
+    EnvChangeTokenSubType::PacketSize,
+    u32
+);
+env_change_token!(
+    CharsetEnvChangeToken,
+    EnvChangeTokenSubType::CharacterSet,
+    String
+);
+env_change_token!(
+    RoutingEnvChangeToken,
+    EnvChangeTokenSubType::Routing,
+    Option<RoutingInfo>
+);
+env_change_token!(
+    BeginTransactionEnvChangeToken,
+    EnvChangeTokenSubType::BeginTransaction,
+    Vec<u8>
+);
+env_change_token!(
+    CommitTransactionEnvChangeToken,
+    EnvChangeTokenSubType::CommitTransaction,
+    Vec<u8>
+);
+env_change_token!(
+    RollbackTransactionEnvChangeToken,
+    EnvChangeTokenSubType::RollbackTransaction,
+    Vec<u8>
+);
+env_change_token!(
+    ResetConnectionEnvChangeToken,
+    EnvChangeTokenSubType::ResetConnection,
+    Vec<u8>
+);
+env_change_token!(
+    DatabaseMirroringPartnerEnvChangeToken,
+    EnvChangeTokenSubType::DatabaseMirroringPartner,
+    String
+);
