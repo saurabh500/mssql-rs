@@ -280,21 +280,73 @@ impl<'a> PacketReader<'a> {
         Ok(result)
     }
 
-    pub async fn read_varchar_with_byte_length(&mut self) -> Result<Option<String>, Error> {
+    /// Reads a Unicode string which is prefixed by its length of an unsigned 16-bit integer.
+    ///
+    /// This method reads a Unicode string from the packet stream. The length of the string
+    /// is specified by an unsigned 16-bit integer value preceding the string. If the length
+    /// is equal to `LENGTHNULL`, the method returns `None`.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing an `Option<String>` if successful. If the length is
+    /// `LENGTHNULL`, it returns `Ok(None)`. Otherwise, it returns `Ok(Some(String))` with
+    /// the read Unicode string. If an error occurs during reading, it returns an `Error`.
+    ///
+    /// # Errors
+    ///
+    /// This method returns an `Error` if there is an issue reading from the packet stream
+    /// or if the data cannot be converted to a valid Unicode string.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let mut packet_reader = PacketReader::new(&mut network_reader);
+    /// if let Some(unicode_string) = packet_reader.read_varchar_u16_length().await? {
+    ///     println!("Read Unicode string: {}", unicode_string);
+    /// } else {
+    ///     println!("No Unicode string found (length was LENGTHNULL)");
+    /// }
+    /// ```
+    pub async fn read_varchar_u16_length(&mut self) -> Result<Option<String>, Error> {
         let length: u16 = self.read_uint16().await?;
         if length == Self::LENGTHNULL {
             return Ok(None);
         }
 
-        let string = self.read_unicode_with_byte_length(length as usize).await?;
+        let string = self
+            .read_unicode_with_byte_length((length << 1) as usize)
+            .await?;
         Ok(Some(string))
     }
 
-    /// Reads a Unicode string which is prefixed by its length of a single byte.
+    /// Reads a Unicode string where the length is specified by an unsigned 8-bit integer.
     ///
-    pub async fn read_u8_varchar(&mut self) -> Result<String, Error> {
+    /// This method reads a Unicode string from the packet stream. The length of the string
+    /// is specified by an unsigned 8-bit integer value preceding the string. The method
+    /// reads twice that number of bytes from the stream (since each Unicode character is 2 bytes).
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the read `String` if successful, or an `Error` if
+    /// something goes wrong.
+    ///
+    /// # Errors
+    ///
+    /// This method returns an `Error` if there is an issue reading from the packet stream
+    /// or if the data cannot be converted to a valid Unicode string.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let mut packet_reader = PacketReader::new(&mut network_reader);
+    /// let unicode_string = packet_reader.read_varchar_u8_length().await?;
+    /// println!("Read Unicode string: {}", unicode_string);
+    /// ```
+    pub async fn read_varchar_u8_length(&mut self) -> Result<String, Error> {
         let length: u8 = self.read_byte().await?;
-        let string = self.read_unicode_with_byte_length(length as usize).await?;
+        let string = self
+            .read_unicode_with_byte_length((length << 1) as usize)
+            .await?;
         Ok(string)
     }
 
@@ -745,7 +797,7 @@ pub(crate) mod tests {
 
         let utf16_byte_len: u16 = utf16_units.len() as u16;
         let mut byte_array: Vec<u8> = vec![0; 2];
-        LittleEndian::write_u16(&mut byte_array[0..], utf16_byte_len * 2);
+        LittleEndian::write_u16(&mut byte_array[0..], utf16_byte_len);
         for unit in utf16_units {
             byte_array.push((unit & 0xFF) as u8); // Low byte
             byte_array.push((unit >> 8) as u8); // High byte
@@ -760,7 +812,7 @@ pub(crate) mod tests {
 
         let mut packet_reader = PacketReader::new(&mut mock_reader);
 
-        let varchar = packet_reader.read_varchar_with_byte_length().await.unwrap();
+        let varchar = packet_reader.read_varchar_u16_length().await.unwrap();
         // assert_eq!(varchar, Some("ab".to_string()));
         assert_eq!(varchar, Some(unicode_string.to_string()));
     }
@@ -773,7 +825,7 @@ pub(crate) mod tests {
 
         let utf16_byte_len: u8 = utf16_units.len() as u8;
         let mut byte_array: Vec<u8> = Vec::new();
-        byte_array.push(utf16_byte_len * 2);
+        byte_array.push(utf16_byte_len);
 
         for unit in utf16_units {
             byte_array.push((unit & 0xFF) as u8); // Low byte
@@ -789,7 +841,7 @@ pub(crate) mod tests {
 
         let mut packet_reader = PacketReader::new(&mut mock_reader);
 
-        let varchar = packet_reader.read_u8_varchar().await.unwrap();
+        let varchar = packet_reader.read_varchar_u8_length().await.unwrap();
         // assert_eq!(varchar, Some("ab".to_string()));
         assert_eq!(varchar, unicode_string.to_string());
     }
