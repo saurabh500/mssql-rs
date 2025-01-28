@@ -2,7 +2,13 @@ use std::fmt;
 
 use crate::message::login::RoutingInfo;
 
+use super::{
+    fed_auth_info::{FedAuthInfoToken, RowToken, SspiToken},
+    login_ack::LoginAckToken,
+};
+
 #[derive(Eq, PartialEq, Hash, Debug)]
+#[repr(u8)]
 pub enum TokenType {
     AltMetadata = 0x88,
     AltRow = 0xD3,
@@ -60,9 +66,146 @@ pub trait Token {
     fn token_type(&self) -> TokenType;
 }
 
-pub struct TokenEvent<'a> {
+pub(crate) enum Tokens {
+    Done(DoneToken),
+    DoneInProc(DoneInProcToken),
+    DoneProc(DoneProcToken),
+    EnvChange(EnvChangeToken),
+    Error(ErrorToken),
+    Info(InfoToken),
+    LoginAck(LoginAckToken),
+    FeatureExtAck(FeatureExtAckToken),
+    FedAuthInfo(FedAuthInfoToken),
+    Sspi(SspiToken),
+    Row(RowToken),
+}
+macro_rules! impl_from_token {
+    ($token_type:ty, $variant:ident) => {
+        impl From<$token_type> for Tokens {
+            fn from(token: $token_type) -> Self {
+                Tokens::$variant(token)
+            }
+        }
+    };
+}
+
+impl_from_token!(EnvChangeToken, EnvChange);
+impl_from_token!(ErrorToken, Error);
+impl_from_token!(InfoToken, Info);
+impl_from_token!(DoneToken, Done);
+impl_from_token!(DoneInProcToken, DoneInProc);
+impl_from_token!(DoneProcToken, DoneProc);
+impl_from_token!(LoginAckToken, LoginAck);
+impl_from_token!(FeatureExtAckToken, FeatureExtAck);
+impl_from_token!(FedAuthInfoToken, FedAuthInfo);
+impl_from_token!(SspiToken, Sspi);
+impl_from_token!(RowToken, Row);
+
+impl Token for Tokens {
+    fn token_type(&self) -> TokenType {
+        match self {
+            Tokens::Done(token) => token.token_type(),
+            Tokens::DoneInProc(token) => token.token_type(),
+            Tokens::DoneProc(token) => token.token_type(),
+            Tokens::EnvChange(token) => token.token_type(),
+            Tokens::Error(token) => token.token_type(),
+            Tokens::Info(token) => token.token_type(),
+            Tokens::LoginAck(token) => token.token_type(),
+            Tokens::FeatureExtAck(token) => token.token_type(),
+            Tokens::FedAuthInfo(token) => token.token_type(),
+            Tokens::Sspi(token) => token.token_type(),
+            Tokens::Row(token) => token.token_type(),
+        }
+    }
+}
+
+pub(crate) struct TokenEvent<'a> {
     pub token: &'a dyn Token,
     pub exit: bool,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum EnvChangeContainer {
+    String(EnvChangeTokenValuePairs<String>),
+    SqlCollation(EnvChangeTokenValuePairs<SqlCollation>),
+    UInt32(EnvChangeTokenValuePairs<u32>),
+    RoutingType(EnvChangeTokenValuePairs<Option<RoutingInfo>>),
+    BytesType(EnvChangeTokenValuePairs<Vec<u8>>),
+}
+
+impl From<(String, String)> for EnvChangeContainer {
+    fn from(value: (String, String)) -> Self {
+        EnvChangeContainer::String(EnvChangeTokenValuePairs::<String>::new(value.0, value.1))
+    }
+}
+
+impl From<(SqlCollation, SqlCollation)> for EnvChangeContainer {
+    fn from(value: (SqlCollation, SqlCollation)) -> Self {
+        EnvChangeContainer::SqlCollation(EnvChangeTokenValuePairs::<SqlCollation>::new(
+            value.0, value.1,
+        ))
+    }
+}
+
+impl From<(u32, u32)> for EnvChangeContainer {
+    fn from(value: (u32, u32)) -> Self {
+        EnvChangeContainer::UInt32(EnvChangeTokenValuePairs::<u32>::new(value.0, value.1))
+    }
+}
+
+impl From<(Option<RoutingInfo>, Option<RoutingInfo>)> for EnvChangeContainer {
+    fn from(value: (Option<RoutingInfo>, Option<RoutingInfo>)) -> Self {
+        EnvChangeContainer::RoutingType(EnvChangeTokenValuePairs::<Option<RoutingInfo>>::new(
+            value.0, value.1,
+        ))
+    }
+}
+
+impl From<(Vec<u8>, Vec<u8>)> for EnvChangeContainer {
+    fn from(value: (Vec<u8>, Vec<u8>)) -> Self {
+        EnvChangeContainer::BytesType(EnvChangeTokenValuePairs::<Vec<u8>>::new(value.0, value.1))
+    }
+}
+
+impl fmt::Debug for EnvChangeContainer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EnvChangeContainer::String(value) => write!(f, "String: {:?}", value),
+            EnvChangeContainer::SqlCollation(value) => write!(f, "SqlCollation: {:?}", value),
+            EnvChangeContainer::UInt32(value) => write!(f, "UInt32: {:?}", value),
+            EnvChangeContainer::RoutingType(value) => write!(f, "RoutingType: {:?}", value),
+            EnvChangeContainer::BytesType(value) => write!(f, "ByteType: {:?}", value),
+        }
+    }
+}
+
+pub(crate) struct EnvChangeToken {
+    pub sub_type: EnvChangeTokenSubType,
+    pub change_type: EnvChangeContainer,
+}
+
+trait EnvChangeSubToken {
+    fn sub_type(&self) -> EnvChangeTokenSubType;
+}
+
+pub struct FeatureExtAckToken {}
+
+impl Token for EnvChangeToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::EnvChange
+    }
+}
+
+impl EnvChangeSubToken for EnvChangeToken {
+    fn sub_type(&self) -> EnvChangeTokenSubType {
+        self.sub_type
+    }
+}
+
+impl Token for FeatureExtAckToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::FeatureExtAck
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -574,13 +717,13 @@ impl From<u8> for EnvChangeTokenSubType {
 }
 
 /// A generic struct that stores the old/new values of an environment change.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnvChangeTokenValue<T> {
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub struct EnvChangeTokenValuePairs<T> {
     old_value: T,
     new_value: T,
 }
 
-impl<T> EnvChangeTokenValue<T> {
+impl<T> EnvChangeTokenValuePairs<T> {
     /// Creates a new instance of EnvChangeTokenValue.
     pub fn new(old_value: T, new_value: T) -> Self {
         Self {
@@ -599,94 +742,3 @@ impl<T> EnvChangeTokenValue<T> {
         &self.new_value
     }
 }
-
-macro_rules! env_change_token {
-    ($name:ident, $sub_type:expr, $value_type:ty) => {
-        #[derive(Debug, Clone, PartialEq, Eq)]
-        pub struct $name {
-            inner: EnvChangeTokenValue<$value_type>,
-        }
-
-        impl $name {
-            pub fn new(old_value: $value_type, new_value: $value_type) -> Self {
-                Self {
-                    inner: EnvChangeTokenValue::new(old_value, new_value),
-                }
-            }
-
-            pub fn sub_type(&self) -> EnvChangeTokenSubType {
-                $sub_type
-            }
-
-            pub fn old_value(&self) -> &$value_type {
-                self.inner.old_value()
-            }
-
-            pub fn new_value(&self) -> &$value_type {
-                self.inner.new_value()
-            }
-        }
-
-        impl Token for $name {
-            fn token_type(&self) -> TokenType {
-                TokenType::EnvChange
-            }
-        }
-    };
-}
-
-env_change_token!(
-    LanguageEnvChangeToken,
-    EnvChangeTokenSubType::Language,
-    String
-);
-env_change_token!(
-    DatabaseEnvChangeToken,
-    EnvChangeTokenSubType::Database,
-    String
-);
-env_change_token!(
-    SqlCollationEnvChangeToken,
-    EnvChangeTokenSubType::SqlCollation,
-    SqlCollation
-);
-env_change_token!(
-    PacketSizeEnvChangeToken,
-    EnvChangeTokenSubType::PacketSize,
-    u32
-);
-env_change_token!(
-    CharsetEnvChangeToken,
-    EnvChangeTokenSubType::CharacterSet,
-    String
-);
-env_change_token!(
-    RoutingEnvChangeToken,
-    EnvChangeTokenSubType::Routing,
-    Option<RoutingInfo>
-);
-env_change_token!(
-    BeginTransactionEnvChangeToken,
-    EnvChangeTokenSubType::BeginTransaction,
-    Vec<u8>
-);
-env_change_token!(
-    CommitTransactionEnvChangeToken,
-    EnvChangeTokenSubType::CommitTransaction,
-    Vec<u8>
-);
-env_change_token!(
-    RollbackTransactionEnvChangeToken,
-    EnvChangeTokenSubType::RollbackTransaction,
-    Vec<u8>
-);
-env_change_token!(
-    ResetConnectionEnvChangeToken,
-    EnvChangeTokenSubType::ResetConnection,
-    Vec<u8>
-);
-env_change_token!(
-    DatabaseMirroringPartnerEnvChangeToken,
-    EnvChangeTokenSubType::DatabaseMirroringPartner,
-    String
-);

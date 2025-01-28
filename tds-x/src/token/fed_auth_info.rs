@@ -26,3 +26,21 @@ impl Token for FedAuthInfoToken {
         TokenType::FedAuthInfo
     }
 }
+
+pub struct SspiToken {
+    pub data: Vec<u8>,
+}
+
+impl Token for SspiToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::SSPI
+    }
+}
+
+pub struct RowToken {}
+
+impl Token for RowToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::Row
+    }
+}

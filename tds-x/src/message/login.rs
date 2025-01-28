@@ -6,7 +6,11 @@ use crate::message::messages::{PacketType, Request, TdsError, TypedResponse};
 use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::packet_writer::PacketWriter;
 use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
-use crate::token::tokens::{SqlCollation, TokenType};
+use crate::token::fed_auth_info::FedAuthInfoToken;
+use crate::token::login_ack::LoginAckToken;
+use crate::token::tokens::{
+    EnvChangeContainer, EnvChangeToken, EnvChangeTokenSubType, SqlCollation, Token, Tokens,
+};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io::Error;
@@ -33,7 +37,7 @@ pub struct EnvChangeProperties {
     pub language: String,
     pub database: String,
     pub char_set: Option<String>,
-    pub routing_information: RoutingInfo,
+    pub routing_information: Option<RoutingInfo>,
 }
 
 pub enum FeatureExtension {
@@ -173,11 +177,93 @@ impl LoginRequestModel<'_> {
 }
 
 #[derive(Default)]
-pub struct LoginResponseModel {
+pub(crate) struct LoginResponseModel {
     pub change_properties: EnvChangeProperties,
     pub features: FeaturesRequest,
     pub tds_error: Option<TdsError>,
-    pub login_ack_token: i32,
+    pub success_token: Option<LoginAckToken>,
+    pub fed_auth_info: Option<FedAuthInfoToken>,
+}
+
+#[repr(u8)]
+pub(crate) enum LoginResponseStatus {
+    NoResponse = 0x00,
+    Success = 0x01,
+    Error = 0x02,
+    WaitingForFedAuth = 0x03,
+    Rerouting = 0x04,
+}
+
+impl LoginResponseModel {
+    fn capture_change_property(&mut self, change_token: EnvChangeToken) {
+        let sub_type = change_token.sub_type;
+
+        match change_token.change_type {
+            EnvChangeContainer::String(string_change) => match sub_type {
+                EnvChangeTokenSubType::Database => {
+                    self.change_properties.database = string_change.new_value().clone();
+                }
+                EnvChangeTokenSubType::Language => {
+                    self.change_properties.language = string_change.new_value().clone();
+                }
+                EnvChangeTokenSubType::CharacterSet => {
+                    self.change_properties.char_set = Some(string_change.new_value().clone());
+                }
+                _ => {
+                    event!(
+                        Level::DEBUG,
+                        "Unaccounted change property type: {:?}",
+                        sub_type
+                    );
+                }
+            },
+            EnvChangeContainer::SqlCollation(collation_change) => {
+                self.change_properties.database_collation = collation_change.new_value().clone();
+            }
+            EnvChangeContainer::UInt32(numeric_change) => match sub_type {
+                EnvChangeTokenSubType::PacketSize => {
+                    self.change_properties.packet_size = *numeric_change.new_value() as i32;
+                }
+                _ => {
+                    event!(
+                        Level::DEBUG,
+                        "Unaccounted numeric change property type: {:?}",
+                        sub_type
+                    );
+                }
+            },
+            EnvChangeContainer::RoutingType(routing_change) => {
+                self.change_properties.routing_information = routing_change.new_value().clone();
+            }
+            _ => {
+                event!(
+                    Level::DEBUG,
+                    "Unknown change property type: {:?}",
+                    change_token.change_type
+                );
+            }
+        }
+    }
+
+    pub(crate) fn get_status(&self) -> LoginResponseStatus {
+        if self.change_properties.routing_information.is_some() {
+            return LoginResponseStatus::Rerouting;
+        }
+
+        if self.success_token.is_some() {
+            return LoginResponseStatus::Success;
+        }
+
+        if self.tds_error.is_some() {
+            return LoginResponseStatus::Error;
+        }
+
+        if self.fed_auth_info.is_some() {
+            return LoginResponseStatus::WaitingForFedAuth;
+        }
+
+        LoginResponseStatus::Error
+    }
 }
 
 pub struct LoginRequest<'a> {
@@ -204,7 +290,7 @@ impl<'a> Request<'a> for LoginRequest<'a> {
 }
 
 #[derive(Default)]
-pub struct LoginResponse {
+pub(crate) struct LoginResponse {
     pub model: LoginResponseModel,
 }
 
@@ -218,60 +304,71 @@ impl TypedResponse<LoginResponseModel> for LoginResponse {
             parser_registry: Box::new(login_token_registry),
         };
 
-        let response_model = LoginResponseModel::default();
-        let mut token = token_stream_reader.receive_token().await;
+        let mut response_model = LoginResponseModel::default();
 
-        loop {
+        while let Ok(token) = token_stream_reader.receive_token().await {
+            let token_type = token.token_type();
+            event!(
+                Level::DEBUG,
+                "Received token: {:?} during login response parsing",
+                token_type
+            );
+
             match token {
-                Ok(token) => {
-                    let token_type = token.token_type();
+                Tokens::EnvChange(env_change_token) => {
                     event!(
-                        Level::DEBUG,
-                        "Received token: {:?} during login response parsing",
+                        Level::INFO,
+                        "Received {:?} during login response parsing.",
                         token_type
                     );
-                    match token_type {
-                        TokenType::EnvChange => {}
-                        TokenType::LoginAck => {}
-                        TokenType::Done => {
-                            break;
-                        }
-                        TokenType::DoneProc => {}
-                        TokenType::DoneInProc => {}
-                        TokenType::Error => {
-                            event!(
-                                Level::ERROR,
-                                "Received Error token during login response parsing."
-                            );
-                        }
-                        TokenType::FeatureExtAck => todo!(),
-                        TokenType::FedAuthInfo => todo!(),
-                        TokenType::Info => {
-                            event!(
-                                Level::INFO,
-                                "Received {:?} during login response parsing.",
-                                token_type
-                            );
-                        }
-
-                        TokenType::SSPI => todo!(),
-
-                        _ => {
-                            event!(
-                                Level::ERROR,
-                                "Received unexpected token during login response parsing. Check to make sure that all the tokens from
-                                the registry are handled."
-                            );
-                        }
-                    }
+                    response_model.capture_change_property(env_change_token);
                 }
-                Err(_e) => {
-                    // Handle the error
+                Tokens::LoginAck(login_ack_token) => {
+                    response_model.success_token = Some(login_ack_token);
+                }
+                Tokens::Done(_t) => {
+                    // Once we receive a Done token, exit the loop.
                     break;
                 }
+                Tokens::DoneProc(_t) => {
+                    // ...
+                }
+                Tokens::DoneInProc(_t) => {
+                    // ...
+                }
+                Tokens::Error(error_token) => {
+                    event!(
+                        Level::ERROR,
+                        "Received Error token during login response parsing."
+                    );
+                    response_model.tds_error = Some(TdsError::new(error_token));
+                    // Decide if you want to break here, or keep looping.
+                }
+                Tokens::FeatureExtAck(_t) => todo!(),
+                Tokens::FedAuthInfo(fed_auth_info_token) => {
+                    response_model.fed_auth_info = Some(fed_auth_info_token);
+                    break;
+                }
+                Tokens::Info(_t) => {
+                    event!(
+                        Level::INFO,
+                        "Received {:?} during login response parsing.",
+                        token_type
+                    );
+                }
+                Tokens::Sspi(_t) => {
+                    todo!()
+                }
+                _ => {
+                    event!(
+                        Level::ERROR,
+                        "Received unexpected token during login response parsing. \
+                 Check that all tokens from the registry are handled."
+                    );
+                }
             }
-            token = token_stream_reader.receive_token().await;
         }
+        // If receive_token() returns Err(e), the while let loop ends automatically.
 
         response_model
     }

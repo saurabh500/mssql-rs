@@ -9,32 +9,32 @@ use crate::{
     read_write::packet_reader::PacketReader,
     token::{
         fed_auth_info::FedAuthInfoId,
-        login_ack::{LoginAck, SqlInterfaceType},
+        login_ack::{LoginAckToken, SqlInterfaceType},
         tokens::{
-            CharsetEnvChangeToken, CurrentCommand, DatabaseEnvChangeToken, DoneStatus,
-            EnvChangeTokenSubType, InfoToken, LanguageEnvChangeToken, PacketSizeEnvChangeToken,
-            RoutingEnvChangeToken, SqlCollation, SqlCollationEnvChangeToken, TokenType,
+            CurrentCommand, DoneStatus, EnvChangeContainer, EnvChangeTokenSubType, InfoToken,
+            SqlCollation, TokenType,
         },
     },
 };
 
 use super::{
     fed_auth_info::FedAuthInfoToken,
-    tokens::{DoneInProcToken, DoneProcToken, DoneToken, ErrorToken, Token},
+    tokens::{DoneInProcToken, DoneProcToken, DoneToken, EnvChangeToken, ErrorToken, Tokens},
 };
 
 #[async_trait]
-pub trait TokenParser {
-    async fn parse(&self, packet_reader: &mut PacketReader) -> Result<Box<dyn Token>, Error>;
+pub(crate) trait TokenParser {
+    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error>;
 }
 
+#[derive(Debug, Default)]
 pub(crate) struct EnvChangeTokenParser {
     // fields omitted
 }
 
 #[async_trait]
 impl TokenParser for EnvChangeTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Box<dyn Token>, Error> {
+    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
         let _token_length = reader.read_uint16().await?;
         let sub_type = reader.read_byte().await?;
         let token_sub_type = EnvChangeTokenSubType::from(sub_type);
@@ -44,27 +44,22 @@ impl TokenParser for EnvChangeTokenParser {
             TokenType::EnvChange,
             token_sub_type
         );
-        event!(
-            tracing::Level::DEBUG,
-            "Parsing EnvChangeSubtype {:?} token",
-            token_sub_type
-        );
 
-        let token: Box<dyn Token> = match token_sub_type {
+        let token_value_change: EnvChangeContainer = match token_sub_type {
             EnvChangeTokenSubType::Database => {
                 let new_value = reader.read_varchar_u8_length().await?;
                 let old_value = reader.read_varchar_u8_length().await?;
-                Box::new(DatabaseEnvChangeToken::new(old_value, new_value))
+                EnvChangeContainer::from((old_value, new_value))
             }
             EnvChangeTokenSubType::Language => {
                 let new_value = reader.read_varchar_u8_length().await?;
                 let old_value = reader.read_varchar_u8_length().await?;
-                Box::new(LanguageEnvChangeToken::new(old_value, new_value))
+                EnvChangeContainer::from((old_value, new_value))
             }
             EnvChangeTokenSubType::CharacterSet => {
                 let new_value = reader.read_varchar_u8_length().await?;
                 let old_value = reader.read_varchar_u8_length().await?;
-                Box::new(CharsetEnvChangeToken::new(old_value, new_value))
+                EnvChangeContainer::from((old_value, new_value))
             }
             EnvChangeTokenSubType::PacketSize => {
                 let new_value_string = reader.read_varchar_u8_length().await?;
@@ -75,7 +70,7 @@ impl TokenParser for EnvChangeTokenParser {
                 let old_value = old_value_string.parse::<u32>().map_err(|_| {
                     Error::new(std::io::ErrorKind::InvalidData, "Invalid old packet size")
                 })?;
-                Box::new(PacketSizeEnvChangeToken::new(old_value, new_value))
+                EnvChangeContainer::from((old_value, new_value))
             }
             EnvChangeTokenSubType::UnicodeDataSortingLocalId => todo!(),
             EnvChangeTokenSubType::UnicodeDataSortingComparisonFlags => todo!(),
@@ -84,10 +79,7 @@ impl TokenParser for EnvChangeTokenParser {
                 let new_bytes = reader.read_u8_varbyte().await?;
                 let old_collation = SqlCollation::new(&old_bytes);
                 let new_collation = SqlCollation::new(&new_bytes);
-                Box::new(SqlCollationEnvChangeToken::new(
-                    old_collation,
-                    new_collation,
-                ))
+                EnvChangeContainer::from((old_collation, new_collation))
             }
             EnvChangeTokenSubType::BeginTransaction => todo!(),
             EnvChangeTokenSubType::CommitTransaction => todo!(),
@@ -126,21 +118,24 @@ impl TokenParser for EnvChangeTokenParser {
                     });
                 }
 
-                Box::new(RoutingEnvChangeToken::new(routing_info, old_routing_info))
+                EnvChangeContainer::from((old_routing_info, routing_info))
             }
         };
-
-        Ok(token)
+        Ok(Tokens::from(EnvChangeToken {
+            sub_type: token_sub_type,
+            change_type: token_value_change,
+        }))
     }
 }
 
+#[derive(Debug, Default)]
 pub(crate) struct LoginAckTokenParser {
     // fields omitted
 }
 
 #[async_trait]
 impl TokenParser for LoginAckTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Box<dyn Token>, Error> {
+    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
         event!(
             tracing::Level::DEBUG,
             "Parsing LoginAck token with type: 0x{:02X}",
@@ -166,7 +161,7 @@ impl TokenParser for LoginAckTokenParser {
             (((build_hi as u16) << 8) | build_low as u16) as u16,
             0,
         );
-        Ok(Box::new(LoginAck {
+        Ok(Tokens::from(LoginAckToken {
             interface_type: interface,
             tds_version,
             prog_name,
@@ -181,14 +176,14 @@ pub(crate) struct DoneTokenParser {
 
 #[async_trait]
 impl TokenParser for DoneTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Box<dyn Token>, Error> {
+    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
         let current_command = CurrentCommand::try_from(current_command_value).unwrap();
         let row_count = reader.read_uint64().await?;
 
-        Ok(Box::new(DoneToken {
+        Ok(Tokens::from(DoneToken {
             status: done_status,
             cur_cmd: current_command,
             row_count,
@@ -196,20 +191,21 @@ impl TokenParser for DoneTokenParser {
     }
 }
 
+#[derive(Debug, Default)]
 pub(crate) struct DoneInProcTokenParser {
     // fields omitted
 }
 
 #[async_trait]
 impl TokenParser for DoneInProcTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Box<dyn Token>, Error> {
+    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
         let current_command = CurrentCommand::try_from(current_command_value).unwrap();
         let row_count = reader.read_uint64().await?;
 
-        Ok(Box::new(DoneInProcToken {
+        Ok(Tokens::from(DoneInProcToken {
             status: done_status,
             cur_cmd: current_command,
             row_count,
@@ -217,20 +213,21 @@ impl TokenParser for DoneInProcTokenParser {
     }
 }
 
+#[derive(Debug, Default)]
 pub(crate) struct DoneProcTokenParser {
     // fields omitted
 }
 
 #[async_trait]
 impl TokenParser for DoneProcTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Box<dyn Token>, Error> {
+    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
         let current_command = CurrentCommand::try_from(current_command_value).unwrap();
         let row_count = reader.read_uint64().await?;
 
-        Ok(Box::new(DoneProcToken {
+        Ok(Tokens::from(DoneProcToken {
             status: done_status,
             cur_cmd: current_command,
             row_count,
@@ -238,13 +235,14 @@ impl TokenParser for DoneProcTokenParser {
     }
 }
 
+#[derive(Debug, Default)]
 pub(crate) struct InfoTokenParser {
     // fields omitted
 }
 
 #[async_trait]
 impl TokenParser for InfoTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Box<dyn Token>, Error> {
+    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
         let _length = reader.read_uint16().await?;
         let number = reader.read_uint32().await?;
         let state = reader.read_byte().await?;
@@ -256,7 +254,7 @@ impl TokenParser for InfoTokenParser {
 
         event!(tracing::Level::INFO, "Info message: {:?}", message);
 
-        Ok(Box::new(InfoToken {
+        Ok(Tokens::from(InfoToken {
             number,
             state,
             severity,
@@ -268,13 +266,14 @@ impl TokenParser for InfoTokenParser {
     }
 }
 
+#[derive(Debug, Default)]
 pub(crate) struct ErrorTokenParser {
     // fields omitted
 }
 
 #[async_trait]
 impl TokenParser for ErrorTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Box<dyn Token>, Error> {
+    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
         event!(
             tracing::Level::DEBUG,
             "Parsing Error token with type: 0x{:02X}",
@@ -292,7 +291,7 @@ impl TokenParser for ErrorTokenParser {
 
         let line_number = reader.read_uint32().await?;
 
-        Ok(Box::new(ErrorToken {
+        Ok(Tokens::from(ErrorToken {
             number,
             state,
             severity,
@@ -303,7 +302,7 @@ impl TokenParser for ErrorTokenParser {
         }))
     }
 }
-
+#[derive(Debug, Default)]
 pub(crate) struct FedAuthInfoTokenParser {
     // fields omitted
 }
@@ -314,7 +313,7 @@ impl FedAuthInfoTokenParser {
 
 #[async_trait]
 impl TokenParser for FedAuthInfoTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Box<dyn Token>, Error> {
+    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
         let _length = reader.read_int32().await?;
 
         let options_count = reader.read_uint32().await?;
@@ -367,17 +366,17 @@ impl TokenParser for FedAuthInfoTokenParser {
             }
         }
 
-        Ok(Box::new(FedAuthInfoToken { spn, sts_url }))
+        Ok(Tokens::from(FedAuthInfoToken { spn, sts_url }))
     }
 }
-
+#[derive(Debug, Default)]
 pub(crate) struct FeatureExtAckTokenParser {
     // fields omitted
 }
 
 #[async_trait]
 impl TokenParser for FeatureExtAckTokenParser {
-    async fn parse(&self, _reader: &mut PacketReader) -> Result<Box<dyn Token>, Error> {
+    async fn parse(&self, _reader: &mut PacketReader) -> Result<Tokens, Error> {
         unimplemented!()
     }
 }

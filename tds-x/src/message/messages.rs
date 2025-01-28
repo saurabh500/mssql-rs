@@ -1,6 +1,9 @@
-use crate::read_write::{
-    packet_writer::PacketWriter,
-    reader_writer::{NetworkReader, NetworkWriter},
+use crate::{
+    read_write::{
+        packet_writer::PacketWriter,
+        reader_writer::{NetworkReader, NetworkWriter},
+    },
+    token::tokens::ErrorToken,
 };
 use async_trait::async_trait;
 
@@ -49,8 +52,18 @@ pub trait TypedResponse<T> {
     async fn deserialize(&self, reader: &mut dyn NetworkReader) -> T;
 }
 
-pub struct TdsError {
-    // TODO:
+pub(crate) struct TdsError {
+    error_token: ErrorToken,
+}
+
+impl TdsError {
+    pub fn new(error_token: ErrorToken) -> Self {
+        TdsError { error_token }
+    }
+
+    pub fn get_message(&self) -> String {
+        self.error_token.message.clone()
+    }
 }
 
 pub struct TdsInfo {}

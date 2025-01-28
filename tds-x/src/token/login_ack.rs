@@ -18,14 +18,14 @@ impl From<u8> for SqlInterfaceType {
     }
 }
 
-pub struct LoginAck {
+pub struct LoginAckToken {
     pub interface_type: SqlInterfaceType,
     pub tds_version: TdsVersion,
     pub prog_name: String,
     pub prog_version: Version,
 }
 
-impl Token for LoginAck {
+impl Token for LoginAckToken {
     fn token_type(&self) -> TokenType {
         TokenType::LoginAck
     }

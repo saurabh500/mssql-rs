@@ -4,7 +4,7 @@ use crate::connection::client_context::ClientContext;
 use crate::core::EncryptionSetting;
 use crate::message::login::{
     EnvChangeProperties, Feature, LoginRequest, LoginRequestModel, LoginResponse,
-    LoginResponseModel,
+    LoginResponseModel, LoginResponseStatus,
 };
 use crate::message::messages::{Request, TypedResponse};
 use crate::message::prelogin::{
@@ -199,6 +199,7 @@ impl PreloginHandler<'_, '_> {
 struct LoginResult {
     supported_features: Vec<Box<dyn Feature>>,
     change_properties: EnvChangeProperties,
+    status: LoginResponseStatus,
 }
 
 pub struct LoginHandler<'a, 'n> {
@@ -216,26 +217,14 @@ impl LoginHandler<'_, '_> {
 
         let _request_model = self.send_login7_request(reader_writer).await;
         let login_response = self.get_login_response(reader_writer).await;
-        // let response = LoginResponse {
-        //     model: LoginResponseModel {
-        //         change_properties: EnvChangeProperties {
-        //             database_collation: SqlCollation::new(&[0u8; 5]).unwrap(),
-        //             packet_size: 0,
-        //             language: "".to_string(),
-        //             database: "".to_string(),
-        //             char_set: None,
-        //             routing_information: RoutingInfo {},
-        //         },
-        //         features: FeaturesRequest {
-        //             features: Default::default(),
-        //         },
-        //         tds_error: None,
-        //         login_ack_token: 0,
-        //     },
-        // };
+
+        // TODO Handle the response.
+        let response_status = login_response.get_status();
+
         LoginResult {
             supported_features: vec![],
             change_properties: login_response.change_properties,
+            status: response_status,
         }
     }
 
