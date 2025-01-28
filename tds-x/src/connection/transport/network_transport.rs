@@ -7,7 +7,9 @@ use std::io::Error;
 use tokio::io::{split, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-pub async fn create_transport(context: &ClientContext) -> Result<Box<NetworkTransport>, Error> {
+pub(crate) async fn create_transport(
+    context: &ClientContext,
+) -> Result<Box<NetworkTransport>, Error> {
     let connect_result = TcpStream::connect((context.server_name.as_str(), context.port)).await;
     match connect_result {
         Ok(stream) => {
@@ -34,6 +36,7 @@ pub async fn create_transport(context: &ClientContext) -> Result<Box<NetworkTran
                 Ok((encrypted_reader, encrypted_writer)) => {
                     let transport = Box::new(NetworkTransport {
                         context,
+                        encryption: context.encryption,
                         reader: encrypted_reader,
                         writer: encrypted_writer,
                         ssl_handler: Box::new(ssl_handler),
@@ -74,8 +77,9 @@ impl StreamRecoverer for TcpStreamRecoverer {
     }
 }
 
-pub struct NetworkTransport<'a> {
+pub(crate) struct NetworkTransport<'a> {
     context: &'a ClientContext,
+    encryption: EncryptionSetting,
     reader: Box<dyn AsyncRead + Unpin + Send + 'a>,
     writer: Box<dyn AsyncWrite + Unpin + Send + 'a>,
     ssl_handler: Box<dyn SslHandler + 'a>,
@@ -86,6 +90,10 @@ impl NetworkTransport<'_> {
     pub(crate) async fn send(&mut self, data: &[u8]) -> Result<(), Error> {
         self.writer.write_all(data).await?;
         Ok(())
+    }
+
+    pub(crate) fn notify_encryption_negotiation(&mut self, encryption: EncryptionSetting) {
+        self.encryption = encryption;
     }
 
     /// Asynchronously reads data from the underlying network transport
@@ -245,6 +253,7 @@ pub(crate) mod tests {
         (
             NetworkTransport {
                 context,
+                encryption: context.encryption,
                 reader: Box::new(reader),
                 writer: Box::new(writer),
                 ssl_handler,
@@ -268,6 +277,7 @@ pub(crate) mod tests {
         (
             NetworkTransport {
                 context,
+                encryption: context.encryption,
                 reader: Box::new(reader),
                 writer: Box::new(writer),
                 ssl_handler,
@@ -275,6 +285,7 @@ pub(crate) mod tests {
             },
             NetworkTransport {
                 context,
+                encryption: context.encryption,
                 reader: Box::new(server_reader),
                 writer: Box::new(server_writer),
                 ssl_handler: Box::new(MockSslHandler),
@@ -332,6 +343,7 @@ pub(crate) mod tests {
         // 4) Build our transport
         //    (In a real scenario, you'll also set ssl_handler, stream_recoverer, etc.)
         let mut transport = NetworkTransport {
+            encryption: context.encryption,
             reader: Box::new(reader),
             writer: Box::new(client_writer),
             ssl_handler,

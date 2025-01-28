@@ -1,7 +1,7 @@
 use super::transport::network_transport::NetworkTransport;
-use crate::handler::handler_factory::SessionSettings;
+use crate::handler::handler_factory::NegotiatedSettings;
 
 pub struct TdsConnection<'a> {
-    pub transport: Box<NetworkTransport<'a>>,
-    pub(crate) session_settings: SessionSettings,
+    pub(crate) transport: Box<NetworkTransport<'a>>,
+    pub(crate) negotiated_settings: NegotiatedSettings,
 }

@@ -37,33 +37,15 @@ impl TokenStreamReader<'_> {
         );
 
         match parser {
-            TokenParsers::EnvChange(parser) => {
-                return parser.parse(&mut self.packet_reader).await;
-            }
-            TokenParsers::LoginAck(parser) => {
-                return parser.parse(&mut self.packet_reader).await;
-            }
-            TokenParsers::Done(parser) => {
-                return parser.parse(&mut self.packet_reader).await;
-            }
-            TokenParsers::DoneInProc(parser) => {
-                return parser.parse(&mut self.packet_reader).await;
-            }
-            TokenParsers::DoneProc(parser) => {
-                return parser.parse(&mut self.packet_reader).await;
-            }
-            TokenParsers::Info(parser) => {
-                return parser.parse(&mut self.packet_reader).await;
-            }
-            TokenParsers::Error(parser) => {
-                return parser.parse(&mut self.packet_reader).await;
-            }
-            TokenParsers::FedAuthInfo(parser) => {
-                return parser.parse(&mut self.packet_reader).await;
-            }
-            TokenParsers::FeatureExtAck(parser) => {
-                return parser.parse(&mut self.packet_reader).await;
-            }
+            TokenParsers::EnvChange(parser) => parser.parse(&mut self.packet_reader).await,
+            TokenParsers::LoginAck(parser) => parser.parse(&mut self.packet_reader).await,
+            TokenParsers::Done(parser) => parser.parse(&mut self.packet_reader).await,
+            TokenParsers::DoneInProc(parser) => parser.parse(&mut self.packet_reader).await,
+            TokenParsers::DoneProc(parser) => parser.parse(&mut self.packet_reader).await,
+            TokenParsers::Info(parser) => parser.parse(&mut self.packet_reader).await,
+            TokenParsers::Error(parser) => parser.parse(&mut self.packet_reader).await,
+            TokenParsers::FedAuthInfo(parser) => parser.parse(&mut self.packet_reader).await,
+            TokenParsers::FeatureExtAck(parser) => parser.parse(&mut self.packet_reader).await,
         }
     }
 }

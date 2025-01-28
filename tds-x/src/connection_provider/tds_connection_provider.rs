@@ -23,14 +23,14 @@ impl TdsConnectionProvider {
                     packet_size: context.packet_size as u32,
                 };
 
-                let session_settings = factory
+                let negotiated_settings = factory
                     .session_handler()
                     .execute(&mut network_reader_writer)
                     .await?;
 
                 Ok(TdsConnection {
                     transport: result,
-                    session_settings,
+                    negotiated_settings,
                 })
             }
             Err(err) => Err(err),

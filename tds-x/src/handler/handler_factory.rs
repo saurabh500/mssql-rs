@@ -11,6 +11,7 @@ use crate::message::prelogin::{
     EncryptionType, PreloginRequest, PreloginRequestModel, PreloginResponse,
 };
 use crate::read_write::reader_writer::NetworkReaderWriter;
+use crate::token::tokens::SqlCollation;
 use uuid::Uuid;
 
 pub(crate) struct HandlerFactory<'a> {
@@ -33,13 +34,6 @@ impl HandlerFactory<'_> {
         SessionHandler { factory: self }
     }
 
-    fn create_session_settings(
-        &self,
-        _supported_features: Vec<Box<dyn Feature>>,
-    ) -> SessionSettings {
-        SessionSettings {}
-    }
-
     fn create_login_request(&self) -> LoginRequest {
         let model = self.create_login_model();
         LoginRequest { model }
@@ -54,16 +48,61 @@ impl HandlerFactory<'_> {
     }
 }
 
-#[derive(Clone)]
+pub(crate) struct NegotiatedSettings {
+    pub session_settings: SessionSettings,
+    pub encryption: EncryptionSetting,
+}
+
 pub(crate) struct SessionSettings {
-    //TODO
-    // supported_features: Vec<&'a dyn Feature>,
+    pub database_collation: SqlCollation,
+    pub packet_size: u32,
+    pub language: String,
+    pub database: String,
+    pub char_set: String,
+    pub server_name: String,
+    pub user_name: String,
+    supported_features: Vec<Box<dyn Feature>>,
+    mars_enabled: bool,
 }
 
 impl SessionSettings {
-    fn update_settings(&self, _change_properties: &EnvChangeProperties) {
-        // todo!()
-        // Need to populate this information.
+    // Note that this destructively consumes the features list.
+    fn new(context: &ClientContext, feautures: &mut Vec<Box<dyn Feature>>) -> Self {
+        let mut result = SessionSettings {
+            database_collation: Default::default(),
+            packet_size: context.packet_size as u32,
+            language: context.language.clone(),
+            database: context.database.clone(),
+            char_set: "".to_string(),
+            server_name: context.server_name.clone(),
+            user_name: context.user_name.clone(),
+            supported_features: vec![],
+            mars_enabled: context.mars_enabled,
+        };
+        result.supported_features.append(feautures);
+        result
+    }
+
+    fn update_settings(&mut self, change_properties: &EnvChangeProperties) {
+        if change_properties.char_set.is_some() {
+            self.char_set = change_properties.char_set.clone().unwrap();
+        }
+
+        if change_properties.database_collation.is_some() {
+            self.database_collation = change_properties.database_collation.clone().unwrap();
+        }
+
+        if change_properties.language.is_some() {
+            self.language = change_properties.language.clone().unwrap();
+        }
+
+        if change_properties.database.is_some() {
+            self.database = change_properties.database.clone().unwrap();
+        }
+
+        if change_properties.packet_size > 0 {
+            self.packet_size = change_properties.packet_size as u32;
+        }
     }
 }
 
@@ -75,18 +114,20 @@ impl SessionHandler<'_, '_> {
     pub(crate) async fn execute(
         &mut self,
         reader_writer: &mut impl NetworkReaderWriter,
-    ) -> Result<SessionSettings, Error> {
+    ) -> Result<NegotiatedSettings, Error> {
         let pre_login_result = self.get_pre_login_result(reader_writer).await?;
-        self.validate_and_apply_prelogin_result(pre_login_result);
-        let login_result = self.get_login_result(reader_writer).await;
-        self.validate_and_apply_login_result(&login_result);
+        self.validate_prelogin_result(&pre_login_result)?;
 
-        let settings = self
-            .factory
-            .create_session_settings(login_result.supported_features);
-        settings.update_settings(&login_result.change_properties);
+        // Note: This must happen before login because the login process can use the negotiated
+        // encryption setting.
+        reader_writer.notify_encryption_setting_change(pre_login_result.encryption_setting);
 
-        Ok(settings)
+        let mut login_result = self.get_login_result(reader_writer).await;
+        self.validate_login_result(&login_result)?;
+
+        let negotiated_settings = self.negotiate_settings(&pre_login_result, &mut login_result);
+
+        Ok(negotiated_settings)
     }
 
     async fn get_pre_login_result(
@@ -101,28 +142,31 @@ impl SessionHandler<'_, '_> {
         Ok(result)
     }
 
-    fn validate_and_apply_login_result(&self, _login_result: &LoginResult) {
-        // todo!("save the results from login response");
-        // var changeProps = loginResult.ChangeProperties;
-
-        // if (changeProps.PacketSize > 0)
-        // {
-        //     this.clientContext.PacketSize = (short)loginResult.ChangeProperties.PacketSize;
-        // }
-
-        // if (!string.IsNullOrEmpty(changeProps.Language))
-        // {
-        //     this.clientContext.Language = changeProps.Language;
-        // }
-
-        // if (!string.IsNullOrEmpty(changeProps.Database))
-        // {
-        //     this.clientContext.Database = changeProps.Database;
-        // }
+    fn validate_prelogin_result(&self, _result: &PreloginResult) -> Result<(), Error> {
+        // TBDif sever does not support fed auth and client expects fed auth then throw an exception.
+        Ok(())
     }
 
-    fn validate_and_apply_prelogin_result(&self, _prelogin_result: PreloginResult) {
-        // todo!("save the encryption settings");
+    fn validate_login_result(&self, _result: &LoginResult) -> Result<(), Error> {
+        // No validation currently.
+        Ok(())
+    }
+
+    fn negotiate_settings(
+        &self,
+        prelogin_result: &PreloginResult,
+        login_result: &mut LoginResult,
+    ) -> NegotiatedSettings {
+        let change_props = &login_result.change_properties;
+
+        let mut session_settings =
+            SessionSettings::new(self.factory.context, &mut login_result.supported_features);
+        session_settings.update_settings(change_props);
+
+        NegotiatedSettings {
+            session_settings,
+            encryption: prelogin_result.encryption_setting,
+        }
     }
 
     async fn get_login_result(

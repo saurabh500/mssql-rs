@@ -1,4 +1,5 @@
 use crate::connection::transport::network_transport::NetworkTransport;
+use crate::core::EncryptionSetting;
 use async_trait::async_trait;
 use std::io::Error;
 
@@ -15,7 +16,9 @@ pub trait NetworkReader: Send {
 }
 
 #[async_trait]
-pub trait NetworkReaderWriter: NetworkReader + NetworkWriter {}
+pub trait NetworkReaderWriter: NetworkReader + NetworkWriter {
+    fn notify_encryption_setting_change(&mut self, setting: EncryptionSetting);
+}
 
 pub struct NetworkReaderWriterImpl<'a, 'n> {
     pub(crate) transport: &'a mut NetworkTransport<'n>, // Enforce that this struct has a shorter lifetime than the transport.
@@ -46,7 +49,11 @@ impl NetworkWriter for NetworkReaderWriterImpl<'_, '_> {
 }
 
 #[async_trait]
-impl NetworkReaderWriter for NetworkReaderWriterImpl<'_, '_> {}
+impl NetworkReaderWriter for NetworkReaderWriterImpl<'_, '_> {
+    fn notify_encryption_setting_change(&mut self, setting: EncryptionSetting) {
+        self.transport.notify_encryption_negotiation(setting);
+    }
+}
 
 #[cfg(test)]
 mod tests {

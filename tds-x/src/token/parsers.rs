@@ -155,12 +155,8 @@ impl TokenParser for LoginAckTokenParser {
         let build_hi = reader.read_byte().await?;
         let build_low = reader.read_byte().await?;
 
-        let prog_version = Version::new(
-            major,
-            minor,
-            (((build_hi as u16) << 8) | build_low as u16) as u16,
-            0,
-        );
+        let prog_version =
+            Version::new(major, minor, ((build_hi as u16) << 8) | build_low as u16, 0);
         Ok(Tokens::from(LoginAckToken {
             interface_type: interface,
             tds_version,

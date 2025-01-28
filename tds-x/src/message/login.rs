@@ -32,10 +32,10 @@ pub struct RoutingInfo {
 
 #[derive(Default)]
 pub struct EnvChangeProperties {
-    pub database_collation: SqlCollation,
+    pub database_collation: Option<SqlCollation>,
     pub packet_size: i32,
-    pub language: String,
-    pub database: String,
+    pub language: Option<String>,
+    pub database: Option<String>,
     pub char_set: Option<String>,
     pub routing_information: Option<RoutingInfo>,
 }
@@ -201,10 +201,12 @@ impl LoginResponseModel {
         match change_token.change_type {
             EnvChangeContainer::String(string_change) => match sub_type {
                 EnvChangeTokenSubType::Database => {
-                    self.change_properties.database = string_change.new_value().clone();
+                    self.change_properties.database =
+                        Option::from(string_change.new_value().clone());
                 }
                 EnvChangeTokenSubType::Language => {
-                    self.change_properties.language = string_change.new_value().clone();
+                    self.change_properties.language =
+                        Option::from(string_change.new_value().clone());
                 }
                 EnvChangeTokenSubType::CharacterSet => {
                     self.change_properties.char_set = Some(string_change.new_value().clone());
@@ -218,7 +220,8 @@ impl LoginResponseModel {
                 }
             },
             EnvChangeContainer::SqlCollation(collation_change) => {
-                self.change_properties.database_collation = collation_change.new_value().clone();
+                self.change_properties.database_collation =
+                    Option::from(collation_change.new_value().clone());
             }
             EnvChangeContainer::UInt32(numeric_change) => match sub_type {
                 EnvChangeTokenSubType::PacketSize => {

@@ -314,22 +314,19 @@ impl<'a, 'n> Serializer<'a, 'n> {
     async fn write_encryption(&mut self) -> Result<(), Error> {
         match self.model.encryption_setting {
             EncryptionSetting::Optional => {
-                return self
-                    .payload_writer
+                self.payload_writer
                     .write_byte_async(EncryptionType::On as u8)
-                    .await;
+                    .await
             }
             EncryptionSetting::Required => {
-                return self
-                    .payload_writer
+                self.payload_writer
                     .write_byte_async(EncryptionType::Required as u8)
-                    .await;
+                    .await
             }
             _ => {
-                return self
-                    .payload_writer
+                self.payload_writer
                     .write_byte_async(EncryptionType::NotSupported as u8)
-                    .await;
+                    .await
             }
         }
     }
