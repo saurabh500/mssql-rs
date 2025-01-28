@@ -75,8 +75,8 @@ impl SessionHandler<'_, '_> {
     pub(crate) async fn execute(
         &mut self,
         reader_writer: &mut impl NetworkReaderWriter,
-    ) -> SessionSettings {
-        let pre_login_result = self.get_pre_login_result(reader_writer).await;
+    ) -> Result<SessionSettings, Error> {
+        let pre_login_result = self.get_pre_login_result(reader_writer).await?;
         self.validate_and_apply_prelogin_result(pre_login_result);
         let login_result = self.get_login_result(reader_writer).await;
         self.validate_and_apply_login_result(&login_result);
@@ -86,14 +86,19 @@ impl SessionHandler<'_, '_> {
             .create_session_settings(login_result.supported_features);
         settings.update_settings(&login_result.change_properties);
 
-        settings
+        Ok(settings)
     }
 
     async fn get_pre_login_result(
         &self,
         reader_writer: &mut impl NetworkReaderWriter,
-    ) -> PreloginResult {
-        self.factory.prelogin_handler().execute(reader_writer).await
+    ) -> Result<PreloginResult, Error> {
+        let result = self
+            .factory
+            .prelogin_handler()
+            .execute(reader_writer)
+            .await?;
+        Ok(result)
     }
 
     fn validate_and_apply_login_result(&self, _login_result: &LoginResult) {
@@ -140,7 +145,10 @@ pub struct PreloginHandler<'a, 'n> {
 }
 
 impl PreloginHandler<'_, '_> {
-    async fn execute(&self, reader_writer: &mut impl NetworkReaderWriter) -> PreloginResult {
+    async fn execute(
+        &self,
+        reader_writer: &mut impl NetworkReaderWriter,
+    ) -> Result<PreloginResult, Error> {
         // Create the request.
         let request_model = PreloginRequestModel::new(
             Uuid::new_v4(),
@@ -153,7 +161,7 @@ impl PreloginHandler<'_, '_> {
         };
 
         // Serialize it.
-        prelogin_request.serialize(reader_writer).await;
+        prelogin_request.serialize(reader_writer).await?;
 
         // Return result (which contains data model).
         let response = PreloginResponse {};
@@ -170,10 +178,10 @@ impl PreloginHandler<'_, '_> {
         }
 
         if request_model.encryption_setting == EncryptionSetting::Strict {
-            return PreloginResult {
+            return Ok(PreloginResult {
                 encryption_setting: EncryptionSetting::Strict,
                 is_fed_auth_supported: response_model.federated_auth_supported,
-            };
+            });
         }
 
         if response_model.encryption == EncryptionType::NotSupported {
@@ -183,16 +191,16 @@ impl PreloginHandler<'_, '_> {
         if request_model.encryption_setting == EncryptionSetting::Optional
             && response_model.encryption == EncryptionType::Off
         {
-            return PreloginResult {
+            return Ok(PreloginResult {
                 encryption_setting: EncryptionSetting::LoginOnly,
                 is_fed_auth_supported: response_model.federated_auth_supported,
-            };
+            });
         }
 
-        PreloginResult {
+        Ok(PreloginResult {
             encryption_setting: EncryptionSetting::Required,
             is_fed_auth_supported: response_model.federated_auth_supported,
-        }
+        })
     }
 }
 
@@ -242,7 +250,7 @@ impl LoginHandler<'_, '_> {
         if self.encryption == EncryptionSetting::LoginOnly {
             todo!("TDS 7.4 implementation");
         } else {
-            request.serialize(reader_writer).await;
+            request.serialize(reader_writer).await?;
         }
         Ok(request.model)
     }

@@ -1,3 +1,5 @@
+use std::io::Error;
+
 use crate::{
     read_write::{
         packet_writer::PacketWriter,
@@ -44,7 +46,7 @@ pub(crate) enum PacketStatusFlags {
 pub trait Request<'a> {
     fn packet_type(&self) -> PacketType;
     fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a>;
-    async fn serialize(&self, _transport: &mut dyn NetworkWriter);
+    async fn serialize(&self, _transport: &mut dyn NetworkWriter) -> Result<(), Error>;
 }
 
 #[async_trait(?Send)]

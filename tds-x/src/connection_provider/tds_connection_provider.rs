@@ -26,7 +26,7 @@ impl TdsConnectionProvider {
                 let session_settings = factory
                     .session_handler()
                     .execute(&mut network_reader_writer)
-                    .await;
+                    .await?;
 
                 Ok(TdsConnection {
                     transport: result,

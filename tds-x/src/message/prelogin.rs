@@ -8,6 +8,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use std::collections::VecDeque;
+use std::io::Error;
 use std::sync::atomic::AtomicI32;
 use std::sync::atomic::Ordering::Relaxed;
 use std::thread;
@@ -153,10 +154,11 @@ impl<'a> Request<'a> for PreloginRequest<'a> {
         PacketWriter::new(self.packet_type(), writer)
     }
 
-    async fn serialize(&self, writer: &mut dyn NetworkWriter) {
+    async fn serialize(&self, writer: &mut dyn NetworkWriter) -> Result<(), Error> {
         let mut packet_writer = self.create_packet_writer(writer);
         let mut serializer = Serializer::new(self.model, &mut packet_writer);
-        serializer.serialize().await
+        serializer.serialize().await?;
+        Ok(())
     }
 }
 
@@ -258,125 +260,145 @@ impl<'a, 'n> Serializer<'a, 'n> {
             instance_bytes: model.database_instance.as_bytes(),
         }
     }
-    async fn serialize(&mut self) {
+    async fn serialize(&mut self) -> Result<(), Error> {
         // Write headers then terminate the header table.
-        self.write_headers().await;
-        self.write_terminator().await;
+        self.write_headers().await?;
+        self.write_terminator().await?;
 
         // Write data values. Must be the same order was what's in write_headers.
-        self.write_version().await;
-        self.write_encryption().await;
-        self.write_inst_opt().await;
-        self.write_thread_id().await;
-        self.write_mars().await;
-        self.write_trace_id().await;
-        self.write_fed_auth_required().await;
+        self.write_version().await?;
+        self.write_encryption().await?;
+        self.write_inst_opt().await?;
+        self.write_thread_id().await?;
+        self.write_mars().await?;
+        self.write_trace_id().await?;
+        self.write_fed_auth_required().await?;
 
-        self.payload_writer.finalize().await;
+        self.payload_writer.finalize().await?;
+        Ok(())
     }
 
-    async fn write_headers(&mut self) {
-        self.write_option_metadata(OptionType::Version, 6).await;
-        self.write_option_metadata(OptionType::Encryption, 1).await;
+    async fn write_headers(&mut self) -> Result<(), Error> {
+        self.write_option_metadata(OptionType::Version, 6).await?;
+        self.write_option_metadata(OptionType::Encryption, 1)
+            .await?;
         self.write_option_metadata(OptionType::InstOpt, (self.instance_bytes.len() + 1) as u16)
-            .await;
-        self.write_option_metadata(OptionType::ThreadId, 4).await;
-        self.write_option_metadata(OptionType::Mars, 1).await;
+            .await?;
+        self.write_option_metadata(OptionType::ThreadId, 4).await?;
+        self.write_option_metadata(OptionType::Mars, 1).await?;
 
         let length = (16 + 16 + 4) as u16; // two GUIDs and one 32-bit integer.
         self.write_option_metadata(OptionType::TraceId, length)
-            .await;
+            .await?;
         self.write_option_metadata(OptionType::FedAuthRequired, 1)
-            .await;
+            .await?;
+        Ok(())
     }
 
-    async fn write_version(&mut self) {
+    async fn write_version(&mut self) -> Result<(), Error> {
         self.payload_writer
             .write_byte_async(self.model.sdk_version.major)
-            .await;
+            .await?;
         self.payload_writer
             .write_byte_async(self.model.sdk_version.minor)
-            .await;
+            .await?;
         self.payload_writer
             .write_i16_be_async(self.model.sdk_version.build as i16)
-            .await;
+            .await?;
         self.payload_writer
             .write_i16_be_async(self.model.sdk_version.revision as i16)
-            .await;
+            .await?;
+        Ok(())
     }
 
-    async fn write_encryption(&mut self) {
+    async fn write_encryption(&mut self) -> Result<(), Error> {
         match self.model.encryption_setting {
             EncryptionSetting::Optional => {
-                self.payload_writer
+                return self
+                    .payload_writer
                     .write_byte_async(EncryptionType::On as u8)
                     .await;
             }
             EncryptionSetting::Required => {
-                self.payload_writer
+                return self
+                    .payload_writer
                     .write_byte_async(EncryptionType::Required as u8)
                     .await;
             }
             _ => {
-                self.payload_writer
+                return self
+                    .payload_writer
                     .write_byte_async(EncryptionType::NotSupported as u8)
                     .await;
             }
         }
     }
 
-    async fn write_inst_opt(&mut self) {
-        self.payload_writer.write_async(self.instance_bytes).await;
-        self.payload_writer.write_byte_async(0).await;
+    async fn write_inst_opt(&mut self) -> Result<(), Error> {
+        self.payload_writer.write_async(self.instance_bytes).await?;
+        self.payload_writer.write_byte_async(0).await?;
+        Ok(())
     }
 
-    async fn write_thread_id(&mut self) {
+    async fn write_thread_id(&mut self) -> Result<(), Error> {
         // Revisit because Rust's ThreadId is not the same numerically as the OS-level thread id.
-        self.payload_writer.write_i32_be_async(0).await;
+        self.payload_writer.write_i32_be_async(0).await?;
+        Ok(())
     }
 
-    async fn write_mars(&mut self) {
+    async fn write_mars(&mut self) -> Result<(), Error> {
         self.payload_writer
             .write_byte_async(match self.model.mars_enabled {
                 true => MarsType::On as u8,
                 false => MarsType::Off as u8,
             })
-            .await;
+            .await?;
+        Ok(())
     }
 
-    async fn write_trace_id(&mut self) {
+    async fn write_trace_id(&mut self) -> Result<(), Error> {
         let activity_id_bytes = self.model.activity_id.as_bytes();
         let connection_id_bytes = self.model.connection_id.as_bytes();
-        self.payload_writer.write_async(activity_id_bytes).await;
-        self.payload_writer.write_async(connection_id_bytes).await;
+        self.payload_writer.write_async(activity_id_bytes).await?;
+        self.payload_writer.write_async(connection_id_bytes).await?;
         self.payload_writer
             .write_i32_async(self.model.activity_sequence_number)
-            .await
+            .await?;
+        Ok(())
     }
 
-    async fn write_fed_auth_required(&mut self) {
+    async fn write_fed_auth_required(&mut self) -> Result<(), Error> {
         self.payload_writer
             .write_byte_async(match self.model.fed_auth {
                 true => FederationType::On as u8,
                 false => FederationType::Off as u8,
             })
-            .await;
+            .await?;
+        Ok(())
     }
 
-    async fn write_terminator(&mut self) {
+    async fn write_terminator(&mut self) -> Result<(), Error> {
         self.payload_writer
             .write_byte_async(OptionType::Terminator as u8)
-            .await;
+            .await?;
         self.content_next_offset += 1;
+        Ok(())
     }
 
-    async fn write_option_metadata(&mut self, option: OptionType, length: u16) {
-        self.payload_writer.write_byte_async(option as u8).await;
+    async fn write_option_metadata(
+        &mut self,
+        option: OptionType,
+        length: u16,
+    ) -> Result<(), Error> {
+        self.payload_writer.write_byte_async(option as u8).await?;
         self.payload_writer
             .write_i16_be_async(self.content_next_offset as i16)
-            .await;
-        self.payload_writer.write_i16_be_async(length as i16).await;
+            .await?;
+        self.payload_writer
+            .write_i16_be_async(length as i16)
+            .await?;
         self.content_next_offset += length as u32;
+        Ok(())
     }
 }
 
@@ -406,7 +428,7 @@ pub(crate) mod tests {
         let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock);
 
         let mut serializer = Serializer::new(&model, &mut packet_writer);
-        block_on(serializer.serialize());
+        block_on(serializer.serialize()).unwrap();
 
         let mut cursor = packet_writer.get_payload();
 
@@ -427,26 +449,26 @@ pub(crate) mod tests {
         let mut mock = MockNetworkWriter { size: 1024 };
         let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock);
         // Write headers.
-        block_on(packet_writer.write_byte_async(OptionType::Version as u8));
-        block_on(packet_writer.write_i16_be_async(0)); // offset - unused
-        block_on(packet_writer.write_i16_be_async(6)); // length.
+        block_on(packet_writer.write_byte_async(OptionType::Version as u8)).unwrap();
+        block_on(packet_writer.write_i16_be_async(0)).unwrap(); // offset - unused
+        block_on(packet_writer.write_i16_be_async(6)).unwrap(); // length.
 
-        block_on(packet_writer.write_byte_async(OptionType::Mars as u8));
-        block_on(packet_writer.write_i16_be_async(0)); // offset - unused
-        block_on(packet_writer.write_i16_be_async(6)); // length.
+        block_on(packet_writer.write_byte_async(OptionType::Mars as u8)).unwrap();
+        block_on(packet_writer.write_i16_be_async(0)).unwrap(); // offset - unused
+        block_on(packet_writer.write_i16_be_async(6)).unwrap(); // length.
 
         // Write terminator.
-        block_on(packet_writer.write_byte_async(0xFF));
+        block_on(packet_writer.write_byte_async(0xFF)).unwrap();
 
         // Write values
         // Version 15.2.3.4
-        block_on(packet_writer.write_byte_async(15));
-        block_on(packet_writer.write_byte_async(2));
-        block_on(packet_writer.write_i16_be_async(3));
-        block_on(packet_writer.write_i16_be_async(4));
+        block_on(packet_writer.write_byte_async(15)).unwrap();
+        block_on(packet_writer.write_byte_async(2)).unwrap();
+        block_on(packet_writer.write_i16_be_async(3)).unwrap();
+        block_on(packet_writer.write_i16_be_async(4)).unwrap();
 
         // Mars - enabled.
-        block_on(packet_writer.write_byte_async(1));
+        block_on(packet_writer.write_byte_async(1)).unwrap();
 
         let cursor = packet_writer.get_payload();
 

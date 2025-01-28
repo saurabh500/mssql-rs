@@ -57,7 +57,7 @@ pub trait Feature {
     fn feature_identifier(&self) -> FeatureExtension;
     fn is_requested(&self) -> bool;
     fn data_length(&self) -> i32;
-    async fn serialize(&self, packet_writer: &PacketWriter);
+    async fn serialize(&self, packet_writer: &PacketWriter) -> Result<(), Error>;
     fn deserialize(&self, data: &[u8]);
     fn is_acknowledged(&self) -> bool;
 }
@@ -280,12 +280,13 @@ impl<'a> Request<'a> for LoginRequest<'a> {
         PacketWriter::new(self.packet_type(), writer)
     }
 
-    async fn serialize(&self, transport: &mut dyn NetworkWriter) {
+    async fn serialize(&self, transport: &mut dyn NetworkWriter) -> Result<(), Error> {
         // TODO: Log the datamodel.
         let mut packet_writer = self.create_packet_writer(transport);
         let _ = Serializer::new(&self.model, &mut packet_writer)
             .serialize()
-            .await;
+            .await?;
+        Ok(())
     }
 }
 
@@ -399,51 +400,51 @@ impl Serializer<'_> {
 
     pub(crate) async fn serialize(&mut self) -> Result<(), Error> {
         // This is the place holder for the login packet. We will come back and repopulate it after constructing the login packet.
-        self.payload_writer.write_i32_async(0).await;
+        self.payload_writer.write_i32_async(0).await?;
 
         self.payload_writer
             .write_u32_async(self.model.tds_version as u32)
-            .await;
+            .await?;
 
         self.payload_writer
             .write_i32_async(self.model.user_input.packet_size as i32)
-            .await;
+            .await?;
 
         self.payload_writer
             .write_i32_async(self.model.client_prog_ver)
-            .await;
+            .await?;
 
         self.payload_writer
             .write_i32_async(self.model.client_process_id)
-            .await;
+            .await?;
 
         self.payload_writer
             .write_i32_async(self.model.connection_id_deprecated)
-            .await;
+            .await?;
 
         self.payload_writer
             .write_byte_async(self.model.option_flags1.value())
-            .await;
+            .await?;
 
         self.payload_writer
             .write_byte_async(self.model.option_flags2.value())
-            .await;
+            .await?;
 
         self.payload_writer
             .write_byte_async(self.model.type_flags.value())
-            .await;
+            .await?;
 
         self.payload_writer
             .write_byte_async(self.model.option_flags3.value())
-            .await;
+            .await?;
 
         self.payload_writer
             .write_i32_async(self.model.client_time_zone_deprecated)
-            .await;
+            .await?;
 
         self.payload_writer
             .write_i32_async(self.model.client_lcid_deprecated)
-            .await;
+            .await?;
 
         self.write_variable_length_section().await?;
 
@@ -501,12 +502,12 @@ impl Serializer<'_> {
                 LoginDeferredPayload::HostName => {
                     self.payload_writer
                         .write_string_unicode_async(&self.model.user_input.workstation_id)
-                        .await;
+                        .await?;
                 }
                 LoginDeferredPayload::UserName => {
                     self.payload_writer
                         .write_string_unicode_async(&self.model.user_input.user_name)
-                        .await;
+                        .await?;
                 }
                 LoginDeferredPayload::Password => {
                     let mut password_utf16_bytes = self
@@ -517,50 +518,52 @@ impl Serializer<'_> {
                         .flat_map(|f| f.to_le_bytes())
                         .collect::<Vec<u8>>();
                     scramble_password(&mut password_utf16_bytes);
-                    self.payload_writer.write_async(&password_utf16_bytes).await;
+                    self.payload_writer
+                        .write_async(&password_utf16_bytes)
+                        .await?;
                 }
                 LoginDeferredPayload::AppName => {
                     self.payload_writer
                         .write_string_unicode_async(&self.model.user_input.application_name)
-                        .await;
+                        .await?;
                 }
                 LoginDeferredPayload::ServerName => {
                     self.payload_writer
                         .write_string_unicode_async(&self.model.user_input.server_name)
-                        .await;
+                        .await?;
                 }
                 LoginDeferredPayload::FeatureExt => {
                     self.payload_writer
                         .write_i32_async(size_of::<i32>() as i32 + self.payload_writer.position())
-                        .await;
+                        .await?;
 
                     for feature in self.features_request.features() {
                         if feature.is_requested() {
-                            feature.serialize(self.payload_writer).await;
+                            feature.serialize(self.payload_writer).await?;
                         }
                     }
 
-                    self.payload_writer.write_byte_async(0xff).await;
+                    self.payload_writer.write_byte_async(0xff).await?;
                 }
                 LoginDeferredPayload::Library => {
                     self.payload_writer
                         .write_string_unicode_async(&self.model.user_input.library_name)
-                        .await;
+                        .await?;
                 }
                 LoginDeferredPayload::Language => {
                     self.payload_writer
                         .write_string_unicode_async(&self.model.user_input.language)
-                        .await;
+                        .await?;
                 }
                 LoginDeferredPayload::Database => {
                     self.payload_writer
                         .write_string_unicode_async(&self.model.user_input.database)
-                        .await;
+                        .await?;
                 }
                 LoginDeferredPayload::AttachDbFile => {
                     self.payload_writer
                         .write_string_unicode_async(&self.model.user_input.attach_db_file)
-                        .await;
+                        .await?;
                 }
                 LoginDeferredPayload::ChangePassword => {
                     let mut password_utf16_bytes = self
@@ -571,7 +574,9 @@ impl Serializer<'_> {
                         .flat_map(|f| f.to_le_bytes())
                         .collect::<Vec<u8>>();
                     scramble_password(&mut password_utf16_bytes);
-                    self.payload_writer.write_async(&password_utf16_bytes).await;
+                    self.payload_writer
+                        .write_async(&password_utf16_bytes)
+                        .await?;
                 }
             }
         }
@@ -579,7 +584,7 @@ impl Serializer<'_> {
         self.payload_writer
             .write_i32_at_index(0, self.content_next_offset);
 
-        self.payload_writer.finalize().await;
+        self.payload_writer.finalize().await?;
         Ok(())
     }
 
@@ -604,8 +609,8 @@ impl Serializer<'_> {
                     .push(LoginDeferredPayload::UserName);
             }
         } else {
-            self.payload_writer.write_i16_async(0).await;
-            self.payload_writer.write_i16_async(0).await;
+            self.payload_writer.write_i16_async(0).await?;
+            self.payload_writer.write_i16_async(0).await?;
         }
         Ok(())
     }
@@ -620,8 +625,8 @@ impl Serializer<'_> {
                     .push(LoginDeferredPayload::Password);
             }
         } else {
-            self.payload_writer.write_i16_async(0).await;
-            self.payload_writer.write_i16_async(0).await;
+            self.payload_writer.write_i16_async(0).await?;
+            self.payload_writer.write_i16_async(0).await?;
         }
         Ok(())
     }
@@ -651,9 +656,9 @@ impl Serializer<'_> {
     async fn write_feature_ext(&mut self) -> Result<(), Error> {
         self.payload_writer
             .write_i16_async(self.content_next_offset as i16)
-            .await;
+            .await?;
 
-        self.payload_writer.write_i16_async(4).await;
+        self.payload_writer.write_i16_async(4).await?;
 
         let feature_data_length = 0;
 
@@ -707,12 +712,12 @@ impl Serializer<'_> {
     async fn write_client_id(&mut self) -> Result<(), Error> {
         self.payload_writer
             .write_async(&self.model.client_id.address_bytes)
-            .await;
+            .await?;
         Ok(())
     }
 
     async fn write_sspi_short(&mut self) -> Result<(), Error> {
-        let _ = self.write_metadata(0).await;
+        let _ = self.write_metadata(0).await?;
         Ok(())
     }
 
@@ -739,7 +744,7 @@ impl Serializer<'_> {
     }
 
     async fn write_cb_sspi_long(&mut self) -> Result<(), Error> {
-        self.payload_writer.write_i32_async(0).await;
+        self.payload_writer.write_i32_async(0).await?;
         Ok(())
     }
 
@@ -747,15 +752,15 @@ impl Serializer<'_> {
         if char_length == 0 {
             self.payload_writer
                 .write_i16_async(self.content_next_offset as i16)
-                .await;
-            self.payload_writer.write_i16_async(0).await;
+                .await?;
+            self.payload_writer.write_i16_async(0).await?;
             return Ok(false);
         }
 
         self.payload_writer
             .write_i16_async(self.content_next_offset as i16)
-            .await;
-        self.payload_writer.write_i16_async(char_length).await;
+            .await?;
+        self.payload_writer.write_i16_async(char_length).await?;
 
         self.content_next_offset += (char_length * 2) as i32;
         Ok(true)
