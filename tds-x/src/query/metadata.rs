@@ -3,12 +3,12 @@ use crate::token::tokens::SqlCollation;
 use super::sqldatatypes::SqlDataType;
 use std::fmt;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ColumnMetadata {
     pub user_type: u32,
     pub flags: u16,
     pub data_type: SqlDataType,
-    pub length: i32,
+    pub length: usize,
     pub precision: u8,
     pub scale: u8,
     pub column_name: String,
@@ -40,4 +40,20 @@ impl fmt::Display for ColumnMetadata {
         self.is_sparse_column_set,
         self.is_encrypted)
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct ColumnEncryptionMetadata {
+    pub key_count: u8,
+    pub key_details: Vec<ColumnEncryptionKeyDetails>,
+    pub db_id: u32,
+    pub key_id: u32,
+}
+
+#[derive(Debug)]
+pub(crate) struct ColumnEncryptionKeyDetails {
+    pub encrypted_cek: Vec<u8>,
+    pub algo: String,
+    pub key_path: String,
+    pub key_store_name: String,
 }

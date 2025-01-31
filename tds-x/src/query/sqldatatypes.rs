@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SqlDataType {
     // Fixed-Length Data Types
     TinyInt = 0x30,
@@ -48,6 +48,9 @@ pub enum SqlDataType {
     Geometry = 0xF9,    // Geometry
     HierarchyId = 0xFD, // HierarchyId
     BigChar = 0xAF,
+
+    #[default]
+    None = 0x00,
 }
 
 impl SqlDataType {
