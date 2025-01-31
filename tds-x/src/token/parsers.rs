@@ -1,4 +1,4 @@
-use std::io::Error;
+use std::{io::Error, vec};
 
 use async_trait::async_trait;
 use tracing::event;
@@ -6,13 +6,14 @@ use tracing::event;
 use crate::{
     core::Version,
     message::{login::RoutingInfo, login_options::TdsVersion},
+    query::{metadata::ColumnMetadata, sqldatatypes::SqlDataType},
     read_write::packet_reader::PacketReader,
     token::{
         fed_auth_info::FedAuthInfoId,
         login_ack::{LoginAckToken, SqlInterfaceType},
         tokens::{
-            CurrentCommand, DoneStatus, EnvChangeContainer, EnvChangeTokenSubType, InfoToken,
-            SqlCollation, TokenType,
+            ColMetadataToken, CurrentCommand, DoneStatus, EnvChangeContainer,
+            EnvChangeTokenSubType, InfoToken, SqlCollation, TokenType,
         },
     },
 };
@@ -23,8 +24,8 @@ use super::{
 };
 
 #[async_trait]
-pub(crate) trait TokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error>;
+pub(crate) trait TokenParser<'a> {
+    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error>;
 }
 
 #[derive(Debug, Default)]
@@ -33,8 +34,8 @@ pub(crate) struct EnvChangeTokenParser {
 }
 
 #[async_trait]
-impl TokenParser for EnvChangeTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
+impl<'a> TokenParser<'a> for EnvChangeTokenParser {
+    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
         let _token_length = reader.read_uint16().await?;
         let sub_type = reader.read_byte().await?;
         let token_sub_type = EnvChangeTokenSubType::from(sub_type);
@@ -134,8 +135,8 @@ pub(crate) struct LoginAckTokenParser {
 }
 
 #[async_trait]
-impl TokenParser for LoginAckTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
+impl<'a> TokenParser<'a> for LoginAckTokenParser {
+    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
         event!(
             tracing::Level::DEBUG,
             "Parsing LoginAck token with type: 0x{:02X}",
@@ -171,8 +172,8 @@ pub(crate) struct DoneTokenParser {
 }
 
 #[async_trait]
-impl TokenParser for DoneTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
+impl<'a> TokenParser<'a> for DoneTokenParser {
+    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -193,8 +194,8 @@ pub(crate) struct DoneInProcTokenParser {
 }
 
 #[async_trait]
-impl TokenParser for DoneInProcTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
+impl<'a> TokenParser<'a> for DoneInProcTokenParser {
+    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -215,8 +216,8 @@ pub(crate) struct DoneProcTokenParser {
 }
 
 #[async_trait]
-impl TokenParser for DoneProcTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
+impl<'a> TokenParser<'a> for DoneProcTokenParser {
+    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -237,8 +238,8 @@ pub(crate) struct InfoTokenParser {
 }
 
 #[async_trait]
-impl TokenParser for InfoTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
+impl<'a> TokenParser<'a> for InfoTokenParser {
+    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
         let _length = reader.read_uint16().await?;
         let number = reader.read_uint32().await?;
         let state = reader.read_byte().await?;
@@ -268,8 +269,8 @@ pub(crate) struct ErrorTokenParser {
 }
 
 #[async_trait]
-impl TokenParser for ErrorTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
+impl<'a> TokenParser<'a> for ErrorTokenParser {
+    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
         event!(
             tracing::Level::DEBUG,
             "Parsing Error token with type: 0x{:02X}",
@@ -308,8 +309,8 @@ impl FedAuthInfoTokenParser {
 }
 
 #[async_trait]
-impl TokenParser for FedAuthInfoTokenParser {
-    async fn parse(&self, reader: &mut PacketReader) -> Result<Tokens, Error> {
+impl<'a> TokenParser<'a> for FedAuthInfoTokenParser {
+    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
         let _length = reader.read_int32().await?;
 
         let options_count = reader.read_uint32().await?;
@@ -371,8 +372,178 @@ pub(crate) struct FeatureExtAckTokenParser {
 }
 
 #[async_trait]
-impl TokenParser for FeatureExtAckTokenParser {
-    async fn parse(&self, _reader: &mut PacketReader) -> Result<Tokens, Error> {
+impl<'a> TokenParser<'a> for FeatureExtAckTokenParser {
+    async fn parse(&self, _reader: &'a mut PacketReader) -> Result<Tokens, Error> {
         unimplemented!()
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ColMetadataTokenParser {
+    // Do we want to create a new parser for every connection, or should
+    // this value be passed as a context to the parser? Likely SessionSettings?
+    pub is_column_encryption_supported: bool,
+}
+
+impl ColMetadataTokenParser {
+    pub fn new(is_column_encryption_supported: bool) -> Self {
+        Self {
+            is_column_encryption_supported,
+        }
+    }
+
+    pub fn is_column_encryption_supported(&self) -> bool {
+        self.is_column_encryption_supported
+    }
+
+    pub fn try_get_fixed_length(&self, data_type: SqlDataType) -> Option<usize> {
+        match data_type {
+            SqlDataType::TinyInt | SqlDataType::Bit => Some(size_of::<u8>()),
+            SqlDataType::SmallInt => Some(size_of::<u16>()),
+            SqlDataType::SmallMoney
+            | SqlDataType::Real
+            | SqlDataType::SmallDateTime
+            | SqlDataType::Int => Some(size_of::<u32>()),
+
+            SqlDataType::Money
+            | SqlDataType::DateTime
+            | SqlDataType::Float
+            | SqlDataType::BigInt => Some(size_of::<u64>()),
+            _ => None,
+        }
+    }
+
+    pub fn get_var_len_byte_count(&self, data_type: SqlDataType) -> usize {
+        match data_type {
+            SqlDataType::Binary
+            | SqlDataType::VarBinary
+            | SqlDataType::VarChar
+            | SqlDataType::NVarChar
+            | SqlDataType::BigChar
+            | SqlDataType::NChar => size_of::<u16>(),
+
+            SqlDataType::UniqueIdentifier
+            | SqlDataType::IntN
+            | SqlDataType::Date
+            | SqlDataType::Time
+            | SqlDataType::DateTime2
+            | SqlDataType::DateTimeOffset
+            | SqlDataType::Char
+            | SqlDataType::BitN
+            | SqlDataType::Decimal
+            | SqlDataType::Numeric => size_of::<u8>(),
+
+            SqlDataType::SqlVariant
+            | SqlDataType::Image
+            | SqlDataType::Text
+            | SqlDataType::NText => size_of::<u32>(),
+            _ => unimplemented!("Variable length not implemented for type: {:?}", data_type),
+        }
+    }
+}
+
+#[async_trait]
+impl<'a> TokenParser<'a> for ColMetadataTokenParser {
+    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
+        let col_count = reader.read_uint16().await?;
+
+        if self.is_column_encryption_supported {
+            unimplemented!("Column encryption is not yet supported");
+        }
+
+        // Handle the special case where no metadata is sent
+        if col_count == 0xFFFF {
+            return Ok(Tokens::from(ColMetadataToken::default()));
+        }
+
+        let mut column_metadata: Vec<ColumnMetadata> = Vec::with_capacity(col_count as usize);
+        for _ in 0..col_count {
+            let mut col_metadata = ColumnMetadata::default();
+            let user_type = reader.read_uint32().await?;
+            col_metadata.user_type = user_type;
+            let flags = reader.read_uint16().await?;
+            col_metadata.flags = flags;
+            col_metadata.is_nullable = (flags & 0x01) != 0x00;
+            col_metadata.is_case_sensitive = (flags & 0x02) != 0x00;
+            col_metadata.is_identity = (flags & 0x10) != 0x00;
+            col_metadata.is_computed = (flags & 0x20) != 0x00;
+            col_metadata.is_sparse_column_set = (flags & 0x1000) != 0x00;
+            col_metadata.is_encrypted = (flags & 0x2000) != 0x00;
+
+            let raw_data_type = reader.read_byte().await?;
+            let some_data_type = SqlDataType::from_u8(raw_data_type);
+
+            debug_assert!(
+                some_data_type.is_some(),
+                "Unknown data type: {}",
+                raw_data_type
+            );
+            let data_type = some_data_type.unwrap();
+            col_metadata.data_type = data_type;
+            // let mut boxed_reader = Box::new(&mut reader);
+            // self.parse_type_info(&mut boxed_reader, sql_data_type.unwrap(), &mut col_metadata)
+            //     .await?;
+            // let reader = boxed_reader.as_mut();
+            let fixed_length = self.try_get_fixed_length(data_type);
+            col_metadata.length = match fixed_length {
+                Some(len) => len,
+                None => {
+                    let byte_count = self.get_var_len_byte_count(data_type);
+                    match byte_count {
+                        1 => reader.read_byte().await? as usize,
+                        2 => reader.read_uint16().await? as usize,
+                        4 => reader.read_int32().await? as usize,
+                        _ => {
+                            unimplemented!(
+                                "Variable length not implemented for type: {:?}",
+                                data_type
+                            )
+                        }
+                    }
+                }
+            };
+
+            // Handle precision
+            let (precision, scale) = match data_type {
+                SqlDataType::Decimal | SqlDataType::Numeric => {
+                    let precision = reader.read_byte().await?;
+                    let scale = reader.read_byte().await?;
+                    (precision, scale)
+                }
+                _ => (0, 0),
+            };
+
+            col_metadata.precision = precision;
+            col_metadata.scale = scale;
+
+            // Handle collation
+            let collation = match data_type {
+                SqlDataType::NChar
+                | SqlDataType::VarChar
+                | SqlDataType::Text
+                | SqlDataType::NText
+                | SqlDataType::NVarChar
+                | SqlDataType::BigChar => {
+                    let mut collation_bytes: [u8; 5] = [0; 5];
+                    let _ = reader.read_bytes(&mut collation_bytes).await?;
+                    Some(SqlCollation::new(&collation_bytes))
+                }
+                _ => None,
+            };
+            col_metadata.collation = collation;
+
+            let col_name = reader.read_varchar_u8_length().await?;
+            col_metadata.column_name = col_name;
+            if col_metadata.is_encrypted {
+                unimplemented!("Column encryption is not yet supported");
+            }
+
+            column_metadata.push(col_metadata);
+        }
+        let metadata = ColMetadataToken {
+            column_count: col_count,
+            columns: column_metadata,
+        };
+        Ok(Tokens::from(metadata))
     }
 }

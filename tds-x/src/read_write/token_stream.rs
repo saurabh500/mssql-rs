@@ -5,9 +5,9 @@ use std::io::Error;
 use tracing::event;
 
 use crate::token::parsers::{
-    DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser, EnvChangeTokenParser,
-    ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser, InfoTokenParser,
-    LoginAckTokenParser, TokenParser,
+    ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
+    EnvChangeTokenParser, ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser,
+    InfoTokenParser, LoginAckTokenParser, TokenParser,
 };
 use crate::token::tokens::{TokenType, Tokens};
 
@@ -23,7 +23,7 @@ impl TokenStreamReader<'_> {
         let token_type_byte = self.packet_reader.read_byte().await?;
         let token_type = TokenType::from(token_type_byte);
         if !self.parser_registry.has_parser(&token_type) {
-            panic!("No parser found for token type: {:?}", token_type);
+            unimplemented!("No parser implemented for token type: {:?}", token_type);
         }
 
         let parser = self
@@ -46,6 +46,7 @@ impl TokenStreamReader<'_> {
             TokenParsers::Error(parser) => parser.parse(&mut self.packet_reader).await,
             TokenParsers::FedAuthInfo(parser) => parser.parse(&mut self.packet_reader).await,
             TokenParsers::FeatureExtAck(parser) => parser.parse(&mut self.packet_reader).await,
+            TokenParsers::ColMetadata(parser) => parser.parse(&mut self.packet_reader).await,
         }
     }
 }
@@ -55,63 +56,11 @@ pub(crate) trait TokenParserRegistry {
     fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers>;
 }
 
-struct GenericTokenParserRegistry {
+pub(crate) struct GenericTokenParserRegistry {
     parsers: HashMap<TokenType, TokenParsers>,
 }
 
-impl TokenParserRegistry for GenericTokenParserRegistry {
-    fn has_parser(&self, token_type: &TokenType) -> bool {
-        self.parsers.contains_key(token_type)
-    }
-
-    fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers> {
-        // Unwrap will throw an error when the parser is not found.
-        // This would be an implementation error and would need to be fixed with Code change.
-        self.parsers.get(token_type)
-    }
-}
-
-pub enum TokenParsers {
-    EnvChange(EnvChangeTokenParser),
-    LoginAck(LoginAckTokenParser),
-    Done(DoneTokenParser),
-    DoneInProc(DoneInProcTokenParser),
-    DoneProc(DoneProcTokenParser),
-    Info(InfoTokenParser),
-    Error(ErrorTokenParser),
-    FedAuthInfo(FedAuthInfoTokenParser),
-    FeatureExtAck(FeatureExtAckTokenParser),
-}
-
-macro_rules! impl_from_token_parser {
-    ($($parser:ty => $variant:ident),*) => {
-        $(
-            impl From<$parser> for TokenParsers {
-                fn from(parser: $parser) -> Self {
-                    TokenParsers::$variant(parser)
-                }
-            }
-        )*
-    };
-}
-
-impl_from_token_parser!(
-    EnvChangeTokenParser => EnvChange,
-    LoginAckTokenParser => LoginAck,
-    DoneTokenParser => Done,
-    DoneInProcTokenParser => DoneInProc,
-    DoneProcTokenParser => DoneProc,
-    InfoTokenParser => Info,
-    ErrorTokenParser => Error,
-    FedAuthInfoTokenParser => FedAuthInfo,
-    FeatureExtAckTokenParser => FeatureExtAck
-);
-
-pub struct LoginTokenRegistry {
-    internal_registry: HashMap<TokenType, TokenParsers>,
-}
-
-impl Default for LoginTokenRegistry {
+impl Default for GenericTokenParserRegistry {
     fn default() -> Self {
         let mut internal_registry: HashMap<TokenType, TokenParsers> = HashMap::new();
         internal_registry.insert(
@@ -141,18 +90,62 @@ impl Default for LoginTokenRegistry {
             TokenType::FedAuthInfo,
             TokenParsers::from(FedAuthInfoTokenParser::default()),
         );
-        Self { internal_registry }
+        internal_registry.insert(
+            TokenType::ColMetadata,
+            TokenParsers::from(ColMetadataTokenParser::default()),
+        );
+        Self {
+            parsers: internal_registry,
+        }
     }
 }
 
-impl TokenParserRegistry for LoginTokenRegistry {
+impl TokenParserRegistry for GenericTokenParserRegistry {
     fn has_parser(&self, token_type: &TokenType) -> bool {
-        self.internal_registry.contains_key(token_type)
+        self.parsers.contains_key(token_type)
     }
 
     fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers> {
         // Unwrap will throw an error when the parser is not found.
         // This would be an implementation error and would need to be fixed with Code change.
-        self.internal_registry.get(token_type)
+        self.parsers.get(token_type)
     }
 }
+
+pub enum TokenParsers {
+    EnvChange(EnvChangeTokenParser),
+    LoginAck(LoginAckTokenParser),
+    Done(DoneTokenParser),
+    DoneInProc(DoneInProcTokenParser),
+    DoneProc(DoneProcTokenParser),
+    Info(InfoTokenParser),
+    Error(ErrorTokenParser),
+    FedAuthInfo(FedAuthInfoTokenParser),
+    FeatureExtAck(FeatureExtAckTokenParser),
+    ColMetadata(ColMetadataTokenParser),
+}
+
+macro_rules! impl_from_token_parser {
+    ($($parser:ty => $variant:ident),*) => {
+        $(
+            impl From<$parser> for TokenParsers {
+                fn from(parser: $parser) -> Self {
+                    TokenParsers::$variant(parser)
+                }
+            }
+        )*
+    };
+}
+
+impl_from_token_parser!(
+    EnvChangeTokenParser => EnvChange,
+    LoginAckTokenParser => LoginAck,
+    DoneTokenParser => Done,
+    DoneInProcTokenParser => DoneInProc,
+    DoneProcTokenParser => DoneProc,
+    InfoTokenParser => Info,
+    ErrorTokenParser => Error,
+    FedAuthInfoTokenParser => FedAuthInfo,
+    FeatureExtAckTokenParser => FeatureExtAck,
+    ColMetadataTokenParser => ColMetadata
+);

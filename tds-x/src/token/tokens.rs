@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::message::login::RoutingInfo;
+use crate::{message::login::RoutingInfo, query::metadata::ColumnMetadata};
 
 use super::{
     fed_auth_info::{FedAuthInfoToken, RowToken, SspiToken},
@@ -78,7 +78,10 @@ pub(crate) enum Tokens {
     FedAuthInfo(FedAuthInfoToken),
     Sspi(SspiToken),
     Row(RowToken),
+    ColMetadata(ColMetadataToken),
+    NbcRow(NbcRowToken),
 }
+
 macro_rules! impl_from_token {
     ($token_type:ty, $variant:ident) => {
         impl From<$token_type> for Tokens {
@@ -100,6 +103,8 @@ impl_from_token!(FeatureExtAckToken, FeatureExtAck);
 impl_from_token!(FedAuthInfoToken, FedAuthInfo);
 impl_from_token!(SspiToken, Sspi);
 impl_from_token!(RowToken, Row);
+impl_from_token!(ColMetadataToken, ColMetadata);
+impl_from_token!(NbcRowToken, NbcRow);
 
 impl Token for Tokens {
     fn token_type(&self) -> TokenType {
@@ -115,6 +120,8 @@ impl Token for Tokens {
             Tokens::FedAuthInfo(token) => token.token_type(),
             Tokens::Sspi(token) => token.token_type(),
             Tokens::Row(token) => token.token_type(),
+            Tokens::ColMetadata(token) => token.token_type(),
+            Tokens::NbcRow(token) => token.token_type(),
         }
     }
 }
@@ -205,6 +212,26 @@ impl EnvChangeSubToken for EnvChangeToken {
 impl Token for FeatureExtAckToken {
     fn token_type(&self) -> TokenType {
         TokenType::FeatureExtAck
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ColMetadataToken {
+    pub column_count: u16,
+    pub columns: Vec<ColumnMetadata>,
+}
+
+impl Token for ColMetadataToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::ColMetadata
+    }
+}
+
+pub(crate) struct NbcRowToken {}
+
+impl Token for NbcRowToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::NbcRow
     }
 }
 
@@ -582,6 +609,7 @@ impl Token for DoneInProcToken {
         TokenType::DoneInProc
     }
 }
+
 pub(crate) struct DoneProcToken {
     pub status: DoneStatus,
     pub cur_cmd: CurrentCommand,

@@ -21,7 +21,7 @@ use super::login_options::{
 };
 use tracing::{event, Level};
 
-use crate::read_write::token_stream::{LoginTokenRegistry, TokenStreamReader};
+use crate::read_write::token_stream::{GenericTokenParserRegistry, TokenStreamReader};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct RoutingInfo {
@@ -302,7 +302,7 @@ pub(crate) struct LoginResponse {
 impl TypedResponse<LoginResponseModel> for LoginResponse {
     async fn deserialize(&self, reader: &mut dyn NetworkReader) -> LoginResponseModel {
         let packet_reader = PacketReader::new(reader);
-        let login_token_registry = LoginTokenRegistry::default();
+        let login_token_registry = GenericTokenParserRegistry::default();
         let mut token_stream_reader = TokenStreamReader {
             packet_reader,
             parser_registry: Box::new(login_token_registry),
