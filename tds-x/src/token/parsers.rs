@@ -1,13 +1,13 @@
 use std::{io::Error, vec};
 
 use async_trait::async_trait;
-use tracing::event;
+use tracing::{debug, error, event, info};
 
 use crate::{
     core::Version,
     message::{login::RoutingInfo, login_options::TdsVersion},
     query::{metadata::ColumnMetadata, sqldatatypes::SqlDataType},
-    read_write::packet_reader::PacketReader,
+    read_write::{packet_reader::PacketReader, token_stream::ParserContext},
     token::{
         fed_auth_info::FedAuthInfoId,
         login_ack::{LoginAckToken, SqlInterfaceType},
@@ -20,12 +20,18 @@ use crate::{
 
 use super::{
     fed_auth_info::FedAuthInfoToken,
-    tokens::{DoneInProcToken, DoneProcToken, DoneToken, EnvChangeToken, ErrorToken, Tokens},
+    tokens::{
+        DoneInProcToken, DoneProcToken, DoneToken, EnvChangeToken, ErrorToken, RowToken, Tokens,
+    },
 };
 
 #[async_trait]
 pub(crate) trait TokenParser<'a> {
-    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error>;
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        context: &ParserContext,
+    ) -> Result<Tokens, Error>;
 }
 
 #[derive(Debug, Default)]
@@ -35,7 +41,11 @@ pub(crate) struct EnvChangeTokenParser {
 
 #[async_trait]
 impl<'a> TokenParser<'a> for EnvChangeTokenParser {
-    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
         let _token_length = reader.read_uint16().await?;
         let sub_type = reader.read_byte().await?;
         let token_sub_type = EnvChangeTokenSubType::from(sub_type);
@@ -136,7 +146,11 @@ pub(crate) struct LoginAckTokenParser {
 
 #[async_trait]
 impl<'a> TokenParser<'a> for LoginAckTokenParser {
-    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
         event!(
             tracing::Level::DEBUG,
             "Parsing LoginAck token with type: 0x{:02X}",
@@ -173,7 +187,11 @@ pub(crate) struct DoneTokenParser {
 
 #[async_trait]
 impl<'a> TokenParser<'a> for DoneTokenParser {
-    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -195,7 +213,11 @@ pub(crate) struct DoneInProcTokenParser {
 
 #[async_trait]
 impl<'a> TokenParser<'a> for DoneInProcTokenParser {
-    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -217,7 +239,11 @@ pub(crate) struct DoneProcTokenParser {
 
 #[async_trait]
 impl<'a> TokenParser<'a> for DoneProcTokenParser {
-    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -239,7 +265,11 @@ pub(crate) struct InfoTokenParser {
 
 #[async_trait]
 impl<'a> TokenParser<'a> for InfoTokenParser {
-    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
         let _length = reader.read_uint16().await?;
         let number = reader.read_uint32().await?;
         let state = reader.read_byte().await?;
@@ -270,9 +300,12 @@ pub(crate) struct ErrorTokenParser {
 
 #[async_trait]
 impl<'a> TokenParser<'a> for ErrorTokenParser {
-    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
-        event!(
-            tracing::Level::DEBUG,
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
+        error!(
             "Parsing Error token with type: 0x{:02X}",
             TokenType::Error as u8
         );
@@ -282,7 +315,7 @@ impl<'a> TokenParser<'a> for ErrorTokenParser {
         let severity = reader.read_byte().await?;
 
         let message = reader.read_varchar_u16_length().await?.unwrap();
-        event!(tracing::Level::ERROR, "Error message: {:?}", message);
+        error!("Error message: {:?}", message);
         let server_name = reader.read_varchar_u8_length().await?;
         let proc_name = reader.read_varchar_u8_length().await?;
 
@@ -310,7 +343,11 @@ impl FedAuthInfoTokenParser {
 
 #[async_trait]
 impl<'a> TokenParser<'a> for FedAuthInfoTokenParser {
-    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
         let _length = reader.read_int32().await?;
 
         let options_count = reader.read_uint32().await?;
@@ -346,8 +383,7 @@ impl<'a> TokenParser<'a> for FedAuthInfoTokenParser {
                 Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8 sequence")
             })?;
 
-            event!(
-                tracing::Level::DEBUG,
+            debug!(
                 "FedAuth option: {:?} with value: {:?}",
                 option_id,
                 value.clone()
@@ -373,7 +409,11 @@ pub(crate) struct FeatureExtAckTokenParser {
 
 #[async_trait]
 impl<'a> TokenParser<'a> for FeatureExtAckTokenParser {
-    async fn parse(&self, _reader: &'a mut PacketReader) -> Result<Tokens, Error> {
+    async fn parse(
+        &self,
+        _reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
         unimplemented!()
     }
 }
@@ -444,7 +484,11 @@ impl ColMetadataTokenParser {
 
 #[async_trait]
 impl<'a> TokenParser<'a> for ColMetadataTokenParser {
-    async fn parse(&self, reader: &'a mut PacketReader) -> Result<Tokens, Error> {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
         let col_count = reader.read_uint16().await?;
 
         if self.is_column_encryption_supported {
@@ -545,5 +589,73 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
             columns: column_metadata,
         };
         Ok(Tokens::from(metadata))
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct RowTokenParser {}
+
+#[async_trait]
+impl<'a> TokenParser<'a> for RowTokenParser {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        context: &ParserContext,
+    ) -> Result<Tokens, Error> {
+        let column_metadata_token = match context {
+            ParserContext::ColumnMetadata(metadata) => {
+                info!("Metadata during Row Parsing: {:?}", metadata);
+                metadata
+            }
+            _ => {
+                debug_assert!(false, "Expected ColumnMetadata in context");
+                return Err(Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Expected ColumnMetadata in context",
+                ));
+            }
+        };
+
+        let all_metadata = &column_metadata_token.columns;
+        let mut all_values: Vec<ColumnValues> =
+            Vec::with_capacity(column_metadata_token.column_count as usize);
+        for metadata in all_metadata {
+            info!("Metadata: {:?}", metadata);
+            let column_value = match metadata.data_type {
+                SqlDataType::TinyInt => {
+                    let value = reader.read_byte().await?;
+                    ColumnValues::from(value)
+                }
+                SqlDataType::Int => {
+                    let value = reader.read_int32().await?;
+                    ColumnValues::from(value)
+                }
+                _ => {
+                    unimplemented!("Data type not implemented: {:?}", metadata.data_type);
+                }
+            };
+
+            all_values.push(column_value);
+        }
+        Ok(Tokens::from(RowToken::new(all_values)))
+    }
+}
+
+#[derive(Debug)]
+pub enum ColumnValues {
+    TinyInt(u8),
+    Int(i32),
+    Null,
+}
+
+impl From<u8> for ColumnValues {
+    fn from(value: u8) -> Self {
+        ColumnValues::TinyInt(value)
+    }
+}
+
+impl From<i32> for ColumnValues {
+    fn from(value: i32) -> Self {
+        ColumnValues::Int(value)
     }
 }

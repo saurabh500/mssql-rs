@@ -3,6 +3,7 @@ use crate::message::login_options::TdsVersion;
 use crate::token::tokens::{Token, TokenType};
 
 #[repr(u8)]
+#[derive(Debug)]
 pub enum SqlInterfaceType {
     Default = 0,
     TSql = 1,
@@ -18,6 +19,7 @@ impl From<u8> for SqlInterfaceType {
     }
 }
 
+#[derive(Debug)]
 pub struct LoginAckToken {
     pub interface_type: SqlInterfaceType,
     pub tds_version: TdsVersion,

@@ -16,6 +16,7 @@ impl From<u8> for FedAuthInfoId {
     }
 }
 
+#[derive(Debug)]
 pub struct FedAuthInfoToken {
     pub spn: String,
     pub sts_url: String,
@@ -27,6 +28,7 @@ impl Token for FedAuthInfoToken {
     }
 }
 
+#[derive(Debug)]
 pub struct SspiToken {
     pub data: Vec<u8>,
 }
@@ -34,13 +36,5 @@ pub struct SspiToken {
 impl Token for SspiToken {
     fn token_type(&self) -> TokenType {
         TokenType::SSPI
-    }
-}
-
-pub struct RowToken {}
-
-impl Token for RowToken {
-    fn token_type(&self) -> TokenType {
-        TokenType::Row
     }
 }

@@ -21,17 +21,19 @@ use super::login_options::{
 };
 use tracing::{event, Level};
 
-use crate::read_write::token_stream::{GenericTokenParserRegistry, TokenStreamReader};
+use crate::read_write::token_stream::{
+    GenericTokenParserRegistry, ParserContext, TokenStreamReader,
+};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct RoutingInfo {
+pub(crate) struct RoutingInfo {
     pub protocol: u8,
     pub port: u16,
     pub server: String,
 }
 
 #[derive(Default)]
-pub struct EnvChangeProperties {
+pub(crate) struct EnvChangeProperties {
     pub database_collation: Option<SqlCollation>,
     pub packet_size: i32,
     pub language: Option<String>,
@@ -40,7 +42,7 @@ pub struct EnvChangeProperties {
     pub routing_information: Option<RoutingInfo>,
 }
 
-pub enum FeatureExtension {
+pub(crate) enum FeatureExtension {
     SRecovery = 0x01,
     FedAuth = 0x02,
     AlwaysEncrypted = 0x04,
@@ -53,7 +55,7 @@ pub enum FeatureExtension {
 }
 
 #[async_trait]
-pub trait Feature {
+pub(crate) trait Feature {
     fn feature_identifier(&self) -> FeatureExtension;
     fn is_requested(&self) -> bool;
     fn data_length(&self) -> i32;
@@ -63,7 +65,7 @@ pub trait Feature {
 }
 
 #[derive(Default)]
-pub struct FeaturesRequest {
+pub(crate) struct FeaturesRequest {
     pub features: HashMap<FeatureExtension, Box<dyn Feature>>,
 }
 
@@ -101,7 +103,7 @@ pub struct PhysicalAddress {
     address_bytes: [u8; 6],
 }
 
-pub struct LoginRequestModel<'a> {
+pub(crate) struct LoginRequestModel<'a> {
     pub option_flags1: OptionFlags1,
     pub option_flags2: OptionFlags2,
     pub option_flags3: OptionFlags3,
@@ -269,7 +271,7 @@ impl LoginResponseModel {
     }
 }
 
-pub struct LoginRequest<'a> {
+pub(crate) struct LoginRequest<'a> {
     pub model: LoginRequestModel<'a>,
 }
 
@@ -309,8 +311,8 @@ impl TypedResponse<LoginResponseModel> for LoginResponse {
         };
 
         let mut response_model = LoginResponseModel::default();
-
-        while let Ok(token) = token_stream_reader.receive_token().await {
+        let parser_context = ParserContext::default();
+        while let Ok(token) = token_stream_reader.receive_token(&parser_context).await {
             let token_type = token.token_type();
             event!(
                 Level::DEBUG,

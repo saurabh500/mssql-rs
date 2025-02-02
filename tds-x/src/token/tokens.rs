@@ -3,8 +3,9 @@ use std::fmt;
 use crate::{message::login::RoutingInfo, query::metadata::ColumnMetadata};
 
 use super::{
-    fed_auth_info::{FedAuthInfoToken, RowToken, SspiToken},
+    fed_auth_info::{FedAuthInfoToken, SspiToken},
     login_ack::LoginAckToken,
+    parsers::ColumnValues,
 };
 
 #[derive(Eq, PartialEq, Hash, Debug)]
@@ -66,6 +67,7 @@ pub trait Token {
     fn token_type(&self) -> TokenType;
 }
 
+#[derive(Debug)]
 pub(crate) enum Tokens {
     Done(DoneToken),
     DoneInProc(DoneInProcToken),
@@ -186,6 +188,7 @@ impl fmt::Debug for EnvChangeContainer {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct EnvChangeToken {
     pub sub_type: EnvChangeTokenSubType,
     pub change_type: EnvChangeContainer,
@@ -195,6 +198,7 @@ trait EnvChangeSubToken {
     fn sub_type(&self) -> EnvChangeTokenSubType;
 }
 
+#[derive(Debug)]
 pub struct FeatureExtAckToken {}
 
 impl Token for EnvChangeToken {
@@ -227,6 +231,7 @@ impl Token for ColMetadataToken {
     }
 }
 
+#[derive(Debug, Default)]
 pub(crate) struct NbcRowToken {}
 
 impl Token for NbcRowToken {
@@ -554,6 +559,7 @@ pub static CODE_PAGE_FROM_SORT_ID: [Option<u16>; 256] = [
     None,       // 255
 ];
 
+#[derive(Debug)]
 pub(crate) struct ErrorToken {
     pub number: u32,
     pub state: u8,
@@ -570,6 +576,7 @@ impl Token for ErrorToken {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct InfoToken {
     pub number: u32,
     pub state: u8,
@@ -586,6 +593,7 @@ impl Token for InfoToken {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct DoneToken {
     pub status: DoneStatus,
     pub cur_cmd: CurrentCommand,
@@ -598,6 +606,7 @@ impl Token for DoneToken {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct DoneInProcToken {
     pub status: DoneStatus,
     pub cur_cmd: CurrentCommand,
@@ -610,6 +619,7 @@ impl Token for DoneInProcToken {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct DoneProcToken {
     pub status: DoneStatus,
     pub cur_cmd: CurrentCommand,
@@ -619,6 +629,23 @@ pub(crate) struct DoneProcToken {
 impl Token for DoneProcToken {
     fn token_type(&self) -> TokenType {
         TokenType::DoneProc
+    }
+}
+
+#[derive(Debug)]
+pub struct RowToken {
+    pub all_values: Vec<ColumnValues>,
+}
+
+impl RowToken {
+    pub fn new(all_values: Vec<ColumnValues>) -> Self {
+        Self { all_values }
+    }
+}
+
+impl Token for RowToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::Row
     }
 }
 

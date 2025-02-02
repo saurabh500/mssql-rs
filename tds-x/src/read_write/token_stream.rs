@@ -7,9 +7,9 @@ use tracing::event;
 use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
     EnvChangeTokenParser, ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser,
-    InfoTokenParser, LoginAckTokenParser, TokenParser,
+    InfoTokenParser, LoginAckTokenParser, RowTokenParser, TokenParser,
 };
-use crate::token::tokens::{TokenType, Tokens};
+use crate::token::tokens::{ColMetadataToken, TokenType, Tokens};
 
 use super::packet_reader::PacketReader;
 
@@ -18,8 +18,35 @@ pub(crate) struct TokenStreamReader<'a> {
     pub(crate) parser_registry: Box<dyn TokenParserRegistry>,
 }
 
+/// `ParserContext` is used to add additional context, which can be leveraged by the token parsers.
+/// One of the usecase is passing the metadata for the columns, to the row parser and to the
+/// NBC row token parser.
+/// The consumer of the TokenStreamReader is supposed to set/reset this context.
+/// Incorrectly managing this context, can lead to bad context being used for subsequent operations.
+#[derive(Debug)]
+pub(crate) enum ParserContext {
+    ColumnMetadata(ColMetadataToken),
+    None(()),
+}
+
+impl Default for ParserContext {
+    fn default() -> Self {
+        ParserContext::None(())
+    }
+}
+
 impl TokenStreamReader<'_> {
-    pub(crate) async fn receive_token(&mut self) -> Result<Tokens, Error> {
+    pub(crate) fn new(
+        packet_reader: PacketReader,
+        parser_registry: Box<dyn TokenParserRegistry>,
+    ) -> TokenStreamReader {
+        TokenStreamReader {
+            packet_reader,
+            parser_registry,
+        }
+    }
+
+    pub(crate) async fn receive_token(&mut self, context: &ParserContext) -> Result<Tokens, Error> {
         let token_type_byte = self.packet_reader.read_byte().await?;
         let token_type = TokenType::from(token_type_byte);
         if !self.parser_registry.has_parser(&token_type) {
@@ -37,21 +64,30 @@ impl TokenStreamReader<'_> {
         );
 
         match parser {
-            TokenParsers::EnvChange(parser) => parser.parse(&mut self.packet_reader).await,
-            TokenParsers::LoginAck(parser) => parser.parse(&mut self.packet_reader).await,
-            TokenParsers::Done(parser) => parser.parse(&mut self.packet_reader).await,
-            TokenParsers::DoneInProc(parser) => parser.parse(&mut self.packet_reader).await,
-            TokenParsers::DoneProc(parser) => parser.parse(&mut self.packet_reader).await,
-            TokenParsers::Info(parser) => parser.parse(&mut self.packet_reader).await,
-            TokenParsers::Error(parser) => parser.parse(&mut self.packet_reader).await,
-            TokenParsers::FedAuthInfo(parser) => parser.parse(&mut self.packet_reader).await,
-            TokenParsers::FeatureExtAck(parser) => parser.parse(&mut self.packet_reader).await,
-            TokenParsers::ColMetadata(parser) => parser.parse(&mut self.packet_reader).await,
+            TokenParsers::EnvChange(parser) => parser.parse(&mut self.packet_reader, context).await,
+            TokenParsers::LoginAck(parser) => parser.parse(&mut self.packet_reader, context).await,
+            TokenParsers::Done(parser) => parser.parse(&mut self.packet_reader, context).await,
+            TokenParsers::DoneInProc(parser) => {
+                parser.parse(&mut self.packet_reader, context).await
+            }
+            TokenParsers::DoneProc(parser) => parser.parse(&mut self.packet_reader, context).await,
+            TokenParsers::Info(parser) => parser.parse(&mut self.packet_reader, context).await,
+            TokenParsers::Error(parser) => parser.parse(&mut self.packet_reader, context).await,
+            TokenParsers::FedAuthInfo(parser) => {
+                parser.parse(&mut self.packet_reader, context).await
+            }
+            TokenParsers::FeatureExtAck(parser) => {
+                parser.parse(&mut self.packet_reader, context).await
+            }
+            TokenParsers::ColMetadata(parser) => {
+                parser.parse(&mut self.packet_reader, context).await
+            }
+            TokenParsers::Row(parser) => parser.parse(&mut self.packet_reader, context).await,
         }
     }
 }
 
-pub(crate) trait TokenParserRegistry {
+pub(crate) trait TokenParserRegistry: Send + Sync {
     fn has_parser(&self, token_type: &TokenType) -> bool;
     fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers>;
 }
@@ -94,6 +130,10 @@ impl Default for GenericTokenParserRegistry {
             TokenType::ColMetadata,
             TokenParsers::from(ColMetadataTokenParser::default()),
         );
+        internal_registry.insert(
+            TokenType::Row,
+            TokenParsers::from(RowTokenParser::default()),
+        );
         Self {
             parsers: internal_registry,
         }
@@ -123,6 +163,7 @@ pub enum TokenParsers {
     FedAuthInfo(FedAuthInfoTokenParser),
     FeatureExtAck(FeatureExtAckTokenParser),
     ColMetadata(ColMetadataTokenParser),
+    Row(RowTokenParser),
 }
 
 macro_rules! impl_from_token_parser {
@@ -147,5 +188,6 @@ impl_from_token_parser!(
     ErrorTokenParser => Error,
     FedAuthInfoTokenParser => FedAuthInfo,
     FeatureExtAckTokenParser => FeatureExtAck,
-    ColMetadataTokenParser => ColMetadata
+    ColMetadataTokenParser => ColMetadata,
+    RowTokenParser => Row
 );
