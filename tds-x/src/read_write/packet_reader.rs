@@ -86,7 +86,7 @@ impl<'a> PacketReader<'a> {
         if remaining_bytes > 0 {
             // Move the remaining bytes to the beginning of the buffer.
             self.working_buffer
-                .copy_within(self.buffer_position..(self.buffer_length - 1), 0);
+                .copy_within(self.buffer_position..(self.buffer_length), 0);
             self.buffer_length = remaining_bytes;
             self.buffer_position = 0;
             let new_packet_size = self.get_new_tds_packet().await?;
@@ -121,11 +121,15 @@ impl<'a> PacketReader<'a> {
         while new_packet_byte_length < PacketWriter::PACKET_HEADER_SIZE {
             new_packet_byte_length += self
                 .network_reader
-                .receive(&mut packet_buffer[base_offset_to_write + new_packet_byte_length..])
+                .receive(
+                    &mut packet_buffer[base_offset_to_write + new_packet_byte_length
+                        ..base_offset_to_write + self.max_packet_size],
+                )
                 .await?;
         }
 
-        let length_from_packet_header = BigEndian::read_u16(&packet_buffer[2..4]);
+        let length_from_packet_header =
+            BigEndian::read_u16(&packet_buffer[base_offset_to_write + 2..base_offset_to_write + 4]);
 
         self.last_packet = (packet_buffer[1] & PacketStatusFlags::Eom as u8) != 0;
 
@@ -135,7 +139,10 @@ impl<'a> PacketReader<'a> {
         while new_packet_byte_length < packet_size_from_header {
             new_packet_byte_length += self
                 .network_reader
-                .receive(&mut packet_buffer[base_offset_to_write + new_packet_byte_length..])
+                .receive(
+                    &mut packet_buffer[base_offset_to_write + new_packet_byte_length
+                        ..base_offset_to_write + self.max_packet_size],
+                )
                 .await?;
         }
         event!(

@@ -124,6 +124,9 @@ impl NetworkTransport<'_> {
     /// # }
     /// ```
     pub(crate) async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
+        if buffer.is_empty() {
+            panic!("Buffer length must be greater than 0");
+        }
         let bytes_read = self.reader.read(buffer).await?;
         Ok(bytes_read)
     }
