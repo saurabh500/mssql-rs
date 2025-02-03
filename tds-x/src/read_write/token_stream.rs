@@ -4,6 +4,7 @@ use std::io::Error;
 
 use tracing::event;
 
+use crate::datatypes::decoder::GenericDecoder;
 use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
     EnvChangeTokenParser, ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser,
@@ -163,7 +164,7 @@ pub enum TokenParsers {
     FedAuthInfo(FedAuthInfoTokenParser),
     FeatureExtAck(FeatureExtAckTokenParser),
     ColMetadata(ColMetadataTokenParser),
-    Row(RowTokenParser),
+    Row(RowTokenParser<GenericDecoder>),
 }
 
 macro_rules! impl_from_token_parser {
@@ -189,5 +190,5 @@ impl_from_token_parser!(
     FedAuthInfoTokenParser => FedAuthInfo,
     FeatureExtAckTokenParser => FeatureExtAck,
     ColMetadataTokenParser => ColMetadata,
-    RowTokenParser => Row
+    RowTokenParser<GenericDecoder> => Row
 );

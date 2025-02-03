@@ -1,6 +1,5 @@
-use crate::token::tokens::SqlCollation;
+use crate::{datatypes::sqldatatypes::SqlDataType, token::tokens::SqlCollation};
 
-use super::sqldatatypes::SqlDataType;
 use std::fmt;
 
 #[derive(Debug, Clone, Default)]

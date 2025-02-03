@@ -1,12 +1,16 @@
 use std::{io::Error, vec};
 
 use async_trait::async_trait;
-use tracing::{debug, error, event, info};
+use tracing::{debug, error, event, trace};
 
 use crate::{
     core::Version,
+    datatypes::{
+        decoder::{ColumnValues, SqlTypeDecode},
+        sqldatatypes::SqlDataType,
+    },
     message::{login::RoutingInfo, login_options::TdsVersion},
-    query::{metadata::ColumnMetadata, sqldatatypes::SqlDataType},
+    query::metadata::ColumnMetadata,
     read_write::{packet_reader::PacketReader, token_stream::ParserContext},
     token::{
         fed_auth_info::FedAuthInfoId,
@@ -592,11 +596,25 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct RowTokenParser {}
+#[derive(Debug)]
+pub(crate) struct RowTokenParser<T>
+where
+    T: for<'a> SqlTypeDecode<'a>,
+{
+    // fields omitted
+    decoder: T,
+}
+
+impl<T: for<'a> SqlTypeDecode<'a> + Default> Default for RowTokenParser<T> {
+    fn default() -> Self {
+        Self {
+            decoder: T::default(),
+        }
+    }
+}
 
 #[async_trait]
-impl<'a> TokenParser<'a> for RowTokenParser {
+impl<'a, T: for<'b> SqlTypeDecode<'b> + std::marker::Sync> TokenParser<'a> for RowTokenParser<T> {
     async fn parse(
         &self,
         reader: &'a mut PacketReader,
@@ -604,7 +622,7 @@ impl<'a> TokenParser<'a> for RowTokenParser {
     ) -> Result<Tokens, Error> {
         let column_metadata_token = match context {
             ParserContext::ColumnMetadata(metadata) => {
-                info!("Metadata during Row Parsing: {:?}", metadata);
+                trace!("Metadata during Row Parsing: {:?}", metadata);
                 metadata
             }
             _ => {
@@ -620,42 +638,11 @@ impl<'a> TokenParser<'a> for RowTokenParser {
         let mut all_values: Vec<ColumnValues> =
             Vec::with_capacity(column_metadata_token.column_count as usize);
         for metadata in all_metadata {
-            info!("Metadata: {:?}", metadata);
-            let column_value = match metadata.data_type {
-                SqlDataType::TinyInt => {
-                    let value = reader.read_byte().await?;
-                    ColumnValues::from(value)
-                }
-                SqlDataType::Int => {
-                    let value = reader.read_int32().await?;
-                    ColumnValues::from(value)
-                }
-                _ => {
-                    unimplemented!("Data type not implemented: {:?}", metadata.data_type);
-                }
-            };
+            trace!("Metadata: {:?}", metadata);
+            let column_value = self.decoder.decode(reader, metadata).await?;
 
             all_values.push(column_value);
         }
         Ok(Tokens::from(RowToken::new(all_values)))
-    }
-}
-
-#[derive(Debug)]
-pub enum ColumnValues {
-    TinyInt(u8),
-    Int(i32),
-    Null,
-}
-
-impl From<u8> for ColumnValues {
-    fn from(value: u8) -> Self {
-        ColumnValues::TinyInt(value)
-    }
-}
-
-impl From<i32> for ColumnValues {
-    fn from(value: i32) -> Self {
-        ColumnValues::Int(value)
     }
 }

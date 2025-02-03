@@ -366,6 +366,13 @@ impl<'a> PacketReader<'a> {
         Ok(string)
     }
 
+    /// Reads a Unicode string where the length in bytes is specified by a 16-bit integer.
+    pub async fn read_varchar_byte_len(&mut self) -> Result<String, Error> {
+        let length: u16 = self.read_uint16().await?;
+        let string = self.read_unicode_with_byte_length(length as usize).await?;
+        Ok(string)
+    }
+
     /// Reads a Unicode string of the specified length from the packet stream.
     ///
     /// This method reads a Unicode string from the packet stream. The length of the string
