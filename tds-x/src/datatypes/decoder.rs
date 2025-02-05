@@ -1,4 +1,4 @@
-use std::io::Error;
+use std::{io::Error, vec};
 
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -25,10 +25,10 @@ pub enum ColumnValues {
     SmallInt(i16),
     Int(i32),
     BigInt(i64),
-    Real(f32),
-    Float(f64),
-    Decimal(Vec<u8>), // Todo Decimal needs to be migrated to a strong type.
-    Numeric(Vec<u8>), // Todo Numeric needs to be migrated to a strong type.
+    Real(Option<f32>),
+    Float(Option<f64>),
+    Decimal(Option<DecimalParts>),
+    Numeric(Option<DecimalParts>),
     Bit(Option<bool>),
     String(Option<String>),
     DateTime((i32, u32)),
@@ -60,14 +60,27 @@ impl GenericDecoder {
         &self,
         reader: &mut PacketReader<'_>,
         metadata: &ColumnMetadata,
-    ) -> Result<Vec<u8>, Error> {
-        // Todo Decimal needs to be migrated to a strong type.
-        let _precision = reader.read_byte().await?;
-        let _scale = reader.read_byte().await?;
+    ) -> Result<Option<DecimalParts>, Error> {
+        // Decimal/numeric data type has 1 byte length.
+        let length = reader.read_byte().await?;
+        if length == 0 {
+            return Ok(None);
+        }
+        let sign = reader.read_byte().await?;
+        let is_positive = sign == 1;
 
-        let mut bytes = vec![0u8; metadata.length];
-        reader.read_bytes(&mut bytes).await?;
-        Ok(bytes)
+        let number_of_int_parts = (length - 1) >> 2;
+        let mut int_parts = vec![0i32; number_of_int_parts as usize];
+        for part_index in 0..number_of_int_parts {
+            int_parts[part_index as usize] = reader.read_int32().await?;
+        }
+
+        Ok(Some(DecimalParts {
+            is_positive,
+            scale: metadata.scale,
+            precision: metadata.precision,
+            int_parts,
+        }))
     }
 
     async fn read_datetime(&self, reader: &mut PacketReader<'_>) -> Result<(i32, u32), Error> {
@@ -139,11 +152,11 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
             }
             TdsDataType::Real => {
                 let value = reader.read_float32().await?;
-                ColumnValues::Real(value)
+                ColumnValues::Real(Some(value))
             }
             TdsDataType::Float => {
                 let value = reader.read_float64().await?;
-                ColumnValues::Float(value)
+                ColumnValues::Float(Some(value))
             }
             TdsDataType::Decimal => {
                 let value = self.read_decimal(reader, metadata).await?;
@@ -194,6 +207,20 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                     ColumnValues::Uuid(Some(unique_id))
                 } else {
                     ColumnValues::Uuid(None)
+                }
+            }
+            TdsDataType::FltN => {
+                // This is variable length float, hence the length needs to be read first
+                let length = reader.read_byte().await?;
+                if length == 0 {
+                    return Ok(ColumnValues::Float(None));
+                }
+                if length == 4 {
+                    let value = reader.read_float32().await?;
+                    ColumnValues::Real(Some(value))
+                } else {
+                    let value = reader.read_float64().await?;
+                    ColumnValues::Float(Some(value))
                 }
             }
             _ => {
@@ -265,4 +292,12 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
         }
         // Ok(ColumnValues::String(Some(value)))
     }
+}
+
+#[derive(Debug)]
+pub struct DecimalParts {
+    pub is_positive: bool,
+    pub scale: u8,
+    pub precision: u8,
+    pub int_parts: Vec<i32>,
 }

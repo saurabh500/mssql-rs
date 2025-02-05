@@ -69,6 +69,74 @@ mod query_processing_driver {
         .unwrap();
     }
 
+    #[ignore]
+    #[tokio::test]
+    async fn test_data_types_numerics_no_panic() {
+        execut_test_query(
+            "
+            CREATE TABLE #AllDataTypes (
+                TinyIntColumn TINYINT,
+                SmallIntColumn SMALLINT,
+                IntColumn INT,
+                BigIntColumn BIGINT,
+                BitColumn BIT,
+                DecimalColumn DECIMAL(18,2),
+                NumericColumn NUMERIC(18,2),
+                FloatColumn FLOAT,
+                RealColumn REAL,
+            );
+        
+            INSERT INTO #AllDataTypes (
+                TinyIntColumn, SmallIntColumn, IntColumn, BigIntColumn, BitColumn, 
+                DecimalColumn, NumericColumn, FloatColumn, RealColumn
+            ) 
+            VALUES (
+                CAST(255 AS TINYINT), -- TinyIntColumn
+                CAST(32767 AS SMALLINT), -- SmallIntColumn
+                CAST(2147483647 AS INT), -- IntColumn
+                CAST(9223372036854775807 AS BIGINT), -- BigIntColumn
+                CAST(1 AS BIT), -- BitColumn
+                CAST(272.01 AS DECIMAL(18, 2)), --DecimalColumn
+                CAST(12345678901234.98 AS NUMERIC(18,2)), -- NumericColumn
+                CAST(1234.22231 AS FLOAT), -- FloatColumn
+                CAST(11.11 AS REAL) -- RealColumn
+            );
+            select * from #AllDataTypes;",
+        )
+        .await
+        .unwrap();
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_data_types_numerics_null_values_no_panic() {
+        execut_test_query(
+            "
+            CREATE TABLE #AllDataTypes (
+                TinyIntColumn TINYINT,
+                SmallIntColumn SMALLINT,
+                IntColumn INT,
+                BigIntColumn BIGINT,
+                BitColumn BIT,
+                DecimalColumn DECIMAL(18,2),
+                NumericColumn NUMERIC(18,2),
+                FloatColumn FLOAT,
+                RealColumn REAL,
+            );
+        
+            INSERT INTO #AllDataTypes (
+                TinyIntColumn, SmallIntColumn, IntColumn, BigIntColumn, BitColumn, 
+                DecimalColumn, NumericColumn, FloatColumn, RealColumn
+            ) 
+            VALUES (
+                null, null, null, null, null, null, null, null, null
+            );
+            select * from #AllDataTypes",
+        )
+        .await
+        .unwrap();
+    }
+
     pub async fn execut_test_query(query: &str) -> Result<(), Error> {
         let context = ClientContext {
             server_name: "saurabhsingh.database.windows.net".to_string(),
