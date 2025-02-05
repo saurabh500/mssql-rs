@@ -7,10 +7,10 @@ use crate::{
     core::Version,
     datatypes::{
         decoder::{ColumnValues, SqlTypeDecode},
-        sqldatatypes::SqlDataType,
+        sqldatatypes::TdsDataType,
     },
     message::{login::RoutingInfo, login_options::TdsVersion},
-    query::metadata::ColumnMetadata,
+    query::metadata::{ColumnMetadata, MultiPartName},
     read_write::{packet_reader::PacketReader, token_stream::ParserContext},
     token::{
         fed_auth_info::FedAuthInfoId,
@@ -440,47 +440,52 @@ impl ColMetadataTokenParser {
         self.is_column_encryption_supported
     }
 
-    pub fn try_get_fixed_length(&self, data_type: SqlDataType) -> Option<usize> {
+    pub fn try_get_fixed_length(&self, data_type: TdsDataType) -> Option<usize> {
         match data_type {
-            SqlDataType::TinyInt | SqlDataType::Bit => Some(size_of::<u8>()),
-            SqlDataType::SmallInt => Some(size_of::<u16>()),
-            SqlDataType::SmallMoney
-            | SqlDataType::Real
-            | SqlDataType::SmallDateTime
-            | SqlDataType::Int => Some(size_of::<u32>()),
+            TdsDataType::TinyInt | TdsDataType::Bit => Some(size_of::<u8>()),
+            TdsDataType::SmallInt => Some(size_of::<u16>()),
+            TdsDataType::SmallMoney
+            | TdsDataType::Real
+            | TdsDataType::SmallDateTime
+            | TdsDataType::Int => Some(size_of::<u32>()),
 
-            SqlDataType::Money
-            | SqlDataType::DateTime
-            | SqlDataType::Float
-            | SqlDataType::BigInt => Some(size_of::<u64>()),
+            TdsDataType::Money
+            | TdsDataType::DateTime
+            | TdsDataType::Float
+            | TdsDataType::BigInt => Some(size_of::<u64>()),
+
+            TdsDataType::Date => Some(3),
             _ => None,
         }
     }
 
-    pub fn get_var_len_byte_count(&self, data_type: SqlDataType) -> usize {
+    pub fn get_var_len_byte_count(&self, data_type: TdsDataType) -> usize {
         match data_type {
-            SqlDataType::Binary
-            | SqlDataType::VarBinary
-            | SqlDataType::VarChar
-            | SqlDataType::NVarChar
-            | SqlDataType::BigChar
-            | SqlDataType::NChar => size_of::<u16>(),
+            TdsDataType::Binary
+            | TdsDataType::VarBinary
+            | TdsDataType::VarChar
+            | TdsDataType::NVarChar
+            | TdsDataType::BigChar
+            | TdsDataType::NChar => size_of::<u16>(),
 
-            SqlDataType::UniqueIdentifier
-            | SqlDataType::IntN
-            | SqlDataType::Date
-            | SqlDataType::Time
-            | SqlDataType::DateTime2
-            | SqlDataType::DateTimeOffset
-            | SqlDataType::Char
-            | SqlDataType::BitN
-            | SqlDataType::Decimal
-            | SqlDataType::Numeric => size_of::<u8>(),
+            TdsDataType::UniqueIdentifier
+            | TdsDataType::IntN
+            | TdsDataType::Date
+            | TdsDataType::Time
+            | TdsDataType::DateTime2
+            | TdsDataType::DateTimeOffset
+            | TdsDataType::Char
+            | TdsDataType::BitN
+            | TdsDataType::Decimal
+            | TdsDataType::Numeric
+            | TdsDataType::MoneyN
+            | TdsDataType::FltN
+            | TdsDataType::DateTimeN => size_of::<u8>(),
 
-            SqlDataType::SqlVariant
-            | SqlDataType::Image
-            | SqlDataType::Text
-            | SqlDataType::NText => size_of::<u32>(),
+            TdsDataType::SqlVariant
+            | TdsDataType::Image
+            | TdsDataType::Text
+            | TdsDataType::NText => size_of::<u32>(),
             _ => unimplemented!("Variable length not implemented for type: {:?}", data_type),
         }
     }
@@ -519,12 +524,13 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
             col_metadata.is_encrypted = (flags & 0x2000) != 0x00;
 
             let raw_data_type = reader.read_byte().await?;
-            let some_data_type = SqlDataType::from_u8(raw_data_type);
+            let some_data_type = TdsDataType::from_u8(raw_data_type);
 
             debug_assert!(
                 some_data_type.is_some(),
-                "Unknown data type: {}",
-                raw_data_type
+                "Unknown data type: {}, Parsed so far {:?}",
+                raw_data_type,
+                column_metadata
             );
             let data_type = some_data_type.unwrap();
             col_metadata.data_type = data_type;
@@ -553,7 +559,7 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
 
             // Handle precision
             let (precision, scale) = match data_type {
-                SqlDataType::Decimal | SqlDataType::Numeric => {
+                TdsDataType::Decimal | TdsDataType::Numeric => {
                     let precision = reader.read_byte().await?;
                     let scale = reader.read_byte().await?;
                     (precision, scale)
@@ -566,12 +572,12 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
 
             // Handle collation
             let collation = match data_type {
-                SqlDataType::NChar
-                | SqlDataType::VarChar
-                | SqlDataType::Text
-                | SqlDataType::NText
-                | SqlDataType::NVarChar
-                | SqlDataType::BigChar => {
+                TdsDataType::NChar
+                | TdsDataType::VarChar
+                | TdsDataType::Text
+                | TdsDataType::NText
+                | TdsDataType::NVarChar
+                | TdsDataType::BigChar => {
                     let mut collation_bytes: [u8; 5] = [0; 5];
                     let _ = reader.read_bytes(&mut collation_bytes).await?;
                     Some(SqlCollation::new(&collation_bytes))
@@ -579,6 +585,37 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
                 _ => None,
             };
             col_metadata.collation = collation;
+
+            // Parse Table name
+            // TDS Doc snippet
+            // The fully qualified base table name for this column.
+            // It contains the table name length and table name.
+            // This exists only for text, ntext, and image columns. It specifies the number of parts that are returned and then repeats PartName once for each NumParts.
+            col_metadata.multi_part_name = match data_type {
+                TdsDataType::Text | TdsDataType::NText | TdsDataType::Image => {
+                    let mut part_count = reader.read_byte().await?;
+                    if part_count == 0 {
+                        None
+                    } else {
+                        let mut mpt = MultiPartName::default();
+                        while part_count > 0 {
+                            let part_name = reader.read_varchar_u16_length().await?;
+                            if part_count == 4 {
+                                mpt.server_name = part_name;
+                            } else if part_count == 3 {
+                                mpt.catalog_name = part_name;
+                            } else if part_count == 2 {
+                                mpt.schema_name = part_name;
+                            } else if part_count == 1 {
+                                mpt.table_name = part_name.unwrap();
+                            }
+                            part_count -= 1;
+                        }
+                        Some(mpt)
+                    }
+                }
+                _ => None,
+            };
 
             let col_name = reader.read_varchar_u8_length().await?;
             col_metadata.column_name = col_name;

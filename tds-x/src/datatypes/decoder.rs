@@ -8,7 +8,7 @@ use crate::{
     token::tokens::SqlCollation,
 };
 
-use super::sqldatatypes::SqlDataType;
+use super::sqldatatypes::TdsDataType;
 
 #[async_trait]
 pub(crate) trait SqlTypeDecode<'a> {
@@ -121,62 +121,62 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
         metadata: &ColumnMetadata,
     ) -> Result<ColumnValues, Error> {
         let result = match metadata.data_type {
-            SqlDataType::TinyInt => {
+            TdsDataType::TinyInt => {
                 let value = reader.read_byte().await?;
                 ColumnValues::from(value)
             }
-            SqlDataType::SmallInt => {
+            TdsDataType::SmallInt => {
                 let value = reader.read_int16().await?;
                 ColumnValues::SmallInt(value)
             }
-            SqlDataType::Int => {
+            TdsDataType::Int => {
                 let value = reader.read_int32().await?;
                 ColumnValues::from(value)
             }
-            SqlDataType::BigInt => {
+            TdsDataType::BigInt => {
                 let value = reader.read_int64().await?;
                 ColumnValues::BigInt(value)
             }
-            SqlDataType::Real => {
+            TdsDataType::Real => {
                 let value = reader.read_float32().await?;
                 ColumnValues::Real(value)
             }
-            SqlDataType::Float => {
+            TdsDataType::Float => {
                 let value = reader.read_float64().await?;
                 ColumnValues::Float(value)
             }
-            SqlDataType::Decimal => {
+            TdsDataType::Decimal => {
                 let value = self.read_decimal(reader, metadata).await?;
                 ColumnValues::Decimal(value)
             }
-            SqlDataType::Numeric => {
+            TdsDataType::Numeric => {
                 let value = self.read_decimal(reader, metadata).await?;
                 ColumnValues::Numeric(value)
             }
-            SqlDataType::Bit => {
+            TdsDataType::Bit => {
                 let value = reader.read_byte().await?;
                 ColumnValues::Bit(Some(value == 1))
             }
-            SqlDataType::NChar
-            | SqlDataType::NVarChar
-            | SqlDataType::BigChar
-            | SqlDataType::VarChar => self.string_decoder.decode(reader, metadata).await?,
-            SqlDataType::DateTime => {
+            TdsDataType::NChar
+            | TdsDataType::NVarChar
+            | TdsDataType::BigChar
+            | TdsDataType::VarChar => self.string_decoder.decode(reader, metadata).await?,
+            TdsDataType::DateTime => {
                 let value = self.read_datetime(reader).await?;
                 ColumnValues::DateTime(value)
             }
-            SqlDataType::IntN => {
+            TdsDataType::IntN => {
                 let byte_len = reader.read_byte().await?;
                 let intn_value = self.read_intn(reader, byte_len).await?;
                 ColumnValues::IntN(intn_value)
             }
-            SqlDataType::Binary | SqlDataType::VarBinary => {
+            TdsDataType::Binary | TdsDataType::VarBinary => {
                 let length = reader.read_uint16().await?;
                 let mut bytes = vec![0u8; length as usize];
                 reader.read_bytes(&mut bytes).await?;
                 ColumnValues::Bytes(bytes)
             }
-            SqlDataType::BitN => {
+            TdsDataType::BitN => {
                 let byte_len = reader.read_byte().await?;
                 if byte_len > 0 {
                     let value = reader.read_byte().await?;
@@ -185,7 +185,7 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                     ColumnValues::Bit(None)
                 }
             }
-            SqlDataType::UniqueIdentifier => {
+            TdsDataType::UniqueIdentifier => {
                 let length = reader.read_byte().await?;
                 if length > 0 {
                     let mut bytes = vec![0u8; length as usize];

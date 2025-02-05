@@ -1,4 +1,4 @@
-use crate::{datatypes::sqldatatypes::SqlDataType, token::tokens::SqlCollation};
+use crate::{datatypes::sqldatatypes::TdsDataType, token::tokens::SqlCollation};
 
 use std::fmt;
 
@@ -6,7 +6,7 @@ use std::fmt;
 pub struct ColumnMetadata {
     pub user_type: u32,
     pub flags: u16,
-    pub data_type: SqlDataType,
+    pub data_type: TdsDataType,
     pub length: usize,
     pub precision: u8,
     pub scale: u8,
@@ -18,13 +18,14 @@ pub struct ColumnMetadata {
     pub is_sparse_column_set: bool,
     pub is_encrypted: bool,
     pub collation: Option<SqlCollation>, // Option handles cases where this might not be set
+    pub multi_part_name: Option<MultiPartName>,
 }
 
 impl fmt::Display for ColumnMetadata {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f,  "Column Name: {}\nData Type: {:?} (UserType: {})\nLength: {}, Precision: {}, Scale: {}\n\
         Collation: {:?}\nFlags: [Nullable: {}, CaseSensitive: {}, Identity: {}, Computed: {}, \
-        SparseColumnSet: {}, Encrypted: {}]\n",
+        SparseColumnSet: {}, Encrypted: {}, MultiPartName: {:?}]\n",
         self.column_name,
         self.data_type,
         self.user_type,
@@ -37,8 +38,17 @@ impl fmt::Display for ColumnMetadata {
         self.is_identity,
         self.is_computed,
         self.is_sparse_column_set,
-        self.is_encrypted)
+        self.is_encrypted,
+        self.multi_part_name)
     }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct MultiPartName {
+    pub(crate) server_name: Option<String>,
+    pub(crate) catalog_name: Option<String>,
+    pub(crate) schema_name: Option<String>,
+    pub(crate) table_name: String,
 }
 
 #[derive(Debug)]

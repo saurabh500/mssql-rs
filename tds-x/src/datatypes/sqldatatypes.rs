@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SqlDataType {
+pub enum TdsDataType {
     // Fixed-Length Data Types
     TinyInt = 0x30,
     SmallInt = 0x34,
@@ -24,6 +24,8 @@ pub enum SqlDataType {
 
     IntN = 0x26,
     BitN = 0x68,
+    MoneyN = 0x6E,
+    FltN = 0x6D,
 
     // Date/Time Data Types
     DateTime = 0x3D,
@@ -32,6 +34,7 @@ pub enum SqlDataType {
     Time = 0x29,
     DateTime2 = 0x2A,
     DateTimeOffset = 0x2B,
+    DateTimeN = 0x6F,
 
     // Exact Numerics
     Decimal = 0x6A,
@@ -53,46 +56,49 @@ pub enum SqlDataType {
     None = 0x00,
 }
 
-impl SqlDataType {
+impl TdsDataType {
     /// Converts an integer value to the corresponding SqlDataType, if valid.
-    pub fn from_u8(value: u8) -> Option<SqlDataType> {
+    pub fn from_u8(value: u8) -> Option<TdsDataType> {
         match value {
-            0x30 => Some(SqlDataType::TinyInt),
-            0x34 => Some(SqlDataType::SmallInt),
-            0x38 => Some(SqlDataType::Int),
-            0x7F => Some(SqlDataType::BigInt),
-            0x32 => Some(SqlDataType::Bit),
-            0x3B => Some(SqlDataType::Real),
-            0x3E => Some(SqlDataType::Float),
-            0x3C => Some(SqlDataType::Money),
-            0x7A => Some(SqlDataType::SmallMoney),
-            0x2F => Some(SqlDataType::Char),
-            0xA7 => Some(SqlDataType::VarChar),
-            0xEF => Some(SqlDataType::NChar),
-            0xE7 => Some(SqlDataType::NVarChar),
-            0xAD => Some(SqlDataType::Binary),
-            0xA5 => Some(SqlDataType::VarBinary),
-            0x23 => Some(SqlDataType::Text),
-            0x63 => Some(SqlDataType::NText),
-            0x22 => Some(SqlDataType::Image),
-            0x26 => Some(SqlDataType::IntN),
-            0x68 => Some(SqlDataType::BitN),
-            0x3D => Some(SqlDataType::DateTime),
-            0x3A => Some(SqlDataType::SmallDateTime),
-            0x28 => Some(SqlDataType::Date),
-            0x29 => Some(SqlDataType::Time),
-            0x2A => Some(SqlDataType::DateTime2),
-            0x2B => Some(SqlDataType::DateTimeOffset),
-            0x6A => Some(SqlDataType::Decimal),
-            0x6C => Some(SqlDataType::Numeric),
-            0x24 => Some(SqlDataType::UniqueIdentifier),
-            0x62 => Some(SqlDataType::SqlVariant),
-            0xF1 => Some(SqlDataType::Xml),
-            0xF0 => Some(SqlDataType::Udt),
-            0x11 => Some(SqlDataType::Geography),
-            0xF9 => Some(SqlDataType::Geometry),
-            0xFD => Some(SqlDataType::HierarchyId),
-            0xAF => Some(SqlDataType::BigChar),
+            0x30 => Some(TdsDataType::TinyInt),
+            0x34 => Some(TdsDataType::SmallInt),
+            0x38 => Some(TdsDataType::Int),
+            0x7F => Some(TdsDataType::BigInt),
+            0x32 => Some(TdsDataType::Bit),
+            0x3B => Some(TdsDataType::Real),
+            0x3E => Some(TdsDataType::Float),
+            0x3C => Some(TdsDataType::Money),
+            0x7A => Some(TdsDataType::SmallMoney),
+            0x2F => Some(TdsDataType::Char),
+            0xA7 => Some(TdsDataType::VarChar),
+            0xEF => Some(TdsDataType::NChar),
+            0xE7 => Some(TdsDataType::NVarChar),
+            0xAD => Some(TdsDataType::Binary),
+            0xA5 => Some(TdsDataType::VarBinary),
+            0x23 => Some(TdsDataType::Text),
+            0x63 => Some(TdsDataType::NText),
+            0x22 => Some(TdsDataType::Image),
+            0x26 => Some(TdsDataType::IntN),
+            0x68 => Some(TdsDataType::BitN),
+            0x3D => Some(TdsDataType::DateTime),
+            0x3A => Some(TdsDataType::SmallDateTime),
+            0x28 => Some(TdsDataType::Date),
+            0x29 => Some(TdsDataType::Time),
+            0x2A => Some(TdsDataType::DateTime2),
+            0x2B => Some(TdsDataType::DateTimeOffset),
+            0x6A => Some(TdsDataType::Decimal),
+            0x6C => Some(TdsDataType::Numeric),
+            0x24 => Some(TdsDataType::UniqueIdentifier),
+            0x62 => Some(TdsDataType::SqlVariant),
+            0xF1 => Some(TdsDataType::Xml),
+            0xF0 => Some(TdsDataType::Udt),
+            0x11 => Some(TdsDataType::Geography),
+            0xF9 => Some(TdsDataType::Geometry),
+            0xFD => Some(TdsDataType::HierarchyId),
+            0xAF => Some(TdsDataType::BigChar),
+            0x6E => Some(TdsDataType::MoneyN),
+            0x6D => Some(TdsDataType::FltN),
+            0x6F => Some(TdsDataType::DateTimeN),
             _ => None,
         }
     }
