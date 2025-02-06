@@ -1,4 +1,5 @@
-use std::{io::Error, vec};
+use core::fmt;
+use std::{fmt::Debug, io::Error, vec};
 
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -294,10 +295,69 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
     }
 }
 
-#[derive(Debug)]
 pub struct DecimalParts {
     pub is_positive: bool,
     pub scale: u8,
     pub precision: u8,
     pub int_parts: Vec<i32>,
+}
+
+impl DecimalParts {
+    fn to_f64(&self) -> f64 {
+        let u128_value = self
+            .int_parts
+            .iter()
+            .rev()
+            .enumerate()
+            .fold(0u128, |acc, (i, &part)| {
+                (acc << (i * 32)) + (part as u32 as u128)
+            });
+
+        let mut d_ret: f64 = u128_value as f64;
+
+        d_ret /= 10.0_f64.powi(self.scale as i32);
+
+        if self.is_positive {
+            d_ret
+        } else {
+            -d_ret
+        }
+    }
+}
+
+impl Debug for DecimalParts {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Decimal: {}{} F64 value: {}",
+            if self.is_positive { "" } else { "-" },
+            self.int_parts
+                .iter()
+                .map(|part| part.to_string())
+                .collect::<Vec<String>>()
+                .join(" "),
+            self.to_f64()
+        )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::datatypes::decoder::DecimalParts;
+
+    #[test]
+    fn test_f64_conversion() {
+        let expected: f64 = 123456.322;
+
+        // Represents 123456.322 as observed over TDS wire.
+        let int_parts = vec![-539269688, 2];
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 5,
+            precision: 18,
+            int_parts,
+        };
+
+        assert_eq!(expected, parts.to_f64());
+    }
 }
