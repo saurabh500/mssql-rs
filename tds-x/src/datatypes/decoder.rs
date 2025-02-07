@@ -204,7 +204,7 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                 if length > 0 {
                     let mut bytes = vec![0u8; length as usize];
                     reader.read_bytes(&mut bytes).await?;
-                    let unique_id = uuid::Uuid::from_slice(&bytes).unwrap();
+                    let unique_id = uuid::Uuid::from_slice_le(&bytes).unwrap();
                     ColumnValues::Uuid(Some(unique_id))
                 } else {
                     ColumnValues::Uuid(None)
@@ -286,8 +286,16 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
             } else {
                 let mut buffer = vec![0u8; length];
                 reader.read_bytes(&mut buffer).await?;
-                let value = String::from_utf8(buffer)
+                let mut u16_buffer = Vec::with_capacity(length / 2);
+
+                buffer
+                    .chunks(2)
+                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .for_each(|item| u16_buffer.push(item));
+
+                let value = String::from_utf16(&u16_buffer)
                     .map_err(|e| Error::new(std::io::ErrorKind::InvalidData, e))?;
+
                 Ok(ColumnValues::String(Some(value)))
             }
         }
