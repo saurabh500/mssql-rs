@@ -135,35 +135,35 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
         metadata: &ColumnMetadata,
     ) -> Result<ColumnValues, Error> {
         let result = match metadata.data_type {
-            TdsDataType::TinyInt => {
+            TdsDataType::Int1 => {
                 let value = reader.read_byte().await?;
                 ColumnValues::from(value)
             }
-            TdsDataType::SmallInt => {
+            TdsDataType::Int2 => {
                 let value = reader.read_int16().await?;
                 ColumnValues::SmallInt(value)
             }
-            TdsDataType::Int => {
+            TdsDataType::Int4 => {
                 let value = reader.read_int32().await?;
                 ColumnValues::from(value)
             }
-            TdsDataType::BigInt => {
+            TdsDataType::Int8 => {
                 let value = reader.read_int64().await?;
                 ColumnValues::BigInt(value)
             }
-            TdsDataType::Real => {
+            TdsDataType::Flt4 => {
                 let value = reader.read_float32().await?;
                 ColumnValues::Real(Some(value))
             }
-            TdsDataType::Float => {
+            TdsDataType::Flt8 => {
                 let value = reader.read_float64().await?;
                 ColumnValues::Float(Some(value))
             }
-            TdsDataType::Decimal => {
+            TdsDataType::DecimalN => {
                 let value = self.read_decimal(reader, metadata).await?;
                 ColumnValues::Decimal(value)
             }
-            TdsDataType::Numeric => {
+            TdsDataType::NumericN => {
                 let value = self.read_decimal(reader, metadata).await?;
                 ColumnValues::Numeric(value)
             }
@@ -184,7 +184,7 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                 let intn_value = self.read_intn(reader, byte_len).await?;
                 ColumnValues::IntN(intn_value)
             }
-            TdsDataType::Binary | TdsDataType::VarBinary => {
+            TdsDataType::BigBinary | TdsDataType::BigVarBinary => {
                 let length = reader.read_uint16().await?;
                 let mut bytes = vec![0u8; length as usize];
                 reader.read_bytes(&mut bytes).await?;
@@ -199,7 +199,7 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                     ColumnValues::Bit(None)
                 }
             }
-            TdsDataType::UniqueIdentifier => {
+            TdsDataType::Guid => {
                 let length = reader.read_byte().await?;
                 if length > 0 {
                     let mut bytes = vec![0u8; length as usize];
@@ -224,9 +224,7 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                     ColumnValues::Float(Some(value))
                 }
             }
-            _ => {
-                unimplemented!("Data type not implemented: {:?}", metadata.data_type);
-            }
+            _ => unimplemented!("Data type not implemented: {:?}", metadata.data_type),
         };
         Ok(result)
     }
@@ -254,7 +252,7 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
         reader: &'a mut PacketReader,
         metadata: &ColumnMetadata,
     ) -> Result<ColumnValues, Error> {
-        // If Plp Column.
+        // If Plp Column. (BIGVARCHARTYPE, BIGVARBINARYTYPE, NVARCHARTYPE with md.length == ushort.max)
         if metadata.length == Self::SHORTLEN_MAXVALUE {
             let long_len = reader.read_int64().await? as u64;
 

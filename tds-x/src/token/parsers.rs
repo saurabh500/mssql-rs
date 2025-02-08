@@ -442,51 +442,57 @@ impl ColMetadataTokenParser {
 
     pub fn try_get_fixed_length(&self, data_type: TdsDataType) -> Option<usize> {
         match data_type {
-            TdsDataType::TinyInt | TdsDataType::Bit => Some(size_of::<u8>()),
-            TdsDataType::SmallInt => Some(size_of::<u16>()),
-            TdsDataType::SmallMoney
-            | TdsDataType::Real
-            | TdsDataType::SmallDateTime
-            | TdsDataType::Int => Some(size_of::<u32>()),
+            TdsDataType::Int1 | TdsDataType::Bit => Some(size_of::<u8>()),
+            TdsDataType::Int2 => Some(size_of::<u16>()),
+            TdsDataType::Int4 | TdsDataType::DateTim4 | TdsDataType::Flt4 | TdsDataType::Money4 => {
+                Some(size_of::<u32>())
+            }
 
-            TdsDataType::Money
-            | TdsDataType::DateTime
-            | TdsDataType::Float
-            | TdsDataType::BigInt => Some(size_of::<u64>()),
-
-            TdsDataType::Date => Some(3),
+            TdsDataType::Money | TdsDataType::DateTime | TdsDataType::Flt8 | TdsDataType::Int8 => {
+                Some(size_of::<u64>())
+            }
             _ => None,
         }
     }
 
     pub fn get_var_len_byte_count(&self, data_type: TdsDataType) -> usize {
         match data_type {
-            TdsDataType::Binary
-            | TdsDataType::VarBinary
-            | TdsDataType::VarChar
-            | TdsDataType::NVarChar
+            TdsDataType::BigVarBinary
+            | TdsDataType::BigVarChar
+            | TdsDataType::BigBinary
             | TdsDataType::BigChar
+            | TdsDataType::NVarChar
             | TdsDataType::NChar => size_of::<u16>(),
 
-            TdsDataType::UniqueIdentifier
+            TdsDataType::Guid
             | TdsDataType::IntN
-            | TdsDataType::Date
-            | TdsDataType::Time
-            | TdsDataType::DateTime2
-            | TdsDataType::DateTimeOffset
-            | TdsDataType::Char
-            | TdsDataType::BitN
             | TdsDataType::Decimal
             | TdsDataType::Numeric
-            | TdsDataType::MoneyN
+            | TdsDataType::BitN
+            | TdsDataType::DecimalN
+            | TdsDataType::NumericN
             | TdsDataType::FltN
-            | TdsDataType::DateTimeN => size_of::<u8>(),
+            | TdsDataType::MoneyN
+            | TdsDataType::DateTimN
+            | TdsDataType::DateN
+            | TdsDataType::TimeN
+            | TdsDataType::DateTime2N
+            | TdsDataType::DateTimeOffsetN
+            | TdsDataType::Char
+            | TdsDataType::VarChar
+            | TdsDataType::Binary
+            | TdsDataType::VarBinary => size_of::<u8>(),
 
-            TdsDataType::SqlVariant
-            | TdsDataType::Image
+            TdsDataType::Image
+            | TdsDataType::NText
+            | TdsDataType::SsVariant
             | TdsDataType::Text
-            | TdsDataType::NText => size_of::<u32>(),
-            _ => unimplemented!("Variable length not implemented for type: {:?}", data_type),
+            | TdsDataType::Xml
+            | TdsDataType::Json => size_of::<u32>(),
+            _ => unreachable!(
+                "The datatype is not compatible with Var Length category: {:?}",
+                data_type
+            ),
         }
     }
 }
@@ -559,7 +565,7 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
 
             // Handle precision
             let (precision, scale) = match data_type {
-                TdsDataType::Decimal | TdsDataType::Numeric => {
+                TdsDataType::DecimalN | TdsDataType::NumericN => {
                     let precision = reader.read_byte().await?;
                     let scale = reader.read_byte().await?;
                     (precision, scale)
