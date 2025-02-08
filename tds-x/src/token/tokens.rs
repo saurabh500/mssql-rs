@@ -83,6 +83,7 @@ pub(crate) enum Tokens {
     Row(RowToken),
     ColMetadata(ColMetadataToken),
     NbcRow(NbcRowToken),
+    Order(OrderToken),
 }
 
 macro_rules! impl_from_token {
@@ -108,6 +109,7 @@ impl_from_token!(SspiToken, Sspi);
 impl_from_token!(RowToken, Row);
 impl_from_token!(ColMetadataToken, ColMetadata);
 impl_from_token!(NbcRowToken, NbcRow);
+impl_from_token!(OrderToken, Order);
 
 impl Token for Tokens {
     fn token_type(&self) -> TokenType {
@@ -125,6 +127,7 @@ impl Token for Tokens {
             Tokens::Row(token) => token.token_type(),
             Tokens::ColMetadata(token) => token.token_type(),
             Tokens::NbcRow(token) => token.token_type(),
+            Tokens::Order(token) => token.token_type(),
         }
     }
 }
@@ -238,6 +241,17 @@ pub(crate) struct NbcRowToken {}
 impl Token for NbcRowToken {
     fn token_type(&self) -> TokenType {
         TokenType::NbcRow
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct OrderToken {
+    pub order_columns: Vec<u16>,
+}
+
+impl Token for OrderToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::Order
     }
 }
 

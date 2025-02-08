@@ -17,7 +17,7 @@ use crate::{
         login_ack::{LoginAckToken, SqlInterfaceType},
         tokens::{
             ColMetadataToken, CurrentCommand, DoneStatus, EnvChangeContainer,
-            EnvChangeTokenSubType, InfoToken, SqlCollation, TokenType,
+            EnvChangeTokenSubType, InfoToken, OrderToken, SqlCollation, TokenType,
         },
     },
 };
@@ -687,5 +687,28 @@ impl<'a, T: for<'b> SqlTypeDecode<'b> + std::marker::Sync> TokenParser<'a> for R
             all_values.push(column_value);
         }
         Ok(Tokens::from(RowToken::new(all_values)))
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct OrderTokenParser {}
+
+#[async_trait]
+impl<'a> TokenParser<'a> for OrderTokenParser {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
+        let length = reader.read_uint16().await?;
+
+        let col_count = length / 2;
+        let mut columns = vec![];
+        for _ in 0..col_count {
+            columns.push(reader.read_uint16().await?);
+        }
+        Ok(Tokens::from(OrderToken {
+            order_columns: columns,
+        }))
     }
 }
