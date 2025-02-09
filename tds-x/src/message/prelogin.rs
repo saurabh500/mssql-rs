@@ -1,5 +1,5 @@
 use crate::core::EncryptionSetting;
-use crate::message::messages::{PacketType, Request, TypedResponse};
+use crate::message::messages::{PacketType, Request};
 use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
 use crate::{
@@ -164,9 +164,11 @@ impl<'a> Request<'a> for PreloginRequest<'a> {
 
 pub struct PreloginResponse {}
 
-#[async_trait(?Send)]
-impl TypedResponse<PreloginResponseModel> for PreloginResponse {
-    async fn deserialize(&self, reader: &mut dyn NetworkReader) -> PreloginResponseModel {
+impl PreloginResponse {
+    pub(crate) async fn deserialize(
+        &self,
+        reader: &mut dyn NetworkReader,
+    ) -> PreloginResponseModel {
         let mut packet_reader = PacketReader::new(reader);
         struct OptionContext {
             option: OptionType,
@@ -402,7 +404,7 @@ impl<'a, 'n> Serializer<'a, 'n> {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::core::{EncryptionSetting, SQLServerVersion, Version};
-    use crate::message::messages::{PacketType, TypedResponse};
+    use crate::message::messages::PacketType;
     use crate::message::prelogin::{
         OptionType, PreloginRequestModel, PreloginResponse, Serializer,
     };

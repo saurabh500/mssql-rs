@@ -208,6 +208,10 @@ pub(crate) mod tests {
             // No op
             Ok(())
         }
+
+        fn get_packet_writer(&mut self, _: PacketType) -> PacketWriter<'_> {
+            unimplemented!();
+        }
     }
 
     #[test]

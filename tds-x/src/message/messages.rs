@@ -1,10 +1,7 @@
 use std::io::Error;
 
 use crate::{
-    read_write::{
-        packet_writer::PacketWriter,
-        reader_writer::{NetworkReader, NetworkWriter},
-    },
+    read_write::{packet_writer::PacketWriter, reader_writer::NetworkWriter},
     token::tokens::ErrorToken,
 };
 use async_trait::async_trait;
@@ -22,6 +19,15 @@ pub enum PacketType {
     Login7 = 0x10,
     SSPI = 0x11,
     PreLogin = 0x12,
+}
+
+impl<'a> PacketType {
+    pub(crate) fn create_packet_writer(
+        &self,
+        transport: &'a mut dyn NetworkWriter,
+    ) -> PacketWriter<'a> {
+        PacketWriter::new(*self, transport)
+    }
 }
 
 /// Represents the status flags for a packet.
@@ -47,11 +53,6 @@ pub trait Request<'a> {
     fn packet_type(&self) -> PacketType;
     fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a>;
     async fn serialize(&self, _transport: &mut dyn NetworkWriter) -> Result<(), Error>;
-}
-
-#[async_trait(?Send)]
-pub trait TypedResponse<T> {
-    async fn deserialize(&self, reader: &mut dyn NetworkReader) -> T;
 }
 
 pub(crate) struct TdsError {

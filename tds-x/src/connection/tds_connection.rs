@@ -1,15 +1,29 @@
 use super::transport::network_transport::NetworkTransport;
 use crate::handler::handler_factory::NegotiatedSettings;
-use crate::query::result::QueryResult;
+use crate::message::batch::SqlBatch;
+use crate::message::messages::Request;
+use crate::query::result::BatchResult;
+use std::io::Error;
 
 pub struct TdsConnection<'a> {
     pub(crate) transport: Box<NetworkTransport<'a>>,
     pub(crate) negotiated_settings: NegotiatedSettings,
 }
 
-impl TdsConnection<'_> {
-    pub async fn execute(&self, _query_text: String) -> QueryResult {
-        todo!()
+impl<'connection, 'result> TdsConnection<'connection> {
+    pub async fn execute(
+        &'result mut self,
+        sql_command: String,
+    ) -> Result<BatchResult<'result>, Error>
+    where
+        'connection: 'result,
+    {
+        let batch = SqlBatch::new(sql_command);
+
+        batch.serialize(self.transport.as_mut()).await?;
+        // let response = SqlQueryResponse::new(tds_connection);
+
+        Ok(BatchResult::new(self))
     }
 }
 
@@ -24,8 +38,7 @@ mod query_processing_driver {
         connection_provider::tds_connection_provider::TdsConnectionProvider,
         message::{batch::SqlBatch, messages::Request},
         read_write::{
-            packet_reader::PacketReader,
-            reader_writer::NetworkReaderWriterImpl,
+            reader_writer::NetworkReader,
             token_stream::{GenericTokenParserRegistry, ParserContext, TokenStreamReader},
         },
         token::tokens::{DoneStatus, Tokens},
@@ -165,18 +178,9 @@ mod query_processing_driver {
         sql_command: String,
     ) -> Result<(), Error> {
         let batch = SqlBatch::new(sql_command);
-        let mut nrw = NetworkReaderWriterImpl {
-            transport: tds_connection.transport.as_mut(),
-            packet_size: tds_connection
-                .negotiated_settings
-                .session_settings
-                .packet_size,
-        };
+        batch.serialize(tds_connection.transport.as_mut()).await?;
 
-        batch.serialize(&mut nrw).await?;
-        // let response = SqlQueryResponse::new(tds_connection);
-
-        let packet_reader = PacketReader::new(&mut nrw);
+        let packet_reader = tds_connection.transport.get_packet_reader();
         let mut token_stream_reader = TokenStreamReader::new(
             packet_reader,
             Box::new(GenericTokenParserRegistry::default()),

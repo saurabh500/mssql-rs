@@ -1,7 +1,12 @@
 use crate::connection::client_context::ClientContext;
 use crate::connection::transport::ssl_handler::{SslHandler, Tds8SslHandler};
 use crate::core::EncryptionSetting;
+use crate::handler::handler_factory::SessionSettings;
 use crate::message::login_options::TdsVersion;
+use crate::message::messages::PacketType;
+use crate::read_write::packet_reader::PacketReader;
+use crate::read_write::packet_writer::PacketWriter;
+use crate::read_write::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
 use async_trait::async_trait;
 use std::io::Error;
 use tokio::io::{split, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -41,6 +46,7 @@ pub(crate) async fn create_transport(
                         writer: encrypted_writer,
                         ssl_handler: Box::new(ssl_handler),
                         stream_recoverer: Box::new(stream_recoverer),
+                        packet_size: context.packet_size as u32,
                     });
                     Ok(transport)
                 }
@@ -80,13 +86,59 @@ impl StreamRecoverer for TcpStreamRecoverer {
 pub(crate) struct NetworkTransport<'a> {
     context: &'a ClientContext,
     encryption: EncryptionSetting,
+    packet_size: u32,
     reader: Box<dyn AsyncRead + Unpin + Send + 'a>,
     writer: Box<dyn AsyncWrite + Unpin + Send + 'a>,
     ssl_handler: Box<dyn SslHandler + 'a>,
     stream_recoverer: Box<dyn StreamRecoverer + 'a>,
 }
 
+impl NetworkReaderWriter for NetworkTransport<'_> {
+    fn notify_encryption_setting_change(&mut self, setting: EncryptionSetting) {
+        self.notify_encryption_negotiation(setting);
+    }
+
+    fn notify_session_setting_change(&mut self, setting: &SessionSettings) {
+        self.packet_size = setting.packet_size;
+    }
+}
+
+#[async_trait]
+impl NetworkReader for NetworkTransport<'_> {
+    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
+        Ok(self.receive(buffer).await?)
+    }
+
+    fn packet_size(&self) -> u32 {
+        self.packet_size
+    }
+
+    fn get_packet_reader(&mut self) -> PacketReader<'_> {
+        PacketReader::new(self)
+    }
+}
+
+#[async_trait]
+impl NetworkWriter for NetworkTransport<'_> {
+    async fn send(&mut self, data: &[u8]) -> Result<(), Error> {
+        self.writer.write_all(data).await?;
+        Ok(())
+    }
+
+    fn packet_size(&self) -> u32 {
+        self.packet_size
+    }
+
+    fn get_packet_writer(&mut self, packet_type: PacketType) -> PacketWriter<'_> {
+        packet_type.create_packet_writer(self)
+    }
+}
+
 impl NetworkTransport<'_> {
+    pub(crate) fn get_packet_writer(&mut self, packet_type: PacketType) -> PacketWriter<'_> {
+        packet_type.create_packet_writer(self)
+    }
+
     pub(crate) async fn send(&mut self, data: &[u8]) -> Result<(), Error> {
         self.writer.write_all(data).await?;
         Ok(())
@@ -261,6 +313,7 @@ pub(crate) mod tests {
                 writer: Box::new(writer),
                 ssl_handler,
                 stream_recoverer,
+                packet_size: context.packet_size as u32,
             },
             server_side,
         )
@@ -285,6 +338,7 @@ pub(crate) mod tests {
                 writer: Box::new(writer),
                 ssl_handler,
                 stream_recoverer,
+                packet_size: context.packet_size as u32,
             },
             NetworkTransport {
                 context,
@@ -293,6 +347,7 @@ pub(crate) mod tests {
                 writer: Box::new(server_writer),
                 ssl_handler: Box::new(MockSslHandler),
                 stream_recoverer: Box::new(MockStreamRecoverer {}),
+                packet_size: context.packet_size as u32,
             },
         )
     }
@@ -351,6 +406,7 @@ pub(crate) mod tests {
             writer: Box::new(client_writer),
             ssl_handler,
             stream_recoverer,
+            packet_size: context.packet_size as u32,
             context: &context,
         };
 

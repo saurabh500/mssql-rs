@@ -6,7 +6,7 @@ use crate::message::login::{
     EnvChangeProperties, Feature, LoginRequest, LoginRequestModel, LoginResponse,
     LoginResponseModel, LoginResponseStatus,
 };
-use crate::message::messages::{Request, TypedResponse};
+use crate::message::messages::Request;
 use crate::message::prelogin::{
     EncryptionType, PreloginRequest, PreloginRequestModel, PreloginResponse,
 };
@@ -67,7 +67,7 @@ pub(crate) struct SessionSettings {
 
 impl SessionSettings {
     // Note that this destructively consumes the features list.
-    fn new(context: &ClientContext, feautures: &mut Vec<Box<dyn Feature>>) -> Self {
+    fn new(context: &ClientContext, features: &mut Vec<Box<dyn Feature>>) -> Self {
         let mut result = SessionSettings {
             database_collation: Default::default(),
             packet_size: context.packet_size as u32,
@@ -79,7 +79,7 @@ impl SessionSettings {
             supported_features: vec![],
             mars_enabled: context.mars_enabled,
         };
-        result.supported_features.append(feautures);
+        result.supported_features.append(features);
         result
     }
 
@@ -126,7 +126,7 @@ impl SessionHandler<'_, '_> {
         self.validate_login_result(&login_result)?;
 
         let negotiated_settings = self.negotiate_settings(&pre_login_result, &mut login_result);
-
+        reader_writer.notify_session_setting_change(&negotiated_settings.session_settings);
         Ok(negotiated_settings)
     }
 

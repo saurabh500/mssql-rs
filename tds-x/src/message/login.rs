@@ -2,8 +2,7 @@ use crate::connection::client_context::{ClientContext, TdsAuthenticationMethod};
 use crate::message::login_options::{
     OptionFlags1, OptionFlags2, OptionFlags3, OptionsValue, TdsVersion, TypeFlags,
 };
-use crate::message::messages::{PacketType, Request, TdsError, TypedResponse};
-use crate::read_write::packet_reader::PacketReader;
+use crate::message::messages::{PacketType, Request, TdsError};
 use crate::read_write::packet_writer::PacketWriter;
 use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
 use crate::token::fed_auth_info::FedAuthInfoToken;
@@ -282,7 +281,7 @@ impl<'a> Request<'a> for LoginRequest<'a> {
     }
 
     fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a> {
-        PacketWriter::new(self.packet_type(), writer)
+        writer.get_packet_writer(self.packet_type())
     }
 
     async fn serialize(&self, transport: &mut dyn NetworkWriter) -> Result<(), Error> {
@@ -300,10 +299,9 @@ pub(crate) struct LoginResponse {
     pub model: LoginResponseModel,
 }
 
-#[async_trait(?Send)]
-impl TypedResponse<LoginResponseModel> for LoginResponse {
-    async fn deserialize(&self, reader: &mut dyn NetworkReader) -> LoginResponseModel {
-        let packet_reader = PacketReader::new(reader);
+impl LoginResponse {
+    pub(crate) async fn deserialize(&self, reader: &mut dyn NetworkReader) -> LoginResponseModel {
+        let packet_reader = reader.get_packet_reader();
         let login_token_registry = GenericTokenParserRegistry::default();
         let mut token_stream_reader = TokenStreamReader {
             packet_reader,
