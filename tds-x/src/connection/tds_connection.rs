@@ -122,6 +122,19 @@ mod query_processing_driver {
 
     #[ignore]
     #[tokio::test]
+    async fn test_strings_no_panic() {
+        execut_test_query(
+            "
+            SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS VARCHAR(MAX))
+            
+        ",
+        )
+        .await
+        .unwrap();
+    }
+
+    #[ignore]
+    #[tokio::test]
     async fn test_data_types_numerics_null_values_no_panic() {
         execut_test_query(
             "
@@ -215,7 +228,7 @@ mod query_processing_driver {
                     println!("Received FeatureExtAck token: {:?}", t1);
                 }
                 Tokens::ColMetadata(column_metadata) => {
-                    // println!("Received ColMetadata token: {:?}", column_metadata);
+                    println!("Received ColMetadata token: {:?}", column_metadata);
                     row_count = 0;
                     parser_context = ParserContext::ColumnMetadata(column_metadata);
                 }

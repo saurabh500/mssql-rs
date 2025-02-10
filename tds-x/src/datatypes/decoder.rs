@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{fmt::Debug, io::Error, vec};
+use std::{fmt::Debug, fmt::Display, io::Error, vec};
 
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -9,7 +9,7 @@ use crate::{
     token::tokens::SqlCollation,
 };
 
-use super::sqldatatypes::TdsDataType;
+use super::sqldatatypes::{TdsDataType, TypeInfoVariant};
 
 #[async_trait]
 pub(crate) trait SqlTypeDecode<'a> {
@@ -31,7 +31,7 @@ pub enum ColumnValues {
     Decimal(Option<DecimalParts>),
     Numeric(Option<DecimalParts>),
     Bit(Option<bool>),
-    String(Option<String>),
+    String(Option<SqlString>),
     DateTime((i32, u32)),
     IntN(Option<i64>),
     Bytes(Vec<u8>),
@@ -75,13 +75,18 @@ impl GenericDecoder {
         for part_index in 0..number_of_int_parts {
             int_parts[part_index as usize] = reader.read_int32().await?;
         }
-
-        Ok(Some(DecimalParts {
-            is_positive,
-            scale: metadata.scale,
-            precision: metadata.precision,
-            int_parts,
-        }))
+        if let TypeInfoVariant::VarLenPrecisionScale(_, _, precision, scale) =
+            metadata.type_info.type_info_variant
+        {
+            Ok(Some(DecimalParts {
+                is_positive,
+                scale,
+                precision,
+                int_parts,
+            }))
+        } else {
+            unreachable!("Should never get here")
+        }
     }
 
     async fn read_datetime(&self, reader: &mut PacketReader<'_>) -> Result<(i32, u32), Error> {
@@ -174,6 +179,8 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
             TdsDataType::NChar
             | TdsDataType::NVarChar
             | TdsDataType::BigChar
+            | TdsDataType::BigVarChar
+            | TdsDataType::Char
             | TdsDataType::VarChar => self.string_decoder.decode(reader, metadata).await?,
             TdsDataType::DateTime => {
                 let value = self.read_datetime(reader).await?;
@@ -253,7 +260,7 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
         metadata: &ColumnMetadata,
     ) -> Result<ColumnValues, Error> {
         // If Plp Column. (BIGVARCHARTYPE, BIGVARBINARYTYPE, NVARCHARTYPE with md.length == ushort.max)
-        if metadata.length == Self::SHORTLEN_MAXVALUE {
+        if metadata.is_plp() {
             let long_len = reader.read_int64().await? as u64;
 
             if long_len as usize == Self::SQL_PLP_NULL {
@@ -273,9 +280,13 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
                     offset += chunk_size_read;
                     chunk_len = reader.read_uint32().await? as usize;
                 }
-                let value = String::from_utf8(plp_buffer)
-                    .map_err(|e| Error::new(std::io::ErrorKind::InvalidData, e))?;
-                Ok(ColumnValues::String(Some(value)))
+
+                let sql_string = SqlString::new(
+                    plp_buffer,
+                    metadata.type_info.get_collation().unwrap(),
+                    metadata.type_info.tds_type == TdsDataType::NVarChar,
+                );
+                Ok(ColumnValues::String(Some(sql_string)))
             }
         } else {
             let length = reader.read_uint16().await? as usize;
@@ -284,17 +295,14 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
             } else {
                 let mut buffer = vec![0u8; length];
                 reader.read_bytes(&mut buffer).await?;
-                let mut u16_buffer = Vec::with_capacity(length / 2);
 
-                buffer
-                    .chunks(2)
-                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-                    .for_each(|item| u16_buffer.push(item));
+                let sql_string = SqlString::new(
+                    buffer,
+                    metadata.type_info.get_collation().unwrap(),
+                    metadata.type_info.tds_type == TdsDataType::NVarChar,
+                );
 
-                let value = String::from_utf16(&u16_buffer)
-                    .map_err(|e| Error::new(std::io::ErrorKind::InvalidData, e))?;
-
-                Ok(ColumnValues::String(Some(value)))
+                Ok(ColumnValues::String(Some(sql_string)))
             }
         }
         // Ok(ColumnValues::String(Some(value)))
@@ -306,6 +314,56 @@ pub struct DecimalParts {
     pub scale: u8,
     pub precision: u8,
     pub int_parts: Vec<i32>,
+}
+
+pub struct SqlString {
+    pub bytes: Vec<u8>,
+    pub collation: SqlCollation,
+    is_utf16: bool,
+}
+
+impl SqlString {
+    pub fn new(bytes: Vec<u8>, collation: SqlCollation, is_utf16: bool) -> Self {
+        SqlString {
+            bytes,
+            collation,
+            is_utf16,
+        }
+    }
+
+    pub(crate) fn to_utf8_string(&self) -> String {
+        if self.is_utf16 {
+            let mut u16_buffer = Vec::with_capacity(self.bytes.len() / 2);
+            self.bytes
+                .chunks(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .for_each(|item| u16_buffer.push(item));
+
+            String::from_utf16(&u16_buffer).unwrap()
+        } else {
+            String::from_utf8(self.bytes.clone()).unwrap()
+        }
+    }
+}
+
+impl Debug for SqlString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_utf16 {
+            write!(f, "{:?}", self.to_utf8_string())
+        } else {
+            write!(f, "{:?}", self.bytes)
+        }
+    }
+}
+
+impl Display for SqlString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_utf16 {
+            write!(f, "{}", self.to_utf8_string())
+        } else {
+            write!(f, "{:?}", self.bytes)
+        }
+    }
 }
 
 impl DecimalParts {

@@ -1,44 +1,57 @@
-use crate::{datatypes::sqldatatypes::TdsDataType, token::tokens::SqlCollation};
+use crate::datatypes::sqldatatypes::{TdsDataType, TypeInfo, TypeInfoVariant};
 
 use std::fmt;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ColumnMetadata {
     pub user_type: u32,
     pub flags: u16,
+    pub type_info: TypeInfo,
     pub data_type: TdsDataType,
-    pub length: usize,
-    pub precision: u8,
-    pub scale: u8,
     pub column_name: String,
-    pub is_nullable: bool,
-    pub is_case_sensitive: bool,
-    pub is_identity: bool,
-    pub is_computed: bool,
-    pub is_sparse_column_set: bool,
-    pub is_encrypted: bool,
-    pub collation: Option<SqlCollation>, // Option handles cases where this might not be set
     pub multi_part_name: Option<MultiPartName>,
+}
+
+impl ColumnMetadata {
+    pub fn is_nullable(&self) -> bool {
+        (self.flags & 0x01) != 0x00
+    }
+    pub fn is_case_sensitive(&self) -> bool {
+        (self.flags & 0x02) != 0x00
+    }
+    pub fn is_identity(&self) -> bool {
+        (self.flags & 0x10) != 0x00
+    }
+    pub fn is_computed(&self) -> bool {
+        (self.flags & 0x20) != 0x00
+    }
+    pub fn is_sparse_column_set(&self) -> bool {
+        (self.flags & 0x1000) != 0x00
+    }
+    pub fn is_encrypted(&self) -> bool {
+        (self.flags & 0x2000) != 0x00
+    }
+    pub fn is_plp(&self) -> bool {
+        matches!(
+            self.type_info.type_info_variant,
+            TypeInfoVariant::PartialLen(_, _, _, _, _)
+        )
+    }
 }
 
 impl fmt::Display for ColumnMetadata {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f,  "Column Name: {}\nData Type: {:?} (UserType: {})\nLength: {}, Precision: {}, Scale: {}\n\
-        Collation: {:?}\nFlags: [Nullable: {}, CaseSensitive: {}, Identity: {}, Computed: {}, \
+        write!(f,  "Column Name: {}\nData Type: {:?} (UserType: {})\nFlags: [Nullable: {}, CaseSensitive: {}, Identity: {}, Computed: {}, \
         SparseColumnSet: {}, Encrypted: {}, MultiPartName: {:?}]\n",
         self.column_name,
         self.data_type,
         self.user_type,
-        self.length,
-        self.precision,
-        self.scale,
-        self.collation,
-        self.is_nullable,
-        self.is_case_sensitive,
-        self.is_identity,
-        self.is_computed,
-        self.is_sparse_column_set,
-        self.is_encrypted,
+        self.is_nullable(),
+        self.is_case_sensitive(),
+        self.is_identity(),
+        self.is_computed(),
+        self.is_sparse_column_set(),
+        self.is_encrypted(),
         self.multi_part_name)
     }
 }

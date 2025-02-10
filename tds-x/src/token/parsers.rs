@@ -7,7 +7,7 @@ use crate::{
     core::Version,
     datatypes::{
         decoder::{ColumnValues, SqlTypeDecode},
-        sqldatatypes::TdsDataType,
+        sqldatatypes::{read_type_info, TdsDataType},
     },
     message::{login::RoutingInfo, login_options::TdsVersion},
     query::metadata::{ColumnMetadata, MultiPartName},
@@ -439,71 +439,19 @@ impl ColMetadataTokenParser {
     pub fn is_column_encryption_supported(&self) -> bool {
         self.is_column_encryption_supported
     }
-
-    pub fn try_get_fixed_length(&self, data_type: TdsDataType) -> Option<usize> {
-        match data_type {
-            TdsDataType::Int1 | TdsDataType::Bit => Some(size_of::<u8>()),
-            TdsDataType::Int2 => Some(size_of::<u16>()),
-            TdsDataType::Int4 | TdsDataType::DateTim4 | TdsDataType::Flt4 | TdsDataType::Money4 => {
-                Some(size_of::<u32>())
-            }
-
-            TdsDataType::Money | TdsDataType::DateTime | TdsDataType::Flt8 | TdsDataType::Int8 => {
-                Some(size_of::<u64>())
-            }
-            _ => None,
-        }
-    }
-
-    pub fn get_var_len_byte_count(&self, data_type: TdsDataType) -> usize {
-        match data_type {
-            TdsDataType::BigVarBinary
-            | TdsDataType::BigVarChar
-            | TdsDataType::BigBinary
-            | TdsDataType::BigChar
-            | TdsDataType::NVarChar
-            | TdsDataType::NChar => size_of::<u16>(),
-
-            TdsDataType::Guid
-            | TdsDataType::IntN
-            | TdsDataType::Decimal
-            | TdsDataType::Numeric
-            | TdsDataType::BitN
-            | TdsDataType::DecimalN
-            | TdsDataType::NumericN
-            | TdsDataType::FltN
-            | TdsDataType::MoneyN
-            | TdsDataType::DateTimN
-            | TdsDataType::DateN
-            | TdsDataType::TimeN
-            | TdsDataType::DateTime2N
-            | TdsDataType::DateTimeOffsetN
-            | TdsDataType::Char
-            | TdsDataType::VarChar
-            | TdsDataType::Binary
-            | TdsDataType::VarBinary => size_of::<u8>(),
-
-            TdsDataType::Image
-            | TdsDataType::NText
-            | TdsDataType::SsVariant
-            | TdsDataType::Text
-            | TdsDataType::Xml
-            | TdsDataType::Json => size_of::<u32>(),
-            _ => unreachable!(
-                "The datatype is not compatible with Var Length category: {:?}",
-                data_type
-            ),
-        }
-    }
 }
 
 #[async_trait]
 impl<'a> TokenParser<'a> for ColMetadataTokenParser {
     async fn parse(
         &self,
-        reader: &'a mut PacketReader,
+        packet_reader: &'a mut PacketReader,
         _context: &ParserContext,
     ) -> Result<Tokens, Error> {
+        // Allocate a heap pointer so that we can reference the reader
+        // by passing it around into other methods.
+        let mut reader = Box::new(packet_reader);
+
         let col_count = reader.read_uint16().await?;
 
         if self.is_column_encryption_supported {
@@ -517,87 +465,27 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
 
         let mut column_metadata: Vec<ColumnMetadata> = Vec::with_capacity(col_count as usize);
         for _ in 0..col_count {
-            let mut col_metadata = ColumnMetadata::default();
             let user_type = reader.read_uint32().await?;
-            col_metadata.user_type = user_type;
+
             let flags = reader.read_uint16().await?;
-            col_metadata.flags = flags;
-            col_metadata.is_nullable = (flags & 0x01) != 0x00;
-            col_metadata.is_case_sensitive = (flags & 0x02) != 0x00;
-            col_metadata.is_identity = (flags & 0x10) != 0x00;
-            col_metadata.is_computed = (flags & 0x20) != 0x00;
-            col_metadata.is_sparse_column_set = (flags & 0x1000) != 0x00;
-            col_metadata.is_encrypted = (flags & 0x2000) != 0x00;
 
             let raw_data_type = reader.read_byte().await?;
-            let some_data_type = TdsDataType::from_u8(raw_data_type);
-
-            debug_assert!(
-                some_data_type.is_some(),
-                "Unknown data type: {}, Parsed so far {:?}",
-                raw_data_type,
-                column_metadata
-            );
+            let some_data_type = TdsDataType::try_from(raw_data_type);
+            if some_data_type.is_err() {
+                return Err(Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Invalid data type: {}", raw_data_type),
+                ));
+            }
             let data_type = some_data_type.unwrap();
-            col_metadata.data_type = data_type;
-            // let mut boxed_reader = Box::new(&mut reader);
-            // self.parse_type_info(&mut boxed_reader, sql_data_type.unwrap(), &mut col_metadata)
-            //     .await?;
-            // let reader = boxed_reader.as_mut();
-            let fixed_length = self.try_get_fixed_length(data_type);
-            col_metadata.length = match fixed_length {
-                Some(len) => len,
-                None => {
-                    let byte_count = self.get_var_len_byte_count(data_type);
-                    match byte_count {
-                        1 => reader.read_byte().await? as usize,
-                        2 => reader.read_uint16().await? as usize,
-                        4 => reader.read_int32().await? as usize,
-                        _ => {
-                            unimplemented!(
-                                "Variable length not implemented for type: {:?}",
-                                data_type
-                            )
-                        }
-                    }
-                }
-            };
-
-            // Handle precision
-            let (precision, scale) = match data_type {
-                TdsDataType::DecimalN | TdsDataType::NumericN => {
-                    let precision = reader.read_byte().await?;
-                    let scale = reader.read_byte().await?;
-                    (precision, scale)
-                }
-                _ => (0, 0),
-            };
-
-            col_metadata.precision = precision;
-            col_metadata.scale = scale;
-
-            // Handle collation
-            let collation = match data_type {
-                TdsDataType::NChar
-                | TdsDataType::VarChar
-                | TdsDataType::Text
-                | TdsDataType::NText
-                | TdsDataType::NVarChar
-                | TdsDataType::BigChar => {
-                    let mut collation_bytes: [u8; 5] = [0; 5];
-                    let _ = reader.read_bytes(&mut collation_bytes).await?;
-                    Some(SqlCollation::new(&collation_bytes))
-                }
-                _ => None,
-            };
-            col_metadata.collation = collation;
+            let type_info = read_type_info(&mut reader, data_type).await?;
 
             // Parse Table name
             // TDS Doc snippet
             // The fully qualified base table name for this column.
             // It contains the table name length and table name.
             // This exists only for text, ntext, and image columns. It specifies the number of parts that are returned and then repeats PartName once for each NumParts.
-            col_metadata.multi_part_name = match data_type {
+            let multi_part_name = match data_type {
                 TdsDataType::Text | TdsDataType::NText | TdsDataType::Image => {
                     let mut part_count = reader.read_byte().await?;
                     if part_count == 0 {
@@ -624,8 +512,16 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
             };
 
             let col_name = reader.read_varchar_u8_length().await?;
-            col_metadata.column_name = col_name;
-            if col_metadata.is_encrypted {
+
+            let col_metadata = ColumnMetadata {
+                user_type,
+                flags,
+                data_type,
+                type_info,
+                column_name: col_name,
+                multi_part_name,
+            };
+            if col_metadata.is_encrypted() {
                 unimplemented!("Column encryption is not yet supported");
             }
 
