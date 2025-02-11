@@ -9,7 +9,10 @@ use crate::{
         decoder::{ColumnValues, SqlTypeDecode},
         sqldatatypes::{read_type_info, TdsDataType},
     },
-    message::{login::RoutingInfo, login_options::TdsVersion},
+    message::{
+        login::{FeatureExtension, RoutingInfo},
+        login_options::TdsVersion,
+    },
     query::metadata::{ColumnMetadata, MultiPartName},
     read_write::{packet_reader::PacketReader, token_stream::ParserContext},
     token::{
@@ -25,7 +28,8 @@ use crate::{
 use super::{
     fed_auth_info::FedAuthInfoToken,
     tokens::{
-        DoneInProcToken, DoneProcToken, DoneToken, EnvChangeToken, ErrorToken, RowToken, Tokens,
+        DoneInProcToken, DoneProcToken, DoneToken, EnvChangeToken, ErrorToken, FeatureExtAckToken,
+        RowToken, Tokens,
     },
 };
 
@@ -415,10 +419,25 @@ pub(crate) struct FeatureExtAckTokenParser {
 impl<'a> TokenParser<'a> for FeatureExtAckTokenParser {
     async fn parse(
         &self,
-        _reader: &'a mut PacketReader,
+        reader: &'a mut PacketReader,
         _context: &ParserContext,
     ) -> Result<Tokens, Error> {
-        unimplemented!()
+        let mut features: Vec<(FeatureExtension, Vec<u8>)> = Vec::new();
+        loop {
+            let feature_identifier = FeatureExtension::from(reader.read_byte().await?);
+            if feature_identifier == FeatureExtension::Terminator {
+                break;
+            }
+            let data_length = reader.read_uint32().await?;
+            let mut feature_data_buffer = vec![0; data_length as usize];
+
+            if data_length > 0 {
+                reader.read_bytes(&mut feature_data_buffer[0..]).await?;
+                // Store the features somewhere.
+            }
+            features.push((feature_identifier, feature_data_buffer));
+        }
+        Ok(Tokens::from(FeatureExtAckToken::new(features)))
     }
 }
 

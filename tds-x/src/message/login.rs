@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io::Error;
 
+use super::features::utf8::Utf8Feature;
 use super::login_options::{
     OptionChangePassword, OptionInitLang, OptionIntegratedSecurity, OptionOdbc, OptionOleDb,
     OptionSqlType, OptionUser,
@@ -41,6 +42,8 @@ pub(crate) struct EnvChangeProperties {
     pub routing_information: Option<RoutingInfo>,
 }
 
+#[derive(Eq, PartialEq, Hash, Debug, Copy, Clone)]
+#[repr(u8)]
 pub(crate) enum FeatureExtension {
     SRecovery = 0x01,
     FedAuth = 0x02,
@@ -53,19 +56,48 @@ pub(crate) enum FeatureExtension {
     Terminator = 0xFF,
 }
 
-#[async_trait]
+impl From<u8> for FeatureExtension {
+    fn from(value: u8) -> Self {
+        match value {
+            0x01 => FeatureExtension::SRecovery,
+            0x02 => FeatureExtension::FedAuth,
+            0x04 => FeatureExtension::AlwaysEncrypted,
+            0x05 => FeatureExtension::GlobalTransactions,
+            0x08 => FeatureExtension::AzureSqlSupport,
+            0x09 => FeatureExtension::DataClassification,
+            0x0A => FeatureExtension::Utf8Support,
+            0x0B => FeatureExtension::SqlDnsCaching,
+            0xFF => FeatureExtension::Terminator,
+            _ => unreachable!("Invalid Feature Extension."),
+        }
+    }
+}
+
+#[async_trait(?Send)]
 pub(crate) trait Feature {
     fn feature_identifier(&self) -> FeatureExtension;
     fn is_requested(&self) -> bool;
     fn data_length(&self) -> i32;
-    async fn serialize(&self, packet_writer: &PacketWriter) -> Result<(), Error>;
+    async fn serialize(&self, packet_writer: &mut PacketWriter) -> Result<(), Error>;
     fn deserialize(&self, data: &[u8]);
     fn is_acknowledged(&self) -> bool;
+    fn set_acknowledged(&mut self, _acknowledged: bool);
 }
 
-#[derive(Default)]
 pub(crate) struct FeaturesRequest {
     pub features: HashMap<FeatureExtension, Box<dyn Feature>>,
+}
+
+/// Default implementation for Feature Request, which will add all the features.
+impl Default for FeaturesRequest {
+    fn default() -> Self {
+        let mut features: HashMap<FeatureExtension, Box<dyn Feature>> = HashMap::new();
+        features.insert(
+            FeatureExtension::Utf8Support,
+            Box::new(Utf8Feature::default()),
+        );
+        FeaturesRequest { features }
+    }
 }
 
 impl FeaturesRequest {
@@ -77,23 +109,48 @@ impl FeaturesRequest {
     }
 
     pub fn is_acknowledged(&self, _feature_extension: FeatureExtension) -> Option<&dyn Feature> {
-        todo!()
+        let feature = self.features.get(&_feature_extension);
+        match feature {
+            Some(f) => {
+                if f.is_acknowledged() {
+                    Some(f.as_ref())
+                } else {
+                    None
+                }
+            }
+            None => {
+                unreachable!("Feature not found in the features request.");
+            }
+        }
     }
 
     pub fn set_acknowledged(&mut self, _feature_extension: FeatureExtension, _data: &[u8]) {
-        todo!()
+        let feature = self.features.get_mut(&_feature_extension);
+        match feature {
+            Some(f) => {
+                f.set_acknowledged(true);
+                f.deserialize(_data);
+            }
+            None => {
+                unreachable!("Feature not found in the features request.");
+            }
+        }
     }
 
     pub fn get_requested_features(&self) -> Vec<&dyn Feature> {
-        Vec::new()
+        self.features
+            .values()
+            .filter(|f| f.is_requested())
+            .map(|f| f.as_ref())
+            .collect()
     }
 
     pub fn get_acknowledged_features(&self) -> Vec<&dyn Feature> {
-        todo!()
-    }
-
-    pub fn is_feature_acknowledged(&self, _feature_extension: FeatureExtension) -> bool {
-        todo!()
+        self.features
+            .values()
+            .filter(|f| f.is_acknowledged())
+            .map(|f| f.as_ref())
+            .collect()
     }
 }
 
@@ -163,9 +220,7 @@ impl LoginRequestModel<'_> {
             option_flags3,
             type_flags,
             tds_version: context.tds_version(),
-            features_request: FeaturesRequest {
-                features: HashMap::new(),
-            },
+            features_request: FeaturesRequest::default(),
             user_input: context,
             client_prog_ver: 0,
             client_process_id: 0,
@@ -348,7 +403,13 @@ impl LoginResponse {
                     response_model.tds_error = Some(TdsError::new(error_token));
                     // Decide if you want to break here, or keep looping.
                 }
-                Tokens::FeatureExtAck(_t) => todo!(),
+                Tokens::FeatureExtAck(_t) => {
+                    _t.acknowledged_features().iter().for_each(|f| {
+                        response_model
+                            .features
+                            .set_acknowledged(f.0, f.1.as_slice());
+                    });
+                }
                 Tokens::FedAuthInfo(fed_auth_info_token) => {
                     response_model.fed_auth_info = Some(fed_auth_info_token);
                     break;
@@ -663,12 +724,12 @@ impl Serializer<'_> {
 
         self.payload_writer.write_i16_async(4).await?;
 
-        let feature_data_length = 0;
+        let mut feature_data_length = 0;
 
         // TODO: Uncomment when features are implemented.
-        // for feature in self.features_request.get_requested_features() {
-        //     feature_data_length += feature.data_length();
-        // }
+        for feature in self.features_request.get_requested_features() {
+            feature_data_length += feature.data_length();
+        }
 
         self.content_next_offset +=
             (size_of::<i32>() as i32) + feature_data_length + (size_of::<u8>() as i32);

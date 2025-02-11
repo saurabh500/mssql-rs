@@ -1,7 +1,9 @@
 use std::fmt;
 
 use crate::{
-    datatypes::decoder::ColumnValues, message::login::RoutingInfo, query::metadata::ColumnMetadata,
+    datatypes::decoder::ColumnValues,
+    message::login::{FeatureExtension, RoutingInfo},
+    query::metadata::ColumnMetadata,
 };
 
 use super::{
@@ -203,7 +205,19 @@ trait EnvChangeSubToken {
 }
 
 #[derive(Debug)]
-pub struct FeatureExtAckToken {}
+pub(crate) struct FeatureExtAckToken {
+    features: Vec<(FeatureExtension, Vec<u8>)>,
+}
+
+impl FeatureExtAckToken {
+    pub(crate) fn new(features: Vec<(FeatureExtension, Vec<u8>)>) -> Self {
+        Self { features }
+    }
+
+    pub(crate) fn acknowledged_features(&self) -> &[(FeatureExtension, Vec<u8>)] {
+        &self.features
+    }
+}
 
 impl Token for EnvChangeToken {
     fn token_type(&self) -> TokenType {

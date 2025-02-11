@@ -1,0 +1,50 @@
+use std::io::Error;
+
+use async_trait::async_trait;
+
+use crate::{
+    message::login::{Feature, FeatureExtension},
+    read_write::packet_writer::PacketWriter,
+};
+
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct Utf8Feature {
+    acknowledged: bool,
+}
+
+#[async_trait(?Send)]
+impl Feature for Utf8Feature {
+    fn feature_identifier(&self) -> FeatureExtension {
+        FeatureExtension::Utf8Support
+    }
+
+    fn is_requested(&self) -> bool {
+        true
+    }
+
+    fn data_length(&self) -> i32 {
+        (size_of::<u8>() + size_of::<i32>()) as i32
+    }
+
+    async fn serialize(&self, packet_writer: &mut PacketWriter) -> Result<(), Error> {
+        packet_writer
+            .write_byte_async(self.feature_identifier() as u8)
+            .await?;
+        packet_writer.write_i32_async(0).await?;
+        Ok(())
+    }
+
+    fn deserialize(&self, data: &[u8]) {
+        if data.len() != 1 {
+            unreachable!("Invalid data length for UTF-8 feature. This is unexpected.");
+        }
+    }
+
+    fn is_acknowledged(&self) -> bool {
+        todo!()
+    }
+
+    fn set_acknowledged(&mut self, acknowledged: bool) {
+        self.acknowledged = acknowledged;
+    }
+}
