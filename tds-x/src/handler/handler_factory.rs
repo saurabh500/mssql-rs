@@ -89,7 +89,7 @@ impl SessionSettings {
         }
 
         if change_properties.database_collation.is_some() {
-            self.database_collation = change_properties.database_collation.clone().unwrap();
+            self.database_collation = change_properties.database_collation.unwrap();
         }
 
         if change_properties.language.is_some() {

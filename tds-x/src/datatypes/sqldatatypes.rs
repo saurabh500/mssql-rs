@@ -280,14 +280,14 @@ impl TypeInfo {
         match &self.type_info_variant {
             TypeInfoVariant::VarLenString(_, _, collation) => {
                 if collation.is_some() {
-                    collation.clone()
+                    *collation
                 } else {
                     None
                 }
             }
             TypeInfoVariant::PartialLen(_, _, collation, _, _) => {
                 if collation.is_some() {
-                    collation.clone()
+                    *collation
                 } else {
                     None
                 }
@@ -430,7 +430,12 @@ pub async fn read_type_info(
                 let collation = {
                     let mut collation_bytes: [u8; 5] = [0; 5];
                     let _ = reader.read_bytes(&mut collation_bytes).await?;
-                    Some(SqlCollation::new(&collation_bytes))
+
+                    if collation_bytes.is_empty() {
+                        None
+                    } else {
+                        Some(SqlCollation::new(&collation_bytes))
+                    }
                 };
 
                 TypeInfo {
@@ -505,4 +510,8 @@ pub async fn read_type_info(
     }
 
     // TODO: We are only left with UDT type now
+}
+
+pub fn is_unicode_type(data_type: TdsDataType) -> bool {
+    matches!(data_type, TdsDataType::NVarChar | TdsDataType::NChar)
 }

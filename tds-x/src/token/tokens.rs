@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self, Debug};
 
 use crate::{
     datatypes::decoder::ColumnValues,
@@ -142,7 +142,7 @@ pub(crate) struct TokenEvent<'a> {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum EnvChangeContainer {
     String(EnvChangeTokenValuePairs<String>),
-    SqlCollation(EnvChangeTokenValuePairs<SqlCollation>),
+    SqlCollation(EnvChangeTokenValuePairs<Option<SqlCollation>>),
     UInt32(EnvChangeTokenValuePairs<u32>),
     RoutingType(EnvChangeTokenValuePairs<Option<RoutingInfo>>),
     BytesType(EnvChangeTokenValuePairs<Vec<u8>>),
@@ -154,9 +154,9 @@ impl From<(String, String)> for EnvChangeContainer {
     }
 }
 
-impl From<(SqlCollation, SqlCollation)> for EnvChangeContainer {
-    fn from(value: (SqlCollation, SqlCollation)) -> Self {
-        EnvChangeContainer::SqlCollation(EnvChangeTokenValuePairs::<SqlCollation>::new(
+impl From<(Option<SqlCollation>, Option<SqlCollation>)> for EnvChangeContainer {
+    fn from(value: (Option<SqlCollation>, Option<SqlCollation>)) -> Self {
+        EnvChangeContainer::SqlCollation(EnvChangeTokenValuePairs::<Option<SqlCollation>>::new(
             value.0, value.1,
         ))
     }
@@ -269,15 +269,12 @@ impl Token for OrderToken {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq, Copy)]
 pub struct SqlCollation {
     pub info: u32,
-    pub lcid: i32,
-    pub comparison_style: u8,
+    pub lcid_language_id: i32,
+    pub col_flags: u8,
     pub sort_id: u8,
-    // TODO: Encoding is represented as a String, but
-    // this detail needs to be worked out
-    pub encoding: Option<String>,
 }
 
 impl SqlCollation {
@@ -287,34 +284,89 @@ impl SqlCollation {
         if byte_len != 5 && byte_len != 0 {
             panic!("Collation must be exactly 5 bytes long or none.");
         }
-        if byte_len == 0 {
-            return Self::default();
-        }
+
         let info = u32::from_le_bytes([
             collation_bytes[0],
             collation_bytes[1],
             collation_bytes[2],
             collation_bytes[3],
         ]);
-        let lcid = (info & 0x000FFFFF) as i32; // Lower 20 bits
-        let comparison_style = ((info >> 20) & 0xFF) as u8; // Next 8 bits
+
+        // 20 BITS are lcid. The language id is the lower 16 bits and the lcid sort flags are in the next 4 bits.
+        let lcid_language_id = (info & 0x000FFFFF) as i32; // Lower 16 bits.
+        let col_flags = ((info >> 20) & 0xFF) as u8; // Next 8 bits
         let sort_id = collation_bytes[4];
-
-        let encoding = Self::get_encoding(lcid, sort_id);
-
         SqlCollation {
             info,
-            lcid,
-            comparison_style,
+            lcid_language_id,
+            col_flags,
             sort_id,
-            encoding,
         }
     }
+}
 
-    /// TODO: Encoding handling needs to be thought of. How do we go from lcid / sort id to encoding?.
-    /// Option<String> return type is just a place holder.
-    fn get_encoding(_lcid: i32, _sort_id: u8) -> Option<String> {
-        None
+impl SqlCollation {
+    /// Returns the LCID from the collation.
+    pub fn lcid_language_id(&self) -> i32 {
+        (self.info & 0x000FFFFF) as i32
+    }
+
+    /// Returns the comparison style from the collation.
+    pub fn comparison_style(&self) -> u8 {
+        ((self.info >> 20) & 0xFF) as u8 // Next 8 bits
+    }
+
+    /// Returns the sort ID from the collation.
+    pub fn sort_id(&self) -> u8 {
+        self.sort_id
+    }
+
+    pub fn version(&self) -> u8 {
+        (self.info >> 28) as u8
+    }
+
+    // fIgnoreCase fIgnoreAccent fIgnoreKana fIgnoreWidth fBinary fBinary2 fUTF8
+    pub fn ignore_case(&self) -> bool {
+        (self.col_flags & 0x1) != 0
+    }
+
+    pub fn ignore_accent(&self) -> bool {
+        (self.col_flags & 0x2) != 0
+    }
+
+    pub fn ignore_kana(&self) -> bool {
+        (self.col_flags & 0x4) != 0
+    }
+
+    pub fn ignore_width(&self) -> bool {
+        (self.col_flags & 0x8) != 0
+    }
+
+    pub fn binary(&self) -> bool {
+        (self.col_flags & 0x10) != 0
+    }
+
+    pub fn binary2(&self) -> bool {
+        (self.col_flags & 0x20) != 0
+    }
+
+    pub fn utf8(&self) -> bool {
+        (self.col_flags & 0x40) != 0
+    }
+}
+
+impl Debug for SqlCollation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "INFO: {} LCID: {}, ComparisonStyle: {}, SortID: {}, IsUtf8: {}, IgnoreCase: {}",
+            self.info,
+            self.lcid_language_id,
+            self.col_flags,
+            self.sort_id,
+            self.utf8(),
+            self.ignore_case()
+        )
     }
 }
 
@@ -322,8 +374,12 @@ impl fmt::Display for SqlCollation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "INFO: {} LCID: {}, ComparisonStyle: {}, SortID: {}, Encoding: {:?}",
-            self.info, self.lcid, self.comparison_style, self.sort_id, self.encoding
+            "INFO: {} LCID: {}, ComparisonStyle: {}, SortID: {}, IsUtf8: {}",
+            self.info,
+            self.lcid_language_id,
+            self.col_flags,
+            self.sort_id,
+            self.utf8()
         )
     }
 }

@@ -96,8 +96,15 @@ impl<'a> TokenParser<'a> for EnvChangeTokenParser {
             EnvChangeTokenSubType::SqlCollation => {
                 let old_bytes = reader.read_u8_varbyte().await?;
                 let new_bytes = reader.read_u8_varbyte().await?;
-                let old_collation = SqlCollation::new(&old_bytes);
-                let new_collation = SqlCollation::new(&new_bytes);
+                let old_collation = match old_bytes.len() {
+                    5 => Some(SqlCollation::new(&old_bytes)),
+                    _ => None,
+                };
+
+                let new_collation = match new_bytes.len() {
+                    5 => Some(SqlCollation::new(&old_bytes)),
+                    _ => None,
+                };
                 EnvChangeContainer::from((old_collation, new_collation))
             }
             EnvChangeTokenSubType::BeginTransaction => todo!(),

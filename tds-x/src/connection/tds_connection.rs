@@ -124,10 +124,12 @@ mod query_processing_driver {
     #[tokio::test]
     async fn test_strings_no_panic() {
         execut_test_query(
-            "
-            SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS VARCHAR(MAX))
-            
-        ",
+            "SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS NVARCHAR(500)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; 
+            SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS NCHAR(500)) COLLATE Latin1_General_100_CI_AS_SC_UTF8;
+            SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS VARCHAR(500)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; 
+            SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS CHAR(500)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; 
+            SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS NVARCHAR(MAX)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; 
+            SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS VARCHAR(MAX)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; ",
         )
         .await
         .unwrap();
@@ -200,7 +202,7 @@ mod query_processing_driver {
         );
 
         let mut parser_context = ParserContext::default();
-        let mut row_count = 0;
+        let mut _row_count = 0;
         while let Ok(token) = token_stream_reader.receive_token(&parser_context).await {
             // let token = token_stream_reader.receive_token().await?;
             match token {
@@ -229,16 +231,16 @@ mod query_processing_driver {
                 }
                 Tokens::ColMetadata(column_metadata) => {
                     println!("Received ColMetadata token: {:?}", column_metadata);
-                    row_count = 0;
+                    _row_count = 0;
                     parser_context = ParserContext::ColumnMetadata(column_metadata);
                 }
                 Tokens::Row(row) => {
                     // Just print the first row, to avoid cluttering the output
-                    if row_count == 0 {
-                        println!("Received Row Data: {:?}", row);
-                    }
-                    row_count += 1;
-                    // println!("Received Row Index: {:?}", row_count);
+                    // if row_count == 0 {
+                    //     println!("Received Row Data: {:?}", row);
+                    // }
+                    _row_count += 1;
+                    println!("Received Row Index: {:?}", row);
                 }
                 _ => {
                     println!("Received token: {:?}", token);

@@ -276,8 +276,7 @@ impl LoginResponseModel {
                 }
             },
             EnvChangeContainer::SqlCollation(collation_change) => {
-                self.change_properties.database_collation =
-                    Option::from(collation_change.new_value().clone());
+                self.change_properties.database_collation = *collation_change.new_value();
             }
             EnvChangeContainer::UInt32(numeric_change) => match sub_type {
                 EnvChangeTokenSubType::PacketSize => {

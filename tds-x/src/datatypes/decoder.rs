@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{fmt::Debug, fmt::Display, io::Error, vec};
+use std::{fmt::Debug, io::Error};
 
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -9,7 +9,10 @@ use crate::{
     token::tokens::SqlCollation,
 };
 
-use super::sqldatatypes::{TdsDataType, TypeInfoVariant};
+use super::{
+    sql_string::{get_encoding_type, SqlString},
+    sqldatatypes::{TdsDataType, TypeInfoVariant},
+};
 
 #[async_trait]
 pub(crate) trait SqlTypeDecode<'a> {
@@ -259,6 +262,8 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
         reader: &'a mut PacketReader,
         metadata: &ColumnMetadata,
     ) -> Result<ColumnValues, Error> {
+        let encoding_type = get_encoding_type(metadata);
+
         // If Plp Column. (BIGVARCHARTYPE, BIGVARBINARYTYPE, NVARCHARTYPE with md.length == ushort.max)
         if metadata.is_plp() {
             let long_len = reader.read_int64().await? as u64;
@@ -284,7 +289,7 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
                 let sql_string = SqlString::new(
                     plp_buffer,
                     metadata.type_info.get_collation().unwrap(),
-                    metadata.type_info.tds_type == TdsDataType::NVarChar,
+                    encoding_type,
                 );
                 Ok(ColumnValues::String(Some(sql_string)))
             }
@@ -299,13 +304,12 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
                 let sql_string = SqlString::new(
                     buffer,
                     metadata.type_info.get_collation().unwrap(),
-                    metadata.type_info.tds_type == TdsDataType::NVarChar,
+                    encoding_type,
                 );
 
                 Ok(ColumnValues::String(Some(sql_string)))
             }
         }
-        // Ok(ColumnValues::String(Some(value)))
     }
 }
 
@@ -314,56 +318,6 @@ pub struct DecimalParts {
     pub scale: u8,
     pub precision: u8,
     pub int_parts: Vec<i32>,
-}
-
-pub struct SqlString {
-    pub bytes: Vec<u8>,
-    pub collation: SqlCollation,
-    is_utf16: bool,
-}
-
-impl SqlString {
-    pub fn new(bytes: Vec<u8>, collation: SqlCollation, is_utf16: bool) -> Self {
-        SqlString {
-            bytes,
-            collation,
-            is_utf16,
-        }
-    }
-
-    pub(crate) fn to_utf8_string(&self) -> String {
-        if self.is_utf16 {
-            let mut u16_buffer = Vec::with_capacity(self.bytes.len() / 2);
-            self.bytes
-                .chunks(2)
-                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-                .for_each(|item| u16_buffer.push(item));
-
-            String::from_utf16(&u16_buffer).unwrap()
-        } else {
-            String::from_utf8(self.bytes.clone()).unwrap()
-        }
-    }
-}
-
-impl Debug for SqlString {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_utf16 {
-            write!(f, "{:?}", self.to_utf8_string())
-        } else {
-            write!(f, "{:?}", self.bytes)
-        }
-    }
-}
-
-impl Display for SqlString {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_utf16 {
-            write!(f, "{}", self.to_utf8_string())
-        } else {
-            write!(f, "{:?}", self.bytes)
-        }
-    }
 }
 
 impl DecimalParts {
