@@ -8,7 +8,8 @@ use crate::datatypes::decoder::GenericDecoder;
 use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
     EnvChangeTokenParser, ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser,
-    InfoTokenParser, LoginAckTokenParser, OrderTokenParser, RowTokenParser, TokenParser,
+    InfoTokenParser, LoginAckTokenParser, OrderTokenParser, ReturnStatusTokenParser,
+    RowTokenParser, TokenParser,
 };
 use crate::token::tokens::{ColMetadataToken, TokenType, Tokens};
 
@@ -85,6 +86,9 @@ impl TokenStreamReader<'_> {
             }
             TokenParsers::Row(parser) => parser.parse(&mut self.packet_reader, context).await,
             TokenParsers::Order(parser) => parser.parse(&mut self.packet_reader, context).await,
+            TokenParsers::ReturnStatus(parser) => {
+                parser.parse(&mut self.packet_reader, context).await
+            }
         }
     }
 }
@@ -140,6 +144,10 @@ impl Default for GenericTokenParserRegistry {
             TokenType::Order,
             TokenParsers::from(OrderTokenParser::default()),
         );
+        internal_registry.insert(
+            TokenType::ReturnStatus,
+            TokenParsers::from(ReturnStatusTokenParser::default()),
+        );
         Self {
             parsers: internal_registry,
         }
@@ -171,6 +179,7 @@ pub enum TokenParsers {
     ColMetadata(ColMetadataTokenParser),
     Row(RowTokenParser<GenericDecoder>),
     Order(OrderTokenParser),
+    ReturnStatus(ReturnStatusTokenParser),
 }
 
 macro_rules! impl_from_token_parser {
@@ -197,5 +206,6 @@ impl_from_token_parser!(
     FeatureExtAckTokenParser => FeatureExtAck,
     ColMetadataTokenParser => ColMetadata,
     RowTokenParser<GenericDecoder> => Row,
-    OrderTokenParser => Order
+    OrderTokenParser => Order,
+    ReturnStatusTokenParser => ReturnStatus
 );

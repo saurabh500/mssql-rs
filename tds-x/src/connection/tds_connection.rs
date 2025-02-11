@@ -49,9 +49,7 @@ mod query_processing_driver {
     #[ignore]
     #[tokio::test]
     async fn test_single_query_no_panic() {
-        execut_test_query("select * from sys.databases")
-            .await
-            .unwrap();
+        execut_test_query("sp_who2").await.unwrap();
     }
 
     #[ignore]
@@ -219,6 +217,9 @@ mod query_processing_driver {
                 Tokens::DoneProc(t1) => {
                     println!("Received DoneProc token: {:?}", t1);
                     parser_context = ParserContext::None(());
+                    if !t1.status.contains(DoneStatus::MORE) {
+                        break;
+                    }
                 }
                 Tokens::EnvChange(t1) => {
                     println!("Received EnvChange token: {:?}", t1);

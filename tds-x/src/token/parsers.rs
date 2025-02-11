@@ -29,7 +29,7 @@ use super::{
     fed_auth_info::FedAuthInfoToken,
     tokens::{
         DoneInProcToken, DoneProcToken, DoneToken, EnvChangeToken, ErrorToken, FeatureExtAckToken,
-        RowToken, Tokens,
+        ReturnStatusToken, RowToken, Tokens,
     },
 };
 
@@ -632,5 +632,21 @@ impl<'a> TokenParser<'a> for OrderTokenParser {
         Ok(Tokens::from(OrderToken {
             order_columns: columns,
         }))
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ReturnStatusTokenParser {}
+
+#[async_trait]
+impl<'a> TokenParser<'a> for ReturnStatusTokenParser {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> Result<Tokens, Error> {
+        let value = reader.read_int32().await?;
+
+        Ok(Tokens::from(ReturnStatusToken { value }))
     }
 }

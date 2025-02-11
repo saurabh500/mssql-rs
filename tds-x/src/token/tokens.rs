@@ -86,6 +86,7 @@ pub(crate) enum Tokens {
     ColMetadata(ColMetadataToken),
     NbcRow(NbcRowToken),
     Order(OrderToken),
+    ReturnStatus(ReturnStatusToken),
 }
 
 macro_rules! impl_from_token {
@@ -112,6 +113,7 @@ impl_from_token!(RowToken, Row);
 impl_from_token!(ColMetadataToken, ColMetadata);
 impl_from_token!(NbcRowToken, NbcRow);
 impl_from_token!(OrderToken, Order);
+impl_from_token!(ReturnStatusToken, ReturnStatus);
 
 impl Token for Tokens {
     fn token_type(&self) -> TokenType {
@@ -130,6 +132,7 @@ impl Token for Tokens {
             Tokens::ColMetadata(token) => token.token_type(),
             Tokens::NbcRow(token) => token.token_type(),
             Tokens::Order(token) => token.token_type(),
+            Tokens::ReturnStatus(token) => token.token_type(),
         }
     }
 }
@@ -688,6 +691,17 @@ pub(crate) struct DoneToken {
 impl Token for DoneToken {
     fn token_type(&self) -> TokenType {
         TokenType::Done
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ReturnStatusToken {
+    pub value: i32,
+}
+
+impl Token for ReturnStatusToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::ReturnValue
     }
 }
 
