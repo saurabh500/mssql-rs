@@ -9,5 +9,5 @@ replace-with = "RustTools"
 
 [alias]
 bfmt = "fmt -- --check"
-bclippy = "clippy --frozen -p tds-x --all-targets -- -D warnings"
+bclippy = "clippy --frozen --all-features -p tds-x --all-targets -- -D warnings"
 btest = "test --lib -p tds-x"

@@ -82,7 +82,6 @@ impl QueryResultType<'_> {
                 todo!()
             }
             Tokens::ColMetadata(column_metadata) => {
-                // println!("Received ColMetadata token: {:?}", column_metadata);
                 // Start a QueryResultType::ResultSet here.
                 // ResultSet needs to notify BatchResultType if there's another result
                 // when it sees the Done token.
@@ -389,7 +388,7 @@ impl<'result> ResultSet<'result> {
 
 impl Drop for ResultSet<'_> {
     fn drop(&mut self) {
-        println!("ResultSet::drop");
+        trace!("ResultSet::drop");
         let mut parent_batch = self.parent_batch.try_lock().unwrap();
         if !self.received_last_row {
             parent_batch.drain_stream(true);
@@ -533,7 +532,7 @@ impl CellData {
         }
     }
 
-    fn get_value(self) -> ColumnValues {
+    pub fn get_value(self) -> ColumnValues {
         self.column_value
     }
 

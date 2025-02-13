@@ -9,8 +9,5 @@ pub mod query;
 pub mod read_write;
 pub mod token;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {}
-}
+#[cfg(feature = "cli")]
+pub mod cli;
