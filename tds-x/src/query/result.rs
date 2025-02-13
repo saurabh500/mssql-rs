@@ -1,68 +1,65 @@
 use crate::connection::tds_connection::TdsConnection;
 use crate::datatypes::decoder::ColumnValues;
-use crate::handler::handler_factory::NegotiatedSettings;
 use crate::query::metadata::ColumnMetadata;
 use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::token_stream::{
     GenericTokenParserRegistry, ParserContext, TokenStreamReader,
 };
 use crate::token::tokens::{ColMetadataToken, DoneStatus, Tokens};
+use futures::executor::block_on;
+use futures::task::AtomicWaker;
 use futures::Stream;
 use std::future::Future;
 use std::io::Error;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
 use std::vec::IntoIter;
+use tokio::sync::Mutex;
 
 pub enum QueryResultType<'result> {
-    Update(i64, BatchResult<'result>),
+    Update(i64),
     ResultSet(ResultSet<'result>),
 }
 
-impl<'result> QueryResultType<'result> {
-    fn is_last(&self) -> bool {
-        match self {
-            QueryResultType::Update(_, batch_result) => batch_result.received_last,
-            QueryResultType::ResultSet(result_set) => result_set.parent_batch.received_last,
-        }
-    }
-
-    fn get_batch_result(self) -> BatchResult<'result> {
-        match self {
-            QueryResultType::Update(_, batch_result) => batch_result,
-            QueryResultType::ResultSet(result_set) => result_set.parent_batch,
-        }
-    }
-}
-
 impl QueryResultType<'_> {
-    async fn from_token(
-        token: Tokens,
-        mut parent_batch: BatchResult<'_>,
+    async fn next_result(
+        parent_batch: Arc<Mutex<BatchResult<'_>>>,
+        processing_signal: DeferredSignal,
     ) -> Result<QueryResultType<'_>, Error> {
+        let mut parent_batch_ref = parent_batch.lock().await;
+        let token = parent_batch_ref.next_token().await?;
         match token {
             Tokens::Done(t1) => {
                 println!("Received Done token: {:?}", t1);
-                if !t1.status.contains(DoneStatus::MORE) {
-                    parent_batch.received_last = true;
+                {
+                    if !t1.status.contains(DoneStatus::MORE) {
+                        parent_batch_ref.received_last = true;
+                    }
+                    parent_batch_ref.parser_context = ParserContext::None(());
                 }
-                Ok(QueryResultType::Update(t1.row_count as i64, parent_batch))
+                Ok(QueryResultType::Update(t1.row_count as i64))
             }
             Tokens::DoneInProc(t1) => {
                 println!("Received DoneInProc token: {:?}", t1);
-                if !t1.status.contains(DoneStatus::MORE) {
-                    parent_batch.received_last = true;
+                {
+                    if !t1.status.contains(DoneStatus::MORE) {
+                        parent_batch_ref.received_last = true;
+                    }
+                    parent_batch_ref.parser_context = ParserContext::None(());
                 }
-                parent_batch.parser_context = ParserContext::None(());
-                Ok(QueryResultType::Update(t1.row_count as i64, parent_batch))
+                Ok(QueryResultType::Update(t1.row_count as i64))
             }
             Tokens::DoneProc(t1) => {
                 println!("Received DoneProc token: {:?}", t1);
-                if !t1.status.contains(DoneStatus::MORE) {
-                    parent_batch.received_last = true;
+                {
+                    if !t1.status.contains(DoneStatus::MORE) {
+                        parent_batch_ref.received_last = true;
+                    }
+                    parent_batch_ref.parser_context = ParserContext::None(());
                 }
-                parent_batch.parser_context = ParserContext::None(());
-                Ok(QueryResultType::Update(t1.row_count as i64, parent_batch))
+                Ok(QueryResultType::Update(t1.row_count as i64))
             }
             Tokens::EnvChange(t1) => {
                 println!("Received EnvChange token: {:?}", t1);
@@ -82,10 +79,12 @@ impl QueryResultType<'_> {
                 // Start a QueryResultType::ResultSet here.
                 // ResultSet needs to notify BatchResultType if there's another result
                 // when it sees the Done token.
-                parent_batch.parser_context =
+                println!("Received column metadata token");
+                parent_batch_ref.parser_context =
                     ParserContext::ColumnMetadata(column_metadata.clone());
                 Ok(QueryResultType::ResultSet(ResultSet::new(
-                    parent_batch,
+                    parent_batch.clone(),
+                    processing_signal,
                     column_metadata,
                 )))
             }
@@ -104,7 +103,7 @@ impl QueryResultType<'_> {
 }
 
 pub struct BatchResult<'result> {
-    negotiated_settings: &'result mut NegotiatedSettings,
+    //  negotiated_settings: &'result mut NegotiatedSettings,
     token_stream_reader: TokenStreamReader<'result>,
     parser_context: ParserContext,
     received_last: bool,
@@ -117,13 +116,20 @@ where
     pub(crate) fn new(
         tds_connection: &'result mut TdsConnection<'connection>,
     ) -> BatchResult<'result> {
+        println!("Batch result created.");
         let packet_reader = PacketReader::new(tds_connection.transport.as_mut());
         let token_stream_reader = TokenStreamReader::new(
             packet_reader,
             Box::new(GenericTokenParserRegistry::default()),
         );
         BatchResult {
-            negotiated_settings: &mut tds_connection.negotiated_settings,
+            // TODO: Holding a mutable borrow of negotiated_settings prevents BatchResult from implementing
+            // Send or Sync, which makes it illegal to use in an Arc<Mutex<>>. However the negotiated_settings
+            // are needed if there's a SET statement to update the settings.
+            // This code will likely need to change such that the negotiated settings get cloned, updated
+            // by reading the tokens, then propagated-by-copy back to the original one.
+
+            //negotiated_settings: &mut tds_connection.negotiated_settings,
             token_stream_reader,
             parser_context: ParserContext::default(),
             received_last: false,
@@ -139,12 +145,67 @@ where
     pub fn get_all_results(self) -> Vec<QueryResultType<'result>> {
         todo!()
     }
+
+    async fn next_token(&mut self) -> Result<Tokens, Error> {
+        self.token_stream_reader
+            .receive_token(&self.parser_context)
+            .await
+    }
+
+    fn drain_stream(&mut self, drain_until_first_done: bool) {
+        println!("Draining stream.");
+        while let Ok(token) = block_on(self.token_stream_reader.receive_token(&self.parser_context))
+        {
+            match token {
+                Tokens::Done(t1) => {
+                    println!("Received Done token: {:?}", t1);
+                    self.parser_context = ParserContext::None(());
+                    if !t1.status.contains(DoneStatus::MORE) {
+                        self.received_last = true;
+                    }
+                    if drain_until_first_done || !t1.status.contains(DoneStatus::MORE) {
+                        break;
+                    }
+                }
+                Tokens::DoneInProc(t1) => {
+                    println!("Received DoneInProc token: {:?}", t1);
+                    self.parser_context = ParserContext::None(());
+                    if !t1.status.contains(DoneStatus::MORE) {
+                        self.received_last = true;
+                    }
+                    if drain_until_first_done || !t1.status.contains(DoneStatus::MORE) {
+                        break;
+                    }
+                }
+                Tokens::DoneProc(t1) => {
+                    println!("Received DoneProc token: {:?}", t1);
+                    self.parser_context = ParserContext::None(());
+                    if !t1.status.contains(DoneStatus::MORE) {
+                        self.received_last = true;
+                    }
+                    if drain_until_first_done || !t1.status.contains(DoneStatus::MORE) {
+                        break;
+                    }
+                }
+                Tokens::ColMetadata(column_metadata) => {
+                    println!("Received ColMetadata token");
+                    self.parser_context = ParserContext::ColumnMetadata(column_metadata.clone());
+                }
+                _ => {
+                    println!("Received token: {:?}", token);
+                }
+            }
+        }
+    }
 }
 
 #[allow(clippy::type_complexity)]
 pub struct QueryResultTypeStream<'result> {
-    initial_batch_result: Option<BatchResult<'result>>,
-    previous_result: Option<Result<QueryResultType<'result>, Error>>,
+    // Because we are passing in ref-counted objects to Futures, we must use
+    // Arc<Mutex<resource>> and Arc<AtomicBool> because the thread running the future may
+    // differ from the originating thread. Rc<RefCell<resource>> and Rc<Cell<bool>> won't work.
+    batch_result: Arc<Mutex<BatchResult<'result>>>,
+    processing_flag: Arc<AtomicBool>,
     executing_future:
         Option<Pin<Box<dyn Future<Output = Result<QueryResultType<'result>, Error>> + 'result>>>,
 }
@@ -152,9 +213,34 @@ pub struct QueryResultTypeStream<'result> {
 impl<'result> QueryResultTypeStream<'result> {
     fn new(initial_batch_result: BatchResult<'result>) -> QueryResultTypeStream<'result> {
         QueryResultTypeStream {
-            initial_batch_result: Some(initial_batch_result),
-            previous_result: None,
+            batch_result: Arc::new(Mutex::new(initial_batch_result)),
+            processing_flag: Arc::new(AtomicBool::new(false)),
             executing_future: None,
+        }
+    }
+
+    fn evaluate_executing_future(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<QueryResultType<'result>, Error>>> {
+        // Poll the executing future. Note that this may have just been created.
+        assert!(self.executing_future.is_some());
+        if let Some(mut future) = self.executing_future.take() {
+            println!("Consuming future.");
+            match future.as_mut().poll(cx) {
+                Poll::Pending => {
+                    println!("Future pending.");
+                    // Put this future back so that it can be polled again.
+                    self.executing_future = Some(future);
+                    Poll::Pending
+                }
+                Poll::Ready(result) => {
+                    println!("Future ready.");
+                    Poll::Ready(Some(result))
+                }
+            }
+        } else {
+            panic!("Executing future not available.");
         }
     }
 }
@@ -163,60 +249,67 @@ impl<'result> Stream for QueryResultTypeStream<'result> {
     type Item = Result<QueryResultType<'result>, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Some(initial_batch_result) = self.initial_batch_result.take() {
-            // Dummy previous result to just hold the initial batch. The caller never sees this.
-            self.previous_result = Some(Ok(QueryResultType::Update(0, initial_batch_result)));
-        }
+        if self.executing_future.is_some() {
+            self.evaluate_executing_future(cx)
+        } else if !self.processing_flag.load(Ordering::Acquire) {
+            // If there is no active future, and the processing flag is off,
+            // there is no work being done. The previous item may have been
+            // the final, otherwise start getting the next token.
+            println!("Borrowing batch result in stream.");
+            if self.batch_result.try_lock().unwrap().received_last {
+                println!("Received last.");
+                // Nothing is processing and we have received the last item.
+                Poll::Ready(None)
+            } else {
+                // Start processing the next item.
+                println!("Start processing.");
+                self.processing_flag.store(true, Ordering::Release);
 
-        // Take back the batch result from the previous result.
-        if let Some(previous_result) = self.previous_result.take() {
-            let previous_result = previous_result?;
-
-            // Verify that the done token without a more hasn't already been hit.
-            if previous_result.is_last() {
-                return Poll::Ready(None);
-            }
-
-            // Start getting the next token.
-            let future = async move {
-                let mut batch_result = previous_result.get_batch_result();
-                let token = batch_result
-                    .token_stream_reader
-                    .receive_token(&batch_result.parser_context)
-                    .await;
-                QueryResultType::from_token(token.unwrap(), batch_result).await
-            };
-            self.executing_future = Some(Box::pin(future));
-        }
-
-        // Poll the executing future.
-        if let Some(mut future) = self.executing_future.take() {
-            match future.as_mut().poll(cx) {
-                Poll::Pending => {
-                    // Put this future back so that it can be polled again.
-                    self.executing_future = Some(future);
-                    Poll::Pending
-                }
-                Poll::Ready(result) => Poll::Ready(Some(result)),
+                println!("Starting future.");
+                let batch_ref = self.batch_result.clone();
+                let processing_flag_ref = self.processing_flag.clone();
+                let future = QueryResultType::next_result(
+                    batch_ref,
+                    DeferredSignal::new(processing_flag_ref, cx.waker().clone()),
+                );
+                self.executing_future = Some(Box::pin(future));
+                self.evaluate_executing_future(cx)
             }
         } else {
-            Poll::Ready(None)
+            Poll::Pending
+        }
+    }
+}
+
+impl Drop for QueryResultTypeStream<'_> {
+    fn drop(&mut self) {
+        let mut batch_result = self.batch_result.try_lock().unwrap();
+        if !batch_result.received_last {
+            batch_result.drain_stream(false);
+            batch_result.received_last = true;
         }
     }
 }
 
 pub struct ResultSet<'result> {
     metadata: Vec<ColumnMetadata>,
-    parent_batch: BatchResult<'result>,
+    parent_batch: Arc<Mutex<BatchResult<'result>>>,
+    processing_signal: DeferredSignal,
     received_last_row: bool,
     row_count: Option<u64>,
 }
 
 impl<'result> ResultSet<'result> {
-    pub(crate) fn new(parent_batch: BatchResult<'result>, col_token: ColMetadataToken) -> Self {
+    fn new(
+        parent_batch: Arc<Mutex<BatchResult<'result>>>,
+        processing_signal: DeferredSignal,
+        col_token: ColMetadataToken,
+    ) -> Self {
+        println!("ResultSet created.");
         ResultSet {
             metadata: col_token.columns,
             parent_batch,
+            processing_signal,
             received_last_row: false,
             row_count: None,
         }
@@ -234,102 +327,91 @@ impl<'result> ResultSet<'result> {
     pub async fn into_row_stream(self) -> Result<RowStream<'result>, Error> {
         Ok(RowStream::new(self))
     }
-}
 
-#[allow(clippy::type_complexity)]
-pub struct RowStream<'result> {
-    parent_result_set: Option<ResultSet<'result>>,
-    previous_result: Option<Result<RowData<'result>, Error>>,
-    executing_future:
-        Option<Pin<Box<dyn Future<Output = Result<RowData<'result>, Error>> + 'result>>>,
-}
+    // Retrieves the next token and updates internal state about this result set and its parent batch.
+    async fn next_row_token(&mut self) -> Result<Tokens, Error> {
+        let mut parent_batch_mut = self.parent_batch.lock().await;
+        let token_result = parent_batch_mut.next_token().await;
+        let token_ref = token_result.as_ref().unwrap();
 
-impl<'result> RowStream<'result> {
-    fn new(parent_result_set: ResultSet<'result>) -> Self {
-        RowStream {
-            parent_result_set: Some(parent_result_set),
-            previous_result: None,
-            executing_future: None,
-        }
-    }
-
-    async fn from_token(
-        token: Tokens,
-        mut parent_result: ResultSet<'result>,
-    ) -> Result<RowData<'result>, Error> {
-        match token {
+        match token_ref {
             Tokens::Done(t1) => {
                 println!("Received Done token: {:?}", t1);
+                self.received_last_row = true;
+                self.row_count = Some(t1.row_count);
+
                 if !t1.status.contains(DoneStatus::MORE) {
-                    parent_result.parent_batch.received_last = true;
+                    parent_batch_mut.received_last = true;
                 }
-                parent_result.received_last_row = true;
-                parent_result.row_count = Some(t1.row_count);
-                Ok(RowData::new(Vec::new(), parent_result))
+                parent_batch_mut.parser_context = ParserContext::None(());
             }
             Tokens::DoneInProc(t1) => {
                 println!("Received DoneInProc token: {:?}", t1);
+                self.received_last_row = true;
+                self.row_count = Some(t1.row_count);
+
                 if !t1.status.contains(DoneStatus::MORE) {
-                    parent_result.parent_batch.received_last = true;
+                    parent_batch_mut.received_last = true;
                 }
-                parent_result.received_last_row = true;
-                parent_result.row_count = Some(t1.row_count);
-                Ok(RowData::new(Vec::new(), parent_result))
+                parent_batch_mut.parser_context = ParserContext::None(());
             }
             Tokens::DoneProc(t1) => {
-                println!("Received DoneProc token: {:?}", t1);
+                self.received_last_row = true;
+                self.row_count = Some(t1.row_count);
+
                 if !t1.status.contains(DoneStatus::MORE) {
-                    parent_result.parent_batch.received_last = true;
+                    parent_batch_mut.received_last = true;
                 }
-                parent_result.received_last_row = true;
-                parent_result.row_count = Some(t1.row_count);
-                Ok(RowData::new(Vec::new(), parent_result))
+                parent_batch_mut.parser_context = ParserContext::None(());
             }
             Tokens::Error(t1) => {
                 println!("Received Error token: {:?}", t1);
                 panic!("Received error token: {:?}", t1);
             }
-            Tokens::Row(row) => Ok(RowData::new(row.all_values, parent_result)),
+            Tokens::Row(_row) => {}
             _ => {
                 //println!("Received token: {:?}", token);
-                panic!("Received unexpected token: {:?}", token)
+                panic!("Received unexpected token: {:?}", token_ref)
             }
+        };
+
+        token_result
+    }
+}
+
+impl Drop for ResultSet<'_> {
+    fn drop(&mut self) {
+        println!("ResultSet::drop");
+        let mut parent_batch = self.parent_batch.try_lock().unwrap();
+        if !self.received_last_row {
+            parent_batch.drain_stream(true);
+            self.received_last_row = true;
         }
     }
 }
 
-impl<'result> Stream for RowStream<'result> {
-    type Item = Result<RowData<'result>, Error>;
+#[allow(clippy::type_complexity)]
+pub struct RowStream<'result> {
+    result_set: Arc<Mutex<ResultSet<'result>>>,
+    processing_flag: Arc<AtomicBool>,
+    executing_future: Option<Pin<Box<dyn Future<Output = Result<RowData, Error>> + 'result>>>,
+}
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Some(parent_result) = self.parent_result_set.take() {
-            // Dummy previous result to just hold the parent ResultSet. The caller never sees this.
-            self.previous_result = Some(Ok(RowData::new(Vec::new(), parent_result)));
+impl<'result> RowStream<'result> {
+    fn new(parent_result_set: ResultSet<'result>) -> Self {
+        RowStream {
+            result_set: Arc::new(Mutex::new(parent_result_set)),
+            processing_flag: Arc::new(AtomicBool::new(false)),
+            executing_future: None,
         }
+    }
 
-        // Take back the parent ResultSet from the previous result.
-        if let Some(previous_result) = self.previous_result.take() {
-            let mut previous_result = previous_result?;
-
-            // Verify that the done token hasn't already been hit.
-            let mut parent_result_set = previous_result.parent_result.take().unwrap();
-            if parent_result_set.received_last_row {
-                return Poll::Ready(None);
-            }
-
-            // Start getting the next token.
-            let future = async move {
-                let token = parent_result_set
-                    .parent_batch
-                    .token_stream_reader
-                    .receive_token(&parent_result_set.parent_batch.parser_context)
-                    .await;
-                Self::from_token(token.unwrap(), parent_result_set).await
-            };
-            self.executing_future = Some(Box::pin(future));
-        }
-
-        // Poll the executing future.
+    fn evaluate_executing_future(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<RowData, Error>>> {
+        // Poll the executing future. Note that this may have just been created.
+        assert!(self.executing_future.is_some());
         if let Some(mut future) = self.executing_future.take() {
             match future.as_mut().poll(cx) {
                 Poll::Pending => {
@@ -338,7 +420,8 @@ impl<'result> Stream for RowStream<'result> {
                     Poll::Pending
                 }
                 Poll::Ready(result) => {
-                    if result.as_ref().unwrap().is_terminal() {
+                    let row_data_ref = result.as_ref().unwrap();
+                    if row_data_ref.is_terminal {
                         Poll::Ready(None)
                     } else {
                         Poll::Ready(Some(result))
@@ -346,26 +429,71 @@ impl<'result> Stream for RowStream<'result> {
                 }
             }
         } else {
-            Poll::Ready(None)
+            panic!("Executing future not available.");
+        }
+    }
+
+    async fn next_row(
+        parent_result: Arc<Mutex<ResultSet<'_>>>,
+        _processing_signal: DeferredSignal,
+    ) -> Result<RowData, Error> {
+        let token = parent_result.lock().await.next_row_token().await;
+        match token? {
+            Tokens::Done(_) => Ok(RowData::new(Vec::new())),
+            Tokens::DoneInProc(_) => Ok(RowData::new(Vec::new())),
+            Tokens::DoneProc(_) => Ok(RowData::new(Vec::new())),
+            Tokens::Row(row) => Ok(RowData::new(row.all_values)),
+            _ => {
+                panic!("Received unexpected token");
+            }
         }
     }
 }
 
-pub struct RowData<'result> {
-    iterator: IntoIter<ColumnValues>,
-    parent_result: Option<ResultSet<'result>>,
+impl Stream for RowStream<'_> {
+    type Item = Result<RowData, Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.executing_future.is_some() {
+            self.evaluate_executing_future(cx)
+        } else if !self.processing_flag.load(Ordering::Acquire) {
+            if self.result_set.try_lock().unwrap().received_last_row {
+                Poll::Ready(None)
+            } else {
+                self.processing_flag.store(true, Ordering::Release);
+
+                let result_set = self.result_set.clone();
+                let processing_flag_ref = self.processing_flag.clone();
+                let future = Self::next_row(
+                    result_set,
+                    DeferredSignal::new(processing_flag_ref, cx.waker().clone()),
+                );
+                self.executing_future = Some(Box::pin(future));
+
+                self.evaluate_executing_future(cx)
+            }
+        } else {
+            Poll::Pending
+        }
+    }
 }
 
-impl RowData<'_> {
-    fn new(column_values: Vec<ColumnValues>, parent_result: ResultSet<'_>) -> RowData<'_> {
+#[derive(Debug)]
+pub struct RowData {
+    is_terminal: bool,
+    iterator: IntoIter<ColumnValues>,
+}
+
+impl RowData {
+    fn new(column_values: Vec<ColumnValues>) -> RowData {
         RowData {
+            is_terminal: column_values.is_empty(),
             iterator: column_values.into_iter(),
-            parent_result: Some(parent_result),
         }
     }
 
     fn is_terminal(&self) -> bool {
-        self.parent_result.as_ref().unwrap().received_last_row
+        self.is_terminal
     }
 }
 
@@ -373,7 +501,7 @@ impl RowData<'_> {
 // It should be streamed instead. This implements the Stream traits to force callers
 // to use the row as a Stream to avoid having to change calling code when the implementation
 // changes to use a streaming token parser.
-impl Stream for RowData<'_> {
+impl Stream for RowData {
     type Item = Result<CellData, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -407,5 +535,382 @@ impl CellData {
 
     fn get_bytes(&self) -> &[u8] {
         self.protocol_data.as_ref()
+    }
+}
+
+// Resets the flag when destructed and wakes.
+struct DeferredSignal {
+    atomic_waker: AtomicWaker,
+    waker: Waker,
+    flag: Arc<AtomicBool>,
+}
+
+impl DeferredSignal {
+    fn new(flag: Arc<AtomicBool>, waker: Waker) -> Self {
+        assert!(flag.load(Ordering::Acquire));
+        let atomic_waker = AtomicWaker::new();
+        let result = DeferredSignal {
+            flag,
+            atomic_waker,
+            waker,
+        };
+        result.atomic_waker.register(&result.waker);
+        result
+    }
+}
+
+impl Drop for DeferredSignal {
+    fn drop(&mut self) {
+        assert!(self.flag.load(Ordering::Acquire));
+        self.flag.store(false, Ordering::Release);
+        self.atomic_waker.wake();
+    }
+}
+
+#[cfg(test)]
+mod query_processing_driver {
+    use super::{BatchResult, QueryResultType, TdsConnection};
+    use crate::connection::client_context::ClientContext;
+    use crate::connection::tds_connection::query_processing_driver;
+    use futures::StreamExt;
+
+    enum ExpectedQueryResultType {
+        Update(u64),
+        Result(u64),
+    }
+
+    // Extra functions for testing.
+    impl QueryResultType<'_> {
+        #[allow(clippy::assertions_on_constants)]
+        async fn assert_matches_expected(self, expected: &ExpectedQueryResultType) {
+            match (self, expected) {
+                (QueryResultType::ResultSet(_), ExpectedQueryResultType::Update(_)) => {
+                    assert!(false)
+                }
+                (QueryResultType::Update(_), ExpectedQueryResultType::Result(_)) => {
+                    assert!(false)
+                }
+                (
+                    QueryResultType::ResultSet(result_set),
+                    ExpectedQueryResultType::Result(expected_row_count),
+                ) => {
+                    let mut actual_rows: u64 = 0;
+                    println!("Columns: {:?}", result_set.metadata);
+                    let mut row_stream = result_set.into_row_stream().await.unwrap();
+                    while let Some(row) = row_stream.next().await {
+                        let mut unwrapped_row = row.unwrap();
+                        print!("Row {:?}: ", actual_rows);
+                        while let Some(cell) = unwrapped_row.next().await {
+                            print!("{:?},", cell.unwrap().get_value());
+                        }
+                        println!();
+                        actual_rows += 1;
+                    }
+                    assert_eq!(actual_rows, *expected_row_count);
+                }
+                (
+                    QueryResultType::Update(rows_affected),
+                    ExpectedQueryResultType::Update(expected_row_count),
+                ) => {
+                    assert_eq!(rows_affected, *expected_row_count as i64);
+                }
+            }
+        }
+    }
+
+    pub fn create_context() -> ClientContext {
+        ClientContext {
+            server_name: "saurabhsingh.database.windows.net".to_string(),
+            port: 1433,
+            user_name: "saurabh".to_string(),
+            password: std::fs::read_to_string("/tmp/password")
+                .expect("Failed to read password file")
+                .trim()
+                .to_string(),
+            database: "drivers".to_string(),
+            ..Default::default()
+        }
+    }
+
+    pub async fn begin_connection(client_context: &ClientContext) -> Box<TdsConnection> {
+        query_processing_driver::create_connection(client_context)
+            .await
+            .unwrap()
+    }
+
+    async fn validate_results(
+        batch_result: BatchResult<'_>,
+        expected_results: &[ExpectedQueryResultType],
+    ) {
+        let mut query_result_stream = batch_result.stream_results();
+        let mut expected_index = 0;
+        println!("Before looping.");
+        while let Some(query_result_type) = query_result_stream.next().await {
+            println!("Current index {:?}", expected_index);
+            assert!(expected_index < expected_results.len());
+            query_result_type
+                .unwrap()
+                .assert_matches_expected(&expected_results[expected_index])
+                .await;
+            expected_index += 1;
+        }
+    }
+
+    async fn run_query_and_check_results<'a, 'n>(
+        connection: &'a mut TdsConnection<'n>,
+        query: String,
+        expected_results: &[ExpectedQueryResultType],
+    ) where
+        'n: 'a,
+    {
+        let results = connection.execute(query).await;
+        validate_results(results.unwrap(), expected_results).await;
+    }
+
+    async fn connect_query_and_validate(
+        query: String,
+        expected_results: &[ExpectedQueryResultType],
+    ) {
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+        run_query_and_check_results(&mut connection, query, expected_results).await;
+    }
+
+    #[ignore]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_select_1() {
+        let expected = [ExpectedQueryResultType::Result(1)];
+        connect_query_and_validate("SELECT 1".to_string(), &expected).await;
+    }
+
+    #[ignore]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_generate_all_types_table() {
+        let expected = [
+            ExpectedQueryResultType::Update(0),
+            ExpectedQueryResultType::Update(2),
+            ExpectedQueryResultType::Result(2),
+        ];
+        connect_query_and_validate(
+            "
+            CREATE TABLE #AllDataTypes (
+                TinyIntColumn TINYINT,
+                SmallIntColumn SMALLINT,
+                IntColumn INT,
+                BigIntColumn BIGINT,
+                BitColumn BIT,
+                DecimalColumn DECIMAL(18,2),
+                NumericColumn NUMERIC(18,2),
+                FloatColumn FLOAT,
+                RealColumn REAL,
+            );
+
+            INSERT INTO #AllDataTypes (
+                TinyIntColumn, SmallIntColumn, IntColumn, BigIntColumn, BitColumn,
+                DecimalColumn, NumericColumn, FloatColumn, RealColumn
+            )
+            VALUES (
+                CAST(255 AS TINYINT), -- TinyIntColumn
+                CAST(32767 AS SMALLINT), -- SmallIntColumn
+                CAST(2147483647 AS INT), -- IntColumn
+                CAST(9223372036854775807 AS BIGINT), -- BigIntColumn
+                CAST(1 AS BIT), -- BitColumn
+                CAST(272.01 AS DECIMAL(18, 2)), --DecimalColumn
+                CAST(12345678901234.98 AS NUMERIC(18,2)), -- NumericColumn
+                CAST(1234.22231 AS FLOAT), -- FloatColumn
+                CAST(11.11 AS REAL) -- RealColumn
+            ),
+            (
+                CAST(128 AS TINYINT), -- TinyIntColumn
+                CAST(128 AS SMALLINT), -- SmallIntColumn
+                CAST(128 AS INT), -- IntColumn
+                CAST(128 AS BIGINT), -- BigIntColumn
+                CAST(0 AS BIT), -- BitColumn
+                CAST(19.01 AS DECIMAL(18, 2)), --DecimalColumn
+                CAST(18.98 AS NUMERIC(18,2)), -- NumericColumn
+                CAST(100.22231 AS FLOAT), -- FloatColumn
+                CAST(5.11 AS REAL) -- RealColumn
+            );
+
+            select * from #AllDataTypes;"
+                .to_string(),
+            &expected,
+        )
+        .await;
+    }
+
+    #[ignore]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_tds_connection_reuse() {
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+        let expected = [
+            ExpectedQueryResultType::Update(0),
+            ExpectedQueryResultType::Update(2),
+            ExpectedQueryResultType::Result(2),
+        ];
+        run_query_and_check_results(
+            &mut connection,
+            "
+            CREATE TABLE #dummy (
+                IntColumn INT
+            );
+            INSERT INTO #dummy VALUES(10),(20);
+            SELECT * FROM #dummy;"
+                .to_string(),
+            &expected,
+        )
+        .await;
+
+        let expected = [
+            ExpectedQueryResultType::Update(0),
+            ExpectedQueryResultType::Update(0),
+            ExpectedQueryResultType::Update(3),
+            ExpectedQueryResultType::Result(3),
+        ];
+        run_query_and_check_results(
+            &mut connection,
+            "DROP TABLE #dummy;
+            CREATE TABLE #dummy (
+                ShortColumn SMALLINT
+            );
+            INSERT INTO #dummy VALUES(0),(1),(2);
+            SELECT * FROM #dummy;"
+                .to_string(),
+            &expected,
+        )
+        .await;
+    }
+
+    #[ignore]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_incomplete_result_set_iteration() {
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+
+        {
+            let batch_result = connection
+                .execute(
+                    "
+                CREATE TABLE #dummy (
+                    IntColumn INT
+                );
+                INSERT INTO #dummy VALUES(10),(20);
+                SELECT * FROM #dummy;
+                SELECT 1;
+                SELECT * FROM #dummy;
+                SELECT * FROM #dummy;
+                SELECT * FROM #dummy"
+                        .to_string(),
+                )
+                .await;
+
+            // Skip over update results and iterate over result sets.
+            // Special behavior for the first and third SELECT * from #dummy (index = 2, 4, 6)  to just get one row.
+            // These cases result in incomplete stream consumption. These happen to be even numbered indices,
+            // but that is coincidental.
+            let mut result_stream = batch_result.unwrap().stream_results();
+            let mut result_number = 0;
+            let expected_row_counts = [0, 0, 1, 1, 1, 2, 1];
+            while let Some(result_type) = result_stream.next().await {
+                match result_type.unwrap() {
+                    QueryResultType::Update(_) => {}
+                    QueryResultType::ResultSet(result_set) => {
+                        let mut row_number = 0;
+                        println!(
+                            "Result number {:?}: {:?}",
+                            result_number,
+                            result_set.get_metadata()
+                        );
+                        let mut row_stream = result_set.into_row_stream().await.unwrap();
+                        while let Some(row) = row_stream.next().await {
+                            let mut unwrapped_row = row.unwrap();
+                            print!("Row {:?}: ", row_number);
+                            while let Some(cell) = unwrapped_row.next().await {
+                                print!("{:?},", cell.unwrap().get_value());
+                            }
+                            println!();
+                            row_number += 1;
+                            if result_number == 2 || result_number == 4 || result_number == 6 {
+                                break;
+                            }
+                        }
+
+                        assert_eq!(row_number, expected_row_counts[result_number]);
+                    }
+                }
+                result_number += 1;
+            }
+        }
+
+        // Try to reuse the connection. Note that the last result set was only partially consumed.
+        let expected = [
+            ExpectedQueryResultType::Update(0),
+            ExpectedQueryResultType::Update(0),
+            ExpectedQueryResultType::Update(3),
+            ExpectedQueryResultType::Result(3),
+        ];
+        run_query_and_check_results(
+            &mut connection,
+            "DROP TABLE #dummy;
+            CREATE TABLE #dummy (
+                ShortColumn SMALLINT
+            );
+            INSERT INTO #dummy VALUES(0),(1),(2);
+            SELECT * FROM #dummy;"
+                .to_string(),
+            &expected,
+        )
+        .await;
+    }
+
+    #[ignore]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_incomplete_result_iteration() {
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+
+        {
+            let batch_result = connection
+                .execute(
+                    "
+                CREATE TABLE #dummy (
+                    IntColumn INT
+                );
+                INSERT INTO #dummy VALUES(10),(20);
+                SELECT * FROM #dummy;"
+                        .to_string(),
+                )
+                .await;
+
+            // Just get one result.
+            let result_number = 0;
+            let mut result_stream = batch_result.unwrap().stream_results();
+            while result_stream.next().await.is_some() {
+                if result_number == 0 {
+                    break;
+                }
+            }
+        }
+
+        // Try to reuse the connection.
+        let expected = [
+            ExpectedQueryResultType::Update(0),
+            ExpectedQueryResultType::Update(0),
+            ExpectedQueryResultType::Update(3),
+            ExpectedQueryResultType::Result(3),
+        ];
+        run_query_and_check_results(
+            &mut connection,
+            "DROP TABLE #dummy;
+            CREATE TABLE #dummy (
+                ShortColumn SMALLINT
+            );
+            INSERT INTO #dummy VALUES(0),(1),(2);
+            SELECT * FROM #dummy;"
+                .to_string(),
+            &expected,
+        )
+        .await;
     }
 }

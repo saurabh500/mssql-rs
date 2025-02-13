@@ -30,7 +30,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
 // Remove the ignore attribute to run the test.
 
 #[cfg(test)]
-mod query_processing_driver {
+pub(crate) mod query_processing_driver {
     use std::io::Error;
 
     use crate::{
@@ -49,13 +49,13 @@ mod query_processing_driver {
     #[ignore]
     #[tokio::test]
     async fn test_single_query_no_panic() {
-        execut_test_query("sp_who2").await.unwrap();
+        execute_test_query("sp_who2").await.unwrap();
     }
 
     #[ignore]
     #[tokio::test]
     async fn test_multi_query_no_panic() {
-        execut_test_query("select * from sys.databases; select * from sys.columns")
+        execute_test_query("select * from sys.databases; select * from sys.columns")
             .await
             .unwrap();
     }
@@ -63,7 +63,7 @@ mod query_processing_driver {
     #[ignore]
     #[tokio::test]
     async fn test_multi_mixed_queries_no_panic() {
-        execut_test_query(
+        execute_test_query(
             "
             select * from sys.databases; 
             CREATE TABLE #TempTable (ID BIGINT); 
@@ -83,7 +83,7 @@ mod query_processing_driver {
     #[ignore]
     #[tokio::test]
     async fn test_data_types_numerics_no_panic() {
-        execut_test_query(
+        execute_test_query(
             "
             CREATE TABLE #AllDataTypes (
                 TinyIntColumn TINYINT,
@@ -121,7 +121,7 @@ mod query_processing_driver {
     #[ignore]
     #[tokio::test]
     async fn test_strings_no_panic() {
-        execut_test_query(
+        execute_test_query(
             "SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS NVARCHAR(500)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; 
             SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS NCHAR(500)) COLLATE Latin1_General_100_CI_AS_SC_UTF8;
             SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS VARCHAR(500)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; 
@@ -136,7 +136,7 @@ mod query_processing_driver {
     #[ignore]
     #[tokio::test]
     async fn test_data_types_numerics_null_values_no_panic() {
-        execut_test_query(
+        execute_test_query(
             "
             CREATE TABLE #AllDataTypes (
                 TinyIntColumn TINYINT,
@@ -163,7 +163,7 @@ mod query_processing_driver {
         .unwrap();
     }
 
-    pub async fn execut_test_query(query: &str) -> Result<(), Error> {
+    pub async fn execute_test_query(query: &str) -> Result<(), Error> {
         let context = ClientContext {
             server_name: "saurabhsingh.database.windows.net".to_string(),
             port: 1433,
