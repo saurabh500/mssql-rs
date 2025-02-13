@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::vec::IntoIter;
 use tokio::sync::Mutex;
+use tracing::{debug, error, info, instrument, trace};
 
 pub enum QueryResultType<'result> {
     Update(i64),
@@ -68,7 +69,13 @@ impl QueryResultType<'_> {
             }
             Tokens::Error(t1) => {
                 println!("Received Error token: {:?}", t1);
-                panic!("Received error token: {:?}", t1);
+
+                // TODO: Do not panic. Get the error out to the user, and then drain any more data
+                // out and be done. Error tokens can also be raised because the Stored Proc has a
+                // exception being raised. in those cases, the query execution failure means
+                // user
+                error!(?t1);
+                todo!("Received error token: {:?}", t1)
             }
             Tokens::FeatureExtAck(t1) => {
                 println!("Received FeatureExtAck token: {:?}", t1);
@@ -79,7 +86,7 @@ impl QueryResultType<'_> {
                 // Start a QueryResultType::ResultSet here.
                 // ResultSet needs to notify BatchResultType if there's another result
                 // when it sees the Done token.
-                println!("Received column metadata token");
+                info!(?column_metadata);
                 parent_batch_ref.parser_context =
                     ParserContext::ColumnMetadata(column_metadata.clone());
                 Ok(QueryResultType::ResultSet(ResultSet::new(
@@ -116,7 +123,7 @@ where
     pub(crate) fn new(
         tds_connection: &'result mut TdsConnection<'connection>,
     ) -> BatchResult<'result> {
-        println!("Batch result created.");
+        debug!("Batch result created.");
         let packet_reader = PacketReader::new(tds_connection.transport.as_mut());
         let token_stream_reader = TokenStreamReader::new(
             packet_reader,
@@ -152,13 +159,13 @@ where
             .await
     }
 
+    #[instrument(skip(self))]
     fn drain_stream(&mut self, drain_until_first_done: bool) {
-        println!("Draining stream.");
         while let Ok(token) = block_on(self.token_stream_reader.receive_token(&self.parser_context))
         {
             match token {
                 Tokens::Done(t1) => {
-                    println!("Received Done token: {:?}", t1);
+                    info!(?t1);
                     self.parser_context = ParserContext::None(());
                     if !t1.status.contains(DoneStatus::MORE) {
                         self.received_last = true;
@@ -168,7 +175,7 @@ where
                     }
                 }
                 Tokens::DoneInProc(t1) => {
-                    println!("Received DoneInProc token: {:?}", t1);
+                    info!(?t1);
                     self.parser_context = ParserContext::None(());
                     if !t1.status.contains(DoneStatus::MORE) {
                         self.received_last = true;
@@ -178,7 +185,7 @@ where
                     }
                 }
                 Tokens::DoneProc(t1) => {
-                    println!("Received DoneProc token: {:?}", t1);
+                    info!(?t1);
                     self.parser_context = ParserContext::None(());
                     if !t1.status.contains(DoneStatus::MORE) {
                         self.received_last = true;
@@ -188,11 +195,11 @@ where
                     }
                 }
                 Tokens::ColMetadata(column_metadata) => {
-                    println!("Received ColMetadata token");
+                    info!(?column_metadata);
                     self.parser_context = ParserContext::ColumnMetadata(column_metadata.clone());
                 }
                 _ => {
-                    println!("Received token: {:?}", token);
+                    info!(?token);
                 }
             }
         }
@@ -226,16 +233,16 @@ impl<'result> QueryResultTypeStream<'result> {
         // Poll the executing future. Note that this may have just been created.
         assert!(self.executing_future.is_some());
         if let Some(mut future) = self.executing_future.take() {
-            println!("Consuming future.");
+            trace!("Consuming future.");
             match future.as_mut().poll(cx) {
                 Poll::Pending => {
-                    println!("Future pending.");
+                    trace!("Future pending.");
                     // Put this future back so that it can be polled again.
                     self.executing_future = Some(future);
                     Poll::Pending
                 }
                 Poll::Ready(result) => {
-                    println!("Future ready.");
+                    trace!("Future ready.");
                     Poll::Ready(Some(result))
                 }
             }
@@ -255,17 +262,17 @@ impl<'result> Stream for QueryResultTypeStream<'result> {
             // If there is no active future, and the processing flag is off,
             // there is no work being done. The previous item may have been
             // the final, otherwise start getting the next token.
-            println!("Borrowing batch result in stream.");
+            debug!("Borrowing batch result in stream.");
             if self.batch_result.try_lock().unwrap().received_last {
-                println!("Received last.");
+                debug!("Received last.");
                 // Nothing is processing and we have received the last item.
                 Poll::Ready(None)
             } else {
                 // Start processing the next item.
-                println!("Start processing.");
+                debug!("Start processing.");
                 self.processing_flag.store(true, Ordering::Release);
 
-                println!("Starting future.");
+                debug!("Starting future.");
                 let batch_ref = self.batch_result.clone();
                 let processing_flag_ref = self.processing_flag.clone();
                 let future = QueryResultType::next_result(
@@ -305,7 +312,6 @@ impl<'result> ResultSet<'result> {
         processing_signal: DeferredSignal,
         col_token: ColMetadataToken,
     ) -> Self {
-        println!("ResultSet created.");
         ResultSet {
             metadata: col_token.columns,
             parent_batch,
@@ -336,7 +342,7 @@ impl<'result> ResultSet<'result> {
 
         match token_ref {
             Tokens::Done(t1) => {
-                println!("Received Done token: {:?}", t1);
+                debug!(?t1);
                 self.received_last_row = true;
                 self.row_count = Some(t1.row_count);
 
@@ -346,7 +352,7 @@ impl<'result> ResultSet<'result> {
                 parent_batch_mut.parser_context = ParserContext::None(());
             }
             Tokens::DoneInProc(t1) => {
-                println!("Received DoneInProc token: {:?}", t1);
+                debug!(?t1);
                 self.received_last_row = true;
                 self.row_count = Some(t1.row_count);
 
@@ -365,13 +371,15 @@ impl<'result> ResultSet<'result> {
                 parent_batch_mut.parser_context = ParserContext::None(());
             }
             Tokens::Error(t1) => {
-                println!("Received Error token: {:?}", t1);
-                panic!("Received error token: {:?}", t1);
+                error!(?t1);
+                todo!(
+                    "Received error token, change this to not error/panic. : {:?}",
+                    t1
+                );
             }
             Tokens::Row(_row) => {}
             _ => {
-                //println!("Received token: {:?}", token);
-                panic!("Received unexpected token: {:?}", token_ref)
+                unreachable!("Received unexpected token: {:?}", token_ref)
             }
         };
 
@@ -671,7 +679,7 @@ mod query_processing_driver {
         query: String,
         expected_results: &[ExpectedQueryResultType],
     ) {
-        let context = create_context();
+        let context: ClientContext = create_context();
         let mut connection = begin_connection(&context).await;
         run_query_and_check_results(&mut connection, query, expected_results).await;
     }

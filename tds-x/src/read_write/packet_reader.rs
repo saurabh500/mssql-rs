@@ -749,7 +749,6 @@ pub(crate) mod tests {
             position: 0,
         };
         let mut packet_reader = PacketReader::new(&mut mock_reader);
-        println!("{}", unicode_string.len());
         let unicode = packet_reader.read_unicode(utf16_byte_len).await.unwrap();
         assert_eq!(unicode, unicode_string);
     }
