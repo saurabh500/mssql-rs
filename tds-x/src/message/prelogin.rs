@@ -423,7 +423,7 @@ pub(crate) mod tests {
             Option::from(EncryptionSetting::Required),
             Option::from("MSSQLServer"),
         );
-        let mut mock = MockNetworkWriter { size: 1024 };
+        let mut mock = MockNetworkWriter::new(1024);
         let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock);
 
         let mut serializer = Serializer::new(&model, &mut packet_writer);
@@ -445,7 +445,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_deserialize_model() {
-        let mut mock = MockNetworkWriter { size: 1024 };
+        let mut mock = MockNetworkWriter::new(1024);
         let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock);
         // Write headers.
         block_on(packet_writer.write_byte_async(OptionType::Version as u8)).unwrap();
