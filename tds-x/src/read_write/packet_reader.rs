@@ -35,7 +35,7 @@ macro_rules! generate_read_fn {
 impl<'a> PacketReader<'a> {
     pub const LENGTHNULL: u16 = 0xffff;
 
-    pub fn new(network_reader: &'a mut dyn NetworkReader) -> PacketReader<'a> {
+    pub(crate) fn new(network_reader: &'a mut dyn NetworkReader) -> PacketReader<'a> {
         let packet_size: usize = network_reader.packet_size() as usize;
         let packet_storage = packet_size * 2;
         let buffer: Vec<u8> = vec![0; packet_storage]; // Adjust the capacity as needed

@@ -53,9 +53,18 @@ impl Version {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum EncryptionSetting {
-    NotSupported,
-    Optional,
-    Required,
+    PreferOff, // Don't use encryption if the server allows this or doesn't support encryption.
+    On,        // Use encryption after prelogin.
+    Required, // Use encryption after prelogin. Note that this is the same as On per the documentation,
+    // but writes a different value in the request. Perhaps On is supposed to keep the connection alive,
+    // but unencrypted if the server returns encryption off/unsupported.
+    Strict, // Encrypt the whole stream, including prelogin.
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum NegotiatedEncryptionSetting {
     Strict,
     LoginOnly,
+    Mandatory,
+    NoEncryption,
 }

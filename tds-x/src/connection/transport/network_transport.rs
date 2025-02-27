@@ -1,6 +1,6 @@
 use crate::connection::client_context::ClientContext;
-use crate::connection::transport::ssl_handler::{SslHandler, Tds8SslHandler};
-use crate::core::EncryptionSetting;
+use crate::connection::transport::ssl_handler::{SslHandler, Tds7StreamRecoverer};
+use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting};
 use crate::handler::handler_factory::SessionSettings;
 use crate::message::login_options::TdsVersion;
 use crate::message::messages::PacketType;
@@ -8,52 +8,62 @@ use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::packet_writer::PacketWriter;
 use crate::read_write::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
 use async_trait::async_trait;
-use std::io::Error;
-use tokio::io::{split, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use std::io::{Error, ErrorKind};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 pub(crate) async fn create_transport(
     context: &ClientContext,
 ) -> Result<Box<NetworkTransport>, Error> {
-    let connect_result = TcpStream::connect((context.server_name.as_str(), context.port)).await;
-    match connect_result {
-        Ok(stream) => {
-            // Enable TLS over TCP immediately in TDS 8.0
-            assert!(matches!(context.tds_version(), TdsVersion::V8_0));
-            let ssl_handler = Tds8SslHandler { settings: context };
+    let stream = TcpStream::connect((context.server_name.as_str(), context.port)).await?;
 
-            // Convert the Tokio stream to a std::TcpStream to make it easier to clone.
-            // Do this outside the callback instead of making the Tokio Stream part of the closure
-            // because into_std() is a destructive operation.
-            let std_stream = stream.into_std()?;
+    // Convert the Tokio stream to a std::TcpStream to make it easier to clone.
+    // Do this outside the callback instead of making the Tokio Stream part of the closure
+    // because into_std() is a destructive operation.
+    let std_stream = stream.into_std()?;
 
-            // Define a cloning callback since this is the only time we know we're working with
-            // TcpStreams.
+    // Define a cloning callback since this is the only time we know we're working with
+    // TcpStreams.
+
+    match context.tds_version() {
+        TdsVersion::V7_4 => {
+            let stream_recoverer = Tds7StreamRecoverer::new(TcpStreamRecoverer {
+                stream: Box::new(std_stream),
+            });
+
+            // TDS 7.4 starts with unencrypted streams that could get encrypted as part of prelogin
+            // negotiation.
+            let base_stream = stream_recoverer.recover_base_stream();
+
+            Ok(Box::new(NetworkTransport {
+                context,
+                encryption: None,
+                stream: base_stream,
+                ssl_handler: SslHandler { settings: context },
+                stream_recoverer: Box::new(stream_recoverer),
+                packet_size: context.packet_size as u32,
+            }))
+        }
+        TdsVersion::V8_0 => {
             let stream_recoverer = TcpStreamRecoverer {
                 stream: Box::new(std_stream),
             };
 
-            let encrypted_stream_result = ssl_handler
+            // Enable TLS over TCP immediately in TDS 8.0
+            let ssl_handler = SslHandler { settings: context };
+            let encrypted_stream = ssl_handler
                 .enable_ssl_async(stream_recoverer.recover_base_stream())
-                .await;
+                .await?;
 
-            match encrypted_stream_result {
-                Ok((encrypted_reader, encrypted_writer)) => {
-                    let transport = Box::new(NetworkTransport {
-                        context,
-                        encryption: context.encryption,
-                        reader: encrypted_reader,
-                        writer: encrypted_writer,
-                        ssl_handler: Box::new(ssl_handler),
-                        stream_recoverer: Box::new(stream_recoverer),
-                        packet_size: context.packet_size as u32,
-                    });
-                    Ok(transport)
-                }
-                Err(err) => Err(err),
-            }
+            Ok(Box::new(NetworkTransport {
+                context,
+                encryption: None,
+                stream: encrypted_stream,
+                ssl_handler,
+                stream_recoverer: Box::new(stream_recoverer),
+                packet_size: context.packet_size as u32,
+            }))
         }
-        Err(err) => Err(err),
     }
 }
 
@@ -63,12 +73,20 @@ pub trait TransportSslHandler {
     async fn disable_ssl(&mut self) -> Result<(), Error>;
 }
 
-pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
+pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send {
+    fn tls_handshake_starting(&mut self);
+    fn tls_handshake_completed(&mut self);
+}
 
-impl<T> Stream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
-
-trait StreamRecoverer: Send {
+pub(crate) trait StreamRecoverer: Send {
     fn recover_base_stream(&self) -> Box<dyn Stream>;
+    fn tls_handshake_starting(&mut self);
+    fn tls_handshake_completed(&mut self);
+}
+
+impl Stream for TcpStream {
+    fn tls_handshake_starting(&mut self) {}
+    fn tls_handshake_completed(&mut self) {}
 }
 
 struct TcpStreamRecoverer {
@@ -81,20 +99,23 @@ impl StreamRecoverer for TcpStreamRecoverer {
         let tokio_stream = TcpStream::from_std(std_stream_clone).unwrap();
         Box::new(tokio_stream)
     }
+
+    fn tls_handshake_starting(&mut self) {}
+
+    fn tls_handshake_completed(&mut self) {}
 }
 
 pub(crate) struct NetworkTransport<'a> {
     context: &'a ClientContext,
-    encryption: EncryptionSetting,
+    encryption: Option<NegotiatedEncryptionSetting>,
     packet_size: u32,
-    reader: Box<dyn AsyncRead + Unpin + Send + 'a>,
-    writer: Box<dyn AsyncWrite + Unpin + Send + 'a>,
-    ssl_handler: Box<dyn SslHandler + 'a>,
+    stream: Box<dyn Stream>,
+    ssl_handler: SslHandler<'a>,
     stream_recoverer: Box<dyn StreamRecoverer + 'a>,
 }
 
 impl NetworkReaderWriter for NetworkTransport<'_> {
-    fn notify_encryption_setting_change(&mut self, setting: EncryptionSetting) {
+    fn notify_encryption_setting_change(&mut self, setting: NegotiatedEncryptionSetting) {
         self.notify_encryption_negotiation(setting);
     }
 
@@ -121,7 +142,7 @@ impl NetworkReader for NetworkTransport<'_> {
 #[async_trait]
 impl NetworkWriter for NetworkTransport<'_> {
     async fn send(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.writer.write_all(data).await?;
+        self.stream.write_all(data).await?;
         Ok(())
     }
 
@@ -132,6 +153,11 @@ impl NetworkWriter for NetworkTransport<'_> {
     fn get_packet_writer(&mut self, packet_type: PacketType) -> PacketWriter<'_> {
         packet_type.create_packet_writer(self)
     }
+
+    fn get_encryption_setting(&self) -> NegotiatedEncryptionSetting {
+        assert!(self.encryption.is_some());
+        self.encryption.unwrap()
+    }
 }
 
 impl NetworkTransport<'_> {
@@ -140,12 +166,16 @@ impl NetworkTransport<'_> {
     }
 
     pub(crate) async fn send(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.writer.write_all(data).await?;
+        self.stream.write_all(data).await?;
         Ok(())
     }
 
-    pub(crate) fn notify_encryption_negotiation(&mut self, encryption: EncryptionSetting) {
-        self.encryption = encryption;
+    pub(crate) fn notify_encryption_negotiation(
+        &mut self,
+        encryption: NegotiatedEncryptionSetting,
+    ) {
+        assert!(self.encryption.is_none());
+        self.encryption = Some(encryption);
     }
 
     /// Asynchronously reads data from the underlying network transport
@@ -179,35 +209,29 @@ impl NetworkTransport<'_> {
         if buffer.is_empty() {
             panic!("Buffer length must be greater than 0");
         }
-        let bytes_read = self.reader.read(buffer).await?;
-        Ok(bytes_read)
-    }
-
-    async fn enable_ssl_internal(&mut self) -> Result<(), Error> {
-        match self
-            .ssl_handler
-            .enable_ssl_async(self.stream_recoverer.recover_base_stream())
-            .await
-        {
-            Ok((encrypted_reader, encrypted_writer)) => {
-                self.reader = encrypted_reader;
-                self.writer = encrypted_writer;
-                Ok(())
-            }
-            Err(err) => Err(err),
+        let bytes_read = self.stream.read(buffer).await?;
+        if bytes_read == 0 {
+            Err(Error::from(ErrorKind::UnexpectedEof))
+        } else {
+            Ok(bytes_read)
         }
     }
 
-    async fn disable_ssl_internal(&mut self) {
-        // Notify the SSL handler that SSL is being disabled.
-        self.ssl_handler.shutdown_ssl();
+    async fn enable_ssl_internal(&mut self) -> Result<(), Error> {
+        self.stream_recoverer.tls_handshake_starting();
+        let encrypted_stream = self
+            .ssl_handler
+            .enable_ssl_async(self.stream_recoverer.recover_base_stream())
+            .await?;
 
-        // Update the reader and writer. Note - buffering should get re-enabled on the reader
-        // if it was applied previously here.
+        self.stream_recoverer.tls_handshake_completed();
+        self.stream = encrypted_stream;
+        Ok(())
+    }
+
+    async fn disable_ssl_internal(&mut self) {
         let base_stream = self.stream_recoverer.recover_base_stream();
-        let (base_reader, base_writer) = split(base_stream);
-        self.reader = Box::new(base_reader);
-        self.writer = Box::new(base_writer)
+        self.stream = base_stream;
     }
 }
 
@@ -219,9 +243,6 @@ impl TransportSslHandler for NetworkTransport<'_> {
 
     async fn disable_ssl(&mut self) -> Result<(), Error> {
         let encryption_type_check = match self.context.encryption {
-            EncryptionSetting::NotSupported => Ok(()),
-            EncryptionSetting::Optional => Ok(()),
-            EncryptionSetting::Required => Ok(()),
             EncryptionSetting::Strict => {
                 // TODO: Evaluate this error.
                 Err(Error::new(
@@ -229,7 +250,7 @@ impl TransportSslHandler for NetworkTransport<'_> {
                     "Under strict mode the client must communicate over TLS",
                 ))
             }
-            EncryptionSetting::LoginOnly => Ok(()),
+            _ => Ok(()),
         };
 
         if encryption_type_check.is_err() {
@@ -247,12 +268,11 @@ pub(crate) mod tests {
     use crate::connection::client_context::ClientContext;
     use crate::connection::transport::network_transport::Stream; // Your custom trait
     use crate::connection::transport::ssl_handler::SslHandler;
-    use async_trait::async_trait;
     use bytes::Bytes;
     use futures::SinkExt;
     use futures::StreamExt;
     use rand::Rng;
-    use tokio::io::{duplex, split, AsyncRead, AsyncWrite, DuplexStream};
+    use tokio::io::{duplex, DuplexStream};
     use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite};
 
     // The choice of 8192 is large enough for sending data. This stream should have a buffer large enough for send.
@@ -262,29 +282,13 @@ pub(crate) mod tests {
     /// A mock SslHandler that simply returns the same stream, no real TLS.
     pub(crate) struct MockSslHandler;
 
-    #[async_trait]
-    impl SslHandler for MockSslHandler {
-        async fn enable_ssl_async(
-            &self,
-            base_stream: Box<dyn Stream>,
-        ) -> Result<
-            (
-                Box<dyn AsyncRead + Send + Unpin>,
-                Box<dyn AsyncWrite + Send + Unpin>,
-            ),
-            std::io::Error,
-        > {
-            let (r, w) = tokio::io::split(base_stream);
-            Ok((Box::new(r), Box::new(w)))
-        }
-
-        fn shutdown_ssl(&self) {
-            // No-op
-        }
-    }
-
     /// A mock StreamRecoverer that always returns the stored DuplexStream.
     pub(crate) struct MockStreamRecoverer {}
+
+    impl Stream for DuplexStream {
+        fn tls_handshake_starting(&mut self) {}
+        fn tls_handshake_completed(&mut self) {}
+    }
 
     impl StreamRecoverer for MockStreamRecoverer {
         fn recover_base_stream(&self) -> Box<dyn Stream> {
@@ -293,6 +297,9 @@ pub(crate) mod tests {
             let stream = dummy_client;
             Box::new(stream)
         }
+
+        fn tls_handshake_starting(&mut self) {}
+        fn tls_handshake_completed(&mut self) {}
     }
 
     pub(crate) fn create_readable_network_transport(
@@ -300,17 +307,14 @@ pub(crate) mod tests {
     ) -> (NetworkTransport, DuplexStream) {
         let (client_side, server_side) = duplex(MAX_BUFFER_SIZE);
 
-        let (reader, writer) = split(client_side);
-
-        let ssl_handler = Box::new(MockSslHandler);
+        let ssl_handler = SslHandler { settings: context };
         let stream_recoverer = Box::new(MockStreamRecoverer {});
 
         (
             NetworkTransport {
                 context,
-                encryption: context.encryption,
-                reader: Box::new(reader),
-                writer: Box::new(writer),
+                encryption: None,
+                stream: Box::new(client_side),
                 ssl_handler,
                 stream_recoverer,
                 packet_size: context.packet_size as u32,
@@ -324,28 +328,23 @@ pub(crate) mod tests {
     ) -> (NetworkTransport, NetworkTransport) {
         let (client_side, server_side) = duplex(MAX_BUFFER_SIZE);
 
-        let (reader, writer) = split(client_side);
-        let (server_reader, server_writer) = split(server_side);
-
-        let ssl_handler = Box::new(MockSslHandler);
+        let ssl_handler = SslHandler { settings: context };
         let stream_recoverer = Box::new(MockStreamRecoverer {});
 
         (
             NetworkTransport {
                 context,
-                encryption: context.encryption,
-                reader: Box::new(reader),
-                writer: Box::new(writer),
+                encryption: None,
+                stream: Box::new(client_side),
                 ssl_handler,
                 stream_recoverer,
                 packet_size: context.packet_size as u32,
             },
             NetworkTransport {
                 context,
-                encryption: context.encryption,
-                reader: Box::new(server_reader),
-                writer: Box::new(server_writer),
-                ssl_handler: Box::new(MockSslHandler),
+                encryption: None,
+                stream: Box::new(server_side),
+                ssl_handler: SslHandler { settings: context },
                 stream_recoverer: Box::new(MockStreamRecoverer {}),
                 packet_size: context.packet_size as u32,
             },
@@ -354,7 +353,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_network_transport_send() {
-        let context = ClientContext::default();
+        let mut context = ClientContext::new();
+        context.encryption = EncryptionSetting::Strict;
         let (mut transport, server_side) = create_readable_network_transport(&context);
 
         // Fill data_to_send with random values
@@ -387,23 +387,20 @@ pub(crate) mod tests {
         // Data will be written on the server_side and the network transport will read from the client side.
         let (client_side, server_side) = duplex(1024);
 
-        // 2) Split the client side into a reader and writer for the transport
-        let (reader, client_writer) = tokio::io::split(client_side);
-
         // Mocks and defaults.
-        let ssl_handler = Box::new(MockSslHandler);
         let stream_recoverer = Box::new(MockStreamRecoverer {});
-        let context = ClientContext::default();
+        let mut context = ClientContext::new();
+        context.encryption = EncryptionSetting::Strict;
+        let ssl_handler = SslHandler { settings: &context };
 
         // Optionally, shut down the writer so the reader sees EOF if all data is read
         // client_writer.shutdown().await?;
 
-        // 4) Build our transport
+        // Build our transport
         //    (In a real scenario, you'll also set ssl_handler, stream_recoverer, etc.)
         let mut transport = NetworkTransport {
-            encryption: context.encryption,
-            reader: Box::new(reader),
-            writer: Box::new(client_writer),
+            encryption: None,
+            stream: Box::new(client_side),
             ssl_handler,
             stream_recoverer,
             packet_size: context.packet_size as u32,

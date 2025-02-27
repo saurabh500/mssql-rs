@@ -335,16 +335,15 @@ impl<'a> Request<'a> for LoginRequest<'a> {
     }
 
     fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a> {
-        writer.get_packet_writer(self.packet_type())
+        self.packet_type().create_packet_writer(writer)
     }
 
     async fn serialize(&self, transport: &mut dyn NetworkWriter) -> Result<(), Error> {
         // TODO: Log the datamodel.
         let mut packet_writer = self.create_packet_writer(transport);
-        let _ = Serializer::new(&self.model, &mut packet_writer)
+        Serializer::new(&self.model, &mut packet_writer)
             .serialize()
-            .await?;
-        Ok(())
+            .await
     }
 }
 

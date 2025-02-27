@@ -1,7 +1,7 @@
 use std::io::Error;
 
 use crate::connection::client_context::ClientContext;
-use crate::core::EncryptionSetting;
+use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting};
 use crate::message::login::{
     EnvChangeProperties, Feature, LoginRequest, LoginRequestModel, LoginResponse,
     LoginResponseModel, LoginResponseStatus,
@@ -24,10 +24,7 @@ impl HandlerFactory<'_> {
     }
 
     pub(crate) fn login_handler(&self) -> LoginHandler<'_, '_> {
-        LoginHandler {
-            factory: self,
-            encryption: self.context.encryption,
-        }
+        LoginHandler { factory: self }
     }
 
     pub(crate) fn session_handler(&self) -> SessionHandler<'_, '_> {
@@ -50,7 +47,7 @@ impl HandlerFactory<'_> {
 
 pub(crate) struct NegotiatedSettings {
     pub session_settings: SessionSettings,
-    pub encryption: EncryptionSetting,
+    pub encryption: NegotiatedEncryptionSetting,
 }
 
 pub(crate) struct SessionSettings {
@@ -122,7 +119,7 @@ impl SessionHandler<'_, '_> {
         // encryption setting.
         reader_writer.notify_encryption_setting_change(pre_login_result.encryption_setting);
 
-        let mut login_result = self.get_login_result(reader_writer).await;
+        let mut login_result = self.get_login_result(reader_writer).await?;
         self.validate_login_result(&login_result)?;
 
         let negotiated_settings = self.negotiate_settings(&pre_login_result, &mut login_result);
@@ -172,19 +169,19 @@ impl SessionHandler<'_, '_> {
     async fn get_login_result(
         &mut self,
         reader_writer: &mut impl NetworkReaderWriter,
-    ) -> LoginResult {
+    ) -> Result<LoginResult, Error> {
         self.factory.login_handler().execute(reader_writer).await
     }
 }
 
-pub struct PreloginResult {
-    pub encryption_setting: EncryptionSetting,
-    pub is_fed_auth_supported: bool,
+struct PreloginResult {
+    encryption_setting: NegotiatedEncryptionSetting,
+    is_fed_auth_supported: bool,
 }
 
 impl PreloginResult {}
 
-pub struct PreloginHandler<'a, 'n> {
+pub(crate) struct PreloginHandler<'a, 'n> {
     factory: &'a HandlerFactory<'n>,
 }
 
@@ -222,29 +219,47 @@ impl PreloginHandler<'_, '_> {
         }
 
         if request_model.encryption_setting == EncryptionSetting::Strict {
+            // If strict is used, the user is using TDS 8. The server's encryption response is
+            // unused and the stream is already (and stays) encrypted.
             return Ok(PreloginResult {
-                encryption_setting: EncryptionSetting::Strict,
+                encryption_setting: NegotiatedEncryptionSetting::Strict,
                 is_fed_auth_supported: response_model.federated_auth_supported,
             });
         }
 
-        if response_model.encryption == EncryptionType::NotSupported {
-            panic!("Encryption is not supported.")
-        }
-
-        if request_model.encryption_setting == EncryptionSetting::Optional
-            && response_model.encryption == EncryptionType::Off
-        {
-            return Ok(PreloginResult {
-                encryption_setting: EncryptionSetting::LoginOnly,
+        match &response_model.encryption {
+            EncryptionType::Off => {
+                // The _only_ way the server would have sent Off would be if the
+                // client asked for it to be off. If the server supports
+                // encryption it will return On and if not returns Unsupported.
+                if request_model.encryption_setting == EncryptionSetting::PreferOff {
+                    Ok(PreloginResult {
+                        encryption_setting: NegotiatedEncryptionSetting::LoginOnly,
+                        is_fed_auth_supported: response_model.federated_auth_supported,
+                    })
+                } else {
+                    // For other user encryption settings, the server would have
+                    assert!(request_model.encryption_setting == EncryptionSetting::Required);
+                    panic!("Server disallowed encryption but client requires it.");
+                }
+            }
+            EncryptionType::NotSupported => {
+                if request_model.encryption_setting != EncryptionSetting::PreferOff {
+                    Ok(PreloginResult {
+                        encryption_setting: NegotiatedEncryptionSetting::Mandatory,
+                        is_fed_auth_supported: response_model.federated_auth_supported,
+                    })
+                } else {
+                    // For other user encryption settings, the server would have
+                    assert!(request_model.encryption_setting == EncryptionSetting::Required);
+                    panic!("Server does not support encryption but client requires it.");
+                }
+            }
+            _ => Ok(PreloginResult {
+                encryption_setting: NegotiatedEncryptionSetting::Mandatory,
                 is_fed_auth_supported: response_model.federated_auth_supported,
-            });
+            }),
         }
-
-        Ok(PreloginResult {
-            encryption_setting: EncryptionSetting::Required,
-            is_fed_auth_supported: response_model.federated_auth_supported,
-        })
     }
 }
 
@@ -256,15 +271,20 @@ struct LoginResult {
 
 pub struct LoginHandler<'a, 'n> {
     factory: &'a HandlerFactory<'n>,
-    encryption: EncryptionSetting,
 }
 
 impl LoginHandler<'_, '_> {
-    async fn execute(&self, reader_writer: &mut impl NetworkReaderWriter) -> LoginResult {
-        if self.encryption != EncryptionSetting::Strict
-            && self.encryption != EncryptionSetting::NotSupported
+    async fn execute(
+        &self,
+        reader_writer: &mut impl NetworkReaderWriter,
+    ) -> Result<LoginResult, Error> {
+        let encryption = reader_writer.get_encryption_setting();
+        if encryption != NegotiatedEncryptionSetting::Strict
+            && encryption != NegotiatedEncryptionSetting::NoEncryption
         {
-            todo!("Handle TDS 7.4 login");
+            // Note: We should not toggle encryption on if Strict is used because it is already,
+            // and we shouldn't alter the streams.
+            reader_writer.enable_ssl().await?;
         }
 
         let _request_model = self.send_login7_request(reader_writer).await;
@@ -273,11 +293,11 @@ impl LoginHandler<'_, '_> {
         // TODO Handle the response.
         let response_status = login_response.get_status();
 
-        LoginResult {
+        Ok(LoginResult {
             supported_features: vec![],
             change_properties: login_response.change_properties,
             status: response_status,
-        }
+        })
     }
 
     async fn send_login7_request(
@@ -291,11 +311,7 @@ impl LoginHandler<'_, '_> {
             todo!("Integrated security is not supported yet");
         }
 
-        if self.encryption == EncryptionSetting::LoginOnly {
-            todo!("TDS 7.4 implementation");
-        } else {
-            request.serialize(reader_writer).await?;
-        }
+        request.serialize(reader_writer).await?;
         Ok(request.model)
     }
 

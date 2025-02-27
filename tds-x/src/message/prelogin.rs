@@ -151,7 +151,7 @@ impl<'a> Request<'a> for PreloginRequest<'a> {
     }
 
     fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a> {
-        PacketWriter::new(self.packet_type(), writer)
+        self.packet_type().create_packet_writer(writer)
     }
 
     async fn serialize(&self, writer: &mut dyn NetworkWriter) -> Result<(), Error> {
@@ -315,7 +315,12 @@ impl<'a, 'n> Serializer<'a, 'n> {
 
     async fn write_encryption(&mut self) -> Result<(), Error> {
         match self.model.encryption_setting {
-            EncryptionSetting::Optional => {
+            EncryptionSetting::PreferOff => {
+                self.payload_writer
+                    .write_byte_async(EncryptionType::Off as u8)
+                    .await
+            }
+            EncryptionSetting::On => {
                 self.payload_writer
                     .write_byte_async(EncryptionType::On as u8)
                     .await
@@ -326,6 +331,7 @@ impl<'a, 'n> Serializer<'a, 'n> {
                     .await
             }
             _ => {
+                // This includes Strict, which the server ignores because it is always on in TDS 8.
                 self.payload_writer
                     .write_byte_async(EncryptionType::NotSupported as u8)
                     .await

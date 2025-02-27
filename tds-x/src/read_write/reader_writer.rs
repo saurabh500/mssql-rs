@@ -1,21 +1,22 @@
-use crate::core::EncryptionSetting;
+use super::packet_reader::PacketReader;
+use super::packet_writer::PacketWriter;
+use crate::connection::transport::network_transport::TransportSslHandler;
+use crate::core::NegotiatedEncryptionSetting;
 use crate::handler::handler_factory::SessionSettings;
 use crate::message::messages::PacketType;
 use async_trait::async_trait;
 use std::io::Error;
 
-use super::packet_reader::PacketReader;
-use super::packet_writer::PacketWriter;
-
 #[async_trait]
-pub trait NetworkWriter: Send {
+pub(crate) trait NetworkWriter: Send + TransportSslHandler {
     async fn send(&mut self, data: &[u8]) -> Result<(), Error>;
     fn packet_size(&self) -> u32;
     fn get_packet_writer(&mut self, packet_type: PacketType) -> PacketWriter<'_>;
+    fn get_encryption_setting(&self) -> NegotiatedEncryptionSetting;
 }
 
 #[async_trait]
-pub trait NetworkReader: Send {
+pub(crate) trait NetworkReader: Send {
     async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error>;
     fn packet_size(&self) -> u32;
     fn get_packet_reader(&mut self) -> PacketReader<'_>;
@@ -23,7 +24,7 @@ pub trait NetworkReader: Send {
 
 #[async_trait]
 pub(crate) trait NetworkReaderWriter: NetworkReader + NetworkWriter {
-    fn notify_encryption_setting_change(&mut self, setting: EncryptionSetting);
+    fn notify_encryption_setting_change(&mut self, setting: NegotiatedEncryptionSetting);
     fn notify_session_setting_change(&mut self, settings: &SessionSettings);
 }
 

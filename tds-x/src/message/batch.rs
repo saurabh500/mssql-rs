@@ -213,7 +213,7 @@ impl<'a> Request<'a> for SqlBatch {
     }
 
     fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a> {
-        PacketWriter::new(self.packet_type(), writer)
+        self.packet_type().create_packet_writer(writer)
     }
 
     async fn serialize(&self, writer: &mut dyn NetworkWriter) -> Result<(), Error> {

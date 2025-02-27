@@ -15,12 +15,13 @@ pub struct PacketWriter<'a> {
     packet_id: u8,
     payload_cursor: Cursor<Vec<u8>>,
     packet_size: usize,
+    is_first_packet: bool, // Note: Cannot just use packet_id because its value can rollover.
 }
 
 impl<'a> PacketWriter<'a> {
-    pub const PACKET_HEADER_SIZE: usize = 8;
+    pub(crate) const PACKET_HEADER_SIZE: usize = 8;
 
-    pub fn new(
+    pub(crate) fn new(
         packet_type: PacketType,
         network_writer: &'a mut dyn NetworkWriter,
     ) -> PacketWriter<'a> {
@@ -39,6 +40,7 @@ impl<'a> PacketWriter<'a> {
             packet_id: 1,
             payload_cursor: buffer_cursor,
             packet_size,
+            is_first_packet: true,
         }
     }
 
@@ -186,23 +188,13 @@ impl<'a> PacketWriter<'a> {
 
         // Position at the header start and start writing the header.
         self.payload_cursor.set_position(0);
-
-        let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, self.packet_type as u8);
-        let mut status: PacketStatusFlags = PacketStatusFlags::Normal;
-        if is_last_packet {
-            status = PacketStatusFlags::Eom;
-        }
-
-        let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, status as u8);
-
-        let _ =
-            WriteBytesExt::write_u16::<BigEndian>(&mut self.payload_cursor, packet_length as u16);
-
-        let _ = WriteBytesExt::write_u16::<BigEndian>(&mut self.payload_cursor, 0);
-
-        let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, self.packet_id);
-        let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, 0);
-
+        let _ = Self::build_header(
+            &mut self.payload_cursor,
+            packet_length,
+            self.packet_type,
+            self.packet_id,
+            is_last_packet,
+        );
         let data_slice = &self.payload_cursor.get_ref().as_slice()[..packet_length];
         self.network_writer.send(data_slice).await?;
 
@@ -212,12 +204,44 @@ impl<'a> PacketWriter<'a> {
             packet_length
         );
         event!(tracing::Level::DEBUG, "Packet content: {:?}", data_slice);
+
+        // Invoke the first-packet callback if needed.
+        if self.is_first_packet {
+            self.packet_type
+                .first_packet_callback(self.network_writer)
+                .await?;
+            self.is_first_packet = false;
+        }
+
         // Add the counter for the packet and increment by 1 for the next packet.
         self.packet_id = self.packet_id.wrapping_add(1);
 
         // Restore the cursor position.
         self.payload_cursor.set_position(saved_position);
         Ok(())
+    }
+
+    pub(crate) fn build_header<W: WriteBytesExt>(
+        writer: &mut W,
+        packet_length: usize,
+        packet_type: PacketType,
+        packet_id: u8,
+        is_last_packet: bool,
+    ) -> Result<(), Error> {
+        let _ = WriteBytesExt::write_u8(writer, packet_type as u8);
+        let status = match is_last_packet {
+            true => PacketStatusFlags::Eom,
+            false => PacketStatusFlags::Normal,
+        };
+
+        let _ = WriteBytesExt::write_u8(writer, status as u8);
+
+        let _ = WriteBytesExt::write_u16::<BigEndian>(writer, packet_length as u16);
+
+        let _ = WriteBytesExt::write_u16::<BigEndian>(writer, 0);
+
+        let _ = WriteBytesExt::write_u8(writer, packet_id);
+        WriteBytesExt::write_u8(writer, 0)
     }
 }
 
@@ -226,6 +250,8 @@ pub(crate) mod tests {
     use std::vec;
 
     use super::*;
+    use crate::connection::transport::network_transport::TransportSslHandler;
+    use crate::core::NegotiatedEncryptionSetting;
     use async_trait::async_trait;
     use futures::executor::block_on;
 
@@ -249,10 +275,6 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl NetworkWriter for MockNetworkWriter {
-        fn packet_size(&self) -> u32 {
-            self.size
-        }
-
         #[must_use]
         #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
         async fn send(&mut self, _data: &[u8]) -> Result<(), std::io::Error> {
@@ -261,8 +283,27 @@ pub(crate) mod tests {
             Ok(())
         }
 
+        fn packet_size(&self) -> u32 {
+            self.size
+        }
+
         fn get_packet_writer(&mut self, _: PacketType) -> PacketWriter<'_> {
             unimplemented!();
+        }
+
+        fn get_encryption_setting(&self) -> NegotiatedEncryptionSetting {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl TransportSslHandler for MockNetworkWriter {
+        async fn enable_ssl(&mut self) -> Result<(), Error> {
+            unimplemented!()
+        }
+
+        async fn disable_ssl(&mut self) -> Result<(), Error> {
+            unimplemented!()
         }
     }
 

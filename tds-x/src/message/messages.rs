@@ -1,5 +1,6 @@
 use std::io::Error;
 
+use crate::core::NegotiatedEncryptionSetting;
 use crate::{
     read_write::{packet_writer::PacketWriter, reader_writer::NetworkWriter},
     token::tokens::ErrorToken,
@@ -21,12 +22,32 @@ pub enum PacketType {
     PreLogin = 0x12,
 }
 
-impl<'a> PacketType {
+impl<'a, 'b> PacketType
+where
+    'a: 'b,
+{
     pub(crate) fn create_packet_writer(
         &self,
         transport: &'a mut dyn NetworkWriter,
     ) -> PacketWriter<'a> {
         PacketWriter::new(*self, transport)
+    }
+
+    pub(crate) async fn first_packet_callback(
+        &self,
+        writer: &'b mut dyn NetworkWriter,
+    ) -> Result<(), Error> {
+        match self {
+            PacketType::Login7 => {
+                if writer.get_encryption_setting() == NegotiatedEncryptionSetting::LoginOnly {
+                    // Only the first packet should be encrypted. Turn off encryption after the first packet.
+                    writer.disable_ssl().await
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -49,7 +70,7 @@ pub(crate) enum PacketStatusFlags {
 }
 
 #[async_trait(?Send)]
-pub trait Request<'a> {
+pub(crate) trait Request<'a> {
     fn packet_type(&self) -> PacketType;
     fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a>;
     async fn serialize(&self, _transport: &mut dyn NetworkWriter) -> Result<(), Error>;
