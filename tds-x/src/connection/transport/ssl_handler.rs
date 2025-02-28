@@ -436,7 +436,13 @@ impl<S: StreamRecoverer> Tds7StreamRecoverer<S> {
 impl<S: StreamRecoverer> StreamRecoverer for Tds7StreamRecoverer<S> {
     #[cfg(not(target_os = "macos"))]
     fn recover_base_stream(&self) -> Box<dyn Stream> {
-        self.base_stream_recoverer.recover_base_stream()
+        if !self.is_executing_tls_handshake {
+            self.base_stream_recoverer.recover_base_stream()
+        } else {
+            Box::new(TlsOverTdsStream::new(
+                self.base_stream_recoverer.recover_base_stream(),
+            ))
+        }
     }
 
     #[cfg(target_os = "macos")]
