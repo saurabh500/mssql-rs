@@ -16,8 +16,8 @@ jobs:
   strategy:
     matrix:
       Windows:
-        poolName: Hosted Windows 2019 with VS2019
-        vmImage:
+        poolName: Azure Pipelines
+        vmImage: windows-2022
         cargoTargetDir: C:\cargo_target_dir
         buildTarget: Windows
       Linux:
@@ -51,8 +51,9 @@ jobs:
     displayName: "Run the docker container on linux"
     inputs:
       script: 'docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 -d mcr.microsoft.com/mssql/server:2022-latest'
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)
     condition: and(succeededOrFailed(), eq(variables.buildTarget, 'Linux'))
-
 
 
   - task: PowerShell@2
@@ -85,6 +86,8 @@ jobs:
         Restart-Service -Name 'MSSQLSERVER' -Force
         sqlcmd -Q "ALTER SERVER ROLE sysadmin ADD MEMBER testuser;"
         sqlcmd -S localhost,1433 -U sa -P $(SQL_PASSWORD) -Q "SELECT @@VERSION"
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)
     condition: and(succeeded(), eq(variables.buildTarget, 'Windows'))
 
   - task: CargoAuthenticate@0
@@ -123,8 +126,16 @@ jobs:
   - bash: cargo llvm-cov clean --workspace
     displayName: Clean up old coverage files
 
-  - bash: cargo llvm-cov nextest --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
+  - task: PowerShell@2
+    inputs:
+      targetType: 'inline'
+      script: |
+        $env:RUST_BACKTRACE=1
+        $env:RUST_BACKTRACE="full"
+        cargo llvm-cov nextest --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
     displayName: Run tests
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)
 
   - task: PublishTestResults@2
     condition: succeededOrFailed()

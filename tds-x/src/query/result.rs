@@ -575,12 +575,14 @@ impl Drop for DeferredSignal {
 }
 
 #[cfg(test)]
+#[cfg(target_os = "windows")]
 mod query_processing_driver {
     use super::{BatchResult, QueryResultType, TdsConnection};
     use crate::connection::client_context::ClientContext;
     use crate::connection::tds_connection::query_processing_driver;
+    use dotenv::dotenv;
     use futures::StreamExt;
-
+    use std::env;
     enum ExpectedQueryResultType {
         Update(u64),
         Result(u64),
@@ -626,15 +628,13 @@ mod query_processing_driver {
     }
 
     pub fn create_context() -> ClientContext {
+        dotenv().ok();
         ClientContext {
-            server_name: "saurabhsingh.database.windows.net".to_string(),
+            server_name: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
             port: 1433,
-            user_name: "saurabh".to_string(),
-            password: std::fs::read_to_string("/tmp/password")
-                .expect("Failed to read password file")
-                .trim()
-                .to_string(),
-            database: "drivers".to_string(),
+            user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
+            password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            database: "master".to_string(),
             ..Default::default()
         }
     }
@@ -683,14 +683,12 @@ mod query_processing_driver {
         run_query_and_check_results(&mut connection, query, expected_results).await;
     }
 
-    #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_select_1() {
         let expected = [ExpectedQueryResultType::Result(1)];
         connect_query_and_validate("SELECT 1".to_string(), &expected).await;
     }
 
-    #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_generate_all_types_table() {
         let expected = [
@@ -746,7 +744,6 @@ mod query_processing_driver {
         .await;
     }
 
-    #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_tds_connection_reuse() {
         let context = create_context();
@@ -789,7 +786,6 @@ mod query_processing_driver {
         .await;
     }
 
-    #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_incomplete_result_set_iteration() {
         let context = create_context();
@@ -871,7 +867,6 @@ mod query_processing_driver {
         .await;
     }
 
-    #[ignore]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_incomplete_result_iteration() {
         let context = create_context();

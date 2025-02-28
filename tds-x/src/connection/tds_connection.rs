@@ -27,11 +27,11 @@ impl<'connection, 'result> TdsConnection<'connection> {
     }
 }
 
-// Remove the ignore attribute to run the test.
-
 #[cfg(test)]
+#[cfg(target_os = "windows")]
 pub(crate) mod query_processing_driver {
-    use std::io::Error;
+    use dotenv::dotenv;
+    use std::{env, io::Error};
 
     use crate::{
         connection::client_context::ClientContext,
@@ -46,13 +46,11 @@ pub(crate) mod query_processing_driver {
 
     use super::TdsConnection;
 
-    #[ignore]
     #[tokio::test]
     async fn test_single_query_no_panic() {
         execute_test_query("sp_who2").await.unwrap();
     }
 
-    #[ignore]
     #[tokio::test]
     async fn test_multi_query_no_panic() {
         execute_test_query("select * from sys.databases; select * from sys.columns")
@@ -60,7 +58,6 @@ pub(crate) mod query_processing_driver {
             .unwrap();
     }
 
-    #[ignore]
     #[tokio::test]
     async fn test_multi_mixed_queries_no_panic() {
         execute_test_query(
@@ -80,7 +77,6 @@ pub(crate) mod query_processing_driver {
         .unwrap();
     }
 
-    #[ignore]
     #[tokio::test]
     async fn test_data_types_numerics_no_panic() {
         execute_test_query(
@@ -118,7 +114,6 @@ pub(crate) mod query_processing_driver {
         .unwrap();
     }
 
-    #[ignore]
     #[tokio::test]
     async fn test_strings_no_panic() {
         execute_test_query(
@@ -133,7 +128,6 @@ pub(crate) mod query_processing_driver {
         .unwrap();
     }
 
-    #[ignore]
     #[tokio::test]
     async fn test_data_types_numerics_null_values_no_panic() {
         execute_test_query(
@@ -164,15 +158,13 @@ pub(crate) mod query_processing_driver {
     }
 
     pub async fn execute_test_query(query: &str) -> Result<(), Error> {
+        dotenv().ok();
         let context = ClientContext {
-            server_name: "saurabhsingh.database.windows.net".to_string(),
+            server_name: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
             port: 1433,
-            user_name: "saurabh".to_string(),
-            password: std::fs::read_to_string("/tmp/password")
-                .expect("Failed to read password file")
-                .trim()
-                .to_string(),
-            database: "drivers".to_string(),
+            user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
+            password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            // database: "drivers".to_string(),
             ..Default::default()
         };
         let connection = create_connection(&context).await.unwrap();
