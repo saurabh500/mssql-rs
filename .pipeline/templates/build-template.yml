@@ -16,6 +16,11 @@ parameters:
   - Release
   default: Both
 
+- name: testFilter
+  displayName: Exclusion filter for tests
+  type: string
+  default: ''
+
 steps:
 - task: RustInstaller@1
   displayName: Install Rust Toolchain
@@ -64,7 +69,7 @@ steps:
     script: |
       $env:RUST_BACKTRACE=1
       $env:RUST_BACKTRACE="full"
-      cargo llvm-cov nextest --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
+      cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
   displayName: Run tests
   env:
     SQL_PASSWORD: $(SQL_PASSWORD)

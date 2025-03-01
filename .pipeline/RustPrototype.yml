@@ -59,3 +59,4 @@ jobs:
       parameters:
         buildTarget: MacOS
         buildType: ${{ parameters.buildType }}
+        testFilter: -E 'not test(query_result)'
