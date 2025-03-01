@@ -1,0 +1,48 @@
+parameters:
+- name: buildTarget  # defaults for any parameters that aren't specified
+  default: 'Windows'
+  type: string
+  values:
+  - Windows
+  - Linux
+  - MacOS
+
+steps:
+- ${{ if eq(parameters.buildTarget, 'Windows') }}:
+  - task: PowerShell@2
+    displayName: 'Generate Certificate for TLS encryption '
+    inputs:
+      targetType: 'inline'
+      script: |
+        .pipeline/Certificates-Operations.ps1 -instanceName "MSSQLSERVER"
+
+  - task: PowerShell@2
+    displayName: 'Setup users in SQL server, restart service and check version'
+    inputs:
+      targetType: 'inline'
+      script: |
+        echo "Creating users, setting up test user and restarting SQL server"
+        Restart-Service -Name 'MSSQLSERVER' -Force
+        
+        sqlcmd -Q "ALTER LOGIN sa ENABLE;"
+        sqlcmd -Q "ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
+        sqlcmd -Q "ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'"
+        sqlcmd -Q "CREATE LOGIN testuser WITH PASSWORD = '$(SQL_PASSWORD)', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
+        Restart-Service -Name 'MSSQLSERVER' -Force
+        sqlcmd -Q "ALTER SERVER ROLE sysadmin ADD MEMBER testuser;"
+        sqlcmd -S localhost,1433 -U sa -P $(SQL_PASSWORD) -Q "SELECT @@VERSION"
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)
+
+
+- ${{ if eq(parameters.buildTarget, 'Linux') }}:
+  - task: DockerInstaller@0
+    inputs:
+      dockerVersion: '17.09.0-ce'
+
+  - task: CmdLine@2
+    displayName: "Run the docker container on linux"
+    inputs:
+      script: 'docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 -d mcr.microsoft.com/mssql/server:2022-latest'
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)

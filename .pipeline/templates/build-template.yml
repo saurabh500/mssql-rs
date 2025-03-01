@@ -1,0 +1,155 @@
+parameters:
+- name: buildTarget  # defaults for any parameters that aren't specified
+  default: Windows
+  type: string
+  values:
+  - Windows
+  - Linux
+  - MacOS
+
+- name: buildType
+  displayName: Type of the build to produce
+  type: string
+  values:
+  - Both
+  - Debug
+  - Release
+  default: Both
+
+steps:
+- task: RustInstaller@1
+  displayName: Install Rust Toolchain
+  inputs:
+    toolchainFeed: https://sqlclientdrivers.pkgs.visualstudio.com/SqlDevX/_packaging/RustTools/nuget/v3/index.json
+
+- task: CargoAuthenticate@0
+  displayName: Authenticate with Azure Artifacts
+  inputs:
+    configFile: '.cargo/config.toml'
+
+  # Execute cargo fetch at the start of the pipeline to pull down deps specified in the lockfile.
+  # Subsequent steps will always use --frozen that will use the pre-resolved dependency versions
+  # which are pinned in the lockfile
+- script: cargo fetch
+  displayName: Fetch Crates
+  env:
+    CARGO_REGISTRIES_ONELAKECLIENT_TOKEN: $(OneLakeClientSecret)
+
+- script: cargo build --frozen 2>&1
+  displayName: Rust Debug Build
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+
+- script: cargo build --frozen --release 2>&1
+  displayName: Rust Release Build
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+
+- script: cargo bclippy
+  displayName: Rust Clippy Lint
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+
+- script: cargo bfmt
+  displayName: Check Format
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+
+- script: cargo install cargo-llvm-cov cargo-nextest
+  displayName: Install llvm-cov and nextest
+  condition: succeeded()
+
+- bash: cargo llvm-cov clean --workspace
+  displayName: Clean up old coverage files
+
+- task: PowerShell@2
+  inputs:
+    targetType: 'inline'
+    script: |
+      $env:RUST_BACKTRACE=1
+      $env:RUST_BACKTRACE="full"
+      cargo llvm-cov nextest --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
+  displayName: Run tests
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+
+- task: PublishTestResults@2
+  condition: succeededOrFailed()
+  displayName: "Publish test results"
+  inputs:
+    testResultsFormat: "JUnit"
+    testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
+    testRunTitle: ${{ parameters.buildTarget }}
+
+- script: cargo llvm-cov report --cobertura --output-path "$(Build.SourcesDirectory)/target/coverage.xml"
+  condition: succeededOrFailed()
+  workingDirectory: "$(Build.SourcesDirectory)"
+  displayName: Save code coverage in cobertura format
+
+- ${{ if eq(parameters.buildTarget, 'Windows') }}:
+  - task: PublishCodeCoverageResults@2
+    displayName: "Publish coverage results"
+    inputs:
+      summaryFileLocation: "$(Build.SourcesDirectory)/target/coverage*.xml"
+      pathToSources: "$(Build.SourcesDirectory)"
+
+- ${{ if eq(parameters.buildTarget, 'Windows') }}:
+  - task: MSBuild@1
+    displayName: C++ Debug Build
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+    inputs:
+      solution: '**/*.sln'
+      msbuildArchitecture: 'x64'
+      platform: 'x64'
+      configuration: 'Debug'
+
+- ${{ if eq(parameters.buildTarget, 'Windows') }}:
+  - task: MSBuild@1
+    displayName: C++ Release Build
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+    inputs:
+      solution: '**/*.sln'
+      msbuildArchitecture: 'x64'
+      platform: 'x64'
+      configuration: 'Release'
+
+- task: CopyFiles@2
+  displayName: Copy Rust Debug Build
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+  inputs:
+    SourceFolder: '$(CARGO_TARGET_DIR)/debug'
+    Contents: |
+      *
+      !.cargo-lock
+    TargetFolder: '$(Build.ArtifactStagingDirectory)/debug'
+
+- task: CopyFiles@2
+  displayName: Copy Rust Release Build
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+  inputs:
+    SourceFolder: '$(CARGO_TARGET_DIR)/release'
+    Contents: |
+      *
+      !.cargo-lock
+    TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
+
+- ${{ if eq(parameters.buildTarget, 'Windows') }}:
+  - task: CopyFiles@2
+    displayName: Copy C++ Debug Build
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+    inputs:
+      SourceFolder: '$(Build.SourcesDirectory)\prototype\ffi-prototype\x64\Debug'
+      Contents: 'ffi-app.*'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)\Debug'
+
+- ${{ if eq(parameters.buildTarget, 'Windows') }}:
+  - task: CopyFiles@2
+    displayName: Copy C++ Release Build
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+    inputs:
+      SourceFolder: '$(Build.SourcesDirectory)\prototype\ffi-prototype\x64\Release'
+      Contents: 'ffi-app.*'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)\Release'
+
+- task: PublishBuildArtifacts@1
+  displayName: Publish Build Drop
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+    ArtifactName: $(buildTarget)
+    publishLocation: Container

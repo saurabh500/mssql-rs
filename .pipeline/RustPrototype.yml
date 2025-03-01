@@ -12,210 +12,50 @@ parameters:
   default: Both
 
 jobs:
-- job: Build
-  strategy:
-    matrix:
-      Windows:
-        poolName: Azure Pipelines
-        vmImage: windows-2022
-        cargoTargetDir: C:\cargo_target_dir
-        buildTarget: Windows
-      Linux:
-        poolName: Azure Pipelines
-        vmImage: ubuntu-latest
-        cargoTargetDir: $(Build.SourcesDirectory)
-        buildTarget: Linux
-      MacOS:
-        poolName: Azure Pipelines
-        vmImage: macOS-latest
-        cargoTargetDir: $(Build.SourcesDirectory)
-        buildTarget: MacOS
+- job: Build_Windows
   pool:
-    name: $(poolName)
-    vmImage: $(vmImage)
+    name: RUST-1ES-POOL
+    demands:
+      - imageOverride -equals RUST-Win22-Sql22
   variables:
     # For details on this CARGO_TARGET_DIR setting, see https://eng.ms/docs/more/rust/topics/onebranch-workaround
-    CARGO_TARGET_DIR: $(cargoTargetDir)
+    CARGO_TARGET_DIR: C:\cargo_target_dir
   steps:
-  - task: RustInstaller@1
-    displayName: Install Rust Toolchain
-    inputs:
-      toolchainFeed: https://sqlclientdrivers.pkgs.visualstudio.com/SqlDevX/_packaging/RustTools/nuget/v3/index.json
-
-  - task: DockerInstaller@0
-    inputs:
-      dockerVersion: '17.09.0-ce'
-    condition: and(succeededOrFailed(), eq(variables.buildTarget, 'Linux'))
-
-  - task: CmdLine@2
-    displayName: "Run the docker container on linux"
-    inputs:
-      script: 'docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 -d mcr.microsoft.com/mssql/server:2022-latest'
-    env:
-      SQL_PASSWORD: $(SQL_PASSWORD)
-    condition: and(succeededOrFailed(), eq(variables.buildTarget, 'Linux'))
-
-
-  - task: PowerShell@2
-    displayName: "Install SQL Server"
-    inputs:
-      filePath: '.pipeline/windows-sql-server-2022.ps1'
-      arguments: '-Updates $true -AddFirewallExceptions $true -EnableMixedMode $true -InstanceName "MSSQLSERVER" -UpdateOnly $false'
-    condition: and(succeededOrFailed(), eq(variables.buildTarget, 'Windows'))
-
-  - task: PowerShell@2
-    displayName: 'Generate Certificate for TLS encryption '
-    inputs:
-      targetType: 'inline'
-      script: |
-        .pipeline/Certificates-Operations.ps1 -instanceName "MSSQLSERVER"
-    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'))
-
-  - task: PowerShell@2
-    displayName: 'Setup users in SQL server, restart service and check version'
-    inputs:
-      targetType: 'inline'
-      script: |
-        echo "Creating users, setting up test user and restarting SQL server"
-        Restart-Service -Name 'MSSQLSERVER' -Force
-        
-        sqlcmd -Q "ALTER LOGIN sa ENABLE;"
-        sqlcmd -Q "ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
-        sqlcmd -Q "ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'"
-        sqlcmd -Q "CREATE LOGIN testuser WITH PASSWORD = '$(SQL_PASSWORD)', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
-        Restart-Service -Name 'MSSQLSERVER' -Force
-        sqlcmd -Q "ALTER SERVER ROLE sysadmin ADD MEMBER testuser;"
-        sqlcmd -S localhost,1433 -U sa -P $(SQL_PASSWORD) -Q "SELECT @@VERSION"
-    env:
-      SQL_PASSWORD: $(SQL_PASSWORD)
-    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'))
-
-  - task: CargoAuthenticate@0
-    displayName: Authenticate with Azure Artifacts
-    inputs:
-      configFile: '.cargo/config.toml'
-
-    # Execute cargo fetch at the start of the pipeline to pull down deps specified in the lockfile.
-    # Subsequent steps will always use --frozen that will use the pre-resolved dependency versions
-    # which are pinned in the lockfile
-  - script: cargo fetch
-    displayName: Fetch Crates
-    env:
-      CARGO_REGISTRIES_ONELAKECLIENT_TOKEN: $(OneLakeClientSecret)
-
-  - script: cargo build --frozen 2>&1
-    displayName: Rust Debug Build
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
-
-  - script: cargo build --frozen --release 2>&1
-    displayName: Rust Release Build
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
-
-  - script: cargo bclippy
-    displayName: Rust Clippy Lint
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
-
-  - script: cargo bfmt
-    displayName: Check Format
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
-
-  - script: cargo install cargo-llvm-cov cargo-nextest
-    displayName: Install llvm-cov and nextest
-    condition: succeeded()
-
-  - bash: cargo llvm-cov clean --workspace
-    displayName: Clean up old coverage files
-
-  - task: PowerShell@2
-    inputs:
-      targetType: 'inline'
-      script: |
-        $env:RUST_BACKTRACE=1
-        $env:RUST_BACKTRACE="full"
-        cargo llvm-cov nextest --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
-    displayName: Run tests
-    env:
-      SQL_PASSWORD: $(SQL_PASSWORD)
-
-  - task: PublishTestResults@2
-    condition: succeededOrFailed()
-    displayName: "Publish test results"
-    inputs:
-      testResultsFormat: "JUnit"
-      testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
-      testRunTitle: unit_tests
-
-  - script: cargo llvm-cov report --cobertura --output-path "$(Build.SourcesDirectory)/target/coverage.xml"
-    condition: succeededOrFailed()
-    workingDirectory: "$(Build.SourcesDirectory)"
-    displayName: Save code coverage in cobertura format
-
-  - task: PublishCodeCoverageResults@2
-    displayName: "Publish coverage results"
-    condition: and(succeededOrFailed(), eq(variables.buildTarget, 'Linux'))
-    inputs:
-      codeCoverageTool: "Cobertura"
-      summaryFileLocation: "$(Build.SourcesDirectory)/target/coverage*.xml"
-      pathToSources: "$(Build.SourcesDirectory)"
-      reportDirectory: "$(Build.SourcesDirectory)/target/llvm-cov/html"
-
-  - task: MSBuild@1
-    displayName: C++ Debug Build
-    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
-    inputs:
-      solution: '**/*.sln'
-      msbuildArchitecture: 'x64'
-      platform: 'x64'
-      configuration: 'Debug'
-
-  - task: MSBuild@1
-    displayName: C++ Release Build
-    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
-    inputs:
-      solution: '**/*.sln'
-      msbuildArchitecture: 'x64'
-      platform: 'x64'
-      configuration: 'Release'
-
-  - task: CopyFiles@2
-    displayName: Copy Rust Debug Build
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
-    inputs:
-      SourceFolder: '$(CARGO_TARGET_DIR)/debug'
-      Contents: |
-        *
-        !.cargo-lock
-      TargetFolder: '$(Build.ArtifactStagingDirectory)/debug'
-
-  - task: CopyFiles@2
-    displayName: Copy Rust Release Build
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
-    inputs:
-      SourceFolder: '$(CARGO_TARGET_DIR)/release'
-      Contents: |
-        *
-        !.cargo-lock
-      TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
-
-  - task: CopyFiles@2
-    displayName: Copy C++ Debug Build
-    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
-    inputs:
-      SourceFolder: '$(Build.SourcesDirectory)\prototype\ffi-prototype\x64\Debug'
-      Contents: 'ffi-app.*'
-      TargetFolder: '$(Build.ArtifactStagingDirectory)\Debug'
-
-  - task: CopyFiles@2
-    displayName: Copy C++ Release Build
-    condition: and(succeeded(), eq(variables.buildTarget, 'Windows'), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
-    inputs:
-      SourceFolder: '$(Build.SourcesDirectory)\prototype\ffi-prototype\x64\Release'
-      Contents: 'ffi-app.*'
-      TargetFolder: '$(Build.ArtifactStagingDirectory)\Release'
-
-  - task: PublishBuildArtifacts@1
-    displayName: Publish Build Drop
-    inputs:
-      PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-      ArtifactName: $(buildTarget)
-      publishLocation: Container
+    - template: templates/sql-setup-template.yml
+      parameters:
+        buildTarget: Windows
+    - template: templates/build-template.yml
+      parameters:
+        buildTarget: Windows
+        buildType: ${{ parameters.buildType }}
+- job: Build_Linux
+  pool:
+    name: RUST-1ES-POOL
+    demands:
+      - imageOverride -equals RUST-1ES-UBU
+  variables:
+    # For details on this CARGO_TARGET_DIR setting, see https://eng.ms/docs/more/rust/topics/onebranch-workaround
+    CARGO_TARGET_DIR: $(Build.SourcesDirectory)
+  steps:
+    - template: templates/sql-setup-template.yml
+      parameters:
+        buildTarget: Linux
+    - template: templates/build-template.yml
+      parameters:
+        buildTarget: Linux
+        buildType: ${{ parameters.buildType }}
+- job: Build_MacOS
+  pool:
+    name: Azure Pipelines
+    vmImage: macOS-latest
+  variables:
+    # For details on this CARGO_TARGET_DIR setting, see https://eng.ms/docs/more/rust/topics/onebranch-workaround
+    CARGO_TARGET_DIR: $(Build.SourcesDirectory)
+  steps:
+    - template: templates/sql-setup-template.yml
+      parameters:
+        buildTarget: MacOS
+    - template: templates/build-template.yml
+      parameters:
+        buildTarget: MacOS
+        buildType: ${{ parameters.buildType }}
