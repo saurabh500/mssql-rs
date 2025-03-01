@@ -575,14 +575,16 @@ impl Drop for DeferredSignal {
 }
 
 #[cfg(test)]
-#[cfg(target_os = "windows")]
+#[cfg(not(target_os = "macos"))]
 mod query_processing_driver {
     use super::{BatchResult, QueryResultType, TdsConnection};
     use crate::connection::client_context::ClientContext;
     use crate::connection::tds_connection::query_processing_driver;
+    use crate::core::EncryptionSetting;
     use dotenv::dotenv;
     use futures::StreamExt;
     use std::env;
+
     enum ExpectedQueryResultType {
         Update(u64),
         Result(u64),
@@ -635,6 +637,7 @@ mod query_processing_driver {
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
             database: "master".to_string(),
+            encryption: EncryptionSetting::On,
             ..Default::default()
         }
     }

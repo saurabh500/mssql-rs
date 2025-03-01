@@ -579,7 +579,7 @@ impl<T: for<'a> SqlTypeDecode<'a> + Default> Default for RowTokenParser<T> {
 }
 
 #[async_trait]
-impl<'a, T: for<'b> SqlTypeDecode<'b> + std::marker::Sync> TokenParser<'a> for RowTokenParser<T> {
+impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for RowTokenParser<T> {
     async fn parse(
         &self,
         reader: &'a mut PacketReader,
@@ -648,5 +648,74 @@ impl<'a> TokenParser<'a> for ReturnStatusTokenParser {
         let value = reader.read_int32().await?;
 
         Ok(Tokens::from(ReturnStatusToken { value }))
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct NbcRowTokenParser<T>
+where
+    T: for<'a> SqlTypeDecode<'a>,
+{
+    // fields omitted
+    decoder: T,
+}
+
+impl<T: for<'a> SqlTypeDecode<'a> + Default> Default for NbcRowTokenParser<T> {
+    fn default() -> Self {
+        Self {
+            decoder: T::default(),
+        }
+    }
+}
+
+fn is_null_value_in_column(null_bitmap: &[u8], index: usize) -> bool {
+    let byte_index: usize = index / 8;
+    let bit_index = index % 8;
+    (null_bitmap[byte_index] & (1 << bit_index)) != 0
+}
+
+#[async_trait]
+impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for NbcRowTokenParser<T> {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        context: &ParserContext,
+    ) -> Result<Tokens, Error> {
+        let column_metadata_token = match context {
+            ParserContext::ColumnMetadata(metadata) => {
+                trace!("Metadata during Row Parsing: {:?}", metadata);
+                metadata
+            }
+            _ => {
+                debug_assert!(false, "Expected ColumnMetadata in context");
+                return Err(Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Expected ColumnMetadata in context",
+                ));
+            }
+        };
+
+        let all_metadata = &column_metadata_token.columns;
+        let mut all_values: Vec<ColumnValues> =
+            Vec::with_capacity(column_metadata_token.column_count as usize);
+        let col_count = all_metadata.len();
+
+        let bitmap_length = (col_count + 7) / 8;
+        let mut bitmap: Vec<u8> = vec![0; bitmap_length as usize];
+        reader.read_bytes(bitmap.as_mut_slice()).await?;
+        // let mut index = 0;
+
+        for (index, metadata) in all_metadata.iter().enumerate() {
+            trace!("Metadata: {:?}", metadata);
+            let is_null = is_null_value_in_column(&bitmap, index);
+
+            if is_null {
+                all_values.push(ColumnValues::Null);
+            } else {
+                let column_value = self.decoder.decode(reader, metadata).await?;
+                all_values.push(column_value);
+            }
+        }
+        Ok(Tokens::from(RowToken::new(all_values)))
     }
 }

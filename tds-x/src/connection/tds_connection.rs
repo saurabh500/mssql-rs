@@ -28,7 +28,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
 }
 
 #[cfg(test)]
-#[cfg(target_os = "windows")]
+#[cfg(not(target_os = "macos"))]
 pub(crate) mod query_processing_driver {
     use dotenv::dotenv;
     use std::{env, io::Error};
@@ -36,6 +36,7 @@ pub(crate) mod query_processing_driver {
     use crate::{
         connection::client_context::ClientContext,
         connection_provider::tds_connection_provider::TdsConnectionProvider,
+        core::EncryptionSetting,
         message::{batch::SqlBatch, messages::Request},
         read_write::{
             reader_writer::NetworkReader,
@@ -164,6 +165,7 @@ pub(crate) mod query_processing_driver {
             port: 1433,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            encryption: EncryptionSetting::On,
             // database: "drivers".to_string(),
             ..Default::default()
         };
