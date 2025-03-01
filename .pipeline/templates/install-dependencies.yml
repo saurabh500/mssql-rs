@@ -1,0 +1,14 @@
+parameters:
+- name: osType  # defaults for any parameters that aren't specified
+  default: Windows
+  type: string
+  values:
+  - Windows
+  - Linux
+  - MacOS
+  
+steps:
+- ${{ if eq(parameters.osType, 'Linux') }}:
+  - script: |
+      scripts/install-deps.sh
+    displayName: "Install linux dependencies"

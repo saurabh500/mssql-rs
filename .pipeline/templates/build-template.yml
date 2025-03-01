@@ -1,5 +1,5 @@
 parameters:
-- name: buildTarget  # defaults for any parameters that aren't specified
+- name: osType  # defaults for any parameters that aren't specified
   default: Windows
   type: string
   values:
@@ -17,7 +17,7 @@ parameters:
   default: Both
 
 - name: testFilter
-  displayName: Exclusion filter for tests
+  displayName: Optional Filter for tests
   type: string
   default: ''
 
@@ -63,16 +63,12 @@ steps:
 - bash: cargo llvm-cov clean --workspace
   displayName: Clean up old coverage files
 
-- task: PowerShell@2
-  inputs:
-    targetType: 'inline'
-    script: |
-      $env:RUST_BACKTRACE=1
-      $env:RUST_BACKTRACE="full"
+- script: |
       cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
   displayName: Run tests
   env:
     SQL_PASSWORD: $(SQL_PASSWORD)
+    RUST_BACKTRACE: full
 
 - task: PublishTestResults@2
   condition: succeededOrFailed()
@@ -80,21 +76,21 @@ steps:
   inputs:
     testResultsFormat: "JUnit"
     testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
-    testRunTitle: ${{ parameters.buildTarget }}
+    testRunTitle: $(System.PhaseName)
 
-- script: cargo llvm-cov report --cobertura --output-path "$(Build.SourcesDirectory)/target/coverage.xml"
+- script: cargo llvm-cov report --lcov --output-path "$(Build.SourcesDirectory)/target/lcov.info"
   condition: succeededOrFailed()
   workingDirectory: "$(Build.SourcesDirectory)"
-  displayName: Save code coverage in cobertura format
+  displayName: Save code coverage in lcov format
 
-- ${{ if eq(parameters.buildTarget, 'Windows') }}:
+- ${{ if eq(parameters.osType, 'Windows') }}:
   - task: PublishCodeCoverageResults@2
     displayName: "Publish coverage results"
     inputs:
-      summaryFileLocation: "$(Build.SourcesDirectory)/target/coverage*.xml"
+      summaryFileLocation: "$(Build.SourcesDirectory)/target/lcov.info"
       pathToSources: "$(Build.SourcesDirectory)"
 
-- ${{ if eq(parameters.buildTarget, 'Windows') }}:
+- ${{ if eq(parameters.osType, 'Windows') }}:
   - task: MSBuild@1
     displayName: C++ Debug Build
     condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
@@ -104,7 +100,7 @@ steps:
       platform: 'x64'
       configuration: 'Debug'
 
-- ${{ if eq(parameters.buildTarget, 'Windows') }}:
+- ${{ if eq(parameters.osType, 'Windows') }}:
   - task: MSBuild@1
     displayName: C++ Release Build
     condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
@@ -134,7 +130,7 @@ steps:
       !.cargo-lock
     TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
 
-- ${{ if eq(parameters.buildTarget, 'Windows') }}:
+- ${{ if eq(parameters.osType, 'Windows') }}:
   - task: CopyFiles@2
     displayName: Copy C++ Debug Build
     condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
@@ -143,7 +139,7 @@ steps:
       Contents: 'ffi-app.*'
       TargetFolder: '$(Build.ArtifactStagingDirectory)\Debug'
 
-- ${{ if eq(parameters.buildTarget, 'Windows') }}:
+- ${{ if eq(parameters.osType, 'Windows') }}:
   - task: CopyFiles@2
     displayName: Copy C++ Release Build
     condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
@@ -156,5 +152,5 @@ steps:
   displayName: Publish Build Drop
   inputs:
     PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-    ArtifactName: $(buildTarget)
+    ArtifactName: $(System.PhaseName)
     publishLocation: Container
