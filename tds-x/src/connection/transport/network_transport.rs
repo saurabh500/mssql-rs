@@ -12,6 +12,8 @@ use std::io::{Error, ErrorKind};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
+
 pub(crate) async fn create_transport(
     context: &ClientContext,
 ) -> Result<Box<NetworkTransport>, Error> {
@@ -41,7 +43,7 @@ pub(crate) async fn create_transport(
                 stream: base_stream,
                 ssl_handler: SslHandler { settings: context },
                 stream_recoverer: Box::new(stream_recoverer),
-                packet_size: context.packet_size as u32,
+                packet_size: PRE_NEGOTIATED_PACKET_SIZE,
             }))
         }
         TdsVersion::V8_0 => {
@@ -61,7 +63,7 @@ pub(crate) async fn create_transport(
                 stream: encrypted_stream,
                 ssl_handler,
                 stream_recoverer: Box::new(stream_recoverer),
-                packet_size: context.packet_size as u32,
+                packet_size: PRE_NEGOTIATED_PACKET_SIZE,
             }))
         }
     }

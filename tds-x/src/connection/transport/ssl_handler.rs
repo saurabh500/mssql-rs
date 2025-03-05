@@ -14,6 +14,8 @@ use tracing::{debug, error};
 #[cfg(target_os = "macos")]
 use std::io::{ErrorKind, Write};
 
+use super::network_transport::PRE_NEGOTIATED_PACKET_SIZE;
+
 pub(crate) struct SslHandler<'a> {
     pub(crate) settings: &'a ClientContext,
 }
@@ -79,7 +81,8 @@ struct ActiveWriteState {
 }
 
 impl ActiveWriteState {
-    const PRELOGIN_MAX_PACKET_SIZE: usize = 4096 - PacketWriter::PACKET_HEADER_SIZE;
+    const PRELOGIN_MAX_PACKET_SIZE: usize =
+        PRE_NEGOTIATED_PACKET_SIZE as usize - PacketWriter::PACKET_HEADER_SIZE;
     const MAX_PACKET_SIZE_WITHOUT_HEADER: usize =
         Self::PRELOGIN_MAX_PACKET_SIZE - PacketWriter::PACKET_HEADER_SIZE;
 
