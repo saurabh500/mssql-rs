@@ -1,4 +1,5 @@
 use crate::connection::tds_connection::TdsConnection;
+use crate::core::TdsResult;
 use crate::datatypes::decoder::ColumnValues;
 use crate::query::metadata::ColumnMetadata;
 use crate::read_write::packet_reader::PacketReader;
@@ -10,7 +11,6 @@ use futures::executor::block_on;
 use futures::task::AtomicWaker;
 use futures::Stream;
 use std::future::Future;
-use std::io::Error;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -28,7 +28,7 @@ impl QueryResultType<'_> {
     async fn next_result(
         parent_batch: Arc<Mutex<BatchResult<'_>>>,
         processing_signal: DeferredSignal,
-    ) -> Result<QueryResultType<'_>, Error> {
+    ) -> TdsResult<QueryResultType<'_>> {
         let mut parent_batch_ref = parent_batch.lock().await;
         let token = parent_batch_ref.next_token().await?;
         match token {
@@ -144,7 +144,7 @@ where
 
     pub fn stream_results(
         self,
-    ) -> impl Stream<Item = Result<QueryResultType<'result>, Error>> + 'result {
+    ) -> impl Stream<Item = TdsResult<QueryResultType<'result>>> + 'result {
         QueryResultTypeStream::new(self)
     }
 
@@ -152,7 +152,7 @@ where
         todo!()
     }
 
-    async fn next_token(&mut self) -> Result<Tokens, Error> {
+    async fn next_token(&mut self) -> TdsResult<Tokens> {
         self.token_stream_reader
             .receive_token(&self.parser_context)
             .await
@@ -213,7 +213,7 @@ pub struct QueryResultTypeStream<'result> {
     batch_result: Arc<Mutex<BatchResult<'result>>>,
     processing_flag: Arc<AtomicBool>,
     executing_future:
-        Option<Pin<Box<dyn Future<Output = Result<QueryResultType<'result>, Error>> + 'result>>>,
+        Option<Pin<Box<dyn Future<Output = TdsResult<QueryResultType<'result>>> + 'result>>>,
 }
 
 impl<'result> QueryResultTypeStream<'result> {
@@ -228,7 +228,7 @@ impl<'result> QueryResultTypeStream<'result> {
     fn evaluate_executing_future(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<QueryResultType<'result>, Error>>> {
+    ) -> Poll<Option<TdsResult<QueryResultType<'result>>>> {
         // Poll the executing future. Note that this may have just been created.
         assert!(self.executing_future.is_some());
         if let Some(mut future) = self.executing_future.take() {
@@ -252,7 +252,7 @@ impl<'result> QueryResultTypeStream<'result> {
 }
 
 impl<'result> Stream for QueryResultTypeStream<'result> {
-    type Item = Result<QueryResultType<'result>, Error>;
+    type Item = TdsResult<QueryResultType<'result>>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.executing_future.is_some() {
@@ -320,7 +320,7 @@ impl<'result> ResultSet<'result> {
         }
     }
 
-    pub async fn get_all_data(self) -> Result<Vec<Vec<CellData>>, Error> {
+    pub async fn get_all_data(self) -> TdsResult<Vec<Vec<CellData>>> {
         // Internally iterate over the row data and cache all the CellDatas into vectors.
         todo!();
     }
@@ -329,12 +329,12 @@ impl<'result> ResultSet<'result> {
         self.metadata.as_ref()
     }
 
-    pub async fn into_row_stream(self) -> Result<RowStream<'result>, Error> {
+    pub async fn into_row_stream(self) -> TdsResult<RowStream<'result>> {
         Ok(RowStream::new(self))
     }
 
     // Retrieves the next token and updates internal state about this result set and its parent batch.
-    async fn next_row_token(&mut self) -> Result<Tokens, Error> {
+    async fn next_row_token(&mut self) -> TdsResult<Tokens> {
         let mut parent_batch_mut = self.parent_batch.lock().await;
         let token_result = parent_batch_mut.next_token().await;
         let token_ref = token_result.as_ref().unwrap();
@@ -401,7 +401,7 @@ impl Drop for ResultSet<'_> {
 pub struct RowStream<'result> {
     result_set: Arc<Mutex<ResultSet<'result>>>,
     processing_flag: Arc<AtomicBool>,
-    executing_future: Option<Pin<Box<dyn Future<Output = Result<RowData, Error>> + 'result>>>,
+    executing_future: Option<Pin<Box<dyn Future<Output = TdsResult<RowData>> + 'result>>>,
 }
 
 impl<'result> RowStream<'result> {
@@ -416,7 +416,7 @@ impl<'result> RowStream<'result> {
     fn evaluate_executing_future(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<RowData, Error>>> {
+    ) -> Poll<Option<TdsResult<RowData>>> {
         // Poll the executing future. Note that this may have just been created.
         assert!(self.executing_future.is_some());
         if let Some(mut future) = self.executing_future.take() {
@@ -443,7 +443,7 @@ impl<'result> RowStream<'result> {
     async fn next_row(
         parent_result: Arc<Mutex<ResultSet<'_>>>,
         _processing_signal: DeferredSignal,
-    ) -> Result<RowData, Error> {
+    ) -> TdsResult<RowData> {
         let token = parent_result.lock().await.next_row_token().await;
         match token? {
             Tokens::Done(_) => Ok(RowData::new(Vec::new())),
@@ -458,7 +458,7 @@ impl<'result> RowStream<'result> {
 }
 
 impl Stream for RowStream<'_> {
-    type Item = Result<RowData, Error>;
+    type Item = TdsResult<RowData>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.executing_future.is_some() {
@@ -509,7 +509,7 @@ impl RowData {
 // to use the row as a Stream to avoid having to change calling code when the implementation
 // changes to use a streaming token parser.
 impl Stream for RowData {
-    type Item = Result<CellData, Error>;
+    type Item = TdsResult<CellData>;
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let result = self.iterator.next();

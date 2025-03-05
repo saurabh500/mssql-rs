@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod query_result_reads {
-    use std::{env, io::Error};
+    use std::env;
 
     use dotenv::dotenv;
     use futures::StreamExt;
+    use tds_x::core::TdsResult;
     use tds_x::{
         connection::{client_context::ClientContext, tds_connection::TdsConnection},
         connection_provider::tds_connection_provider::TdsConnectionProvider,
@@ -69,7 +70,7 @@ mod query_result_reads {
         create_connection(client_context).await.unwrap()
     }
 
-    pub async fn create_connection(context: &ClientContext) -> Result<Box<TdsConnection>, Error> {
+    pub async fn create_connection(context: &ClientContext) -> TdsResult<Box<TdsConnection>> {
         let provider = TdsConnectionProvider {};
         let connection_result = provider.create_connection(context).await?;
         Ok(Box::new(connection_result))

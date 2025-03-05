@@ -1,15 +1,14 @@
 use super::packet_reader::PacketReader;
 use super::packet_writer::PacketWriter;
 use crate::connection::transport::network_transport::TransportSslHandler;
-use crate::core::NegotiatedEncryptionSetting;
+use crate::core::{NegotiatedEncryptionSetting, TdsResult};
 use crate::handler::handler_factory::SessionSettings;
 use crate::message::messages::PacketType;
 use async_trait::async_trait;
-use std::io::Error;
 
 #[async_trait]
 pub(crate) trait NetworkWriter: Send + TransportSslHandler {
-    async fn send(&mut self, data: &[u8]) -> Result<(), Error>;
+    async fn send(&mut self, data: &[u8]) -> TdsResult<()>;
     fn packet_size(&self) -> u32;
     fn get_packet_writer(&mut self, packet_type: PacketType) -> PacketWriter<'_>;
     fn get_encryption_setting(&self) -> NegotiatedEncryptionSetting;
@@ -17,7 +16,7 @@ pub(crate) trait NetworkWriter: Send + TransportSslHandler {
 
 #[async_trait]
 pub(crate) trait NetworkReader: Send {
-    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error>;
+    async fn receive(&mut self, buffer: &mut [u8]) -> TdsResult<usize>;
     fn packet_size(&self) -> u32;
     fn get_packet_reader(&mut self) -> PacketReader<'_>;
 }

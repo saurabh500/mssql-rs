@@ -1,7 +1,5 @@
-use std::io::Error;
-
 use crate::connection::client_context::ClientContext;
-use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting};
+use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::message::login::{
     EnvChangeProperties, Feature, LoginRequest, LoginRequestModel, LoginResponse,
     LoginResponseModel, LoginResponseStatus,
@@ -111,7 +109,7 @@ impl SessionHandler<'_, '_> {
     pub(crate) async fn execute(
         &mut self,
         reader_writer: &mut impl NetworkReaderWriter,
-    ) -> Result<NegotiatedSettings, Error> {
+    ) -> TdsResult<NegotiatedSettings> {
         let pre_login_result = self.get_pre_login_result(reader_writer).await?;
         self.validate_prelogin_result(&pre_login_result)?;
 
@@ -130,7 +128,7 @@ impl SessionHandler<'_, '_> {
     async fn get_pre_login_result(
         &self,
         reader_writer: &mut impl NetworkReaderWriter,
-    ) -> Result<PreloginResult, Error> {
+    ) -> TdsResult<PreloginResult> {
         let result = self
             .factory
             .prelogin_handler()
@@ -139,12 +137,12 @@ impl SessionHandler<'_, '_> {
         Ok(result)
     }
 
-    fn validate_prelogin_result(&self, _result: &PreloginResult) -> Result<(), Error> {
+    fn validate_prelogin_result(&self, _result: &PreloginResult) -> TdsResult<()> {
         // TBDif sever does not support fed auth and client expects fed auth then throw an exception.
         Ok(())
     }
 
-    fn validate_login_result(&self, _result: &LoginResult) -> Result<(), Error> {
+    fn validate_login_result(&self, _result: &LoginResult) -> TdsResult<()> {
         // No validation currently.
         Ok(())
     }
@@ -169,7 +167,7 @@ impl SessionHandler<'_, '_> {
     async fn get_login_result(
         &mut self,
         reader_writer: &mut impl NetworkReaderWriter,
-    ) -> Result<LoginResult, Error> {
+    ) -> TdsResult<LoginResult> {
         self.factory.login_handler().execute(reader_writer).await
     }
 }
@@ -189,7 +187,7 @@ impl PreloginHandler<'_, '_> {
     async fn execute(
         &self,
         reader_writer: &mut impl NetworkReaderWriter,
-    ) -> Result<PreloginResult, Error> {
+    ) -> TdsResult<PreloginResult> {
         // Create the request.
         let request_model = PreloginRequestModel::new(
             Uuid::new_v4(),
@@ -277,7 +275,7 @@ impl LoginHandler<'_, '_> {
     async fn execute(
         &self,
         reader_writer: &mut impl NetworkReaderWriter,
-    ) -> Result<LoginResult, Error> {
+    ) -> TdsResult<LoginResult> {
         let encryption = reader_writer.get_encryption_setting();
         if encryption != NegotiatedEncryptionSetting::Strict
             && encryption != NegotiatedEncryptionSetting::NoEncryption
@@ -303,7 +301,7 @@ impl LoginHandler<'_, '_> {
     async fn send_login7_request(
         &self,
         reader_writer: &mut impl NetworkReaderWriter,
-    ) -> Result<LoginRequestModel, Error> {
+    ) -> TdsResult<LoginRequestModel> {
         let request = self.factory.create_login_request();
         let request_model = &request.model;
 

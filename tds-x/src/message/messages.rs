@@ -1,6 +1,4 @@
-use std::io::Error;
-
-use crate::core::NegotiatedEncryptionSetting;
+use crate::core::{NegotiatedEncryptionSetting, TdsResult};
 use crate::{
     read_write::{packet_writer::PacketWriter, reader_writer::NetworkWriter},
     token::tokens::ErrorToken,
@@ -36,7 +34,7 @@ where
     pub(crate) async fn first_packet_callback(
         &self,
         writer: &'b mut dyn NetworkWriter,
-    ) -> Result<(), Error> {
+    ) -> TdsResult<()> {
         match self {
             PacketType::Login7 => {
                 if writer.get_encryption_setting() == NegotiatedEncryptionSetting::LoginOnly {
@@ -73,7 +71,7 @@ pub(crate) enum PacketStatusFlags {
 pub(crate) trait Request<'a> {
     fn packet_type(&self) -> PacketType;
     fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a>;
-    async fn serialize(&self, _transport: &mut dyn NetworkWriter) -> Result<(), Error>;
+    async fn serialize(&self, _transport: &mut dyn NetworkWriter) -> TdsResult<()>;
 }
 
 pub(crate) struct TdsError {

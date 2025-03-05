@@ -12,18 +12,17 @@ use crate::token::tokens::{
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::io::Error;
 
 use super::features::utf8::Utf8Feature;
 use super::login_options::{
     OptionChangePassword, OptionInitLang, OptionIntegratedSecurity, OptionOdbc, OptionOleDb,
     OptionSqlType, OptionUser,
 };
-use tracing::{event, Level};
-
+use crate::core::TdsResult;
 use crate::read_write::token_stream::{
     GenericTokenParserRegistry, ParserContext, TokenStreamReader,
 };
+use tracing::{event, Level};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RoutingInfo {
@@ -78,7 +77,7 @@ pub(crate) trait Feature {
     fn feature_identifier(&self) -> FeatureExtension;
     fn is_requested(&self) -> bool;
     fn data_length(&self) -> i32;
-    async fn serialize(&self, packet_writer: &mut PacketWriter) -> Result<(), Error>;
+    async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()>;
     fn deserialize(&self, data: &[u8]);
     fn is_acknowledged(&self) -> bool;
     fn set_acknowledged(&mut self, _acknowledged: bool);
@@ -338,7 +337,7 @@ impl<'a> Request<'a> for LoginRequest<'a> {
         self.packet_type().create_packet_writer(writer)
     }
 
-    async fn serialize(&self, transport: &mut dyn NetworkWriter) -> Result<(), Error> {
+    async fn serialize(&self, transport: &mut dyn NetworkWriter) -> TdsResult<()> {
         // TODO: Log the datamodel.
         let mut packet_writer = self.create_packet_writer(transport);
         Serializer::new(&self.model, &mut packet_writer)
@@ -460,7 +459,7 @@ impl Serializer<'_> {
         }
     }
 
-    pub(crate) async fn serialize(&mut self) -> Result<(), Error> {
+    pub(crate) async fn serialize(&mut self) -> TdsResult<()> {
         // This is the place holder for the login packet. We will come back and repopulate it after constructing the login packet.
         self.payload_writer.write_i32_async(0).await?;
 
@@ -513,7 +512,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_variable_length_section(&mut self) -> Result<(), Error> {
+    async fn write_variable_length_section(&mut self) -> TdsResult<()> {
         /* Writing variable-length meta data section
             Fixed-Length Metadata (58 bytes)
             HostNameOffset: 2 bytes
@@ -650,7 +649,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_hostname(&mut self) -> Result<(), Error> {
+    async fn write_hostname(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.workstation_id.len() as i16)
             .await?
@@ -661,7 +660,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_username(&mut self) -> Result<(), Error> {
+    async fn write_username(&mut self) -> TdsResult<()> {
         if self.model.user_input.tds_authentication_method == TdsAuthenticationMethod::Password {
             if self
                 .write_metadata(self.model.user_input.user_name.len() as i16)
@@ -677,7 +676,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_password(&mut self) -> Result<(), Error> {
+    async fn write_password(&mut self) -> TdsResult<()> {
         if self.model.user_input.tds_authentication_method == TdsAuthenticationMethod::Password {
             if self
                 .write_metadata(self.model.user_input.password.len() as i16)
@@ -693,7 +692,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_app_name(&mut self) -> Result<(), Error> {
+    async fn write_app_name(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.application_name.len() as i16)
             .await?
@@ -704,7 +703,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_server_name(&mut self) -> Result<(), Error> {
+    async fn write_server_name(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.server_name.len() as i16)
             .await?
@@ -715,7 +714,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_feature_ext(&mut self) -> Result<(), Error> {
+    async fn write_feature_ext(&mut self) -> TdsResult<()> {
         self.payload_writer
             .write_i16_async(self.content_next_offset as i16)
             .await?;
@@ -738,7 +737,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_library(&mut self) -> Result<(), Error> {
+    async fn write_library(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.library_name.len() as i16)
             .await?
@@ -749,7 +748,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_language(&mut self) -> Result<(), Error> {
+    async fn write_language(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.language.len() as i16)
             .await?
@@ -760,7 +759,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_database(&mut self) -> Result<(), Error> {
+    async fn write_database(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.database.len() as i16)
             .await?
@@ -771,19 +770,19 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_client_id(&mut self) -> Result<(), Error> {
+    async fn write_client_id(&mut self) -> TdsResult<()> {
         self.payload_writer
             .write_async(&self.model.client_id.address_bytes)
             .await?;
         Ok(())
     }
 
-    async fn write_sspi_short(&mut self) -> Result<(), Error> {
+    async fn write_sspi_short(&mut self) -> TdsResult<()> {
         let _ = self.write_metadata(0).await?;
         Ok(())
     }
 
-    async fn write_attach_db_file(&mut self) -> Result<(), Error> {
+    async fn write_attach_db_file(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.attach_db_file.len() as i16)
             .await?
@@ -794,7 +793,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_change_password(&mut self) -> Result<(), Error> {
+    async fn write_change_password(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.change_password.len() as i16)
             .await?
@@ -805,12 +804,12 @@ impl Serializer<'_> {
         Ok(())
     }
 
-    async fn write_cb_sspi_long(&mut self) -> Result<(), Error> {
+    async fn write_cb_sspi_long(&mut self) -> TdsResult<()> {
         self.payload_writer.write_i32_async(0).await?;
         Ok(())
     }
 
-    async fn write_metadata(&mut self, char_length: i16) -> Result<bool, Error> {
+    async fn write_metadata(&mut self, char_length: i16) -> TdsResult<bool> {
         if char_length == 0 {
             self.payload_writer
                 .write_i16_async(self.content_next_offset as i16)

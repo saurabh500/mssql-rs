@@ -4,14 +4,14 @@ use std::{fmt::Debug, io::Error};
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::{
-    query::metadata::ColumnMetadata, read_write::packet_reader::PacketReader,
-    token::tokens::SqlCollation,
-};
-
 use super::{
     sql_string::{get_encoding_type, SqlString},
     sqldatatypes::{TdsDataType, TypeInfoVariant},
+};
+use crate::core::TdsResult;
+use crate::{
+    query::metadata::ColumnMetadata, read_write::packet_reader::PacketReader,
+    token::tokens::SqlCollation,
 };
 
 #[async_trait]
@@ -20,7 +20,7 @@ pub(crate) trait SqlTypeDecode<'a> {
         &self,
         reader: &'a mut PacketReader,
         metadata: &ColumnMetadata,
-    ) -> Result<ColumnValues, Error>;
+    ) -> TdsResult<ColumnValues>;
 }
 
 #[derive(Debug)]
@@ -64,7 +64,7 @@ impl GenericDecoder {
         &self,
         reader: &mut PacketReader<'_>,
         metadata: &ColumnMetadata,
-    ) -> Result<Option<DecimalParts>, Error> {
+    ) -> TdsResult<Option<DecimalParts>> {
         // Decimal/numeric data type has 1 byte length.
         let length = reader.read_byte().await?;
         if length == 0 {
@@ -92,23 +92,20 @@ impl GenericDecoder {
         }
     }
 
-    async fn read_datetime(&self, reader: &mut PacketReader<'_>) -> Result<(i32, u32), Error> {
+    async fn read_datetime(&self, reader: &mut PacketReader<'_>) -> TdsResult<(i32, u32)> {
         let days = reader.read_int32().await?;
         let ticks = reader.read_uint32().await?;
 
         Ok((days, ticks))
     }
 
-    async fn read_small_datetime(
-        &self,
-        reader: &mut PacketReader<'_>,
-    ) -> Result<(i16, u16), Error> {
+    async fn read_small_datetime(&self, reader: &mut PacketReader<'_>) -> TdsResult<(i16, u16)> {
         let days = reader.read_int16().await?;
         let minutes = reader.read_uint16().await?;
         Ok((days, minutes))
     }
 
-    async fn read_date(&self, reader: &mut PacketReader<'_>) -> Result<i32, Error> {
+    async fn read_date(&self, reader: &mut PacketReader<'_>) -> TdsResult<i32> {
         let days = reader.read_int32().await?;
         Ok(days)
     }
@@ -117,7 +114,7 @@ impl GenericDecoder {
         &self,
         reader: &mut PacketReader<'_>,
         byte_len: u8,
-    ) -> Result<Option<i64>, Error> {
+    ) -> TdsResult<Option<i64>> {
         let value: Option<i64> = match byte_len {
             1 => Some(reader.read_byte().await? as i64),
             2 => Some(reader.read_int16().await? as i64),
@@ -125,10 +122,10 @@ impl GenericDecoder {
             8 => Some(reader.read_int64().await?),
             0 => None,
             _ => {
-                return Err(Error::new(
+                return Err(crate::error::Error::from(Error::new(
                     std::io::ErrorKind::InvalidData,
                     "Invalid IntN length",
-                ));
+                )));
             }
         };
         Ok(value)
@@ -141,7 +138,7 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
         &self,
         reader: &'a mut PacketReader,
         metadata: &ColumnMetadata,
-    ) -> Result<ColumnValues, Error> {
+    ) -> TdsResult<ColumnValues> {
         let result = match metadata.data_type {
             TdsDataType::Int1 => {
                 let value = reader.read_byte().await?;
@@ -261,7 +258,7 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
         &self,
         reader: &'a mut PacketReader,
         metadata: &ColumnMetadata,
-    ) -> Result<ColumnValues, Error> {
+    ) -> TdsResult<ColumnValues> {
         let encoding_type = get_encoding_type(metadata);
 
         // If Plp Column. (BIGVARCHARTYPE, BIGVARBINARYTYPE, NVARCHARTYPE with md.length == ushort.max)

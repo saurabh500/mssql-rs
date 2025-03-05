@@ -1,11 +1,8 @@
+use super::messages::{PacketType, Request};
+use crate::core::TdsResult;
 use crate::read_write::{packet_writer::PacketWriter, reader_writer::NetworkWriter};
 use async_trait::async_trait;
-use std::{
-    io::Error,
-    sync::atomic::{AtomicU32, Ordering},
-};
-
-use super::messages::{PacketType, Request};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) enum TdsHeaders {
     TransactionDescriptor(TransactionDescriptorHeader),
@@ -24,7 +21,7 @@ impl From<TransactionDescriptorHeader> for TdsHeaders {
 pub(crate) trait TdsHeader {
     fn header_type(&self) -> u16;
     fn calculate_length(&self) -> i32;
-    async fn write_async(&self, writer: &mut PacketWriter) -> Result<(), std::io::Error>;
+    async fn write_async(&self, writer: &mut PacketWriter) -> TdsResult<()>;
 }
 
 // Static counter for non-transaction request count
@@ -60,7 +57,7 @@ impl TdsHeader for TransactionDescriptorHeader {
         18 // 4 (HeaderLength) + 2 (HeaderType) + 8 (TransactionDescriptor) + 4 (OutstandingRequestCount)
     }
 
-    async fn write_async(&self, writer: &mut PacketWriter) -> Result<(), std::io::Error> {
+    async fn write_async(&self, writer: &mut PacketWriter) -> TdsResult<()> {
         let header_length = self.calculate_length();
         writer.write_i32_async(header_length).await?; // HeaderLength
         writer.write_u16_async(self.header_type()).await?; // HeaderType
@@ -94,7 +91,7 @@ impl TdsHeader for QueryNotificationsHeader {
         (6 + self.notification_data.len()) as i32
     }
 
-    async fn write_async(&self, _writer: &mut PacketWriter) -> Result<(), std::io::Error> {
+    async fn write_async(&self, _writer: &mut PacketWriter) -> TdsResult<()> {
         let _length = self.calculate_length();
         unimplemented!("QueryNotificationsHeader::write_async");
         //     writer.write_int32_async(header_length).await; // Write HeaderLength
@@ -131,7 +128,7 @@ impl TdsHeader for TraceActivityHeader {
         6 + 16 + 4
     }
 
-    async fn write_async(&self, writer: &mut PacketWriter) -> Result<(), std::io::Error> {
+    async fn write_async(&self, writer: &mut PacketWriter) -> TdsResult<()> {
         let header_len = self.calculate_length();
         writer.write_i32_async(header_len).await?;
         writer.write_u16_async(self.header_type()).await?;
@@ -169,7 +166,7 @@ impl SqlBatch {
 }
 
 impl SqlBatch {
-    async fn write_headers(&self, packet_writer: &mut PacketWriter<'_>) -> Result<(), Error> {
+    async fn write_headers(&self, packet_writer: &mut PacketWriter<'_>) -> TdsResult<()> {
         let _ = packet_writer;
 
         // Start with the length field size.
@@ -216,7 +213,7 @@ impl<'a> Request<'a> for SqlBatch {
         self.packet_type().create_packet_writer(writer)
     }
 
-    async fn serialize(&self, writer: &mut dyn NetworkWriter) -> Result<(), Error> {
+    async fn serialize(&self, writer: &mut dyn NetworkWriter) -> TdsResult<()> {
         let mut packet_writer = self.create_packet_writer(writer);
         self.write_headers(&mut packet_writer).await?;
         packet_writer

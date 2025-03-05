@@ -1,3 +1,7 @@
+use crate::error::Error;
+
+pub type TdsResult<T> = Result<T, Error>;
+
 #[derive(PartialEq, Debug)]
 pub enum SQLServerVersion {
     SqlServerNotsupported = 0,

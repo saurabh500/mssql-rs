@@ -1,14 +1,13 @@
 use std::fmt::{self, Debug};
 
+use super::{
+    fed_auth_info::{FedAuthInfoToken, SspiToken},
+    login_ack::LoginAckToken,
+};
 use crate::{
     datatypes::decoder::ColumnValues,
     message::login::{FeatureExtension, RoutingInfo},
     query::metadata::ColumnMetadata,
-};
-
-use super::{
-    fed_auth_info::{FedAuthInfoToken, SspiToken},
-    login_ack::LoginAckToken,
 };
 
 #[derive(Eq, PartialEq, Hash, Debug)]

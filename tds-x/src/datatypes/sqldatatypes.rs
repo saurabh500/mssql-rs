@@ -1,6 +1,7 @@
-use std::io::Error;
-
+use crate::core::TdsResult;
+use crate::error::Error;
 use crate::{read_write::packet_reader::PacketReader, token::tokens::SqlCollation};
+use std::fmt::format;
 
 // TdsDataType is a list of all the datatypes in TDS protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -55,9 +56,9 @@ pub enum TdsDataType {
 }
 
 impl TryFrom<u8> for TdsDataType {
-    type Error = ();
+    type Error = Error;
 
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn try_from(value: u8) -> TdsResult<Self> {
         match value {
             0x1F => Ok(TdsDataType::Void),
             0x22 => Ok(TdsDataType::Image),
@@ -102,7 +103,10 @@ impl TryFrom<u8> for TdsDataType {
             0xF0 => Ok(TdsDataType::Udt),
             0xF1 => Ok(TdsDataType::Xml),
             0xF4 => Ok(TdsDataType::Json),
-            _ => Err(()),
+            _ => Err(Error::ProtocolError(format(format_args!(
+                "Invalid TDS Type {:?}",
+                value
+            )))),
         }
     }
 }
@@ -124,12 +128,12 @@ macro_rules! impl_try_from_tdstypes {
         }
 
         impl TryFrom<TdsDataType> for $enum_name {
-            type Error = ();
+            type Error = Error;
 
-            fn try_from(value: TdsDataType) -> Result<Self, Self::Error> {
+            fn try_from(value: TdsDataType) -> TdsResult<Self> {
                 match value {
                     $(TdsDataType::$variant => Ok($enum_name::$variant),)*
-                    _ => Err(()),
+                    _ => Err(Error::ProtocolError(format(format_args!("Invalid TDS Type {:?}", value)))),
                 }
             }
         }
@@ -353,7 +357,7 @@ pub enum UdtInfo {
 pub async fn read_type_info(
     reader: &mut PacketReader<'_>,
     data_type: TdsDataType,
-) -> Result<TypeInfo, Error> {
+) -> TdsResult<TypeInfo> {
     let fixed_length_type = FixedLengthTypes::try_from(data_type);
     if let Ok(fdt) = fixed_length_type {
         return Ok(TypeInfo {

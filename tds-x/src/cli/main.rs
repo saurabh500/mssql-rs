@@ -11,6 +11,7 @@ use rustyline::Result as RustylineResult;
 use rustyline::{error::ReadlineError, CompletionType, Config, Editor};
 
 use crate::connection::tds_connection::TdsConnection;
+use crate::core::TdsResult;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -90,7 +91,7 @@ impl<'session> From<Box<TdsConnection<'session>>> for Session<'session> {
 }
 
 impl Session<'_> {
-    pub async fn submit_sql_batch(&mut self, sql_command: String) -> Result<(), Error> {
+    pub async fn submit_sql_batch(&mut self, sql_command: String) -> TdsResult<()> {
         let connection = self.connection.as_mut().ok_or(Error::new(
             std::io::ErrorKind::NotConnected,
             "No active connection",

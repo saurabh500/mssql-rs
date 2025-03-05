@@ -1,14 +1,14 @@
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use tracing::event;
 
+use super::packet_writer::PacketWriter;
+use crate::core::TdsResult;
 use crate::{message::messages::PacketStatusFlags, read_write::reader_writer::NetworkReader};
 use core::panic;
 use std::{
     cmp::min,
     io::{Error, ErrorKind},
 };
-
-use super::packet_writer::PacketWriter;
 
 pub struct PacketReader<'a> {
     network_reader: &'a mut dyn NetworkReader,
@@ -21,7 +21,7 @@ pub struct PacketReader<'a> {
 
 macro_rules! generate_read_fn {
     ($name:ident, $type:ty, $size:expr, $read_fn:ident) => {
-        pub async fn $name(&mut self) -> Result<$type, Error> {
+        pub async fn $name(&mut self) -> TdsResult<$type> {
             if !self.do_we_have_enough_data($size) {
                 self.read_tds_packet().await?;
             }
@@ -76,7 +76,7 @@ impl<'a> PacketReader<'a> {
         remaining_bytes >= byte_count
     }
 
-    async fn read_tds_packet(&mut self) -> Result<(), Error> {
+    async fn read_tds_packet(&mut self) -> TdsResult<()> {
         if !self.is_data_available() {
             panic!("Unexpected call to read tds packet. There is no data available to read. We have reached the last packet in the message and all data was consumed.");
         }
@@ -107,7 +107,7 @@ impl<'a> PacketReader<'a> {
         Ok(())
     }
 
-    async fn get_new_tds_packet(&mut self) -> Result<usize, Error> {
+    async fn get_new_tds_packet(&mut self) -> TdsResult<usize> {
         let packet_buffer: &mut Vec<u8> = &mut self.working_buffer;
         let base_offset_to_write = self.buffer_length;
 
@@ -170,7 +170,7 @@ impl<'a> PacketReader<'a> {
         }
     }
 
-    pub async fn skip_forward(&mut self, length: usize) -> Result<(), Error> {
+    pub async fn skip_forward(&mut self, length: usize) -> TdsResult<()> {
         if !self.do_we_have_enough_data(length) {
             self.read_tds_packet().await?;
         }
@@ -179,7 +179,7 @@ impl<'a> PacketReader<'a> {
         Ok(())
     }
 
-    pub async fn read_byte(&mut self) -> Result<u8, Error> {
+    pub async fn read_byte(&mut self) -> TdsResult<u8> {
         if !self.do_we_have_enough_data(1) {
             self.read_tds_packet().await?;
         }
@@ -188,7 +188,7 @@ impl<'a> PacketReader<'a> {
         Ok(result)
     }
 
-    pub async fn read_int16_big_endian(&mut self) -> Result<i16, Error> {
+    pub async fn read_int16_big_endian(&mut self) -> TdsResult<i16> {
         if !self.do_we_have_enough_data(2) {
             self.read_tds_packet().await?;
         }
@@ -197,7 +197,7 @@ impl<'a> PacketReader<'a> {
         Ok(result)
     }
 
-    pub async fn read_int32_big_endian(&mut self) -> Result<i32, Error> {
+    pub async fn read_int32_big_endian(&mut self) -> TdsResult<i32> {
         if !self.do_we_have_enough_data(4) {
             self.read_tds_packet().await?;
         }
@@ -206,7 +206,7 @@ impl<'a> PacketReader<'a> {
         Ok(result)
     }
 
-    pub async fn read_int64_big_endian(&mut self) -> Result<i64, Error> {
+    pub async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
         if !self.do_we_have_enough_data(8) {
             self.read_tds_packet().await?;
         }
@@ -235,7 +235,7 @@ impl<'a> PacketReader<'a> {
     ///
     /// # Returns
     ///
-    /// * `Result<usize, Error>` - The number of bytes read on success, or an error if the read operation fails.
+    /// * `TdsResult<usize>` - The number of bytes read on success, or an error if the read operation fails.
     ///
     /// # Errors
     ///
@@ -248,7 +248,7 @@ impl<'a> PacketReader<'a> {
     /// let bytes_read = packet_reader.read_bytes(&mut buffer).await?;
     /// println!("Read {} bytes", bytes_read);
     /// ```
-    pub async fn read_bytes(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
+    pub async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
         let mut total_read = 0;
         let mut length_to_read = buffer.len();
         let mut offset = 0;
@@ -258,7 +258,7 @@ impl<'a> PacketReader<'a> {
             }
             let available = self.buffer_length - self.buffer_position;
 
-            // We can read the minimum of what is availabe, or the actual length needed or the packet size.
+            // We can read the minimum of what is available, or the actual length needed or the packet size.
             let to_read = min(available, min(length_to_read, self.max_packet_size - 8));
 
             if to_read > 0 {
@@ -279,7 +279,7 @@ impl<'a> PacketReader<'a> {
     /// Reads an array of bytes where the array length is specified by the
     /// byte value before the array of bytes.
     ///
-    pub async fn read_u8_varbyte(&mut self) -> Result<Vec<u8>, Error> {
+    pub async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
         let length: u8 = self.read_byte().await?;
         let mut result: Vec<u8> = vec![0; length as usize];
         self.read_bytes(&mut result[0..]).await?;
@@ -289,7 +289,7 @@ impl<'a> PacketReader<'a> {
     /// Reads an array of bytes where the array length is specified by the
     /// unsigned int16 value before the array of bytes.
     ///
-    pub async fn read_u16_varbyte(&mut self) -> Result<Vec<u8>, Error> {
+    pub async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
         let length: u16 = self.read_uint16().await?;
         let mut result: Vec<u8> = vec![0; length as usize];
         self.read_bytes(&mut result[0..]).await?;
@@ -323,7 +323,7 @@ impl<'a> PacketReader<'a> {
     ///     println!("No Unicode string found (length was LENGTHNULL)");
     /// }
     /// ```
-    pub async fn read_varchar_u16_length(&mut self) -> Result<Option<String>, Error> {
+    pub async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>> {
         let length: u16 = self.read_uint16().await?;
         if length == Self::LENGTHNULL {
             return Ok(None);
@@ -358,7 +358,7 @@ impl<'a> PacketReader<'a> {
     /// let unicode_string = packet_reader.read_varchar_u8_length().await?;
     /// println!("Read Unicode string: {}", unicode_string);
     /// ```
-    pub async fn read_varchar_u8_length(&mut self) -> Result<String, Error> {
+    pub async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
         let length: u8 = self.read_byte().await?;
         let string = self
             .read_unicode_with_byte_length((length << 1) as usize)
@@ -367,7 +367,7 @@ impl<'a> PacketReader<'a> {
     }
 
     /// Reads a Unicode string where the length in bytes is specified by a 16-bit integer.
-    pub async fn read_varchar_byte_len(&mut self) -> Result<String, Error> {
+    pub async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
         let length: u16 = self.read_uint16().await?;
         let string = self.read_unicode_with_byte_length(length as usize).await?;
         Ok(string)
@@ -400,7 +400,7 @@ impl<'a> PacketReader<'a> {
     /// let unicode_string = packet_reader.read_unicode(5).await?;
     /// println!("Read Unicode string: {}", unicode_string);
     /// ```
-    pub async fn read_unicode(&mut self, string_length: usize) -> Result<String, Error> {
+    pub async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String> {
         let result = self
             .read_unicode_with_byte_length(string_length * 2)
             .await?;
@@ -426,10 +426,7 @@ impl<'a> PacketReader<'a> {
     /// This method returns an `Error` if there is an issue reading from the packet stream
     /// or if the data cannot be converted to a valid Unicode string.
     ///
-    pub async fn read_unicode_with_byte_length(
-        &mut self,
-        byte_length: usize,
-    ) -> Result<String, Error> {
+    pub async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String> {
         let mut byte_buffer: Vec<u8> = vec![0; byte_length];
         let _ = self.read_bytes(&mut byte_buffer[0..]).await?;
 
@@ -540,7 +537,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl NetworkReader for MockNetworkReader {
-        async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
+        async fn receive(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
             let remaining = self.data.len() - self.position;
             let to_read = min(buffer.len(), remaining);
             buffer[..to_read].copy_from_slice(&self.data[self.position..self.position + to_read]);

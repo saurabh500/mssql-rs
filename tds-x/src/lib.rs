@@ -3,6 +3,7 @@ pub mod connection;
 pub mod connection_provider;
 pub mod core;
 pub(crate) mod datatypes;
+pub mod error;
 pub mod handler;
 pub mod message;
 pub mod query;

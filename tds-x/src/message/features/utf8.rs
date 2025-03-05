@@ -1,7 +1,6 @@
-use std::io::Error;
-
 use async_trait::async_trait;
 
+use crate::core::TdsResult;
 use crate::{
     message::login::{Feature, FeatureExtension},
     read_write::packet_writer::PacketWriter,
@@ -26,7 +25,7 @@ impl Feature for Utf8Feature {
         (size_of::<u8>() + size_of::<i32>()) as i32
     }
 
-    async fn serialize(&self, packet_writer: &mut PacketWriter) -> Result<(), Error> {
+    async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()> {
         packet_writer
             .write_byte_async(self.feature_identifier() as u8)
             .await?;

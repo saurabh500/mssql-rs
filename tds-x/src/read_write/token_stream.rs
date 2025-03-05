@@ -1,9 +1,7 @@
 use core::convert::From;
 use std::collections::HashMap;
-use std::io::Error;
 
-use tracing::event;
-
+use crate::core::TdsResult;
 use crate::datatypes::decoder::GenericDecoder;
 use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
@@ -12,6 +10,7 @@ use crate::token::parsers::{
     ReturnStatusTokenParser, RowTokenParser, TokenParser,
 };
 use crate::token::tokens::{ColMetadataToken, TokenType, Tokens};
+use tracing::event;
 
 use super::packet_reader::PacketReader;
 
@@ -48,7 +47,7 @@ impl TokenStreamReader<'_> {
         }
     }
 
-    pub(crate) async fn receive_token(&mut self, context: &ParserContext) -> Result<Tokens, Error> {
+    pub(crate) async fn receive_token(&mut self, context: &ParserContext) -> TdsResult<Tokens> {
         let token_type_byte = self.packet_reader.read_byte().await?;
         let token_type = TokenType::from(token_type_byte);
         if !self.parser_registry.has_parser(&token_type) {

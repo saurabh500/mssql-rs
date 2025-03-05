@@ -1,9 +1,9 @@
+use super::reader_writer::NetworkWriter;
+use crate::core::TdsResult;
 use crate::message::messages::{PacketStatusFlags, PacketType};
 use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
-use std::io::{Cursor, Error, Write};
+use std::io::{Cursor, Write};
 use tracing::event;
-
-use super::reader_writer::NetworkWriter;
 
 /// A packet writer that writes data to a buffer and if needed flushes it to the network as needed.
 ///
@@ -48,7 +48,7 @@ impl<'a> PacketWriter<'a> {
         (self.payload_cursor.position() - Self::PACKET_HEADER_SIZE as u64) as i32
     }
 
-    async fn handle_overflow_if_needed(&mut self) -> Result<(), Error> {
+    async fn handle_overflow_if_needed(&mut self) -> TdsResult<()> {
         // If the payload size is greater than the max payload size, send the packet.
         if self.position() >= (self.max_payload_size as i32) {
             self.populate_header_and_send(false).await?;
@@ -75,65 +75,65 @@ impl<'a> PacketWriter<'a> {
     ///
     /// * `value` - The byte value to write to the buffer.
     ///
-    pub(crate) async fn write_byte_async(&mut self, value: u8) -> Result<(), Error> {
+    pub(crate) async fn write_byte_async(&mut self, value: u8) -> TdsResult<()> {
         let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, value);
         self.handle_overflow_if_needed().await
     }
 
-    pub(crate) async fn write_i16_async(&mut self, value: i16) -> Result<(), Error> {
+    pub(crate) async fn write_i16_async(&mut self, value: i16) -> TdsResult<()> {
         let _ = WriteBytesExt::write_i16::<LittleEndian>(&mut self.payload_cursor, value);
         self.handle_overflow_if_needed().await
     }
 
-    pub(crate) async fn write_u16_async(&mut self, value: u16) -> Result<(), Error> {
+    pub(crate) async fn write_u16_async(&mut self, value: u16) -> TdsResult<()> {
         let _ = WriteBytesExt::write_u16::<LittleEndian>(&mut self.payload_cursor, value);
         self.handle_overflow_if_needed().await
     }
 
-    pub(crate) async fn write_i32_async(&mut self, _value: i32) -> Result<(), Error> {
+    pub(crate) async fn write_i32_async(&mut self, _value: i32) -> TdsResult<()> {
         let _ =
             byteorder::WriteBytesExt::write_i32::<LittleEndian>(&mut self.payload_cursor, _value);
         self.handle_overflow_if_needed().await
     }
 
-    pub(crate) async fn write_u32_async(&mut self, value: u32) -> Result<(), Error> {
+    pub(crate) async fn write_u32_async(&mut self, value: u32) -> TdsResult<()> {
         let _ =
             byteorder::WriteBytesExt::write_u32::<LittleEndian>(&mut self.payload_cursor, value);
         self.handle_overflow_if_needed().await
     }
 
-    pub(crate) async fn write_i64_async(&mut self, value: i64) -> Result<(), Error> {
+    pub(crate) async fn write_i64_async(&mut self, value: i64) -> TdsResult<()> {
         let _ =
             byteorder::WriteBytesExt::write_i64::<LittleEndian>(&mut self.payload_cursor, value);
         self.handle_overflow_if_needed().await
     }
 
-    pub(crate) async fn write_u64_async(&mut self, value: u64) -> Result<(), Error> {
+    pub(crate) async fn write_u64_async(&mut self, value: u64) -> TdsResult<()> {
         let _ =
             byteorder::WriteBytesExt::write_u64::<LittleEndian>(&mut self.payload_cursor, value);
         self.handle_overflow_if_needed().await
     }
 
-    pub(crate) async fn write_i16_be_async(&mut self, value: i16) -> Result<(), Error> {
+    pub(crate) async fn write_i16_be_async(&mut self, value: i16) -> TdsResult<()> {
         let _ = byteorder::WriteBytesExt::write_i16::<BigEndian>(&mut self.payload_cursor, value);
         self.handle_overflow_if_needed().await
     }
 
-    pub(crate) async fn write_i32_be_async(&mut self, value: i32) -> Result<(), Error> {
+    pub(crate) async fn write_i32_be_async(&mut self, value: i32) -> TdsResult<()> {
         let _ = byteorder::WriteBytesExt::write_i32::<BigEndian>(&mut self.payload_cursor, value);
         self.handle_overflow_if_needed().await
     }
 
-    pub(crate) async fn write_i64_be_async(&mut self, value: i64) -> Result<(), Error> {
+    pub(crate) async fn write_i64_be_async(&mut self, value: i64) -> TdsResult<()> {
         let _ = byteorder::WriteBytesExt::write_i64::<BigEndian>(&mut self.payload_cursor, value);
         self.handle_overflow_if_needed().await
     }
 
-    pub(crate) async fn write_string_ascii_async(&mut self, _value: &str) -> Result<(), Error> {
+    pub(crate) async fn write_string_ascii_async(&mut self, _value: &str) -> TdsResult<()> {
         todo!()
     }
 
-    pub(crate) async fn write_string_unicode_async(&mut self, value: &str) -> Result<(), Error> {
+    pub(crate) async fn write_string_unicode_async(&mut self, value: &str) -> TdsResult<()> {
         // TODO: The performance of this might be terrible. There are allocations happening for every string.
         // 1. Consider using the iterator on encode_utf16 directly and writing to the output buffer,
         // fill up the buffer, send out the packet, rinse and repeat.
@@ -154,7 +154,7 @@ impl<'a> PacketWriter<'a> {
         self.payload_cursor.set_position(position);
     }
 
-    pub(crate) async fn write_async(&mut self, content: &[u8]) -> Result<(), Error> {
+    pub(crate) async fn write_async(&mut self, content: &[u8]) -> TdsResult<()> {
         // Write in chunks of packet size.
         let packet_space_left = self.max_payload_size - self.position() as usize;
         if packet_space_left < content.len() {
@@ -170,7 +170,7 @@ impl<'a> PacketWriter<'a> {
         Ok(())
     }
 
-    pub(crate) async fn finalize(&mut self) -> Result<(), Error> {
+    pub(crate) async fn finalize(&mut self) -> TdsResult<()> {
         if (self.payload_cursor.position()) > Self::PACKET_HEADER_SIZE as u64 {
             self.populate_header_and_send(true).await?;
             self.payload_cursor
@@ -179,7 +179,7 @@ impl<'a> PacketWriter<'a> {
         Ok(())
     }
 
-    async fn populate_header_and_send(&mut self, is_last_packet: bool) -> Result<(), Error> {
+    async fn populate_header_and_send(&mut self, is_last_packet: bool) -> TdsResult<()> {
         let saved_position = self.payload_cursor.position();
         let packet_length = match saved_position as usize > self.packet_size {
             true => self.packet_size,
@@ -227,7 +227,7 @@ impl<'a> PacketWriter<'a> {
         packet_type: PacketType,
         packet_id: u8,
         is_last_packet: bool,
-    ) -> Result<(), Error> {
+    ) -> TdsResult<()> {
         let _ = WriteBytesExt::write_u8(writer, packet_type as u8);
         let status = match is_last_packet {
             true => PacketStatusFlags::Eom,
@@ -241,7 +241,7 @@ impl<'a> PacketWriter<'a> {
         let _ = WriteBytesExt::write_u16::<BigEndian>(writer, 0);
 
         let _ = WriteBytesExt::write_u8(writer, packet_id);
-        WriteBytesExt::write_u8(writer, 0)
+        Ok(WriteBytesExt::write_u8(writer, 0)?)
     }
 }
 
@@ -277,7 +277,7 @@ pub(crate) mod tests {
     impl NetworkWriter for MockNetworkWriter {
         #[must_use]
         #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
-        async fn send(&mut self, _data: &[u8]) -> Result<(), std::io::Error> {
+        async fn send(&mut self, _data: &[u8]) -> TdsResult<()> {
             // No op
             self.data.extend_from_slice(_data);
             Ok(())
@@ -298,11 +298,11 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl TransportSslHandler for MockNetworkWriter {
-        async fn enable_ssl(&mut self) -> Result<(), Error> {
+        async fn enable_ssl(&mut self) -> TdsResult<()> {
             unimplemented!()
         }
 
-        async fn disable_ssl(&mut self) -> Result<(), Error> {
+        async fn disable_ssl(&mut self) -> TdsResult<()> {
             unimplemented!()
         }
     }

@@ -3,6 +3,14 @@ use std::{io::Error, vec};
 use async_trait::async_trait;
 use tracing::{debug, error, event, trace};
 
+use super::{
+    fed_auth_info::FedAuthInfoToken,
+    tokens::{
+        DoneInProcToken, DoneProcToken, DoneToken, EnvChangeToken, ErrorToken, FeatureExtAckToken,
+        ReturnStatusToken, RowToken, Tokens,
+    },
+};
+use crate::core::TdsResult;
 use crate::{
     core::Version,
     datatypes::{
@@ -25,21 +33,13 @@ use crate::{
     },
 };
 
-use super::{
-    fed_auth_info::FedAuthInfoToken,
-    tokens::{
-        DoneInProcToken, DoneProcToken, DoneToken, EnvChangeToken, ErrorToken, FeatureExtAckToken,
-        ReturnStatusToken, RowToken, Tokens,
-    },
-};
-
 #[async_trait]
 pub(crate) trait TokenParser<'a> {
     async fn parse(
         &self,
         reader: &'a mut PacketReader,
         context: &ParserContext,
-    ) -> Result<Tokens, Error>;
+    ) -> TdsResult<Tokens>;
 }
 
 #[derive(Debug, Default)]
@@ -53,7 +53,7 @@ impl<'a> TokenParser<'a> for EnvChangeTokenParser {
         &self,
         reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         let _token_length = reader.read_uint16().await?;
         let sub_type = reader.read_byte().await?;
         let token_sub_type = EnvChangeTokenSubType::from(sub_type);
@@ -165,7 +165,7 @@ impl<'a> TokenParser<'a> for LoginAckTokenParser {
         &self,
         reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         event!(
             tracing::Level::DEBUG,
             "Parsing LoginAck token with type: 0x{:02X}",
@@ -206,7 +206,7 @@ impl<'a> TokenParser<'a> for DoneTokenParser {
         &self,
         reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -232,7 +232,7 @@ impl<'a> TokenParser<'a> for DoneInProcTokenParser {
         &self,
         reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -258,7 +258,7 @@ impl<'a> TokenParser<'a> for DoneProcTokenParser {
         &self,
         reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -284,7 +284,7 @@ impl<'a> TokenParser<'a> for InfoTokenParser {
         &self,
         reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         let _length = reader.read_uint16().await?;
         let number = reader.read_uint32().await?;
         let state = reader.read_byte().await?;
@@ -319,7 +319,7 @@ impl<'a> TokenParser<'a> for ErrorTokenParser {
         &self,
         reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         error!(
             "Parsing Error token with type: 0x{:02X}",
             TokenType::Error as u8
@@ -362,7 +362,7 @@ impl<'a> TokenParser<'a> for FedAuthInfoTokenParser {
         &self,
         reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         let _length = reader.read_int32().await?;
 
         let options_count = reader.read_uint32().await?;
@@ -428,7 +428,7 @@ impl<'a> TokenParser<'a> for FeatureExtAckTokenParser {
         &self,
         reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         let mut features: Vec<(FeatureExtension, Vec<u8>)> = Vec::new();
         loop {
             let feature_identifier = FeatureExtension::from(reader.read_byte().await?);
@@ -473,7 +473,7 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
         &self,
         packet_reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         // Allocate a heap pointer so that we can reference the reader
         // by passing it around into other methods.
         let mut reader = Box::new(packet_reader);
@@ -498,12 +498,12 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
             let raw_data_type = reader.read_byte().await?;
             let some_data_type = TdsDataType::try_from(raw_data_type);
             if some_data_type.is_err() {
-                return Err(Error::new(
+                return Err(crate::error::Error::from(Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!("Invalid data type: {}", raw_data_type),
-                ));
+                )));
             }
-            let data_type = some_data_type.unwrap();
+            let data_type = some_data_type?;
             let type_info = read_type_info(&mut reader, data_type).await?;
 
             // Parse Table name
@@ -584,7 +584,7 @@ impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for RowTokenParser
         &self,
         reader: &'a mut PacketReader,
         context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         let column_metadata_token = match context {
             ParserContext::ColumnMetadata(metadata) => {
                 trace!("Metadata during Row Parsing: {:?}", metadata);
@@ -592,10 +592,10 @@ impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for RowTokenParser
             }
             _ => {
                 debug_assert!(false, "Expected ColumnMetadata in context");
-                return Err(Error::new(
+                return Err(crate::error::Error::from(Error::new(
                     std::io::ErrorKind::InvalidData,
                     "Expected ColumnMetadata in context",
-                ));
+                )));
             }
         };
 
@@ -621,7 +621,7 @@ impl<'a> TokenParser<'a> for OrderTokenParser {
         &self,
         reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         let length = reader.read_uint16().await?;
 
         let col_count = length / 2;
@@ -644,7 +644,7 @@ impl<'a> TokenParser<'a> for ReturnStatusTokenParser {
         &self,
         reader: &'a mut PacketReader,
         _context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         let value = reader.read_int32().await?;
 
         Ok(Tokens::from(ReturnStatusToken { value }))
@@ -680,7 +680,7 @@ impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for NbcRowTokenPar
         &self,
         reader: &'a mut PacketReader,
         context: &ParserContext,
-    ) -> Result<Tokens, Error> {
+    ) -> TdsResult<Tokens> {
         let column_metadata_token = match context {
             ParserContext::ColumnMetadata(metadata) => {
                 trace!("Metadata during Row Parsing: {:?}", metadata);
@@ -688,10 +688,10 @@ impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for NbcRowTokenPar
             }
             _ => {
                 debug_assert!(false, "Expected ColumnMetadata in context");
-                return Err(Error::new(
+                return Err(crate::error::Error::from(Error::new(
                     std::io::ErrorKind::InvalidData,
                     "Expected ColumnMetadata in context",
-                ));
+                )));
             }
         };
 

@@ -1,9 +1,9 @@
 use super::transport::network_transport::NetworkTransport;
+use crate::core::TdsResult;
 use crate::handler::handler_factory::NegotiatedSettings;
 use crate::message::batch::SqlBatch;
 use crate::message::messages::Request;
 use crate::query::result::BatchResult;
-use std::io::Error;
 
 pub struct TdsConnection<'a> {
     pub(crate) transport: Box<NetworkTransport<'a>>,
@@ -11,10 +11,7 @@ pub struct TdsConnection<'a> {
 }
 
 impl<'connection, 'result> TdsConnection<'connection> {
-    pub async fn execute(
-        &'result mut self,
-        sql_command: String,
-    ) -> Result<BatchResult<'result>, Error>
+    pub async fn execute(&'result mut self, sql_command: String) -> TdsResult<BatchResult<'result>>
     where
         'connection: 'result,
     {
@@ -31,12 +28,12 @@ impl<'connection, 'result> TdsConnection<'connection> {
 #[cfg(not(target_os = "macos"))]
 pub(crate) mod query_processing_driver {
     use dotenv::dotenv;
-    use std::{env, io::Error};
+    use std::env;
 
     use crate::{
         connection::client_context::ClientContext,
         connection_provider::tds_connection_provider::TdsConnectionProvider,
-        core::EncryptionSetting,
+        core::{EncryptionSetting, TdsResult},
         message::{batch::SqlBatch, messages::Request},
         read_write::{
             reader_writer::NetworkReader,
@@ -158,7 +155,7 @@ pub(crate) mod query_processing_driver {
         .unwrap();
     }
 
-    pub async fn execute_test_query(query: &str) -> Result<(), Error> {
+    pub async fn execute_test_query(query: &str) -> TdsResult<()> {
         dotenv().ok();
         let context = ClientContext {
             server_name: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
@@ -174,7 +171,7 @@ pub(crate) mod query_processing_driver {
         submit_sql_batch(connection, query.to_string()).await
     }
 
-    pub async fn create_connection(context: &ClientContext) -> Result<Box<TdsConnection>, Error> {
+    pub async fn create_connection(context: &ClientContext) -> TdsResult<Box<TdsConnection>> {
         let provider = TdsConnectionProvider {};
         let connection_result = provider.create_connection(context).await?;
         Ok(Box::new(connection_result))
@@ -183,7 +180,7 @@ pub(crate) mod query_processing_driver {
     pub async fn submit_sql_batch(
         mut tds_connection: Box<TdsConnection<'_>>,
         sql_command: String,
-    ) -> Result<(), Error> {
+    ) -> TdsResult<()> {
         let batch = SqlBatch::new(sql_command);
         batch.serialize(tds_connection.transport.as_mut()).await?;
 

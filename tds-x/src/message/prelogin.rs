@@ -1,4 +1,4 @@
-use crate::core::EncryptionSetting;
+use crate::core::{EncryptionSetting, TdsResult};
 use crate::message::messages::{PacketType, Request};
 use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
@@ -8,7 +8,6 @@ use crate::{
 };
 use async_trait::async_trait;
 use std::collections::VecDeque;
-use std::io::Error;
 use std::sync::atomic::AtomicI32;
 use std::sync::atomic::Ordering::Relaxed;
 use std::thread;
@@ -154,7 +153,7 @@ impl<'a> Request<'a> for PreloginRequest<'a> {
         self.packet_type().create_packet_writer(writer)
     }
 
-    async fn serialize(&self, writer: &mut dyn NetworkWriter) -> Result<(), Error> {
+    async fn serialize(&self, writer: &mut dyn NetworkWriter) -> TdsResult<()> {
         let mut packet_writer = self.create_packet_writer(writer);
         let mut serializer = Serializer::new(self.model, &mut packet_writer);
         serializer.serialize().await?;
@@ -262,7 +261,7 @@ impl<'a, 'n> Serializer<'a, 'n> {
             instance_bytes: model.database_instance.as_bytes(),
         }
     }
-    async fn serialize(&mut self) -> Result<(), Error> {
+    async fn serialize(&mut self) -> TdsResult<()> {
         // Write headers then terminate the header table.
         self.write_headers().await?;
         self.write_terminator().await?;
@@ -280,7 +279,7 @@ impl<'a, 'n> Serializer<'a, 'n> {
         Ok(())
     }
 
-    async fn write_headers(&mut self) -> Result<(), Error> {
+    async fn write_headers(&mut self) -> TdsResult<()> {
         self.write_option_metadata(OptionType::Version, 6).await?;
         self.write_option_metadata(OptionType::Encryption, 1)
             .await?;
@@ -297,7 +296,7 @@ impl<'a, 'n> Serializer<'a, 'n> {
         Ok(())
     }
 
-    async fn write_version(&mut self) -> Result<(), Error> {
+    async fn write_version(&mut self) -> TdsResult<()> {
         self.payload_writer
             .write_byte_async(self.model.sdk_version.major)
             .await?;
@@ -313,7 +312,7 @@ impl<'a, 'n> Serializer<'a, 'n> {
         Ok(())
     }
 
-    async fn write_encryption(&mut self) -> Result<(), Error> {
+    async fn write_encryption(&mut self) -> TdsResult<()> {
         match self.model.encryption_setting {
             EncryptionSetting::PreferOff => {
                 self.payload_writer
@@ -339,19 +338,19 @@ impl<'a, 'n> Serializer<'a, 'n> {
         }
     }
 
-    async fn write_inst_opt(&mut self) -> Result<(), Error> {
+    async fn write_inst_opt(&mut self) -> TdsResult<()> {
         self.payload_writer.write_async(self.instance_bytes).await?;
         self.payload_writer.write_byte_async(0).await?;
         Ok(())
     }
 
-    async fn write_thread_id(&mut self) -> Result<(), Error> {
+    async fn write_thread_id(&mut self) -> TdsResult<()> {
         // Revisit because Rust's ThreadId is not the same numerically as the OS-level thread id.
         self.payload_writer.write_i32_be_async(0).await?;
         Ok(())
     }
 
-    async fn write_mars(&mut self) -> Result<(), Error> {
+    async fn write_mars(&mut self) -> TdsResult<()> {
         self.payload_writer
             .write_byte_async(match self.model.mars_enabled {
                 true => MarsType::On as u8,
@@ -361,7 +360,7 @@ impl<'a, 'n> Serializer<'a, 'n> {
         Ok(())
     }
 
-    async fn write_trace_id(&mut self) -> Result<(), Error> {
+    async fn write_trace_id(&mut self) -> TdsResult<()> {
         let activity_id_bytes = self.model.activity_id.as_bytes();
         let connection_id_bytes = self.model.connection_id.as_bytes();
         self.payload_writer.write_async(activity_id_bytes).await?;
@@ -372,7 +371,7 @@ impl<'a, 'n> Serializer<'a, 'n> {
         Ok(())
     }
 
-    async fn write_fed_auth_required(&mut self) -> Result<(), Error> {
+    async fn write_fed_auth_required(&mut self) -> TdsResult<()> {
         self.payload_writer
             .write_byte_async(match self.model.fed_auth {
                 true => FederationType::On as u8,
@@ -382,7 +381,7 @@ impl<'a, 'n> Serializer<'a, 'n> {
         Ok(())
     }
 
-    async fn write_terminator(&mut self) -> Result<(), Error> {
+    async fn write_terminator(&mut self) -> TdsResult<()> {
         self.payload_writer
             .write_byte_async(OptionType::Terminator as u8)
             .await?;
@@ -390,11 +389,7 @@ impl<'a, 'n> Serializer<'a, 'n> {
         Ok(())
     }
 
-    async fn write_option_metadata(
-        &mut self,
-        option: OptionType,
-        length: u16,
-    ) -> Result<(), Error> {
+    async fn write_option_metadata(&mut self, option: OptionType, length: u16) -> TdsResult<()> {
         self.payload_writer.write_byte_async(option as u8).await?;
         self.payload_writer
             .write_i16_be_async(self.content_next_offset as i16)

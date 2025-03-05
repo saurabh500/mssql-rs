@@ -1,6 +1,6 @@
 use crate::connection::client_context::ClientContext;
 use crate::connection::transport::ssl_handler::{SslHandler, Tds7StreamRecoverer};
-use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting};
+use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::handler::handler_factory::SessionSettings;
 use crate::message::login_options::TdsVersion;
 use crate::message::messages::PacketType;
@@ -8,15 +8,14 @@ use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::packet_writer::PacketWriter;
 use crate::read_write::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
 use async_trait::async_trait;
-use std::io::{Error, ErrorKind};
+use std::io::Error;
+use std::io::ErrorKind::UnexpectedEof;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
 
-pub(crate) async fn create_transport(
-    context: &ClientContext,
-) -> Result<Box<NetworkTransport>, Error> {
+pub(crate) async fn create_transport(context: &ClientContext) -> TdsResult<Box<NetworkTransport>> {
     let stream = TcpStream::connect((context.server_name.as_str(), context.port)).await?;
 
     // Convert the Tokio stream to a std::TcpStream to make it easier to clone.
@@ -71,8 +70,8 @@ pub(crate) async fn create_transport(
 
 #[async_trait]
 pub trait TransportSslHandler {
-    async fn enable_ssl(&mut self) -> Result<(), Error>;
-    async fn disable_ssl(&mut self) -> Result<(), Error>;
+    async fn enable_ssl(&mut self) -> TdsResult<()>;
+    async fn disable_ssl(&mut self) -> TdsResult<()>;
 }
 
 pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send {
@@ -128,7 +127,7 @@ impl NetworkReaderWriter for NetworkTransport<'_> {
 
 #[async_trait]
 impl NetworkReader for NetworkTransport<'_> {
-    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
+    async fn receive(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
         Ok(self.receive(buffer).await?)
     }
 
@@ -143,7 +142,7 @@ impl NetworkReader for NetworkTransport<'_> {
 
 #[async_trait]
 impl NetworkWriter for NetworkTransport<'_> {
-    async fn send(&mut self, data: &[u8]) -> Result<(), Error> {
+    async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
         self.stream.write_all(data).await?;
         Ok(())
     }
@@ -167,7 +166,7 @@ impl NetworkTransport<'_> {
         packet_type.create_packet_writer(self)
     }
 
-    pub(crate) async fn send(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub(crate) async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
         self.stream.write_all(data).await?;
         Ok(())
     }
@@ -189,7 +188,7 @@ impl NetworkTransport<'_> {
     ///
     /// # Returns
     ///
-    /// Returns the number of bytes actually read, or an [`std::io::Error`] if
+    /// Returns the number of bytes actually read, or an [`tds_x::error::Error`] if
     /// something goes wrong. Reading fewer bytes than `buffer.len()` is common
     /// (especially if only part of the data is available).
     ///
@@ -200,26 +199,28 @@ impl NetworkTransport<'_> {
     /// # use tokio::io::{AsyncReadExt, split};
     /// # use tokio_util::codec::BytesCodec;
     /// #
-    /// # async fn demo(mut transport: NetworkTransport<'_>) -> Result<(), Error> {
+    /// # async fn demo(mut transport: NetworkTransport<'_>) -> TdsResult<()> {
     ///     let mut buf = [0u8; 1024];
     ///     let bytes_read = transport.receive(&mut buf).await?;
     ///     println!("Read {} bytes", bytes_read);
     ///     Ok(())
     /// # }
     /// ```
-    pub(crate) async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, Error> {
+    pub(crate) async fn receive(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
         if buffer.is_empty() {
             panic!("Buffer length must be greater than 0");
         }
         let bytes_read = self.stream.read(buffer).await?;
         if bytes_read == 0 {
-            Err(Error::from(ErrorKind::UnexpectedEof))
+            Err(crate::error::Error::from(std::io::Error::from(
+                UnexpectedEof,
+            )))
         } else {
             Ok(bytes_read)
         }
     }
 
-    async fn enable_ssl_internal(&mut self) -> Result<(), Error> {
+    async fn enable_ssl_internal(&mut self) -> TdsResult<()> {
         self.stream_recoverer.tls_handshake_starting();
         let encrypted_stream = self
             .ssl_handler
@@ -239,18 +240,18 @@ impl NetworkTransport<'_> {
 
 #[async_trait]
 impl TransportSslHandler for NetworkTransport<'_> {
-    async fn enable_ssl(&mut self) -> Result<(), Error> {
+    async fn enable_ssl(&mut self) -> TdsResult<()> {
         self.enable_ssl_internal().await
     }
 
-    async fn disable_ssl(&mut self) -> Result<(), Error> {
+    async fn disable_ssl(&mut self) -> TdsResult<()> {
         let encryption_type_check = match self.context.encryption {
             EncryptionSetting::Strict => {
                 // TODO: Evaluate this error.
-                Err(Error::new(
+                Err(crate::error::Error::from(Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "Under strict mode the client must communicate over TLS",
-                ))
+                )))
             }
             _ => Ok(()),
         };
@@ -384,7 +385,7 @@ pub(crate) mod tests {
 
     /// A basic test showing that `receive` can read data from the transport's reader.
     #[tokio::test]
-    async fn test_network_transport_receive() -> Result<(), Error> {
+    async fn test_network_transport_receive() -> TdsResult<()> {
         // 1) Create an in-memory duplex stream (client_side, server_side).
         // Data will be written on the server_side and the network transport will read from the client side.
         let (client_side, server_side) = duplex(1024);
