@@ -22,7 +22,9 @@ use crate::core::TdsResult;
 use crate::read_write::token_stream::{
     GenericTokenParserRegistry, ParserContext, TokenStreamReader,
 };
-use tracing::{event, Level};
+use tracing::{debug, event, trace, Level};
+
+pub(crate) const FIXED_LOGIN_RECORD_LENGTH: i32 = 94;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RoutingInfo {
@@ -453,16 +455,33 @@ impl Serializer<'_> {
             model,
             payload_writer,
             features_request: &model.features_request,
-            content_next_offset: 94,
+            content_next_offset: FIXED_LOGIN_RECORD_LENGTH,
             deferred_actions_indicator: Vec::new(),
-            // TODO: Deferred actions.
         }
     }
 
-    pub(crate) async fn serialize(&mut self) -> TdsResult<()> {
-        // This is the place holder for the login packet. We will come back and repopulate it after constructing the login packet.
-        self.payload_writer.write_i32_async(0).await?;
+    /// Calculate the length of the login record.
+    /// This includes the fixed length of the login record, the length of the variable length fields,
+    /// and the length of the feature extension data.
+    fn calculate_login_record_length(&self) -> (i32, i32) {
+        let mut login_record_length = FIXED_LOGIN_RECORD_LENGTH;
+        login_record_length += self.model.user_input.len_bytes();
+        login_record_length += 4; // Feature extension offset size.
 
+        // We write the feature extension at the end of the login record. This is not necessary, but makes reading
+        // packets easier. Hence we add the length of the feature extensions data at the end, and save the offset,
+        // for the feature extension.
+        let feature_extension_offset = login_record_length;
+        login_record_length += self.features_request.len_bytes();
+        (login_record_length, feature_extension_offset)
+    }
+
+    pub(crate) async fn serialize(&mut self) -> TdsResult<()> {
+        let (login_record_length, feature_extension_offset) = self.calculate_login_record_length();
+        trace!(login_record_length);
+        self.payload_writer
+            .write_i32_async(login_record_length)
+            .await?;
         self.payload_writer
             .write_u32_async(self.model.tds_version as u32)
             .await?;
@@ -507,12 +526,16 @@ impl Serializer<'_> {
             .write_i32_async(self.model.client_lcid_deprecated)
             .await?;
 
-        self.write_variable_length_section().await?;
+        self.write_variable_length_section(feature_extension_offset)
+            .await?;
 
         Ok(())
     }
 
-    async fn write_variable_length_section(&mut self) -> TdsResult<()> {
+    async fn write_variable_length_section(
+        &mut self,
+        feature_extension_offset: i32,
+    ) -> TdsResult<()> {
         /* Writing variable-length meta data section
             Fixed-Length Metadata (58 bytes)
             HostNameOffset: 2 bytes
@@ -544,12 +567,12 @@ impl Serializer<'_> {
         */
 
         self.write_hostname().await?;
-        self.write_username().await?;
-        self.write_password().await?;
+        self.write_username().await?; //
+        self.write_password().await?; //
         self.write_app_name().await?;
         self.write_server_name().await?;
         self.write_feature_ext().await?;
-        self.write_library().await?;
+        self.write_library_name().await?;
         self.write_language().await?;
         self.write_database().await?;
         self.write_client_id().await?;
@@ -558,6 +581,7 @@ impl Serializer<'_> {
         self.write_change_password().await?;
         self.write_cb_sspi_long().await?;
 
+        // Write all the variable length data.
         for indicator in &self.deferred_actions_indicator {
             match indicator {
                 LoginDeferredPayload::HostName => {
@@ -593,18 +617,10 @@ impl Serializer<'_> {
                         .write_string_unicode_async(&self.model.user_input.server_name)
                         .await?;
                 }
-                LoginDeferredPayload::FeatureExt => {
+                LoginDeferredPayload::FeatureExtOffset => {
                     self.payload_writer
-                        .write_i32_async(size_of::<i32>() as i32 + self.payload_writer.position())
+                        .write_i32_async(feature_extension_offset)
                         .await?;
-
-                    for feature in self.features_request.features() {
-                        if feature.is_requested() {
-                            feature.serialize(self.payload_writer).await?;
-                        }
-                    }
-
-                    self.payload_writer.write_byte_async(0xff).await?;
                 }
                 LoginDeferredPayload::Library => {
                     self.payload_writer
@@ -642,13 +658,25 @@ impl Serializer<'_> {
             }
         }
 
-        self.payload_writer
-            .write_i32_at_index(0, self.content_next_offset);
+        self.write_feature_extension_data().await?;
+
+        debug!(?self.content_next_offset);
 
         self.payload_writer.finalize().await?;
         Ok(())
     }
 
+    /// Serializes the Feature extension data for each of the requested features.
+    async fn write_feature_extension_data(&mut self) -> TdsResult<()> {
+        for feature in self.features_request.get_requested_features() {
+            feature.serialize(self.payload_writer).await?;
+        }
+        // Write the terminator
+        self.payload_writer.write_byte_async(0xff).await?;
+        Ok(())
+    }
+
+    /// Writes the value of the hostname of the client to the login packet.
     async fn write_hostname(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.workstation_id.len() as i16)
@@ -660,6 +688,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
+    /// Writes the value of the username of the client to the login packet if the authentication method is Password.
     async fn write_username(&mut self) -> TdsResult<()> {
         if self.model.user_input.tds_authentication_method == TdsAuthenticationMethod::Password {
             if self
@@ -676,6 +705,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
+    /// Writes the value of the password of the client to the login packet if the authentication method is Password.
     async fn write_password(&mut self) -> TdsResult<()> {
         if self.model.user_input.tds_authentication_method == TdsAuthenticationMethod::Password {
             if self
@@ -692,6 +722,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
+    /// Writes the value of the application name provided in the client context to the login packet.
     async fn write_app_name(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.application_name.len() as i16)
@@ -703,6 +734,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
+    /// Writes the value of the target sql server to the login packet.
     async fn write_server_name(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.server_name.len() as i16)
@@ -715,29 +747,25 @@ impl Serializer<'_> {
     }
 
     async fn write_feature_ext(&mut self) -> TdsResult<()> {
+        // The offset at which to read the feature extension length.
         self.payload_writer
             .write_i16_async(self.content_next_offset as i16)
             .await?;
 
+        // Length of the size of feature extension offset data, which is a DWORD.
         self.payload_writer.write_i16_async(4).await?;
 
-        let mut feature_data_length = 0;
-
-        // TODO: Uncomment when features are implemented.
-        for feature in self.features_request.get_requested_features() {
-            feature_data_length += feature.data_length();
-        }
-
-        self.content_next_offset +=
-            (size_of::<i32>() as i32) + feature_data_length + (size_of::<u8>() as i32);
+        self.content_next_offset += size_of::<i32>() as i32;
 
         self.deferred_actions_indicator
-            .push(LoginDeferredPayload::FeatureExt);
+            .push(LoginDeferredPayload::FeatureExtOffset);
 
         Ok(())
     }
 
-    async fn write_library(&mut self) -> TdsResult<()> {
+    /// Writes the value of the library name to the login packet.
+    /// This is also called the Client interface name.
+    async fn write_library_name(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.library_name.len() as i16)
             .await?
@@ -759,6 +787,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
+    /// Writes the value of the database name, which we are connecting to.
     async fn write_database(&mut self) -> TdsResult<()> {
         if self
             .write_metadata(self.model.user_input.database.len() as i16)
@@ -770,6 +799,7 @@ impl Serializer<'_> {
         Ok(())
     }
 
+    /// Writes the network interface address of the client.
     async fn write_client_id(&mut self) -> TdsResult<()> {
         self.payload_writer
             .write_async(&self.model.client_id.address_bytes)
@@ -845,10 +875,67 @@ enum LoginDeferredPayload {
     Password,
     AppName,
     ServerName,
-    FeatureExt,
+    FeatureExtOffset,
     Library,
     Language,
     Database,
     AttachDbFile,
     ChangePassword,
+}
+
+/// Trait to calculate the size of the fields for the login records in bytes.
+trait SizedLoginItem {
+    fn len_bytes(&self) -> i32;
+}
+
+impl SizedLoginItem for String {
+    fn len_bytes(&self) -> i32 {
+        (self.len() * 2) as i32
+    }
+}
+
+impl SizedLoginItem for FeaturesRequest {
+    fn len_bytes(&self) -> i32 {
+        let mut length = 0;
+        for feature in self.get_requested_features() {
+            length += feature.data_length();
+        }
+
+        length += 1; // Feature extension terminator.
+
+        length
+    }
+}
+
+impl SizedLoginItem for ClientContext {
+    fn len_bytes(&self) -> i32 {
+        let mut client_context_item_length = 0;
+        client_context_item_length += self.workstation_id.len_bytes();
+        client_context_item_length += self.application_name.len_bytes();
+        client_context_item_length += self.server_name.len_bytes();
+        client_context_item_length += self.library_name.len_bytes();
+        client_context_item_length += self.language.len_bytes();
+        client_context_item_length += self.database.len_bytes();
+        client_context_item_length += self.attach_db_file.len_bytes();
+
+        client_context_item_length += self.calculate_byte_length_for_authentication();
+        client_context_item_length
+    }
+}
+
+impl ClientContext {
+    /// Calculate the length of the fields to be persisted for the authentication data.
+    /// This would involve the length of the username and password for [TdsAuthenticationMethod::Password].
+    /// For TdsAuthenticationMethod::SSPI, we need to add the length of the SSPI information to be sent to the server.
+    /// FedAuth or AccessToken authentication is accounted for, in the Feature extension data.
+    fn calculate_byte_length_for_authentication(&self) -> i32 {
+        let mut length = 0;
+        if self.tds_authentication_method == TdsAuthenticationMethod::Password {
+            length += self.password.len_bytes();
+            length += self.user_name.len_bytes();
+        } else if self.tds_authentication_method == TdsAuthenticationMethod::SSPI {
+            todo!("SSPI authentication not implemented yet. Add logic to compute the length of the SSPI information to be sent to the server.");
+        }
+        length
+    }
 }

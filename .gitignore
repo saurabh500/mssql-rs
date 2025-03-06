@@ -27,3 +27,5 @@ testresults/
 Cargo.lock
 .DS_Store
 .IdentityService/
+
+**/.env
