@@ -131,7 +131,8 @@ impl<'a> PacketReader<'a> {
         let length_from_packet_header =
             BigEndian::read_u16(&packet_buffer[base_offset_to_write + 2..base_offset_to_write + 4]);
 
-        self.last_packet = (packet_buffer[1] & PacketStatusFlags::Eom as u8) != 0;
+        self.last_packet =
+            (packet_buffer[base_offset_to_write + 1] & PacketStatusFlags::Eom as u8) != 0;
 
         let packet_size_from_header: usize = length_from_packet_header as usize;
 
