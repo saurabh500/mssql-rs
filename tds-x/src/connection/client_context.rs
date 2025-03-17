@@ -12,7 +12,7 @@ pub enum NetworkTracerOutput {
     Console = 1,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Copy, Clone)]
 pub enum TdsAuthenticationMethod {
     Password,
     SSPI, // Integrated Authentication with AD.
@@ -25,6 +25,7 @@ pub enum TdsAuthenticationMethod {
     ActiveDirectoryDefault,
     ActiveDirectoryWorkloadIdentity,
     ActiveDirectoryIntegrated,
+    AccessToken,
 }
 
 pub struct ClientContext {
@@ -56,6 +57,7 @@ pub struct ClientContext {
     pub user_instance: bool,
     pub user_name: String,
     pub workstation_id: String,
+    pub access_token: Option<String>,
 }
 
 impl ClientContext {
@@ -89,6 +91,7 @@ impl ClientContext {
             user_instance: false,
             user_name: "".to_string(),
             workstation_id: "".to_string(), // TODO
+            access_token: None,
         }
     }
 

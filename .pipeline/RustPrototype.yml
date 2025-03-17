@@ -29,6 +29,7 @@ jobs:
       parameters:
         osType: Windows
         buildType: ${{ parameters.buildType }}
+        testFilter: -E "not (test(connectivity))"
 
 # - job: Build_Windows_Arm
 #   displayName: Build Windows ARM
@@ -65,6 +66,7 @@ jobs:
       parameters:
         osType: Linux
         buildType: ${{ parameters.buildType }}
+        testFilter: -E 'not (test(connectivity))'
 
 - job: Build_Linux_ARM
   displayName: Build Linux ARM
@@ -83,7 +85,7 @@ jobs:
       parameters:
         osType: Linux
         buildType: ${{ parameters.buildType }}
-        testFilter: -E 'not (test(query_processing_driver) | test(query_result))'
+        testFilter: -E 'not (test(query_processing_driver) | test(query_result) | test(connectivity))'
 
 - job: Build_MacOS
   displayName: Build MacOS
@@ -101,6 +103,6 @@ jobs:
       parameters:
         osType: MacOS
         buildType: ${{ parameters.buildType }}
-        testFilter: -E 'not test(query_result)'
+        testFilter: -E 'not (test(query_result) | test(connectivity))'
 
 

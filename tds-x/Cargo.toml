@@ -46,3 +46,6 @@ features = [
 [dev-dependencies]
 rand = "0.8.5"
 dotenv = "0.15"
+azure_identity = "0.22.0"
+azure_core = "0.22.0"
+tracing-subscriber = "0.3.19"

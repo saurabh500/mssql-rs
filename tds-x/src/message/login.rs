@@ -13,6 +13,7 @@ use crate::token::tokens::{
 use async_trait::async_trait;
 use std::collections::HashMap;
 
+use super::features::fedauth::FedAuthFeature;
 use super::features::utf8::Utf8Feature;
 use super::login_options::{
     OptionChangePassword, OptionInitLang, OptionIntegratedSecurity, OptionOdbc, OptionOleDb,
@@ -89,19 +90,33 @@ pub(crate) struct FeaturesRequest {
     pub features: HashMap<FeatureExtension, Box<dyn Feature>>,
 }
 
-/// Default implementation for Feature Request, which will add all the features.
-impl Default for FeaturesRequest {
-    fn default() -> Self {
+impl FeaturesRequest {
+    pub fn build(
+        authentication_options: TdsAuthenticationMethod,
+        access_token: Option<String>,
+        prelogin_fedauth_response: bool,
+    ) -> Self {
         let mut features: HashMap<FeatureExtension, Box<dyn Feature>> = HashMap::new();
         features.insert(
             FeatureExtension::Utf8Support,
             Box::new(Utf8Feature::default()),
         );
+
+        if authentication_options != TdsAuthenticationMethod::SSPI
+            && authentication_options != TdsAuthenticationMethod::Password
+        {
+            features.insert(
+                FeatureExtension::FedAuth,
+                Box::new(FedAuthFeature::new(
+                    authentication_options,
+                    access_token,
+                    prelogin_fedauth_response,
+                )),
+            );
+        }
         FeaturesRequest { features }
     }
-}
 
-impl FeaturesRequest {
     pub fn features(&self) -> Vec<&dyn Feature> {
         self.features
             .values()
@@ -180,6 +195,7 @@ pub(crate) struct LoginRequestModel<'a> {
 impl LoginRequestModel<'_> {
     pub(crate) fn from_context(
         context: &crate::connection::client_context::ClientContext,
+        pre_login_fedauth_response: bool,
     ) -> LoginRequestModel {
         let replication_option = match context.replication {
             true => OptionUser::ReplicationLogin,
@@ -215,13 +231,19 @@ impl LoginRequestModel<'_> {
             access_intent: context.application_intent,
         };
 
+        let features_request = FeaturesRequest::build(
+            context.tds_authentication_method,
+            context.access_token.clone(),
+            pre_login_fedauth_response,
+        );
+
         LoginRequestModel {
             option_flags1: OptionFlags1::default(),
             option_flags2,
             option_flags3,
             type_flags,
             tds_version: context.tds_version(),
-            features_request: FeaturesRequest::default(),
+            features_request,
             user_input: context,
             client_prog_ver: 0,
             client_process_id: 0,
@@ -233,7 +255,6 @@ impl LoginRequestModel<'_> {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct LoginResponseModel {
     pub change_properties: EnvChangeProperties,
     pub features: FeaturesRequest,
@@ -252,6 +273,16 @@ pub(crate) enum LoginResponseStatus {
 }
 
 impl LoginResponseModel {
+    fn new(features: FeaturesRequest) -> Self {
+        LoginResponseModel {
+            change_properties: EnvChangeProperties::default(),
+            features,
+            tds_error: None,
+            success_token: None,
+            fed_auth_info: None,
+        }
+    }
+
     fn capture_change_property(&mut self, change_token: EnvChangeToken) {
         let sub_type = change_token.sub_type;
 
@@ -348,13 +379,21 @@ impl<'a> Request<'a> for LoginRequest<'a> {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct LoginResponse {
-    pub model: LoginResponseModel,
+    // pub model: LoginResponseModel,
+    // pub requested_features: Pin<Box<FeaturesRequest>>,
 }
 
 impl LoginResponse {
-    pub(crate) async fn deserialize(&self, reader: &mut dyn NetworkReader) -> LoginResponseModel {
+    pub fn new() -> Self {
+        LoginResponse {}
+    }
+
+    pub(crate) async fn deserialize(
+        &self,
+        reader: &mut dyn NetworkReader,
+        requested_features: FeaturesRequest,
+    ) -> LoginResponseModel {
         let packet_reader = reader.get_packet_reader();
         let login_token_registry = GenericTokenParserRegistry::default();
         let mut token_stream_reader = TokenStreamReader {
@@ -362,7 +401,7 @@ impl LoginResponse {
             parser_registry: Box::new(login_token_registry),
         };
 
-        let mut response_model = LoginResponseModel::default();
+        let mut response_model = LoginResponseModel::new(requested_features);
         let parser_context = ParserContext::default();
         while let Ok(token) = token_stream_reader.receive_token(&parser_context).await {
             let token_type = token.token_type();
