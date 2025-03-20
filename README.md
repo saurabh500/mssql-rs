@@ -69,13 +69,9 @@ cargo build
 ```
 
 ### Other checks
-
 Run clippy and check for formatting before sending a PR. 
 
-This can be done using the [pre-commit-helper for Nix](./.githooks/pre-commit-checks.sh) or for [Powershell on Windows](./.githooks/pre-commit-checks.ps1)
-
 ## Build pipeline
-
 There is a build pipeline in the Azure DevOps that is configured to build the project.
 The pipeline can be triggered manually from this link:
 
@@ -98,3 +94,51 @@ This is an engineering system standard which is required company wide.
 The repo is configured to use Azure Artifacts as a package source.
 There is an artifact feed RustTools in the project that is used to store the cargo crates.
 The configuration is done in the `.cargo/config.toml` file.
+
+
+# Next test goodness
+I want to build the tests in one place, and run the binaries on a different machine/OS
+
+On the source machine with source code, build the tests and archive them
+`cargo nextest archive --archive-file /tmp/nextext.tar.zst`
+
+Copy the archive file to a destination which has cargo and nextest installed, no source code needed. The tests can be executed using.
+`cargo nextest run --archive-file /tmp/nextext.tar.zst`
+
+
+# Docker dev environment for linux
+
+
+```sh
+export DOCKER_BUILDKIT=1
+
+# Get the Access token from windows using `azureauth ado token` and store the access token in a environment variable called 
+# MSRUSTUP_ACCESS_TOKEN
+# Then run the following build command to build the container.
+
+# This needs to be done if any changes are being made to the Dockerfile, which havent been released to the ACR.
+DOCKER_BUILDKIT=1 docker build --progress=plain --debug  --secret id=MSRUSTUP_ACCESS_TOKEN,type=env -t tdslibrs.azurecr.io/ubuntu-msrustup:latest .
+
+# Run the container image.
+docker run --rm -it --mount type=secret,id=MSRUSTUP_ACCESS_TOKEN --mount type=bind,source=/home/saurabh/work/RustPrototype,destination=/src   --env MSRUSTUP_ACCESS_TOKEN=$(cat MSRUSTUP_ACCESS_TOKEN)  tdslibrs.azurecr.io/ubuntu-msrustup:latest
+
+# Publish to ACR
+
+docker tag msrustup:1 tdslibrs.azurecr.io/ubuntu-msrustup:latest
+
+az acr login -n tdslibrs
+
+docker push tdslibrs.azurecr.io/ubuntu-msrustup:latest
+```
+
+
+Get pat for local dev
+
+```
+azureauth ado pat --organization devdiv --display-name pathazauth --scope vso.packaging  --prompt-hint Hint1
+
+```
+
+```
+azureauth ado token
+```

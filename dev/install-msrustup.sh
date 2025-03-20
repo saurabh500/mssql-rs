@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Originally from https://aka.ms/install-msrustup.sh
-# Version 5
+# Version 6
 # This script is expected to be copied into any build system that needs to install the internal Rust toolchain, if
 # that system cannot use an ADO pipeline and the Rust installer pipeline task.
 # Updates to this script will be avoided if possible, but if it stops working in your environment, please check the above
@@ -10,7 +10,7 @@
 # Downloads msrustup from Azure Artifacts.
 # Requires MSRUSTUP_ACCESS_TOKEN or MSRUSTUP_PAT environment variables to be set with a token.
 # See https://aka.ms/rust for more information.
-# set -x
+
 command -v uname >/dev/null 2>&1 || { echo >&2 "install-msrustup requires uname to detect host."; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo >&2 "install-msrustup requires curl to download msrustup."; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo >&2 "install-msrustup requires jq to parse Azure Artifact response."; exit 1; }
@@ -18,7 +18,7 @@ command -v unzip >/dev/null 2>&1 || { echo >&2 "install-msrustup requires unzip 
 
 if [ -z "$MSRUSTUP_ACCESS_TOKEN" ] && [ -z "$MSRUSTUP_PAT" ]; then
     if $(command -v azureauth >/dev/null 2>&1); then
-        MSRUSTUP_ACCESS_TOKEN=$(azureauth ado token --mode devicecode)
+        MSRUSTUP_ACCESS_TOKEN=$(azureauth ado token)
     elif $(command -v azureauth.exe >/dev/null 2>&1); then
         MSRUSTUP_ACCESS_TOKEN=$(azureauth.exe ado token)
     else
@@ -34,7 +34,7 @@ else
 fi
 
 if [ -z "$MSRUSTUP_FEED_URL" ]; then
-    MSRUSTUP_FEED_URL='https://mscodehub.pkgs.visualstudio.com/Rust/_packaging/Rust%40Release/nuget/v3/index.json'
+    MSRUSTUP_FEED_URL='https://devdiv.pkgs.visualstudio.com/DevDiv/_packaging/Rust.Sdk%40Release/nuget/v3/index.json'
 fi
 
 # Now that we've tested for missing required variables, treat unset variables as an error.
