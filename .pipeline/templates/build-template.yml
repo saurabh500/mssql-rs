@@ -63,15 +63,6 @@ steps:
 - bash: cargo llvm-cov clean --workspace
   displayName: Clean up old coverage files
 
-
-- script: |
-    cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
-  displayName: Run tests
-
-  env:
-    SQL_PASSWORD: $(SQL_PASSWORD)
-    RUST_BACKTRACE: full
-
   
 - script: |
       cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
