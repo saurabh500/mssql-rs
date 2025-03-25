@@ -329,7 +329,7 @@ impl<'result> ResultSet<'result> {
         self.metadata.as_ref()
     }
 
-    pub async fn into_row_stream(self) -> TdsResult<RowStream<'result>> {
+    pub fn into_row_stream(self) -> TdsResult<RowStream<'result>> {
         Ok(RowStream::new(self))
     }
 

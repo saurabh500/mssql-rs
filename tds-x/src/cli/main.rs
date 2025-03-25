@@ -106,7 +106,7 @@ impl Session<'_> {
                     println!("Rows updated {}", update);
                 }
                 crate::query::result::QueryResultType::ResultSet(result_set) => {
-                    let mut row_stream = result_set.into_row_stream().await?;
+                    let mut row_stream = result_set.into_row_stream()?;
 
                     while let Some(some_row) = row_stream.next().await {
                         let mut row = some_row?;

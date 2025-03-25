@@ -29,3 +29,11 @@ Cargo.lock
 .IdentityService/
 
 **/.env
+
+**/myvenv
+**/venv
+
+
+# pipenv files
+Pipfile
+Pipfile.lock

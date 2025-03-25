@@ -31,24 +31,17 @@ mod connectivity {
         );
 
         let credential = DefaultAzureCredential::new();
-        // let azclicreds = AzureCliCredential::new();
 
-        // Request the token. get_token expects a slice of scopes (strings).
         let token_response = credential.unwrap().get_token(&[SCOPE]).await;
-
-        // println!(
-        //     "Token response: {:?}",
-        //     token_response.unwrap().token.secret()
-        // );
 
         let secret = token_response.as_ref().unwrap().token.secret();
         print!("{}", secret);
         secret.to_string()
-        // "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6ImltaTBZMnowZFlLeEJ0dEFxS19UdDVoWUJUayIsImtpZCI6ImltaTBZMnowZFlLeEJ0dEFxS19UdDVoWUJUayJ9.eyJhdWQiOiJodHRwczovL2RhdGFiYXNlLndpbmRvd3MubmV0LyIsImlzcyI6Imh0dHBzOi8vc3RzLndpbmRvd3MubmV0L2U4ZjQ3NDFhLTgxN2EtNDAzYS1iMjhmLTIwMGQyYjA3ZDY1Ni8iLCJpYXQiOjE3NDEzMTI2OTEsIm5iZiI6MTc0MTMxMjY5MSwiZXhwIjoxNzQxMzE2ODc4LCJhY3IiOiIxIiwiYWlvIjoiQWNRQU8vOFpBQUFBVUV0K0N1UlRyODkzZjFEK1BvaFg2K0ZSWEtJdWR4T2pFMDlzMHliUUw5alpRaE53MGptN1l4TXk4enJHclBnSjJSNmJzNUpNSnRaYnM4dEZ5dStKNjNNZGxLS0ZacXUveFQzaGh5d2VHQzV4MDVkZksrQW1aVTI2VzZDZ0ljb25od0wrSzBBb1I0Z2R5QlhYSTU5eGZISTBDclhSUWFqTk4xc0M2ZTF3Q014dFdyLy8rU0JrbG5sZUFpMnY1RHR5eUkycU9TRlZGanp5M2NETnAxQmdBQzZxZFR0eDFNQkpVV1IrOVFyc1U5NFB6NGFXa2NJL21rbFBrbVlmYTMrbyIsImFsdHNlY2lkIjoiNTo6MTAwMzIwMDM2ODE2MTZFMiIsImFtciI6WyJmaWRvIiwicnNhIiwibWZhIl0sImFwcGlkIjoiMmZkOTA4YWQtMDY2NC00MzQ0LWI5YmUtY2QzZThiNTc0YzM4IiwiYXBwaWRhY3IiOiIwIiwiZW1haWwiOiJzaW5naHNhdXJhQG1pY3Jvc29mdC5jb20iLCJmYW1pbHlfbmFtZSI6IlNpbmdoIE1TRlQiLCJnaXZlbl9uYW1lIjoiU2F1cmFiaCIsImdyb3VwcyI6WyI3M2EwY2YyZC1iMjczLTQwZjEtOWZmZi02MGFmYmE2ZjE3ZjMiXSwiaG9tZV9vaWQiOiJkMDcxN2VjMi1mODRjLTQ0ODktOGYzMi1jMDg3YzZmY2U3ZjAiLCJpZHAiOiJodHRwczovL3N0cy53aW5kb3dzLm5ldC83MmY5ODhiZi04NmYxLTQxYWYtOTFhYi0yZDdjZDAxMWRiNDcvIiwiaWR0eXAiOiJ1c2VyIiwiaXBhZGRyIjoiMjAuMy4xOTAuMTE4IiwibmFtZSI6IlNhdXJhYmggU2luZ2giLCJvaWQiOiJkMDA4MjU4NC1kZWIwLTQxZTItYmI3Ny04ZDYwZGZmN2QwNjEiLCJwdWlkIjoiMTAwMzIwMDM2RUQ0MkU1QyIsInJoIjoiMS5BY29BR25UMDZIcUJPa0N5anlBTkt3ZldWdE1IS1FJYkRfZEl1dHdicHF1cmJXYjZBQnpLQUEuIiwic2NwIjoiVXNlci5SZWFkIiwic2lkIjoiYzQxOWI2MWItNGRlNi00MTMwLTllMjQtM2JhY2ViNmNiZWFiIiwic3ViIjoiMFBqWXhab3c1cWtkMGkwNnpZRm9iZVJFaHE3b2VPeFBleXB5MEZkM21fTSIsInRpZCI6ImU4ZjQ3NDFhLTgxN2EtNDAzYS1iMjhmLTIwMGQyYjA3ZDY1NiIsInVuaXF1ZV9uYW1lIjoic2luZ2hzYXVyYUBtaWNyb3NvZnQuY29tIiwidXRpIjoiYVM1ZkNTV05jVW13bnMtMGIwMUVBQSIsInZlciI6IjEuMCIsInhtc19pZHJlbCI6IjMyIDEifQ.L55j7j7Go9E75PzDIP7-xFmzELMfW70fyD2mc0xmRziq0Ip9lz-0SAxuJa5ScQW2EFHzinMUGDXy9L9YhaWJ3P4JcI8i7iVI5EQkC_PhdbJ5rTT7ROTaA65qZIdOVRLiGY7vix4BoHmXIEiIgb47xEw6blKMrAXIwB_g45rI47PXXcfGQ2nE4nPl-_sxLipj2Wtm-okKjgoY99IQDJAQyFWDUjw912x8HK0tRE8kjvOq9B-Wrs0Qv0-VG-LpjlPQJU3p5b9K0n5KkexIIuI4JQkoTJCHVT2x1577hPFnuM7u5_25w2J2EG5anqBqFXcpDgP3hM84EevGnALi1G62tg".to_string()
     }
 
     pub fn create_context(access_token: String) -> ClientContext {
         dotenv().ok();
+        println!("This test expects that `az login --tenant E8F4741A-817A-403A-B28F-200D2B07D656` was run to get a token.");
         let trace_level = Level::DEBUG;
         let subscriber = FmtSubscriber::builder()
             .with_max_level(trace_level)
@@ -83,7 +76,7 @@ mod connectivity {
             let res = qrt.unwrap();
             match res {
                 QueryResultType::ResultSet(rs) => {
-                    let mut row_stream = rs.into_row_stream().await.unwrap();
+                    let mut row_stream = rs.into_row_stream().unwrap();
                     while let Some(row) = row_stream.next().await {
                         let mut unwrapped_row = row.unwrap();
                         while let Some(cell) = unwrapped_row.next().await {

@@ -32,7 +32,7 @@ mod query_result_reads {
             ) => {
                 let mut actual_rows: u64 = 0;
                 println!("Columns: {:?}", result_set.get_metadata());
-                let mut row_stream = result_set.into_row_stream().await.unwrap();
+                let mut row_stream = result_set.into_row_stream().unwrap();
                 while let Some(row) = row_stream.next().await {
                     let mut unwrapped_row = row.unwrap();
                     print!("Row {:?}: ", actual_rows);
@@ -254,7 +254,7 @@ mod query_result_reads {
                             result_number,
                             result_set.get_metadata()
                         );
-                        let mut row_stream = result_set.into_row_stream().await.unwrap();
+                        let mut row_stream = result_set.into_row_stream().unwrap();
                         while let Some(row) = row_stream.next().await {
                             let mut unwrapped_row = row.unwrap();
                             print!("Row {:?}: ", row_number);

@@ -26,7 +26,7 @@ impl SqlString {
         }
     }
 
-    pub(crate) fn to_utf8_string(&self) -> String {
+    pub fn to_utf8_string(&self) -> String {
         match self.encoding_type {
             // TODO: Investigation needed. When creating a Utf8 strings from the vector, the string is weirdly encoded.
             // UTF16 decode works better.
