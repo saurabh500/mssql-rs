@@ -89,12 +89,14 @@ pub(crate) mod query_processing_driver {
                 NumericColumn NUMERIC(18,2),
                 FloatColumn FLOAT,
                 RealColumn REAL,
+                DateSmallColumn SMALLDATETIME NULL,
+                DateTimeColumn DATETIME NULL
             );
         
             INSERT INTO #AllDataTypes (
                 TinyIntColumn, SmallIntColumn, IntColumn, BigIntColumn, BitColumn, 
-                DecimalColumn, NumericColumn, FloatColumn, RealColumn
-            ) 
+                DecimalColumn, NumericColumn, FloatColumn, RealColumn, DateSmallColumn, DateTimeColumn
+            )
             VALUES (
                 CAST(255 AS TINYINT), -- TinyIntColumn
                 CAST(32767 AS SMALLINT), -- SmallIntColumn
@@ -104,7 +106,9 @@ pub(crate) mod query_processing_driver {
                 CAST(272.01 AS DECIMAL(18, 2)), --DecimalColumn
                 CAST(12345678901234.98 AS NUMERIC(18,2)), -- NumericColumn
                 CAST(1234.22231 AS FLOAT), -- FloatColumn
-                CAST(11.11 AS REAL) -- RealColumn
+                CAST(11.11 AS REAL), -- RealColumn
+                CAST('1/1/2000 1:00' as SMALLDATETIME),
+                CAST('1/1/2000 1:00' as DATETIME)
             );
             select * from #AllDataTypes;",
         )

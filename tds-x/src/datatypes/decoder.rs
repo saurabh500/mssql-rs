@@ -35,7 +35,7 @@ pub enum ColumnValues {
     Numeric(Option<DecimalParts>),
     Bit(Option<bool>),
     String(Option<SqlString>),
-    DateTime((i32, u32)),
+    DateTime(Option<(i32, u32)>),
     IntN(Option<i64>),
     Bytes(Vec<u8>),
     Null,
@@ -99,8 +99,8 @@ impl GenericDecoder {
         Ok((days, ticks))
     }
 
-    async fn read_small_datetime(&self, reader: &mut PacketReader<'_>) -> TdsResult<(i16, u16)> {
-        let days = reader.read_int16().await?;
+    async fn read_small_datetime(&self, reader: &mut PacketReader<'_>) -> TdsResult<(u16, u16)> {
+        let days = reader.read_uint16().await?;
         let minutes = reader.read_uint16().await?;
         Ok((days, minutes))
     }
@@ -184,7 +184,7 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
             | TdsDataType::VarChar => self.string_decoder.decode(reader, metadata).await?,
             TdsDataType::DateTime => {
                 let value = self.read_datetime(reader).await?;
-                ColumnValues::DateTime(value)
+                ColumnValues::DateTime(Some(value))
             }
             TdsDataType::IntN => {
                 let byte_len = reader.read_byte().await?;
@@ -229,6 +229,22 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                 } else {
                     let value = reader.read_float64().await?;
                     ColumnValues::Float(Some(value))
+                }
+            }
+            TdsDataType::DateTimN => {
+                let length = reader.read_byte().await?;
+                // If length is 0, then it is NULL
+                if length == 0 {
+                    return Ok(ColumnValues::DateTime(None));
+                } else if length == 4 {
+                    // SmallDateTime
+                    let (days, minutes) = self.read_small_datetime(reader).await?;
+                    return Ok(ColumnValues::DateTime(Some((days as i32, minutes as u32))));
+                } else {
+                    // DateTime
+                    return Ok(ColumnValues::DateTime(Some(
+                        self.read_datetime(reader).await?,
+                    )));
                 }
             }
             _ => unimplemented!("Data type not implemented: {:?}", metadata.data_type),
