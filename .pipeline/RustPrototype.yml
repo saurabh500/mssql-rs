@@ -25,6 +25,9 @@ jobs:
     - template: templates/sql-setup-template.yml
       parameters:
         buildTarget: Windows
+    - template: templates/install-dependencies.yml
+      parameters:
+        osType: Windows
     - template: templates/build-template.yml
       parameters:
         osType: Windows
@@ -62,6 +65,9 @@ jobs:
     - template: templates/sql-setup-template.yml
       parameters:
         buildTarget: Linux
+    - template: templates/install-dependencies.yml
+      parameters:
+        osType: Linux
     - template: templates/build-template.yml
       parameters:
         osType: Linux
@@ -99,6 +105,9 @@ jobs:
     - template: templates/sql-setup-template.yml
       parameters:
         buildTarget: MacOS
+    - template: templates/install-dependencies.yml
+      parameters:
+        osType: MacOS
     - template: templates/build-template.yml
       parameters:
         osType: MacOS

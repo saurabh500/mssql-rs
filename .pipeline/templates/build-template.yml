@@ -26,7 +26,6 @@ steps:
   displayName: Install Rust Toolchain
   inputs:
     toolchainFeed: https://sqlclientdrivers.pkgs.visualstudio.com/SqlDevX/_packaging/RustTools/nuget/v3/index.json
-
 - task: CargoAuthenticate@0
   displayName: Authenticate with Azure Artifacts
   inputs:
@@ -40,11 +39,13 @@ steps:
   env:
     CARGO_REGISTRIES_ONELAKECLIENT_TOKEN: $(OneLakeClientSecret)
 
-- script: cargo build --frozen 2>&1
+- script: |
+    pipenv run cargo build --frozen 2>&1
   displayName: Rust Debug Build
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
 
-- script: cargo build --frozen --release 2>&1
+- script: |
+    cargo build --frozen --release 2>&1
   displayName: Rust Release Build
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
 
@@ -55,6 +56,13 @@ steps:
 - script: cargo bfmt
   displayName: Check Format
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+
+- ${{ if eq(parameters.osType, 'Linux') }}:
+  - script: scripts/buildpythoninterop.sh
+    displayName: Build Python Interop
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+    env:
+      CARGO_REGISTRIES_ONELAKECLIENT_TOKEN: $(OneLakeClientSecret)
 
 - script: cargo install cargo-llvm-cov cargo-nextest
   displayName: Install llvm-cov and nextest
@@ -91,26 +99,6 @@ steps:
       summaryFileLocation: "$(Build.SourcesDirectory)/target/lcov.info"
       pathToSources: "$(Build.SourcesDirectory)"
 
-- ${{ if eq(parameters.osType, 'Windows') }}:
-  - task: MSBuild@1
-    displayName: C++ Debug Build
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
-    inputs:
-      solution: '**/*.sln'
-      msbuildArchitecture: 'x64'
-      platform: 'x64'
-      configuration: 'Debug'
-
-- ${{ if eq(parameters.osType, 'Windows') }}:
-  - task: MSBuild@1
-    displayName: C++ Release Build
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
-    inputs:
-      solution: '**/*.sln'
-      msbuildArchitecture: 'x64'
-      platform: 'x64'
-      configuration: 'Release'
-
 - task: CopyFiles@2
   displayName: Copy Rust Debug Build
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
@@ -130,24 +118,6 @@ steps:
       *
       !.cargo-lock
     TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
-
-- ${{ if eq(parameters.osType, 'Windows') }}:
-  - task: CopyFiles@2
-    displayName: Copy C++ Debug Build
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
-    inputs:
-      SourceFolder: '$(Build.SourcesDirectory)\prototype\ffi-prototype\x64\Debug'
-      Contents: 'ffi-app.*'
-      TargetFolder: '$(Build.ArtifactStagingDirectory)\Debug'
-
-- ${{ if eq(parameters.osType, 'Windows') }}:
-  - task: CopyFiles@2
-    displayName: Copy C++ Release Build
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
-    inputs:
-      SourceFolder: '$(Build.SourcesDirectory)\prototype\ffi-prototype\x64\Release'
-      Contents: 'ffi-app.*'
-      TargetFolder: '$(Build.ArtifactStagingDirectory)\Release'
 
 - task: PublishBuildArtifacts@1
   displayName: Publish Build Drop

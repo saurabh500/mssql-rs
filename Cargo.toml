@@ -1,12 +1,5 @@
 [workspace]
 resolver = "2"
-members = [
-    "prototype/connect-async/connect-async-lib",
-    "prototype/connect-async/connect-async-app",
-    "prototype/connect-sync/connect-sync-lib",
-    "prototype/connect-sync/connect-sync-app",
-    "prototype/ffi-prototype/ffi-library",
-    "prototype/transport/transport-lib",
-    "prototype/transport/transport-app",
-    "tds-x",
+members = [ 
+    "tds-x"
 ]

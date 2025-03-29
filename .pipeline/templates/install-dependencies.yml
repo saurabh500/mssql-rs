@@ -11,4 +11,23 @@ steps:
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - script: |
       scripts/install-deps.sh
+      # This is a workaround for the fact that the PATH variable is not updated in the same shell.
+      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/bin:$PATH"
     displayName: "Install linux dependencies"
+- ${{ if eq(parameters.osType, 'MacOS') }}:
+  - script: |
+      python --version
+      pip --version && pip install pipenv
+      if [ -z "$PYTHON_HOME" ]; then
+        export PYTHON_HOME=$(python -c "import sys; print(sys.prefix)")
+      fi
+      echo $PYTHON_HOME
+      if ! command -v python &> /dev/null; then
+        brew install python
+      fi
+    displayName: "Install MacOS dependencies"
+- ${{ if eq(parameters.osType, 'Windows') }}:
+  - script: |
+      python --version
+      pip && pip install pipenv
+    displayName: "Check if python is installed"
