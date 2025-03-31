@@ -24,6 +24,7 @@ RUN apt update && apt install -y \
     python-is-python3 \
     sudo \
     python3.10-venv \
+    pip \
     && wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb \
     && dpkg -i packages-microsoft-prod.deb \
     && apt update \

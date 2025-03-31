@@ -117,14 +117,24 @@ export DOCKER_BUILDKIT=1
 # Then run the following build command to build the container.
 
 # This needs to be done if any changes are being made to the Dockerfile, which havent been released to the ACR.
-DOCKER_BUILDKIT=1 docker build --progress=plain --debug  --secret id=MSRUSTUP_ACCESS_TOKEN,type=env -t tdslibrs.azurecr.io/ubuntu-msrustup:latest .
+
+# Get an access token in Linux or Mac OS
+export MSRUSTUP_ACCESS_TOKEN=$(azureauth ado token --mode all)
+
+export DOCKER_BUILDKIT=1
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+docker buildx create --use --name multiarch-builder
+docker buildx inspect --bootstrap
+docker buildx build --platform linux/amd64,linux/arm64 --progress=plain --debug  --secret id=MSRUSTUP_ACCESS_TOKEN,type=env --build-arg DEBUG=true -t tdslibrs.azurecr.io/ubuntu-msrustup:latest .
+
+docker push tdslibrs.azurecr.io/ubuntu-msrustup:latest
 
 # Run the container image.
 docker run --rm -it --mount type=secret,id=MSRUSTUP_ACCESS_TOKEN --mount type=bind,source=/home/saurabh/work/RustPrototype,destination=/src   --env MSRUSTUP_ACCESS_TOKEN=$(cat MSRUSTUP_ACCESS_TOKEN)  tdslibrs.azurecr.io/ubuntu-msrustup:latest
 
 # Publish to ACR
 
-docker tag msrustup:1 tdslibrs.azurecr.io/ubuntu-msrustup:latest
 
 az acr login -n tdslibrs
 
