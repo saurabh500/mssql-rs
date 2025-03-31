@@ -75,8 +75,8 @@ impl From<u8> for FeatureExtension {
     }
 }
 
-#[async_trait(?Send)]
-pub(crate) trait Feature {
+#[async_trait]
+pub(crate) trait Feature: Send + Sync {
     fn feature_identifier(&self) -> FeatureExtension;
     fn is_requested(&self) -> bool;
     fn data_length(&self) -> i32;
@@ -360,7 +360,7 @@ pub(crate) struct LoginRequest<'a> {
     pub model: LoginRequestModel<'a>,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<'a> Request<'a> for LoginRequest<'a> {
     fn packet_type(&self) -> PacketType {
         PacketType::Login7

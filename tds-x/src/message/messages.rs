@@ -67,7 +67,7 @@ pub(crate) enum PacketStatusFlags {
     ResetConnectionSkipTran = 0x10,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub(crate) trait Request<'a> {
     fn packet_type(&self) -> PacketType;
     fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a>;

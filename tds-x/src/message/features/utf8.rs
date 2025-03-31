@@ -11,7 +11,7 @@ pub(crate) struct Utf8Feature {
     acknowledged: bool,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Feature for Utf8Feature {
     fn feature_identifier(&self) -> FeatureExtension {
         FeatureExtension::Utf8Support

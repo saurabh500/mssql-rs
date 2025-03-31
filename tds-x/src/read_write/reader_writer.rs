@@ -7,7 +7,7 @@ use crate::message::messages::PacketType;
 use async_trait::async_trait;
 
 #[async_trait]
-pub(crate) trait NetworkWriter: Send + TransportSslHandler {
+pub(crate) trait NetworkWriter: Send + Sync + TransportSslHandler {
     async fn send(&mut self, data: &[u8]) -> TdsResult<()>;
     fn packet_size(&self) -> u32;
     fn get_packet_writer(&mut self, packet_type: PacketType) -> PacketWriter<'_>;

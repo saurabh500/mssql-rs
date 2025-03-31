@@ -8,8 +8,10 @@ use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::packet_writer::PacketWriter;
 use crate::read_write::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
 use async_trait::async_trait;
+use futures::lock::Mutex;
 use std::io::Error;
 use std::io::ErrorKind::UnexpectedEof;
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -39,7 +41,7 @@ pub(crate) async fn create_transport(context: &ClientContext) -> TdsResult<Box<N
             Ok(Box::new(NetworkTransport {
                 context,
                 encryption: None,
-                stream: base_stream,
+                stream: Arc::new(Mutex::new(base_stream)),
                 ssl_handler: SslHandler { settings: context },
                 stream_recoverer: Box::new(stream_recoverer),
                 packet_size: PRE_NEGOTIATED_PACKET_SIZE,
@@ -59,7 +61,7 @@ pub(crate) async fn create_transport(context: &ClientContext) -> TdsResult<Box<N
             Ok(Box::new(NetworkTransport {
                 context,
                 encryption: None,
-                stream: encrypted_stream,
+                stream: Arc::new(Mutex::new(encrypted_stream)),
                 ssl_handler,
                 stream_recoverer: Box::new(stream_recoverer),
                 packet_size: PRE_NEGOTIATED_PACKET_SIZE,
@@ -74,12 +76,12 @@ pub trait TransportSslHandler {
     async fn disable_ssl(&mut self) -> TdsResult<()>;
 }
 
-pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send {
+pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync {
     fn tls_handshake_starting(&mut self);
     fn tls_handshake_completed(&mut self);
 }
 
-pub(crate) trait StreamRecoverer: Send {
+pub(crate) trait StreamRecoverer: Send + Sync {
     fn recover_base_stream(&self) -> Box<dyn Stream>;
     fn tls_handshake_starting(&mut self);
     fn tls_handshake_completed(&mut self);
@@ -110,7 +112,7 @@ pub(crate) struct NetworkTransport<'a> {
     context: &'a ClientContext,
     encryption: Option<NegotiatedEncryptionSetting>,
     packet_size: u32,
-    stream: Box<dyn Stream>,
+    stream: Arc<Mutex<dyn Stream>>,
     ssl_handler: SslHandler<'a>,
     stream_recoverer: Box<dyn StreamRecoverer + 'a>,
 }
@@ -143,7 +145,7 @@ impl NetworkReader for NetworkTransport<'_> {
 #[async_trait]
 impl NetworkWriter for NetworkTransport<'_> {
     async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
-        self.stream.write_all(data).await?;
+        self.stream.lock().await.write_all(data).await?;
         Ok(())
     }
 
@@ -167,7 +169,7 @@ impl NetworkTransport<'_> {
     }
 
     pub(crate) async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
-        self.stream.write_all(data).await?;
+        self.stream.lock().await.write_all(data).await?;
         Ok(())
     }
 
@@ -210,7 +212,7 @@ impl NetworkTransport<'_> {
         if buffer.is_empty() {
             panic!("Buffer length must be greater than 0");
         }
-        let bytes_read = self.stream.read(buffer).await?;
+        let bytes_read = self.stream.lock().await.read(buffer).await?;
         if bytes_read == 0 {
             Err(crate::error::Error::from(std::io::Error::from(
                 UnexpectedEof,
@@ -228,13 +230,13 @@ impl NetworkTransport<'_> {
             .await?;
 
         self.stream_recoverer.tls_handshake_completed();
-        self.stream = encrypted_stream;
+        self.stream = Arc::new(Mutex::new(encrypted_stream));
         Ok(())
     }
 
     async fn disable_ssl_internal(&mut self) {
         let base_stream = self.stream_recoverer.recover_base_stream();
-        self.stream = base_stream;
+        self.stream = Arc::new(Mutex::new(base_stream));
     }
 }
 
@@ -317,7 +319,7 @@ pub(crate) mod tests {
             NetworkTransport {
                 context,
                 encryption: None,
-                stream: Box::new(client_side),
+                stream: Arc::new(Mutex::new(client_side)),
                 ssl_handler,
                 stream_recoverer,
                 packet_size: context.packet_size as u32,
@@ -338,7 +340,7 @@ pub(crate) mod tests {
             NetworkTransport {
                 context,
                 encryption: None,
-                stream: Box::new(client_side),
+                stream: Arc::new(Mutex::new(client_side)),
                 ssl_handler,
                 stream_recoverer,
                 packet_size: context.packet_size as u32,
@@ -346,7 +348,7 @@ pub(crate) mod tests {
             NetworkTransport {
                 context,
                 encryption: None,
-                stream: Box::new(server_side),
+                stream: Arc::new(Mutex::new(server_side)),
                 ssl_handler: SslHandler { settings: context },
                 stream_recoverer: Box::new(MockStreamRecoverer {}),
                 packet_size: context.packet_size as u32,
@@ -403,7 +405,7 @@ pub(crate) mod tests {
         //    (In a real scenario, you'll also set ssl_handler, stream_recoverer, etc.)
         let mut transport = NetworkTransport {
             encryption: None,
-            stream: Box::new(client_side),
+            stream: Arc::new(Mutex::new(client_side)),
             ssl_handler,
             stream_recoverer,
             packet_size: context.packet_size as u32,

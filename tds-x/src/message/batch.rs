@@ -17,7 +17,7 @@ impl From<TransactionDescriptorHeader> for TdsHeaders {
 }
 
 // Trait representing the abstract TdsHeader
-#[async_trait(?Send)]
+#[async_trait]
 pub(crate) trait TdsHeader {
     fn header_type(&self) -> u16;
     fn calculate_length(&self) -> i32;
@@ -47,7 +47,7 @@ impl TransactionDescriptorHeader {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl TdsHeader for TransactionDescriptorHeader {
     fn header_type(&self) -> u16 {
         0x0002
@@ -80,7 +80,7 @@ impl QueryNotificationsHeader {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl TdsHeader for QueryNotificationsHeader {
     fn header_type(&self) -> u16 {
         0x0001 // HeaderType for QueryNotificationsHeader
@@ -117,7 +117,7 @@ impl TraceActivityHeader {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl TdsHeader for TraceActivityHeader {
     fn header_type(&self) -> u16 {
         0x0003
@@ -203,7 +203,7 @@ impl SqlBatch {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<'a> Request<'a> for SqlBatch {
     fn packet_type(&self) -> PacketType {
         PacketType::SqlBatch

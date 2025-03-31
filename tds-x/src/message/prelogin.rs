@@ -143,7 +143,7 @@ pub struct PreloginRequest<'a> {
     pub model: &'a PreloginRequestModel,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<'a> Request<'a> for PreloginRequest<'a> {
     fn packet_type(&self) -> PacketType {
         PacketType::PreLogin

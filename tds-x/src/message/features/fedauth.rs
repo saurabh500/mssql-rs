@@ -124,7 +124,7 @@ impl FedAuthFeature {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Feature for FedAuthFeature {
     fn feature_identifier(&self) -> FeatureExtension {
         FeatureExtension::FedAuth
