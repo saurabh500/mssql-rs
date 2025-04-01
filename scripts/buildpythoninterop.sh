@@ -26,7 +26,5 @@ else
 fi
 echo "Using pipenv command: $PIPENV_CMD"
 $PIPENV_CMD run pip install patchelf
-
-# TODO: Uncomment this when we have the project ready and setup.
-# $PIPENV_CMD run maturin build --frozen --manifest-path "$SCRIPT_DIR/../tdsx-python/Cargo.toml"
+$PIPENV_CMD run maturin build --frozen --manifest-path "$SCRIPT_DIR/../tdsx-python/Cargo.toml"
 
