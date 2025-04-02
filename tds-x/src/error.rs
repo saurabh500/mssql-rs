@@ -5,8 +5,8 @@ pub enum Error {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Server redirected the connection: {host}:{port} {count} times")]
-    Redirection { host: String, port: i32, count: i32 },
+    #[error("Server redirected the connection: {host}:{port} times")]
+    Redirection { host: String, port: u16 },
 
     #[error("Protocol Error: {0}")]
     ProtocolError(String),

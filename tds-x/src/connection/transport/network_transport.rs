@@ -1,4 +1,4 @@
-use crate::connection::client_context::ClientContext;
+use crate::connection::client_context::{ClientContext, TransportContext};
 use crate::connection::transport::ssl_handler::{SslHandler, Tds7StreamRecoverer};
 use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::handler::handler_factory::SessionSettings;
@@ -14,11 +14,21 @@ use std::io::ErrorKind::UnexpectedEof;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tracing::info;
 
 pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
 
-pub(crate) async fn create_transport(context: &ClientContext) -> TdsResult<Box<NetworkTransport>> {
-    let stream = TcpStream::connect((context.server_name.as_str(), context.port)).await?;
+pub(crate) async fn create_transport<'a>(
+    context: &'a ClientContext,
+    transport_context: &TransportContext,
+) -> TdsResult<Box<NetworkTransport<'a>>> {
+    let stream = match &transport_context {
+        TransportContext::Tcp { host, port } => {
+            info!("Connecting to TCP transport: {}:{}", host, port);
+            TcpStream::connect((host.as_str(), *port)).await?
+        }
+        _ => unimplemented!("Only TCP transport is supported"),
+    };
 
     // Convert the Tokio stream to a std::TcpStream to make it easier to clone.
     // Do this outside the callback instead of making the Tokio Stream part of the closure
@@ -42,7 +52,9 @@ pub(crate) async fn create_transport(context: &ClientContext) -> TdsResult<Box<N
                 context,
                 encryption: None,
                 stream: Arc::new(Mutex::new(base_stream)),
-                ssl_handler: SslHandler { settings: context },
+                ssl_handler: SslHandler {
+                    server_host_name: transport_context.get_server_name().to_string(),
+                },
                 stream_recoverer: Box::new(stream_recoverer),
                 packet_size: PRE_NEGOTIATED_PACKET_SIZE,
             }))
@@ -53,7 +65,9 @@ pub(crate) async fn create_transport(context: &ClientContext) -> TdsResult<Box<N
             };
 
             // Enable TLS over TCP immediately in TDS 8.0
-            let ssl_handler = SslHandler { settings: context };
+            let ssl_handler = SslHandler {
+                server_host_name: transport_context.get_server_name().to_string(),
+            };
             let encrypted_stream = ssl_handler
                 .enable_ssl_async(stream_recoverer.recover_base_stream())
                 .await?;
@@ -113,7 +127,7 @@ pub(crate) struct NetworkTransport<'a> {
     encryption: Option<NegotiatedEncryptionSetting>,
     packet_size: u32,
     stream: Arc<Mutex<dyn Stream>>,
-    ssl_handler: SslHandler<'a>,
+    ssl_handler: SslHandler,
     stream_recoverer: Box<dyn StreamRecoverer + 'a>,
 }
 
@@ -238,6 +252,11 @@ impl NetworkTransport<'_> {
         let base_stream = self.stream_recoverer.recover_base_stream();
         self.stream = Arc::new(Mutex::new(base_stream));
     }
+
+    pub(crate) async fn close_transport(&mut self) -> TdsResult<()> {
+        self.stream.lock().await.shutdown().await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -312,7 +331,9 @@ pub(crate) mod tests {
     ) -> (NetworkTransport, DuplexStream) {
         let (client_side, server_side) = duplex(MAX_BUFFER_SIZE);
 
-        let ssl_handler = SslHandler { settings: context };
+        let ssl_handler = SslHandler {
+            server_host_name: context.transport_context.get_server_name().clone(),
+        };
         let stream_recoverer = Box::new(MockStreamRecoverer {});
 
         (
@@ -333,7 +354,9 @@ pub(crate) mod tests {
     ) -> (NetworkTransport, NetworkTransport) {
         let (client_side, server_side) = duplex(MAX_BUFFER_SIZE);
 
-        let ssl_handler = SslHandler { settings: context };
+        let ssl_handler = SslHandler {
+            server_host_name: context.transport_context.get_server_name().clone(),
+        };
         let stream_recoverer = Box::new(MockStreamRecoverer {});
 
         (
@@ -349,7 +372,9 @@ pub(crate) mod tests {
                 context,
                 encryption: None,
                 stream: Arc::new(Mutex::new(server_side)),
-                ssl_handler: SslHandler { settings: context },
+                ssl_handler: SslHandler {
+                    server_host_name: context.transport_context.get_server_name().clone(),
+                },
                 stream_recoverer: Box::new(MockStreamRecoverer {}),
                 packet_size: context.packet_size as u32,
             },
@@ -396,7 +421,9 @@ pub(crate) mod tests {
         let stream_recoverer = Box::new(MockStreamRecoverer {});
         let mut context = ClientContext::new();
         context.encryption = EncryptionSetting::Strict;
-        let ssl_handler = SslHandler { settings: &context };
+        let ssl_handler = SslHandler {
+            server_host_name: context.transport_context.get_server_name().clone(),
+        };
 
         // Optionally, shut down the writer so the reader sees EOF if all data is read
         // client_writer.shutdown().await?;

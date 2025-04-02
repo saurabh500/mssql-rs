@@ -143,7 +143,6 @@ impl<'a> TokenParser<'a> for EnvChangeTokenParser {
                         server: old_server.unwrap(),
                     });
                 }
-
                 EnvChangeContainer::from((old_routing_info, routing_info))
             }
         };

@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use tds_x::connection::client_context::ClientContext;
+use tds_x::connection::client_context::{ClientContext, TransportContext};
 use tds_x::core::EncryptionSetting;
 
 /// A Python class representing the client context for a TDS connection.
@@ -57,8 +57,10 @@ impl PyClientContext {
 impl From<PyClientContext> for ClientContext {
     fn from(py_ctx: PyClientContext) -> Self {
         ClientContext {
-            server_name: py_ctx.server_name,
-            port: py_ctx.port,
+            transport_context: TransportContext::Tcp {
+                host: py_ctx.server_name,
+                port: py_ctx.port,
+            },
             user_name: py_ctx.user_name,
             password: py_ctx.password,
             database: py_ctx.database,

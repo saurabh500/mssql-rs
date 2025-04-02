@@ -31,7 +31,7 @@ pub(crate) mod query_processing_driver {
     use std::env;
 
     use crate::{
-        connection::client_context::ClientContext,
+        connection::client_context::{ClientContext, TransportContext},
         connection_provider::tds_connection_provider::TdsConnectionProvider,
         core::{EncryptionSetting, TdsResult},
         message::{batch::SqlBatch, messages::Request},
@@ -61,7 +61,7 @@ pub(crate) mod query_processing_driver {
         execute_test_query(
             "
             select * from sys.databases; 
-            CREATE TABLE #TempTable (ID BIGINT); 
+            CREATE TABLE #TempTable (ID BIGINT);    
             select * from sys.columns; 
             INSERT INTO #TempTable (ID) VALUES (100), (200), (300); 
             select * from #TempTable;
@@ -161,9 +161,16 @@ pub(crate) mod query_processing_driver {
 
     pub async fn execute_test_query(query: &str) -> TdsResult<()> {
         dotenv().ok();
+
+        let transport = TransportContext::Tcp {
+            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
+            port: env::var("DB_PORT")
+                .expect("DB_PORT environment variable not set")
+                .parse::<u16>()
+                .expect("DB_PORT must be a valid u16"),
+        };
         let context = ClientContext {
-            server_name: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
-            port: 1433,
+            transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
             encryption: EncryptionSetting::On,

@@ -1,4 +1,3 @@
-use crate::connection::client_context::ClientContext;
 use crate::connection::transport::network_transport::{Stream, StreamRecoverer};
 use crate::message::messages::PacketType;
 use crate::read_write::packet_writer::PacketWriter;
@@ -9,18 +8,18 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_native_tls::TlsStream;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 #[cfg(target_os = "macos")]
 use std::io::{ErrorKind, Write};
 
 use super::network_transport::PRE_NEGOTIATED_PACKET_SIZE;
 
-pub(crate) struct SslHandler<'a> {
-    pub(crate) settings: &'a ClientContext,
+pub(crate) struct SslHandler {
+    pub(crate) server_host_name: String,
 }
 
-impl SslHandler<'_> {
+impl SslHandler {
     pub(crate) async fn enable_ssl_async(
         &self,
         mut base_stream: Box<dyn Stream>,
@@ -34,8 +33,9 @@ impl SslHandler<'_> {
             .build()
             .unwrap();
 
+        info!("Starting TLS handshake to {}", self.server_host_name);
         let encrypted_stream = tokio_native_tls::TlsConnector::from(connector)
-            .connect(self.settings.server_name.as_str(), base_stream)
+            .connect(&self.server_host_name, base_stream)
             .await;
 
         match encrypted_stream {

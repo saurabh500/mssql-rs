@@ -1,4 +1,4 @@
-use crate::connection::client_context::ClientContext;
+use crate::connection::client_context::{ClientContext, TransportContext};
 use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::message::login::{
     EnvChangeProperties, Feature, FeaturesRequest, LoginRequest, LoginRequestModel, LoginResponse,
@@ -28,17 +28,37 @@ impl HandlerFactory<'_> {
         }
     }
 
-    pub(crate) fn session_handler(&self) -> SessionHandler<'_, '_> {
-        SessionHandler { factory: self }
+    pub(crate) fn session_handler<'a>(
+        &'a self,
+        transport_context: &'a TransportContext,
+    ) -> SessionHandler<'a, 'a, 'a> {
+        SessionHandler {
+            factory: self,
+            transport_context,
+        }
     }
 
-    fn create_login_request(&self, prelogin_fedauth_supported: bool) -> LoginRequest {
-        let model = self.create_login_model(prelogin_fedauth_supported);
+    fn create_login_request<'a, 'b>(
+        &'a self,
+        prelogin_fedauth_supported: bool,
+        transport_context: &'b TransportContext,
+    ) -> LoginRequest<'a>
+    where
+        'b: 'a,
+    {
+        let model = self.create_login_model(prelogin_fedauth_supported, transport_context);
         LoginRequest { model }
     }
 
-    fn create_login_model(&self, prelogin_fedauth_supported: bool) -> LoginRequestModel {
-        LoginRequestModel::from_context(self.context, prelogin_fedauth_supported)
+    fn create_login_model<'a, 'b>(
+        &'a self,
+        prelogin_fedauth_supported: bool,
+        transport_context: &'b TransportContext,
+    ) -> LoginRequestModel<'a>
+    where
+        'b: 'a,
+    {
+        LoginRequestModel::from_context(self.context, prelogin_fedauth_supported, transport_context)
     }
 
     fn create_login_response(&self) -> LoginResponse {
@@ -58,7 +78,6 @@ pub(crate) struct SessionSettings {
     pub language: String,
     pub database: String,
     pub char_set: String,
-    pub server_name: String,
     pub user_name: String,
     supported_features: Vec<Box<dyn Feature>>,
     mars_enabled: bool,
@@ -73,7 +92,6 @@ impl SessionSettings {
             language: context.language.clone(),
             database: context.database.clone(),
             char_set: "".to_string(),
-            server_name: context.server_name.clone(),
             user_name: context.user_name.clone(),
             supported_features: vec![],
             mars_enabled: context.mars_enabled,
@@ -105,11 +123,19 @@ impl SessionSettings {
     }
 }
 
-pub(crate) struct SessionHandler<'a, 'n> {
+pub(crate) struct SessionHandler<'a, 'b, 'n> {
     pub(crate) factory: &'a HandlerFactory<'n>,
+    pub(crate) transport_context: &'b TransportContext,
 }
 
-impl SessionHandler<'_, '_> {
+impl<'a, 'b, 'n> SessionHandler<'a, 'b, 'n> {
+    fn new(factory: &'a HandlerFactory<'n>, transport_context: &'b TransportContext) -> Self {
+        SessionHandler {
+            factory,
+            transport_context,
+        }
+    }
+
     pub(crate) async fn execute(
         &mut self,
         reader_writer: &mut impl NetworkReaderWriter,
@@ -178,7 +204,7 @@ impl SessionHandler<'_, '_> {
     ) -> TdsResult<LoginResult> {
         self.factory
             .login_handler(prelogin_fedauth_supported)
-            .execute(reader_writer)
+            .execute(reader_writer, self.transport_context)
             .await
     }
 }
@@ -287,6 +313,7 @@ impl LoginHandler<'_, '_> {
     async fn execute(
         &self,
         reader_writer: &mut impl NetworkReaderWriter,
+        transport_context: &TransportContext,
     ) -> TdsResult<LoginResult> {
         let encryption = reader_writer.get_encryption_setting();
         if encryption != NegotiatedEncryptionSetting::Strict
@@ -297,11 +324,13 @@ impl LoginHandler<'_, '_> {
             reader_writer.enable_ssl().await?;
         }
 
-        let _request_model = self.send_login7_request(reader_writer).await?;
+        let _request_model = self
+            .send_login7_request(reader_writer, transport_context)
+            .await?;
         let requested_features = _request_model.features_request;
         let login_response = self
             .get_login_response(reader_writer, requested_features)
-            .await;
+            .await?;
 
         // TODO Handle the response.
         let response_status = login_response.get_status();
@@ -313,14 +342,18 @@ impl LoginHandler<'_, '_> {
         })
     }
 
-    async fn send_login7_request(
-        &self,
+    async fn send_login7_request<'a, 'b>(
+        &'a self,
         reader_writer: &mut impl NetworkReaderWriter,
-    ) -> TdsResult<LoginRequestModel> {
+        transport_context: &'b TransportContext,
+    ) -> TdsResult<LoginRequestModel<'a>>
+    where
+        'b: 'a,
+    {
         let request = self
             .factory
-            .create_login_request(self.prelogin_fedauth_supported);
-        let request_model = &request.model;
+            .create_login_request(self.prelogin_fedauth_supported, transport_context);
+        let request_model: &LoginRequestModel<'a> = &request.model;
 
         if request_model.user_input.integrated_security() {
             todo!("Integrated security is not supported yet");
@@ -334,7 +367,7 @@ impl LoginHandler<'_, '_> {
         &self,
         reader_writer: &mut impl NetworkReaderWriter,
         requested_features: FeaturesRequest,
-    ) -> LoginResponseModel {
+    ) -> TdsResult<LoginResponseModel> {
         let response = self.factory.create_login_response();
         response
             .deserialize(reader_writer, requested_features)

@@ -138,7 +138,7 @@ pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
     // use tracing_subscriber::FmtSubscriber;
 
     use crate::{
-        connection::client_context::ClientContext,
+        connection::client_context::{ClientContext, TransportContext},
         connection_provider::tds_connection_provider::TdsConnectionProvider,
     };
     let config = Config::builder()
@@ -150,8 +150,10 @@ pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
     rl.set_helper(Some(helper));
 
     let context = ClientContext {
-        server_name: "saurabhsingh.database.windows.net".to_string(),
-        port: 1433,
+        transport_context: TransportContext::Tcp {
+            host: "saurabhsingh.database.windows.net".to_string(),
+            port: 1433,
+        },
         user_name: "saurabh".to_string(),
         password: std::fs::read_to_string("/tmp/password")
             .expect("Failed to read password file")

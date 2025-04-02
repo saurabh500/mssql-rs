@@ -4,6 +4,7 @@ mod query_result_reads {
 
     use dotenv::dotenv;
     use futures::StreamExt;
+    use tds_x::connection::client_context::TransportContext;
     use tds_x::core::TdsResult;
     use tds_x::{
         connection::{client_context::ClientContext, tds_connection::TdsConnection},
@@ -56,8 +57,10 @@ mod query_result_reads {
     pub fn create_context() -> ClientContext {
         dotenv().ok();
         ClientContext {
-            server_name: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
-            port: 1433,
+            transport_context: TransportContext::Tcp {
+                host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
+                port: 1433,
+            },
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
             database: "master".to_string(),

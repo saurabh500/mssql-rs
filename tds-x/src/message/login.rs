@@ -1,4 +1,4 @@
-use crate::connection::client_context::{ClientContext, TdsAuthenticationMethod};
+use crate::connection::client_context::{ClientContext, TdsAuthenticationMethod, TransportContext};
 use crate::message::login_options::{
     OptionFlags1, OptionFlags2, OptionFlags3, OptionsValue, TdsVersion, TypeFlags,
 };
@@ -23,7 +23,7 @@ use crate::core::TdsResult;
 use crate::read_write::token_stream::{
     GenericTokenParserRegistry, ParserContext, TokenStreamReader,
 };
-use tracing::{debug, event, trace, Level};
+use tracing::{debug, event, info, trace, Level};
 
 pub(crate) const FIXED_LOGIN_RECORD_LENGTH: i32 = 94;
 
@@ -183,6 +183,8 @@ pub(crate) struct LoginRequestModel<'a> {
     pub tds_version: TdsVersion,
     // TODO: user_input needs to be login specific user_input. Need to understand how to replicate the C# concept here.
     pub user_input: &'a ClientContext,
+    // This is a transport context, which will be used to get the authoritative server name.
+    pub transport_context: &'a TransportContext,
     pub features_request: FeaturesRequest,
     pub client_prog_ver: i32,
     pub client_process_id: i32,
@@ -193,10 +195,14 @@ pub(crate) struct LoginRequestModel<'a> {
 }
 
 impl LoginRequestModel<'_> {
-    pub(crate) fn from_context(
-        context: &crate::connection::client_context::ClientContext,
+    pub(crate) fn from_context<'a, 'b>(
+        context: &'a crate::connection::client_context::ClientContext,
         pre_login_fedauth_response: bool,
-    ) -> LoginRequestModel {
+        transport_context: &'b TransportContext,
+    ) -> LoginRequestModel<'b>
+    where
+        'a: 'b,
+    {
         let replication_option = match context.replication {
             true => OptionUser::ReplicationLogin,
             false => OptionUser::Normal,
@@ -245,6 +251,7 @@ impl LoginRequestModel<'_> {
             tds_version: context.tds_version(),
             features_request,
             user_input: context,
+            transport_context,
             client_prog_ver: 0,
             client_process_id: 0,
             connection_id_deprecated: 0,
@@ -283,7 +290,7 @@ impl LoginResponseModel {
         }
     }
 
-    fn capture_change_property(&mut self, change_token: EnvChangeToken) {
+    fn capture_change_property(&mut self, change_token: EnvChangeToken) -> TdsResult<()> {
         let sub_type = change_token.sub_type;
 
         match change_token.change_type {
@@ -291,28 +298,36 @@ impl LoginResponseModel {
                 EnvChangeTokenSubType::Database => {
                     self.change_properties.database =
                         Option::from(string_change.new_value().clone());
+                    Ok(())
                 }
                 EnvChangeTokenSubType::Language => {
                     self.change_properties.language =
                         Option::from(string_change.new_value().clone());
+                    Ok(())
                 }
                 EnvChangeTokenSubType::CharacterSet => {
                     self.change_properties.char_set = Some(string_change.new_value().clone());
+                    Ok(())
                 }
                 _ => {
                     event!(
-                        Level::DEBUG,
-                        "Unaccounted change property type: {:?}",
+                        Level::ERROR,
+                        "Env change token of type string, but implementation doesn't account for this property type: {:?}",
                         sub_type
                     );
+                    Err(crate::error::Error::ProtocolError(
+                        "Env change token of type string, but implementation doesn't account for this property type".to_string(),
+                    ))
                 }
             },
             EnvChangeContainer::SqlCollation(collation_change) => {
                 self.change_properties.database_collation = *collation_change.new_value();
+                Ok(())
             }
             EnvChangeContainer::UInt32(numeric_change) => match sub_type {
                 EnvChangeTokenSubType::PacketSize => {
                     self.change_properties.packet_size = *numeric_change.new_value() as i32;
+                    Ok(())
                 }
                 _ => {
                     event!(
@@ -320,17 +335,28 @@ impl LoginResponseModel {
                         "Unaccounted numeric change property type: {:?}",
                         sub_type
                     );
+                    Err(crate::error::Error::ProtocolError(format!(
+                        "Unaccounted numeric change property type: {:?}",
+                        sub_type
+                    )))
                 }
             },
             EnvChangeContainer::RoutingType(routing_change) => {
                 self.change_properties.routing_information = routing_change.new_value().clone();
+                Err(crate::error::Error::Redirection {
+                    host: routing_change.new_value().as_ref().unwrap().server.clone(),
+                    port: routing_change.new_value().as_ref().unwrap().port,
+                })
             }
             _ => {
                 event!(
-                    Level::DEBUG,
+                    Level::ERROR,
                     "Unknown change property type: {:?}",
                     change_token.change_type
                 );
+                Err(crate::error::Error::ProtocolError(
+                    "Unknown change property type".to_string(),
+                ))
             }
         }
     }
@@ -393,7 +419,7 @@ impl LoginResponse {
         &self,
         reader: &mut dyn NetworkReader,
         requested_features: FeaturesRequest,
-    ) -> LoginResponseModel {
+    ) -> TdsResult<LoginResponseModel> {
         let packet_reader = reader.get_packet_reader();
         let login_token_registry = GenericTokenParserRegistry::default();
         let mut token_stream_reader = TokenStreamReader {
@@ -403,77 +429,92 @@ impl LoginResponse {
 
         let mut response_model = LoginResponseModel::new(requested_features);
         let parser_context = ParserContext::default();
-        while let Ok(token) = token_stream_reader.receive_token(&parser_context).await {
-            let token_type = token.token_type();
-            event!(
-                Level::DEBUG,
-                "Received token: {:?} during login response parsing",
-                token_type
-            );
+        loop {
+            match token_stream_reader.receive_token(&parser_context).await {
+                Ok(token) => {
+                    let token_type = token.token_type();
+                    event!(
+                        Level::DEBUG,
+                        "Received token: {:?} during login response parsing",
+                        token_type
+                    );
 
-            match token {
-                Tokens::EnvChange(env_change_token) => {
-                    event!(
-                        Level::INFO,
-                        "Received {:?} during login response parsing.",
-                        token_type
-                    );
-                    response_model.capture_change_property(env_change_token);
+                    match token {
+                        Tokens::EnvChange(env_change_token) => {
+                            event!(
+                                Level::INFO,
+                                "Received {:?} during login response parsing.",
+                                token_type
+                            );
+                            // If the redirection is received, then the error will be unwrapped and surfaced
+                            // to the caller.
+                            response_model.capture_change_property(env_change_token)?;
+                        }
+                        Tokens::LoginAck(login_ack_token) => {
+                            response_model.success_token = Some(login_ack_token);
+                        }
+                        Tokens::Done(_t) => {
+                            // Once we receive a Done token, exit the loop.
+                            break;
+                        }
+                        Tokens::DoneProc(_t) => {
+                            // ...
+                        }
+                        Tokens::DoneInProc(_t) => {
+                            // ...
+                        }
+                        Tokens::Error(error_token) => {
+                            event!(
+                                Level::ERROR,
+                                "Received Error token during login response parsing."
+                            );
+                            response_model.tds_error = Some(TdsError::new(error_token));
+                            // Decide if you want to break here, or keep looping.
+                        }
+                        Tokens::FeatureExtAck(_t) => {
+                            _t.acknowledged_features().iter().for_each(|f| {
+                                response_model
+                                    .features
+                                    .set_acknowledged(f.0, f.1.as_slice());
+                            });
+                        }
+                        Tokens::FedAuthInfo(fed_auth_info_token) => {
+                            response_model.fed_auth_info = Some(fed_auth_info_token);
+                            break;
+                        }
+                        Tokens::Info(_t) => {
+                            event!(
+                                Level::INFO,
+                                "Received {:?} during login response parsing.",
+                                token_type
+                            );
+                        }
+                        Tokens::Sspi(_t) => {
+                            todo!()
+                        }
+                        _ => {
+                            event!(
+                                Level::ERROR,
+                                "Received unexpected token during login response parsing. \
+                        Check that all tokens from the registry are handled."
+                            );
+                        }
+                    };
                 }
-                Tokens::LoginAck(login_ack_token) => {
-                    response_model.success_token = Some(login_ack_token);
-                }
-                Tokens::Done(_t) => {
-                    // Once we receive a Done token, exit the loop.
-                    break;
-                }
-                Tokens::DoneProc(_t) => {
-                    // ...
-                }
-                Tokens::DoneInProc(_t) => {
-                    // ...
-                }
-                Tokens::Error(error_token) => {
+                Err(e) => {
                     event!(
                         Level::ERROR,
-                        "Received Error token during login response parsing."
+                        "Failed to receive token during login response parsing. Error: {:?}",
+                        e
                     );
-                    response_model.tds_error = Some(TdsError::new(error_token));
-                    // Decide if you want to break here, or keep looping.
-                }
-                Tokens::FeatureExtAck(_t) => {
-                    _t.acknowledged_features().iter().for_each(|f| {
-                        response_model
-                            .features
-                            .set_acknowledged(f.0, f.1.as_slice());
-                    });
-                }
-                Tokens::FedAuthInfo(fed_auth_info_token) => {
-                    response_model.fed_auth_info = Some(fed_auth_info_token);
-                    break;
-                }
-                Tokens::Info(_t) => {
-                    event!(
-                        Level::INFO,
-                        "Received {:?} during login response parsing.",
-                        token_type
-                    );
-                }
-                Tokens::Sspi(_t) => {
-                    todo!()
-                }
-                _ => {
-                    event!(
-                        Level::ERROR,
-                        "Received unexpected token during login response parsing. \
-                 Check that all tokens from the registry are handled."
-                    );
+                    // if Io error then create the Io error
+                    return Err(crate::error::Error::ProtocolError(
+                        "Failed to receive token during login response parsing.".to_string(),
+                    ));
                 }
             }
         }
-        // If receive_token() returns Err(e), the while let loop ends automatically.
-
-        response_model
+        Ok(response_model)
     }
 }
 
@@ -505,6 +546,7 @@ impl Serializer<'_> {
     fn calculate_login_record_length(&self) -> (i32, i32) {
         let mut login_record_length = FIXED_LOGIN_RECORD_LENGTH;
         login_record_length += self.model.user_input.len_bytes();
+        login_record_length += self.model.transport_context.len_bytes();
         login_record_length += 4; // Feature extension offset size.
 
         // We write the feature extension at the end of the login record. This is not necessary, but makes reading
@@ -652,8 +694,21 @@ impl Serializer<'_> {
                         .await?;
                 }
                 LoginDeferredPayload::ServerName => {
+                    let server_name = match &self.model.transport_context {
+                        TransportContext::Tcp { host, port: _ } => host,
+                        _ => {
+                            unimplemented!("Transport type not supported")
+                        }
+                    };
+                    // let server_name = self
+                    //     .model
+                    //     .user_input
+                    //     .transport
+                    //     .get_servername()
+                    //     .to_string();
+                    info!("Login Server name: {}", server_name);
                     self.payload_writer
-                        .write_string_unicode_async(&self.model.user_input.server_name)
+                        .write_string_unicode_async(server_name.as_str())
                         .await?;
                 }
                 LoginDeferredPayload::FeatureExtOffset => {
@@ -776,7 +831,7 @@ impl Serializer<'_> {
     /// Writes the value of the target sql server to the login packet.
     async fn write_server_name(&mut self) -> TdsResult<()> {
         if self
-            .write_metadata(self.model.user_input.server_name.len() as i16)
+            .write_metadata(self.model.transport_context.get_server_name().len() as i16)
             .await?
         {
             self.deferred_actions_indicator
@@ -927,6 +982,12 @@ trait SizedLoginItem {
     fn len_bytes(&self) -> i32;
 }
 
+impl SizedLoginItem for TransportContext {
+    fn len_bytes(&self) -> i32 {
+        self.get_server_name().len_bytes()
+    }
+}
+
 impl SizedLoginItem for String {
     fn len_bytes(&self) -> i32 {
         (self.len() * 2) as i32
@@ -948,10 +1009,11 @@ impl SizedLoginItem for FeaturesRequest {
 
 impl SizedLoginItem for ClientContext {
     fn len_bytes(&self) -> i32 {
+        // Do not consider the length of the transport context. That
+        // may be overridden by the redirected endpoint.
         let mut client_context_item_length = 0;
         client_context_item_length += self.workstation_id.len_bytes();
         client_context_item_length += self.application_name.len_bytes();
-        client_context_item_length += self.server_name.len_bytes();
         client_context_item_length += self.library_name.len_bytes();
         client_context_item_length += self.language.len_bytes();
         client_context_item_length += self.database.len_bytes();

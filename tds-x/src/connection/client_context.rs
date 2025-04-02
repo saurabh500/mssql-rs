@@ -50,14 +50,13 @@ pub struct ClientContext {
     pub packet_size: i16,
     pub password: String,
     pub pooling: bool,
-    pub port: u16,
     pub replication: bool,
-    pub server_name: String,
     pub tds_authentication_method: TdsAuthenticationMethod,
     pub user_instance: bool,
     pub user_name: String,
     pub workstation_id: String,
     pub access_token: Option<String>,
+    pub transport_context: TransportContext,
 }
 
 impl ClientContext {
@@ -84,14 +83,16 @@ impl ClientContext {
             packet_size: 8000,
             password: "".to_string(),
             pooling: false,
-            port: 1433,
             replication: false,
-            server_name: "".to_string(),
             tds_authentication_method: TdsAuthenticationMethod::Password,
             user_instance: false,
             user_name: "".to_string(),
             workstation_id: "".to_string(), // TODO
             access_token: None,
+            transport_context: TransportContext::Tcp {
+                host: "localhost".to_string(),
+                port: 1433,
+            },
         }
     }
 
@@ -114,5 +115,23 @@ impl ClientContext {
 impl Default for ClientContext {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(PartialEq, Clone)]
+pub enum TransportContext {
+    Tcp { host: String, port: u16 },
+    NamedPipe { pipe_name: String },
+    SharedMemory,
+}
+
+impl TransportContext {
+    pub fn get_server_name(&self) -> &String {
+        match self {
+            TransportContext::Tcp { host, .. } => host,
+            _ => {
+                unimplemented!("Transport is not TCP");
+            }
+        }
     }
 }
