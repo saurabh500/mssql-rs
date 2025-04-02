@@ -18,7 +18,11 @@ command -v unzip >/dev/null 2>&1 || { echo >&2 "install-msrustup requires unzip 
 
 if [ -z "$MSRUSTUP_ACCESS_TOKEN" ] && [ -z "$MSRUSTUP_PAT" ]; then
     if $(command -v azureauth >/dev/null 2>&1); then
-        MSRUSTUP_ACCESS_TOKEN=$(azureauth ado token)
+        # If azureauth is installed, try to get a token using default mode.
+        if ! MSRUSTUP_ACCESS_TOKEN=$(azureauth ado token); then
+            # If the default mode fails, explicitly request devicecode auth.
+            MSRUSTUP_ACCESS_TOKEN=$(azureauth ado token --mode devicecode)
+        fi
     elif $(command -v azureauth.exe >/dev/null 2>&1); then
         MSRUSTUP_ACCESS_TOKEN=$(azureauth.exe ado token)
     else
