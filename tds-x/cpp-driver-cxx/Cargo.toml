@@ -1,0 +1,21 @@
+[package]
+name = "cpp-driver-cxx"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tds-x = {path = "../"}
+cxx = "1.0.153"
+futures = "0.3.31"
+tokio = { version = "1.43.0", features = ["full"] }
+tracing = { version = "0.1.41", features = ["log"] }
+tracing-subscriber = "0.3.19"
+
+
+[build-dependencies]
+tds-x = {path = "../"}
+cxx = "1.0.153"
+cxx-build = "1.0.153"
+
+[lib]
+crate-type = ["staticlib"]

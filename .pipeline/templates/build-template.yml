@@ -40,6 +40,11 @@ steps:
     CARGO_REGISTRIES_ONELAKECLIENT_TOKEN: $(OneLakeClientSecret)
 
 - script: |
+    make
+  displayName: Run the Cpp build.
+  condition: and(succeeded(), ne('${{parameters.osType}}', 'Windows'))
+
+- script: |
     pipenv run cargo build --frozen 2>&1
   displayName: Rust Debug Build
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
@@ -71,7 +76,7 @@ steps:
 - bash: cargo llvm-cov clean --workspace
   displayName: Clean up old coverage files
 
-  
+ 
 - script: |
       cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
   displayName: Run tests

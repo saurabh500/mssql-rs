@@ -142,9 +142,7 @@ where
         }
     }
 
-    pub fn stream_results(
-        self,
-    ) -> impl Stream<Item = TdsResult<QueryResultType<'result>>> + 'result {
+    pub fn stream_results(self) -> QueryResultTypeStream<'result> {
         QueryResultTypeStream::new(self)
     }
 
