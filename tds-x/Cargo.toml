@@ -16,6 +16,7 @@ bytes = "1.9.0"
 tracing = { version = "0.1.41", features = ["log"] }
 bitflags = "2.7.0"
 thiserror = "2.0.12"
+pretty-hex = "0.3"
 
 [features]
 all = ["cli"]

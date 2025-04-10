@@ -151,10 +151,14 @@ impl<'a> PacketReader<'a> {
             "Received packet of size: {:?}",
             new_packet_byte_length
         );
+
+        use pretty_hex::PrettyHex;
+
         event!(
             tracing::Level::DEBUG,
             "Packet content: {:?}",
             &packet_buffer[base_offset_to_write..base_offset_to_write + new_packet_byte_length]
+                .hex_dump()
         );
         Ok(new_packet_byte_length)
     }

@@ -203,7 +203,12 @@ impl<'a> PacketWriter<'a> {
             "Sending packet of size: {:?}",
             packet_length
         );
-        event!(tracing::Level::DEBUG, "Packet content: {:?}", data_slice);
+        use pretty_hex::PrettyHex;
+        event!(
+            tracing::Level::DEBUG,
+            "Packet content: {:?}",
+            data_slice.hex_dump()
+        );
 
         // Invoke the first-packet callback if needed.
         if self.is_first_packet {
