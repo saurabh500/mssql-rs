@@ -66,43 +66,35 @@ impl HandlerFactory<'_> {
     }
 }
 
+// The settings that can be negotiated during and after the login process as well.
 pub(crate) struct NegotiatedSettings {
     pub session_settings: SessionSettings,
-    pub encryption: NegotiatedEncryptionSetting,
-    pub pre_login_has_fedauth_supported: bool,
-}
-
-pub(crate) struct SessionSettings {
     pub database_collation: SqlCollation,
-    pub packet_size: u32,
     pub language: String,
     pub database: String,
-    pub char_set: String,
-    pub user_name: String,
-    supported_features: Vec<Box<dyn Feature>>,
-    mars_enabled: bool,
+    pub char_set: Option<String>,
 }
 
-impl SessionSettings {
-    // Note that this destructively consumes the features list.
-    fn new(context: &ClientContext, features: &mut Vec<Box<dyn Feature>>) -> Self {
-        let mut result = SessionSettings {
-            database_collation: Default::default(),
-            packet_size: context.packet_size as u32,
-            language: context.language.clone(),
-            database: context.database.clone(),
-            char_set: "".to_string(),
-            user_name: context.user_name.clone(),
-            supported_features: vec![],
-            mars_enabled: context.mars_enabled,
-        };
-        result.supported_features.append(features);
-        result
+impl NegotiatedSettings {
+    fn new(
+        session_settings: SessionSettings,
+        database_collation: SqlCollation,
+        language: String,
+        database: String,
+        char_set: Option<String>,
+    ) -> Self {
+        NegotiatedSettings {
+            session_settings,
+            database_collation,
+            language,
+            database,
+            char_set,
+        }
     }
 
     fn update_settings(&mut self, change_properties: &EnvChangeProperties) {
         if change_properties.char_set.is_some() {
-            self.char_set = change_properties.char_set.clone().unwrap();
+            self.char_set = change_properties.char_set.clone();
         }
 
         if change_properties.database_collation.is_some() {
@@ -116,10 +108,38 @@ impl SessionSettings {
         if change_properties.database.is_some() {
             self.database = change_properties.database.clone().unwrap();
         }
+    }
+}
 
-        if change_properties.packet_size > 0 {
-            self.packet_size = change_properties.packet_size as u32;
-        }
+// The settings of the session that are negotiated during the login process. They dont change after login.
+pub(crate) struct SessionSettings {
+    pub packet_size: u32,
+    pub user_name: String,
+    supported_features: Vec<Box<dyn Feature>>,
+    mars_enabled: bool,
+    pub pre_login_has_fedauth_supported: bool,
+    pub encryption: NegotiatedEncryptionSetting,
+}
+
+impl SessionSettings {
+    // Note that this destructively consumes the features list.
+    fn new(
+        context: &ClientContext,
+        pre_login_has_fedauth_supported: bool,
+        packet_size: u32,
+        encryption: NegotiatedEncryptionSetting,
+        features: &mut Vec<Box<dyn Feature>>,
+    ) -> Self {
+        let mut result = SessionSettings {
+            packet_size,
+            user_name: context.user_name.clone(),
+            supported_features: vec![],
+            mars_enabled: context.mars_enabled,
+            pre_login_has_fedauth_supported,
+            encryption,
+        };
+        result.supported_features.append(features);
+        result
     }
 }
 
@@ -185,16 +205,32 @@ impl<'a, 'b, 'n> SessionHandler<'a, 'b, 'n> {
         login_result: &mut LoginResult,
     ) -> NegotiatedSettings {
         let change_props = &login_result.change_properties;
+        let packet_size = change_props.packet_size as u32;
+        let session_settings = SessionSettings::new(
+            self.factory.context,
+            prelogin_result.is_fed_auth_supported,
+            packet_size,
+            prelogin_result.encryption_setting,
+            &mut login_result.supported_features,
+        );
 
-        let mut session_settings =
-            SessionSettings::new(self.factory.context, &mut login_result.supported_features);
-        session_settings.update_settings(change_props);
+        let database_collation = match change_props.database_collation {
+            Some(ref collation) => *collation,
+            None => unreachable!("Database collation shouldn't be empty after login."),
+        };
 
-        NegotiatedSettings {
+        let database = match change_props.database {
+            Some(ref db) => db.clone(),
+            None => unreachable!("Database shouldn't be empty after login."),
+        };
+
+        NegotiatedSettings::new(
             session_settings,
-            encryption: prelogin_result.encryption_setting,
-            pre_login_has_fedauth_supported: prelogin_result.is_fed_auth_supported,
-        }
+            database_collation,
+            "".to_string(),
+            database,
+            change_props.char_set.clone(),
+        )
     }
 
     async fn get_login_result(
