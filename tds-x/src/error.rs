@@ -25,4 +25,7 @@ pub enum Error {
         proc_name: Option<String>,
         line_number: Option<i32>,
     },
+
+    #[error("Usage Error: {0}")]
+    UsageError(String),
 }
