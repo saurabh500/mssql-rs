@@ -1,7 +1,7 @@
 use tracing::info;
 
 use crate::connection::client_context::{ClientContext, TransportContext};
-use crate::connection::tds_connection::TdsConnection;
+use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
 use crate::connection::transport::network_transport;
 use crate::core::TdsResult;
 use crate::error::Error;
@@ -80,6 +80,7 @@ impl TdsConnectionProvider {
                     Ok(negotiated_settings) => Ok(TdsConnection {
                         transport,
                         negotiated_settings,
+                        execution_context: ExecutionContext::new(),
                     }),
                     Err(err) => {
                         transport.close_transport().await?;

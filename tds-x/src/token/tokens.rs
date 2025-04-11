@@ -148,6 +148,7 @@ pub(crate) enum EnvChangeContainer {
     UInt32(EnvChangeTokenValuePairs<u32>),
     RoutingType(EnvChangeTokenValuePairs<Option<RoutingInfo>>),
     BytesType(EnvChangeTokenValuePairs<Vec<u8>>),
+    UInt64(EnvChangeTokenValuePairs<u64>),
 }
 
 impl From<(String, String)> for EnvChangeContainer {
@@ -184,6 +185,12 @@ impl From<(Vec<u8>, Vec<u8>)> for EnvChangeContainer {
     }
 }
 
+impl From<(u64, u64)> for EnvChangeContainer {
+    fn from(value: (u64, u64)) -> Self {
+        EnvChangeContainer::UInt64(EnvChangeTokenValuePairs::<u64>::new(value.0, value.1))
+    }
+}
+
 impl fmt::Debug for EnvChangeContainer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -192,6 +199,7 @@ impl fmt::Debug for EnvChangeContainer {
             EnvChangeContainer::UInt32(value) => write!(f, "UInt32: {:?}", value),
             EnvChangeContainer::RoutingType(value) => write!(f, "RoutingType: {:?}", value),
             EnvChangeContainer::BytesType(value) => write!(f, "ByteType: {:?}", value),
+            EnvChangeContainer::UInt64(value) => write!(f, "UInt64 {:?}", value),
         }
     }
 }

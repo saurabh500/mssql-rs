@@ -1,6 +1,7 @@
 use std::{io::Error, vec};
 
 use async_trait::async_trait;
+use byteorder::{ByteOrder, LittleEndian};
 use tracing::{debug, error, event, trace};
 
 use super::{
@@ -107,11 +108,83 @@ impl<'a> TokenParser<'a> for EnvChangeTokenParser {
                 };
                 EnvChangeContainer::from((old_collation, new_collation))
             }
-            EnvChangeTokenSubType::BeginTransaction => todo!(),
-            EnvChangeTokenSubType::CommitTransaction => todo!(),
-            EnvChangeTokenSubType::RollbackTransaction => todo!(),
-            EnvChangeTokenSubType::EnlistDtcTransaction => todo!(),
-            EnvChangeTokenSubType::DefectTransaction => todo!(),
+            EnvChangeTokenSubType::BeginTransaction
+            | EnvChangeTokenSubType::EnlistDtcTransaction => {
+                let new_value = reader.read_u8_varbyte().await?;
+                let new_descriptor = match new_value.len() {
+                    8 => Ok(LittleEndian::read_u64(&new_value)),
+                    _ => Err(Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid new transaction descriptor",
+                    )),
+                }?;
+                let old_value = reader.read_u8_varbyte().await?;
+                let old_descriptor = match old_value.len() {
+                    0 => Ok(0u64),
+                    _ => Err(Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid old transaction descriptor",
+                    )),
+                }?;
+                EnvChangeContainer::from((old_descriptor, new_descriptor))
+            }
+            EnvChangeTokenSubType::CommitTransaction => {
+                let new_value = reader.read_u8_varbyte().await?;
+                let new_descriptor: u64 = match new_value.len() {
+                    0 => Ok(0u64),
+                    _ => Err(Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid new transaction descriptor",
+                    )),
+                }?;
+                let old_value = reader.read_u8_varbyte().await?;
+                let old_descriptor = match old_value.len() {
+                    8 => Ok(LittleEndian::read_u64(&old_value)),
+                    _ => Err(Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid old transaction descriptor",
+                    )),
+                }?;
+                EnvChangeContainer::from((old_descriptor, new_descriptor))
+            }
+            EnvChangeTokenSubType::RollbackTransaction => {
+                let new_value = reader.read_u8_varbyte().await?;
+                let new_descriptor: u64 = match new_value.len() {
+                    0 => Ok(0u64),
+                    _ => Err(Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid new transaction descriptor",
+                    )),
+                }?;
+                let old_value = reader.read_u8_varbyte().await?;
+                let old_descriptor = match old_value.len() {
+                    8 => Ok(LittleEndian::read_u64(&old_value)),
+                    _ => Err(Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid old transaction descriptor",
+                    )),
+                }?;
+                EnvChangeContainer::from((old_descriptor, new_descriptor))
+            }
+            EnvChangeTokenSubType::DefectTransaction => {
+                let new_value = reader.read_u8_varbyte().await?;
+                let new_descriptor = match new_value.len() {
+                    8 => Ok(LittleEndian::read_u64(&new_value)),
+                    _ => Err(Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid new transaction descriptor",
+                    )),
+                }?;
+                let old_value = reader.read_u8_varbyte().await?;
+                let old_descriptor = match old_value.len() {
+                    0 => Ok(0u64),
+                    _ => Err(Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid old transaction descriptor",
+                    )),
+                }?;
+                EnvChangeContainer::from((old_descriptor, new_descriptor))
+            }
             EnvChangeTokenSubType::DatabaseMirroringPartner => todo!(),
             EnvChangeTokenSubType::PromoteTransaction => todo!(),
             EnvChangeTokenSubType::TransactionManagerAddress => todo!(),

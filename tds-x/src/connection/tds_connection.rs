@@ -4,10 +4,13 @@ use crate::handler::handler_factory::NegotiatedSettings;
 use crate::message::batch::SqlBatch;
 use crate::message::messages::Request;
 use crate::query::result::BatchResult;
+use crate::token::tokens::{EnvChangeContainer, EnvChangeToken, EnvChangeTokenSubType};
+use tracing::{event, Level};
 
 pub struct TdsConnection<'a> {
     pub(crate) transport: Box<NetworkTransport<'a>>,
     pub(crate) negotiated_settings: NegotiatedSettings,
+    pub(crate) execution_context: ExecutionContext,
 }
 
 impl<'connection, 'result> TdsConnection<'connection> {
@@ -15,12 +18,66 @@ impl<'connection, 'result> TdsConnection<'connection> {
     where
         'connection: 'result,
     {
-        let batch = SqlBatch::new(sql_command);
+        let batch = SqlBatch::new(sql_command, &self.execution_context);
 
         batch.serialize(self.transport.as_mut()).await?;
         // let response = SqlQueryResponse::new(tds_connection);
 
         Ok(BatchResult::new(self))
+    }
+}
+
+pub(crate) struct ExecutionContext {
+    pub transaction_descriptor: u64,
+    pub outstanding_requests: u32,
+}
+
+impl ExecutionContext {
+    pub(crate) fn new() -> Self {
+        Self {
+            transaction_descriptor: 0,
+            outstanding_requests: 1,
+        }
+    }
+
+    pub(crate) fn capture_change_property(
+        &mut self,
+        change_token: &EnvChangeToken,
+    ) -> TdsResult<()> {
+        let sub_type = change_token.sub_type;
+
+        match change_token.change_type {
+            EnvChangeContainer::UInt64(u64_change) => match sub_type {
+                EnvChangeTokenSubType::BeginTransaction
+                | EnvChangeTokenSubType::CommitTransaction
+                | EnvChangeTokenSubType::RollbackTransaction
+                | EnvChangeTokenSubType::EnlistDtcTransaction
+                | EnvChangeTokenSubType::DefectTransaction => {
+                    self.transaction_descriptor = *u64_change.new_value();
+                    Ok(())
+                }
+                _ => {
+                    event!(
+                        Level::ERROR,
+                        "Unknown change property type: {:?}",
+                        change_token.change_type
+                    );
+                    Err(crate::error::Error::ProtocolError(
+                        "Unknown change property type".to_string(),
+                    ))
+                }
+            },
+            _ => {
+                event!(
+                    Level::ERROR,
+                    "Unknown change property type: {:?}",
+                    change_token.change_type
+                );
+                Err(crate::error::Error::ProtocolError(
+                    "Unknown change property type".to_string(),
+                ))
+            }
+        }
     }
 }
 
@@ -192,7 +249,7 @@ pub(crate) mod query_processing_driver {
         mut tds_connection: Box<TdsConnection<'_>>,
         sql_command: String,
     ) -> TdsResult<()> {
-        let batch = SqlBatch::new(sql_command);
+        let batch = SqlBatch::new(sql_command, &tds_connection.execution_context);
         batch.serialize(tds_connection.transport.as_mut()).await?;
 
         let packet_reader = tds_connection.transport.get_packet_reader();

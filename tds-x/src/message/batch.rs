@@ -1,5 +1,6 @@
 use super::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
 use super::messages::{PacketType, Request};
+use crate::connection::tds_connection::ExecutionContext;
 use crate::core::TdsResult;
 use crate::read_write::{packet_writer::PacketWriter, reader_writer::NetworkWriter};
 use async_trait::async_trait;
@@ -21,9 +22,14 @@ impl Default for SqlBatch {
 }
 
 impl SqlBatch {
-    pub fn new(sql_command: String) -> Self {
-        let transaction_descriptor_header =
-            TransactionDescriptorHeader::create_non_transaction_header();
+    pub fn new(sql_command: String, execution_context: &ExecutionContext) -> Self {
+        let transaction_descriptor_header = match execution_context.transaction_descriptor {
+            0 => TransactionDescriptorHeader::create_non_transaction_header(),
+            transaction_descriptor => TransactionDescriptorHeader::new(
+                transaction_descriptor,
+                execution_context.outstanding_requests,
+            ),
+        };
         Self {
             sql_command,
             headers: Vec::from([transaction_descriptor_header.into()]),

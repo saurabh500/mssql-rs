@@ -1,4 +1,4 @@
-use crate::connection::tds_connection::TdsConnection;
+use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
 use crate::core::TdsResult;
 use crate::datatypes::decoder::ColumnValues;
 use crate::query::metadata::ColumnMetadata;
@@ -30,79 +30,83 @@ impl QueryResultType<'_> {
         processing_signal: DeferredSignal,
     ) -> TdsResult<QueryResultType<'_>> {
         let mut parent_batch_ref = parent_batch.lock().await;
-        let token = parent_batch_ref.next_token().await?;
-        match token {
-            Tokens::Done(t1) => {
-                println!("Received Done token: {:?}", t1);
-                {
-                    if !t1.status.contains(DoneStatus::MORE) {
-                        parent_batch_ref.received_last = true;
+        loop {
+            let token = parent_batch_ref.next_token().await?;
+            match token {
+                Tokens::Done(t1) => {
+                    println!("Received Done token: {:?}", t1);
+                    {
+                        if !t1.status.contains(DoneStatus::MORE) {
+                            parent_batch_ref.received_last = true;
+                        }
+                        parent_batch_ref.parser_context = ParserContext::None(());
                     }
-                    parent_batch_ref.parser_context = ParserContext::None(());
+                    break Ok(QueryResultType::Update(t1.row_count as i64));
                 }
-                Ok(QueryResultType::Update(t1.row_count as i64))
-            }
-            Tokens::DoneInProc(t1) => {
-                println!("Received DoneInProc token: {:?}", t1);
-                {
-                    if !t1.status.contains(DoneStatus::MORE) {
-                        parent_batch_ref.received_last = true;
+                Tokens::DoneInProc(t1) => {
+                    println!("Received DoneInProc token: {:?}", t1);
+                    {
+                        if !t1.status.contains(DoneStatus::MORE) {
+                            parent_batch_ref.received_last = true;
+                        }
+                        parent_batch_ref.parser_context = ParserContext::None(());
                     }
-                    parent_batch_ref.parser_context = ParserContext::None(());
+                    break Ok(QueryResultType::Update(t1.row_count as i64));
                 }
-                Ok(QueryResultType::Update(t1.row_count as i64))
-            }
-            Tokens::DoneProc(t1) => {
-                println!("Received DoneProc token: {:?}", t1);
-                {
-                    if !t1.status.contains(DoneStatus::MORE) {
-                        parent_batch_ref.received_last = true;
+                Tokens::DoneProc(t1) => {
+                    println!("Received DoneProc token: {:?}", t1);
+                    {
+                        if !t1.status.contains(DoneStatus::MORE) {
+                            parent_batch_ref.received_last = true;
+                        }
+                        parent_batch_ref.parser_context = ParserContext::None(());
                     }
-                    parent_batch_ref.parser_context = ParserContext::None(());
+                    break Ok(QueryResultType::Update(t1.row_count as i64));
                 }
-                Ok(QueryResultType::Update(t1.row_count as i64))
-            }
-            Tokens::EnvChange(t1) => {
-                println!("Received EnvChange token: {:?}", t1);
-                todo!()
-                //QueryResultType::Update(0)
-            }
-            Tokens::Error(t1) => {
-                println!("Received Error token: {:?}", t1);
+                Tokens::EnvChange(t1) => {
+                    println!("Received EnvChange token: {:?}", t1);
+                    parent_batch_ref
+                        .execution_context
+                        .capture_change_property(&t1)?;
+                    continue;
+                }
+                Tokens::Error(t1) => {
+                    println!("Received Error token: {:?}", t1);
 
-                // TODO: Do not panic. Get the error out to the user, and then drain any more data
-                // out and be done. Error tokens can also be raised because the Stored Proc has a
-                // exception being raised. in those cases, the query execution failure means
-                // user
-                error!(?t1);
-                todo!("Received error token: {:?}", t1)
-            }
-            Tokens::FeatureExtAck(t1) => {
-                println!("Received FeatureExtAck token: {:?}", t1);
-                todo!()
-            }
-            Tokens::ColMetadata(column_metadata) => {
-                // Start a QueryResultType::ResultSet here.
-                // ResultSet needs to notify BatchResultType if there's another result
-                // when it sees the Done token.
-                info!(?column_metadata);
-                parent_batch_ref.parser_context =
-                    ParserContext::ColumnMetadata(column_metadata.clone());
-                Ok(QueryResultType::ResultSet(ResultSet::new(
-                    parent_batch.clone(),
-                    processing_signal,
-                    column_metadata,
-                )))
-            }
-            Tokens::Row(row) => {
-                // Just print the first row, to avoid cluttering the output
-                // println!("Received Row Index: {:?}", row_count);
-                panic!("Received row token: {:?}", row);
-                //panic!("Received unexpected token: {:?}", token)
-            }
-            _ => {
-                //println!("Received token: {:?}", token);
-                panic!("Received unexpected token: {:?}", token)
+                    // TODO: Do not panic. Get the error out to the user, and then drain any more data
+                    // out and be done. Error tokens can also be raised because the Stored Proc has a
+                    // exception being raised. in those cases, the query execution failure means
+                    // user
+                    error!(?t1);
+                    todo!("Received error token: {:?}", t1)
+                }
+                Tokens::FeatureExtAck(t1) => {
+                    println!("Received FeatureExtAck token: {:?}", t1);
+                    todo!()
+                }
+                Tokens::ColMetadata(column_metadata) => {
+                    // Start a QueryResultType::ResultSet here.
+                    // ResultSet needs to notify BatchResultType if there's another result
+                    // when it sees the Done token.
+                    info!(?column_metadata);
+                    parent_batch_ref.parser_context =
+                        ParserContext::ColumnMetadata(column_metadata.clone());
+                    break Ok(QueryResultType::ResultSet(ResultSet::new(
+                        parent_batch.clone(),
+                        processing_signal,
+                        column_metadata,
+                    )));
+                }
+                Tokens::Row(row) => {
+                    // Just print the first row, to avoid cluttering the output
+                    // println!("Received Row Index: {:?}", row_count);
+                    panic!("Received row token: {:?}", row);
+                    //panic!("Received unexpected token: {:?}", token)
+                }
+                _ => {
+                    //println!("Received token: {:?}", token);
+                    panic!("Received unexpected token: {:?}", token)
+                }
             }
         }
     }
@@ -113,6 +117,7 @@ pub struct BatchResult<'result> {
     token_stream_reader: TokenStreamReader<'result>,
     parser_context: ParserContext,
     received_last: bool,
+    execution_context: &'result mut ExecutionContext,
 }
 
 impl<'connection, 'result> BatchResult<'result>
@@ -139,6 +144,7 @@ where
             token_stream_reader,
             parser_context: ParserContext::default(),
             received_last: false,
+            execution_context: &mut tds_connection.execution_context,
         }
     }
 
@@ -190,6 +196,9 @@ where
                     if drain_until_first_done || !t1.status.contains(DoneStatus::MORE) {
                         break;
                     }
+                }
+                Tokens::EnvChange(t1) => {
+                    self.execution_context.capture_change_property(&t1).unwrap();
                 }
                 Tokens::ColMetadata(column_metadata) => {
                     info!(?column_metadata);
@@ -366,6 +375,11 @@ impl<'result> ResultSet<'result> {
                     parent_batch_mut.received_last = true;
                 }
                 parent_batch_mut.parser_context = ParserContext::None(());
+            }
+            Tokens::EnvChange(t1) => {
+                parent_batch_mut
+                    .execution_context
+                    .capture_change_property(t1)?;
             }
             Tokens::Error(t1) => {
                 error!(?t1);
