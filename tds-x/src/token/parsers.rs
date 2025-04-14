@@ -6,9 +6,10 @@ use tracing::{debug, error, event, trace};
 
 use super::{
     fed_auth_info::FedAuthInfoToken,
+    tokenitems::ReturnValueStatus,
     tokens::{
         DoneInProcToken, DoneProcToken, DoneToken, EnvChangeToken, ErrorToken, FeatureExtAckToken,
-        ReturnStatusToken, RowToken, Tokens,
+        ReturnStatusToken, ReturnValueToken, RowToken, Tokens,
     },
 };
 use crate::core::TdsResult;
@@ -744,6 +745,63 @@ fn is_null_value_in_column(null_bitmap: &[u8], index: usize) -> bool {
     let byte_index: usize = index / 8;
     let bit_index = index % 8;
     (null_bitmap[byte_index] & (1 << bit_index)) != 0
+}
+
+#[derive(Debug)]
+pub(crate) struct ReturnValueTokenParser<T>
+where
+    T: for<'a> SqlTypeDecode<'a>,
+{
+    decoder: T,
+}
+
+impl<T: for<'a> SqlTypeDecode<'a> + Default> Default for ReturnValueTokenParser<T> {
+    fn default() -> Self {
+        Self {
+            decoder: T::default(),
+        }
+    }
+}
+
+#[async_trait]
+impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for ReturnValueTokenParser<T> {
+    async fn parse(
+        &self,
+        reader: &'a mut PacketReader,
+        _context: &ParserContext,
+    ) -> TdsResult<Tokens> {
+        let param_ordinal = reader.read_uint16().await?;
+        let param_name_length = reader.read_byte().await?;
+        let param_name = reader
+            .read_unicode_with_byte_length((param_name_length * 2) as usize)
+            .await?;
+        let status_byte = reader.read_byte().await?;
+        let status = ReturnValueStatus::from(status_byte);
+        let user_type = reader.read_uint32().await?;
+        let flags = reader.read_uint16().await?;
+        let tds_type = reader.read_byte().await?;
+        let type_info = read_type_info(reader, TdsDataType::try_from(tds_type)?).await?;
+        // TODO: Crypto metadata
+
+        let column_metadata = ColumnMetadata {
+            user_type,
+            flags,
+            data_type: TdsDataType::try_from(tds_type)?,
+            type_info,
+            column_name: param_name.clone(),
+            multi_part_name: None,
+        };
+
+        let value = self.decoder.decode(reader, &column_metadata).await?;
+
+        Ok(Tokens::from(ReturnValueToken {
+            param_ordinal,
+            param_name,
+            value,
+            column_metadata: Box::new(column_metadata),
+            status,
+        }))
+    }
 }
 
 #[async_trait]

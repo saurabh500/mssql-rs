@@ -4,7 +4,7 @@ use crate::{read_write::packet_reader::PacketReader, token::tokens::SqlCollation
 use std::fmt::format;
 
 // TdsDataType is a list of all the datatypes in TDS protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 #[repr(u8)]
 pub enum TdsDataType {
     Void = 0x1F,
@@ -53,6 +53,44 @@ pub enum TdsDataType {
 
     #[default]
     None = 0x00,
+}
+
+impl TdsDataType {
+    pub fn get_meta_type_name(&self) -> &'static str {
+        match self {
+            TdsDataType::Int8 => "bigint",
+            TdsDataType::Flt8 => "float",
+            TdsDataType::Flt4 => "real",
+            TdsDataType::BigBinary => "binary",
+            TdsDataType::BigVarBinary => "varbinary",
+            TdsDataType::Image => "image",
+            TdsDataType::Bit => "bit",
+            TdsDataType::Int1 => "tinyint",
+            TdsDataType::Int2 => "smallint",
+            TdsDataType::Int4 => "int",
+            TdsDataType::BigChar => "char",
+            TdsDataType::BigVarChar => "varchar",
+            TdsDataType::Text => "text",
+            TdsDataType::NChar => "nchar",
+            TdsDataType::NVarChar => "nvarchar",
+            TdsDataType::NText => "ntext",
+            TdsDataType::DecimalN => "decimal",
+            TdsDataType::Xml => "xml",
+            TdsDataType::DateTime => "datetime",
+            TdsDataType::DateTim4 => "smalldatetime",
+            TdsDataType::Money => "money",
+            TdsDataType::Money4 => "smallmoney",
+            TdsDataType::Guid => "uniqueidentifier",
+            TdsDataType::SsVariant => "sql_variant",
+            TdsDataType::Udt => "udt",
+            TdsDataType::Json => "json",
+            TdsDataType::DateN => "date",
+            TdsDataType::TimeN => "time",
+            TdsDataType::DateTime2N => "datetime2",
+            TdsDataType::DateTimeOffsetN => "datetimeoffset",
+            _ => unreachable!("Unsupported TDS data type: {:?} for meta type name", self),
+        }
+    }
 }
 
 impl TryFrom<u8> for TdsDataType {

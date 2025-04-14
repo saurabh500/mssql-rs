@@ -3,6 +3,7 @@ use std::fmt::{self, Debug};
 use super::{
     fed_auth_info::{FedAuthInfoToken, SspiToken},
     login_ack::LoginAckToken,
+    tokenitems::ReturnValueStatus,
 };
 use crate::{
     datatypes::decoder::ColumnValues,
@@ -86,6 +87,7 @@ pub(crate) enum Tokens {
     NbcRow(NbcRowToken),
     Order(OrderToken),
     ReturnStatus(ReturnStatusToken),
+    ReturnValue(ReturnValueToken),
 }
 
 macro_rules! impl_from_token {
@@ -113,6 +115,7 @@ impl_from_token!(ColMetadataToken, ColMetadata);
 impl_from_token!(NbcRowToken, NbcRow);
 impl_from_token!(OrderToken, Order);
 impl_from_token!(ReturnStatusToken, ReturnStatus);
+impl_from_token!(ReturnValueToken, ReturnValue);
 
 impl Token for Tokens {
     fn token_type(&self) -> TokenType {
@@ -132,6 +135,7 @@ impl Token for Tokens {
             Tokens::NbcRow(token) => token.token_type(),
             Tokens::Order(token) => token.token_type(),
             Tokens::ReturnStatus(token) => token.token_type(),
+            Tokens::ReturnValue(token) => token.token_type(),
         }
     }
 }
@@ -707,6 +711,21 @@ pub(crate) struct ReturnStatusToken {
 }
 
 impl Token for ReturnStatusToken {
+    fn token_type(&self) -> TokenType {
+        TokenType::ReturnValue
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ReturnValueToken {
+    pub param_ordinal: u16,
+    pub param_name: String,
+    pub value: ColumnValues,
+    pub column_metadata: Box<ColumnMetadata>,
+    pub status: ReturnValueStatus,
+}
+
+impl Token for ReturnValueToken {
     fn token_type(&self) -> TokenType {
         TokenType::ReturnValue
     }

@@ -7,7 +7,7 @@ use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
     EnvChangeTokenParser, ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser,
     InfoTokenParser, LoginAckTokenParser, NbcRowTokenParser, OrderTokenParser,
-    ReturnStatusTokenParser, RowTokenParser, TokenParser,
+    ReturnStatusTokenParser, ReturnValueTokenParser, RowTokenParser, TokenParser,
 };
 use crate::token::tokens::{ColMetadataToken, TokenType, Tokens};
 use tracing::event;
@@ -48,16 +48,22 @@ impl TokenStreamReader<'_> {
     }
 
     pub(crate) async fn receive_token(&mut self, context: &ParserContext) -> TdsResult<Tokens> {
+        // Read the token type so that we can get the right parser for this token.
+        // The first byte of the token is the token type.
         let token_type_byte = self.packet_reader.read_byte().await?;
         let token_type = TokenType::from(token_type_byte);
+
+        // We should always have a parser for the token type.
+        // If we don't, then we have a bug in the code.
         if !self.parser_registry.has_parser(&token_type) {
-            unimplemented!("No parser implemented for token type: {:?}", token_type);
+            unreachable!("No parser implemented for token type: {:?}. This is an internal implementation error.", token_type);
         }
 
         let parser = self
             .parser_registry
             .get_parser(&token_type)
             .expect("Parser not found");
+
         event!(
             tracing::Level::DEBUG,
             "Parsing token type: {:?}",
@@ -89,6 +95,9 @@ impl TokenStreamReader<'_> {
                 parser.parse(&mut self.packet_reader, context).await
             }
             TokenParsers::NbcRow(parser) => parser.parse(&mut self.packet_reader, context).await,
+            TokenParsers::ReturnValue(parser) => {
+                parser.parse(&mut self.packet_reader, context).await
+            }
         }
     }
 }
@@ -152,6 +161,10 @@ impl Default for GenericTokenParserRegistry {
             TokenType::NbcRow,
             TokenParsers::from(NbcRowTokenParser::default()),
         );
+        internal_registry.insert(
+            TokenType::ReturnValue,
+            TokenParsers::from(ReturnValueTokenParser::default()),
+        );
         Self {
             parsers: internal_registry,
         }
@@ -185,6 +198,7 @@ pub enum TokenParsers {
     Order(OrderTokenParser),
     ReturnStatus(ReturnStatusTokenParser),
     NbcRow(NbcRowTokenParser<GenericDecoder>),
+    ReturnValue(ReturnValueTokenParser<GenericDecoder>),
 }
 
 macro_rules! impl_from_token_parser {
@@ -213,5 +227,6 @@ impl_from_token_parser!(
     RowTokenParser<GenericDecoder> => Row,
     OrderTokenParser => Order,
     ReturnStatusTokenParser => ReturnStatus,
-    NbcRowTokenParser<GenericDecoder> => NbcRow
+    NbcRowTokenParser<GenericDecoder> => NbcRow,
+    ReturnValueTokenParser<GenericDecoder> => ReturnValue
 );
