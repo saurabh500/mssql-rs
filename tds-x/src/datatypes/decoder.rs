@@ -29,17 +29,17 @@ pub enum ColumnValues {
     SmallInt(i16),
     Int(i32),
     BigInt(i64),
-    Real(Option<f32>),
-    Float(Option<f64>),
-    Decimal(Option<DecimalParts>),
-    Numeric(Option<DecimalParts>),
-    Bit(Option<bool>),
-    String(Option<SqlString>),
-    DateTime(Option<(i32, u32)>),
-    IntN(Option<i64>),
+    Real(f32),
+    Float(f64),
+    Decimal(DecimalParts),
+    Numeric(DecimalParts),
+    Bit(bool),
+    String(SqlString),
+    DateTime((i32, u32)),
+    IntN(i64),
     Bytes(Vec<u8>),
     Null,
-    Uuid(Option<Uuid>),
+    Uuid(Uuid),
 }
 
 impl From<u8> for ColumnValues {
@@ -158,23 +158,29 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
             }
             TdsDataType::Flt4 => {
                 let value = reader.read_float32().await?;
-                ColumnValues::Real(Some(value))
+                ColumnValues::Real(value)
             }
             TdsDataType::Flt8 => {
                 let value = reader.read_float64().await?;
-                ColumnValues::Float(Some(value))
+                ColumnValues::Float(value)
             }
             TdsDataType::DecimalN => {
                 let value = self.read_decimal(reader, metadata).await?;
-                ColumnValues::Decimal(value)
+                match value {
+                    Some(value) => ColumnValues::Decimal(value),
+                    None => ColumnValues::Null,
+                }
             }
             TdsDataType::NumericN => {
                 let value = self.read_decimal(reader, metadata).await?;
-                ColumnValues::Numeric(value)
+                match value {
+                    Some(value) => ColumnValues::Numeric(value),
+                    None => ColumnValues::Null,
+                }
             }
             TdsDataType::Bit => {
                 let value = reader.read_byte().await?;
-                ColumnValues::Bit(Some(value == 1))
+                ColumnValues::Bit(value == 1)
             }
             TdsDataType::NChar
             | TdsDataType::NVarChar
@@ -184,12 +190,15 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
             | TdsDataType::VarChar => self.string_decoder.decode(reader, metadata).await?,
             TdsDataType::DateTime => {
                 let value = self.read_datetime(reader).await?;
-                ColumnValues::DateTime(Some(value))
+                ColumnValues::DateTime(value)
             }
             TdsDataType::IntN => {
                 let byte_len = reader.read_byte().await?;
                 let intn_value = self.read_intn(reader, byte_len).await?;
-                ColumnValues::IntN(intn_value)
+                match intn_value {
+                    Some(value) => ColumnValues::IntN(value),
+                    None => ColumnValues::Null,
+                }
             }
             TdsDataType::BigBinary | TdsDataType::BigVarBinary => {
                 let length = reader.read_uint16().await?;
@@ -201,9 +210,9 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                 let byte_len = reader.read_byte().await?;
                 if byte_len > 0 {
                     let value = reader.read_byte().await?;
-                    ColumnValues::Bit(Some(value == 1))
+                    ColumnValues::Bit(value == 1)
                 } else {
-                    ColumnValues::Bit(None)
+                    ColumnValues::Null
                 }
             }
             TdsDataType::Guid => {
@@ -212,39 +221,37 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                     let mut bytes = vec![0u8; length as usize];
                     reader.read_bytes(&mut bytes).await?;
                     let unique_id = uuid::Uuid::from_slice_le(&bytes).unwrap();
-                    ColumnValues::Uuid(Some(unique_id))
+                    ColumnValues::Uuid(unique_id)
                 } else {
-                    ColumnValues::Uuid(None)
+                    ColumnValues::Null
                 }
             }
             TdsDataType::FltN => {
                 // This is variable length float, hence the length needs to be read first
                 let length = reader.read_byte().await?;
                 if length == 0 {
-                    return Ok(ColumnValues::Float(None));
+                    return Ok(ColumnValues::Null);
                 }
                 if length == 4 {
                     let value = reader.read_float32().await?;
-                    ColumnValues::Real(Some(value))
+                    ColumnValues::Real(value)
                 } else {
                     let value = reader.read_float64().await?;
-                    ColumnValues::Float(Some(value))
+                    ColumnValues::Float(value)
                 }
             }
             TdsDataType::DateTimN => {
                 let length = reader.read_byte().await?;
                 // If length is 0, then it is NULL
                 if length == 0 {
-                    return Ok(ColumnValues::DateTime(None));
+                    return Ok(ColumnValues::Null);
                 } else if length == 4 {
                     // SmallDateTime
                     let (days, minutes) = self.read_small_datetime(reader).await?;
-                    return Ok(ColumnValues::DateTime(Some((days as i32, minutes as u32))));
+                    return Ok(ColumnValues::DateTime((days as i32, minutes as u32)));
                 } else {
                     // DateTime
-                    return Ok(ColumnValues::DateTime(Some(
-                        self.read_datetime(reader).await?,
-                    )));
+                    return Ok(ColumnValues::DateTime(self.read_datetime(reader).await?));
                 }
             }
             _ => unimplemented!("Data type not implemented: {:?}", metadata.data_type),
@@ -282,7 +289,7 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
             let long_len = reader.read_int64().await? as u64;
 
             if long_len as usize == Self::SQL_PLP_NULL {
-                return Ok(ColumnValues::String(None));
+                return Ok(ColumnValues::Null);
             } else {
                 let mut plp_buffer = vec![0u8; long_len as usize];
                 if long_len as usize == Self::SQL_PLP_UNKNOWNLEN {
@@ -304,12 +311,12 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
                     metadata.type_info.get_collation().unwrap(),
                     encoding_type,
                 );
-                Ok(ColumnValues::String(Some(sql_string)))
+                Ok(ColumnValues::String(sql_string))
             }
         } else {
             let length = reader.read_uint16().await? as usize;
             if length == 0xFFFF {
-                return Ok(ColumnValues::String(None));
+                return Ok(ColumnValues::Null);
             } else {
                 let mut buffer = vec![0u8; length];
                 reader.read_bytes(&mut buffer).await?;
@@ -320,7 +327,7 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
                     encoding_type,
                 );
 
-                Ok(ColumnValues::String(Some(sql_string)))
+                Ok(ColumnValues::String(sql_string))
             }
         }
     }

@@ -74,26 +74,26 @@ impl Encoder for GenericEncode {
                 packet_writer.write_byte_async(tds_type as u8).await?;
                 let optional_string = match value {
                     ColumnValues::String(value) => value,
+                    ColumnValues::Null => {
+                        // Write 0 len to signify a null value.
+                        unimplemented!("Null value for NVarChar type");
+                    }
                     _ => {
                         return Err(crate::error::Error::UsageError(
                             "Expected a string value for NVarChar type".to_string(),
                         ));
                     }
                 };
-                if let Some(string_value) = optional_string {
-                    // Sql String stores the bytes in UTF-16 format. We can write the length of the bytes array as is
-                    packet_writer
-                        .write_i16_async(string_value.bytes.len() as i16)
-                        .await?;
-                    packet_writer.write_u32_async(collation.info).await?;
-                    packet_writer.write_byte_async(collation.sort_id).await?;
-                    // The UTF-8 value of the string is being persisted.
-                    // TODO: Convert to UTF-16 or better, write the byte array as is.
-                    packet_writer.write_async(&string_value.bytes).await?;
-                } else {
-                    // Handle null value
-                    unimplemented!("Null value for NVarChar type");
-                }
+
+                // Sql String stores the bytes in UTF-16 format. We can write the length of the bytes array as is
+                packet_writer
+                    .write_i16_async(optional_string.bytes.len() as i16)
+                    .await?;
+                packet_writer.write_u32_async(collation.info).await?;
+                packet_writer.write_byte_async(collation.sort_id).await?;
+                // The UTF-8 value of the string is being persisted.
+                // TODO: Convert to UTF-16 or better, write the byte array as is.
+                packet_writer.write_async(&optional_string.bytes).await?;
             }
             _ => {
                 // Handle other data types here

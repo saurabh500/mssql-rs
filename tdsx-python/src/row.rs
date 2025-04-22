@@ -75,41 +75,26 @@ impl PyRow {
             let col_val = col_val.map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
             let py_value: PyObject = match col_val.get_value() {
                 ColumnValues::Int(i) => handle_py_result!(i.into_pyobject(py)),
-                ColumnValues::String(s) => match s {
-                    Some(string) => handle_py_result!(string.to_utf8_string().into_pyobject(py)),
-                    None => py.None(),
-                },
+                ColumnValues::String(s) => handle_py_result!(s.to_utf8_string().into_pyobject(py)),
                 ColumnValues::Float(f) => handle_py_result!(f.into_pyobject(py)),
                 ColumnValues::TinyInt(ti) => handle_py_result!(ti.into_pyobject(py)),
                 ColumnValues::SmallInt(si) => handle_py_result!(si.into_pyobject(py)),
                 ColumnValues::BigInt(bi) => handle_py_result!(bi.into_pyobject(py)),
-                ColumnValues::Real(re) => match re {
-                    Some(real) => handle_py_result!(real.into_pyobject(py)),
-                    None => py.None(),
-                },
+                ColumnValues::Real(re) => handle_py_result!(re.into_pyobject(py)),
                 ColumnValues::Decimal(_decimal_parts) => todo!(),
                 ColumnValues::Numeric(_decimal_parts) => todo!(),
-                ColumnValues::Bit(bit) => match bit {
-                    Some(bit) => {
-                        let bitpy = bit.into_pyobject(py);
-                        match bitpy {
-                            Ok(bit) => bit.to_owned().into(),
-                            Err(e) => return Err(PyRuntimeError::new_err(e.to_string())),
-                        }
+                ColumnValues::Bit(bit) => {
+                    let bitpy = bit.into_pyobject(py);
+                    match bitpy {
+                        Ok(bit) => bit.to_owned().into(),
+                        Err(e) => return Err(PyRuntimeError::new_err(e.to_string())),
                     }
-                    None => py.None(),
-                },
+                }
                 ColumnValues::DateTime(dt) => handle_py_result!((dt).into_pyobject(py)),
-                ColumnValues::IntN(intn) => match intn {
-                    Some(intn) => handle_py_result!(intn.into_pyobject(py)),
-                    None => py.None(),
-                },
+                ColumnValues::IntN(intn) => handle_py_result!(intn.into_pyobject(py)),
                 ColumnValues::Bytes(items) => handle_py_result!(items.into_pyobject(py)),
                 ColumnValues::Null => py.None(),
-                ColumnValues::Uuid(uuid) => match uuid {
-                    Some(uuid) => handle_py_result!(uuid.to_string().into_pyobject(py)),
-                    None => py.None(),
-                },
+                ColumnValues::Uuid(uuid) => handle_py_result!(uuid.to_string().into_pyobject(py)),
             };
             results.push(py_value);
         }
