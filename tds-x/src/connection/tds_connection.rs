@@ -5,6 +5,9 @@ use crate::message::batch::SqlBatch;
 use crate::message::messages::Request;
 use crate::message::parameters::rpc_parameters::RpcParameter;
 use crate::message::rpc::{RpcType, SqlRpc};
+use crate::message::transaction_management::{
+    TransactionManagementRequest, TransactionManagementType,
+};
 use crate::query::result::BatchResult;
 use crate::token::tokens::{EnvChangeContainer, EnvChangeToken, EnvChangeTokenSubType};
 use tracing::{event, Level};
@@ -48,6 +51,17 @@ impl<'connection, 'result> TdsConnection<'connection> {
         // Need to enhance this.
         rpc.serialize(self.transport.as_mut()).await?;
         Ok(())
+    }
+
+    pub async fn transaction(
+        &'result mut self,
+        transaction_params: TransactionManagementType,
+    ) -> TdsResult<BatchResult<'result>> {
+        let transaction =
+            TransactionManagementRequest::new(transaction_params, &self.execution_context);
+        transaction.serialize(self.transport.as_mut()).await?;
+
+        Ok(BatchResult::new(self))
     }
 }
 
