@@ -45,7 +45,7 @@ steps:
   condition: and(succeeded(), ne('${{parameters.osType}}', 'Windows'))
 
 - script: |
-    pipenv run cargo build --frozen 2>&1
+    cargo build --frozen 2>&1
   displayName: Rust Debug Build
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
 

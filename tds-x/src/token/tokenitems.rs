@@ -1,6 +1,6 @@
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReturnValueStatus {
+pub enum ReturnValueStatus {
     OutputParam = 0x01,
     Udf = 0x02,
 }

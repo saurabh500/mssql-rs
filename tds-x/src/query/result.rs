@@ -6,7 +6,8 @@ use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::token_stream::{
     GenericTokenParserRegistry, ParserContext, TokenStreamReader,
 };
-use crate::token::tokens::{ColMetadataToken, DoneStatus, Tokens};
+use crate::token::tokenitems::ReturnValueStatus;
+use crate::token::tokens::{ColMetadataToken, DoneStatus, ReturnValueToken, Tokens};
 use futures::executor::block_on;
 use futures::task::AtomicWaker;
 use futures::Stream;
@@ -162,9 +163,20 @@ where
             .await
     }
 
-    #[instrument(skip(self))]
-    fn drain_stream(&mut self, drain_until_first_done: bool) {
-        while let Ok(token) = block_on(self.token_stream_reader.receive_token(&self.parser_context))
+    pub async fn close(&mut self) -> TdsResult<Option<Vec<ReturnValue>>> {
+        // Drain the stream until the first done token.
+        self.close_internal(false).await
+    }
+
+    async fn close_internal(
+        &mut self,
+        drain_until_first_done: bool,
+    ) -> TdsResult<Option<Vec<ReturnValue>>> {
+        let mut return_values: Vec<ReturnValue> = Vec::new();
+        while let Ok(token) = self
+            .token_stream_reader
+            .receive_token(&self.parser_context)
+            .await
         {
             match token {
                 Tokens::Done(t1) => {
@@ -204,10 +216,26 @@ where
                     info!(?column_metadata);
                     self.parser_context = ParserContext::ColumnMetadata(column_metadata.clone());
                 }
+                Tokens::ReturnValue(return_value_token) => {
+                    let return_value = return_value_token.into();
+                    return_values.push(return_value);
+                }
                 _ => {
                     info!(?token);
                 }
             }
+        }
+        if return_values.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(return_values))
+        }
+    }
+
+    #[instrument(skip(self))]
+    fn drain_stream(&mut self, drain_until_first_done: bool) {
+        if let Err(e) = block_on(self.close_internal(drain_until_first_done)) {
+            error!("Error while closing: {:?}", e);
         }
     }
 }
@@ -256,6 +284,16 @@ impl<'result> QueryResultTypeStream<'result> {
             panic!("Executing future not available.");
         }
     }
+
+    // Closes the stream and drains any remaining tokens.
+    pub async fn close(&mut self) -> TdsResult<()> {
+        let mut batch_result = self.batch_result.lock().await;
+        if !batch_result.received_last {
+            batch_result.close_internal(false).await?;
+            batch_result.received_last = true;
+        }
+        Ok(())
+    }
 }
 
 impl<'result> Stream for QueryResultTypeStream<'result> {
@@ -296,11 +334,7 @@ impl<'result> Stream for QueryResultTypeStream<'result> {
 
 impl Drop for QueryResultTypeStream<'_> {
     fn drop(&mut self) {
-        let mut batch_result = self.batch_result.try_lock().unwrap();
-        if !batch_result.received_last {
-            batch_result.drain_stream(false);
-            batch_result.received_last = true;
-        }
+        block_on(self.close()).unwrap();
     }
 }
 
@@ -396,16 +430,23 @@ impl<'result> ResultSet<'result> {
 
         token_result
     }
+
+    // Closes the result set by reading up to the first done token which marks the end of the batch.
+    pub async fn close(&mut self) -> TdsResult<()> {
+        trace!("Closing ResultSet.");
+        let mut parent_batch = self.parent_batch.lock().await;
+        if !self.received_last_row {
+            parent_batch.close_internal(true).await?;
+            self.received_last_row = true;
+        }
+        Ok(())
+    }
 }
 
 impl Drop for ResultSet<'_> {
     fn drop(&mut self) {
         trace!("ResultSet::drop");
-        let mut parent_batch = self.parent_batch.try_lock().unwrap();
-        if !self.received_last_row {
-            parent_batch.drain_stream(true);
-            self.received_last_row = true;
-        }
+        block_on(self.close()).unwrap();
     }
 }
 
@@ -583,5 +624,25 @@ impl Drop for DeferredSignal {
         assert!(self.flag.load(Ordering::Acquire));
         self.flag.store(false, Ordering::Release);
         self.atomic_waker.wake();
+    }
+}
+
+pub struct ReturnValue {
+    pub param_ordinal: u16,
+    pub param_name: String,
+    pub value: ColumnValues,
+    pub column_metadata: Box<ColumnMetadata>,
+    pub status: ReturnValueStatus,
+}
+
+impl From<ReturnValueToken> for ReturnValue {
+    fn from(token: ReturnValueToken) -> Self {
+        ReturnValue {
+            param_ordinal: token.param_ordinal,
+            param_name: token.param_name,
+            value: token.value,
+            column_metadata: token.column_metadata,
+            status: token.status,
+        }
     }
 }

@@ -23,7 +23,7 @@ pub(crate) trait SqlTypeDecode<'a> {
     ) -> TdsResult<ColumnValues>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ColumnValues {
     TinyInt(u8),
     SmallInt(i16),
@@ -36,7 +36,6 @@ pub enum ColumnValues {
     Bit(bool),
     String(SqlString),
     DateTime((i32, u32)),
-    IntN(i64),
     Bytes(Vec<u8>),
     Null,
     Uuid(Uuid),
@@ -114,13 +113,13 @@ impl GenericDecoder {
         &self,
         reader: &mut PacketReader<'_>,
         byte_len: u8,
-    ) -> TdsResult<Option<i64>> {
-        let value: Option<i64> = match byte_len {
-            1 => Some(reader.read_byte().await? as i64),
-            2 => Some(reader.read_int16().await? as i64),
-            4 => Some(reader.read_int32().await? as i64),
-            8 => Some(reader.read_int64().await?),
-            0 => None,
+    ) -> TdsResult<ColumnValues> {
+        let value: ColumnValues = match byte_len {
+            1 => ColumnValues::TinyInt(reader.read_byte().await?), // Some(reader.read_byte().await? as i64),
+            2 => ColumnValues::SmallInt(reader.read_int16().await?), // Some(reader.read_int16().await? as i64),
+            4 => ColumnValues::Int(reader.read_int32().await?),
+            8 => ColumnValues::BigInt(reader.read_int64().await?),
+            0 => ColumnValues::Null,
             _ => {
                 return Err(crate::error::Error::from(Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -194,11 +193,7 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
             }
             TdsDataType::IntN => {
                 let byte_len = reader.read_byte().await?;
-                let intn_value = self.read_intn(reader, byte_len).await?;
-                match intn_value {
-                    Some(value) => ColumnValues::IntN(value),
-                    None => ColumnValues::Null,
-                }
+                self.read_intn(reader, byte_len).await?
             }
             TdsDataType::BigBinary | TdsDataType::BigVarBinary => {
                 let length = reader.read_uint16().await?;
@@ -333,6 +328,7 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
     }
 }
 
+#[derive(PartialEq)]
 pub struct DecimalParts {
     pub is_positive: bool,
     pub scale: u8,

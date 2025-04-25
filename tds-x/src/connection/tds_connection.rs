@@ -32,11 +32,11 @@ impl<'connection, 'result> TdsConnection<'connection> {
     }
 
     pub async fn execute_stored_procedure<'b>(
-        &mut self,
+        &'result mut self,
         sql: String,
         positional_parameters: Option<Vec<RpcParameter<'b>>>,
         named_parameters: Option<Vec<RpcParameter<'b>>>,
-    ) -> TdsResult<()> {
+    ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
         let rpc = SqlRpc::new(
@@ -47,10 +47,8 @@ impl<'connection, 'result> TdsConnection<'connection> {
             &self.execution_context,
         );
 
-        // TODO: We have to wrap this in a batch result or maybe something else.
-        // Need to enhance this.
         rpc.serialize(self.transport.as_mut()).await?;
-        Ok(())
+        Ok(BatchResult::new(self))
     }
 
     pub async fn transaction(

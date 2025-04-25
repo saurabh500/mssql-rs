@@ -12,6 +12,7 @@ use tds_x::{
     query::result::{BatchResult, QueryResultType},
 };
 
+#[allow(dead_code)]
 pub(crate) enum ExpectedQueryResultType {
     Update(u64),
     Result(u64),

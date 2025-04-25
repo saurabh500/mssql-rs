@@ -11,6 +11,7 @@ pub enum EncodingType {
     LcidBased,
 }
 
+#[derive(PartialEq)]
 pub struct SqlString {
     pub bytes: Vec<u8>,
     pub collation: SqlCollation,

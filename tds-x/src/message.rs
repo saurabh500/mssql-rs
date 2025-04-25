@@ -1,5 +1,5 @@
 pub(crate) mod batch;
-pub(crate) mod parameters;
+pub mod parameters;
 
 mod features;
 pub(crate) mod headers;
