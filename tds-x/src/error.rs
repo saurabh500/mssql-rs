@@ -18,9 +18,9 @@ pub enum Error {
             server_name.clone().unwrap(), proc_name.clone().unwrap(), line_number.unwrap())]
     SqlServerError {
         message: String,
-        state: String,
+        state: u8,
         class: i32,
-        number: i32,
+        number: u32,
         server_name: Option<String>,
         proc_name: Option<String>,
         line_number: Option<i32>,

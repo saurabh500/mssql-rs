@@ -16,7 +16,10 @@ bytes = "1.9.0"
 tracing = { version = "0.1.41", features = ["log"] }
 bitflags = "2.7.0"
 thiserror = "2.0.12"
+# For pretty printing of the packets in the traces.
 pretty-hex = "0.3"
+# Added for setting the keep alives on the socket.
+socket2 = { version = "0.4", features = ["all"] }
 
 [features]
 all = ["cli"]
@@ -50,3 +53,4 @@ dotenv = "0.15"
 azure_identity = "0.22.0"
 azure_core = "0.22.0"
 tracing-subscriber = "0.3.19"
+ctor = "0.1"

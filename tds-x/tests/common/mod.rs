@@ -1,5 +1,6 @@
 #[cfg(test)]
 use std::env;
+use std::sync::Once;
 
 use dotenv::dotenv;
 use futures::StreamExt;
@@ -11,6 +12,34 @@ use tds_x::{
     core::EncryptionSetting,
     query::result::{BatchResult, QueryResultType},
 };
+use tracing::Level;
+use tracing_subscriber::FmtSubscriber;
+
+// This module will have a lot of allow(dead_code). This is because some of the capabilities are being used only in
+// some tests. Each test leads to a new binary being created. So if a test is not using parts of Common module, the functions in common
+// will end up being analyzed as dead code. So we will allow dead code in this module.
+
+#[allow(dead_code)]
+static INIT: Once = Once::new();
+
+#[allow(dead_code)]
+pub fn init_tracing() {
+    dotenv().ok();
+    let enable_trace = env::var("ENABLE_TRACE")
+        .unwrap_or_else(|_| "false".to_string())
+        .parse::<bool>()
+        .unwrap();
+    if enable_trace {
+        INIT.call_once(|| {
+            // Initialize the global tracing subscriber
+            let subscriber = FmtSubscriber::builder()
+                .with_max_level(Level::TRACE)
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("Setting default subscriber failed");
+        });
+    }
+}
 
 #[allow(dead_code)]
 pub(crate) enum ExpectedQueryResultType {

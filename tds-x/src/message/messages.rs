@@ -75,7 +75,7 @@ pub(crate) trait Request<'a> {
 }
 
 pub(crate) struct TdsError {
-    error_token: ErrorToken,
+    pub(crate) error_token: ErrorToken,
 }
 
 impl TdsError {

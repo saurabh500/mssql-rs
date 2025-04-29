@@ -1,5 +1,6 @@
 use crate::connection::client_context::{ClientContext, TransportContext};
 use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
+use crate::error::Error;
 use crate::message::login::{
     EnvChangeProperties, Feature, FeaturesRequest, LoginRequest, LoginRequestModel, LoginResponse,
     LoginResponseModel, LoginResponseStatus,
@@ -405,8 +406,22 @@ impl LoginHandler<'_, '_> {
         requested_features: FeaturesRequest,
     ) -> TdsResult<LoginResponseModel> {
         let response = self.factory.create_login_response();
-        response
+        let response_model = response
             .deserialize(reader_writer, requested_features)
-            .await
+            .await?;
+        if response_model.tds_error.is_some() {
+            let tds_error = response_model.tds_error.unwrap();
+            Err(Error::SqlServerError {
+                message: tds_error.get_message(),
+                state: tds_error.error_token.state,
+                class: tds_error.error_token.severity as i32,
+                number: tds_error.error_token.number,
+                server_name: None,
+                proc_name: None,
+                line_number: None,
+            })
+        } else {
+            Ok(response_model)
+        }
     }
 }

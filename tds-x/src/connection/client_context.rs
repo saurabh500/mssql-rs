@@ -1,6 +1,7 @@
 use crate::core::EncryptionSetting;
 use crate::message::login_options::{ApplicationIntent, TdsVersion};
 
+#[derive(PartialEq, Copy, Clone)]
 pub enum IPAddressPreference {
     IPv4First = 0,
     IPv6First = 1,

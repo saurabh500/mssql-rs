@@ -1,4 +1,4 @@
-use crate::connection::client_context::{ClientContext, TransportContext};
+use crate::connection::client_context::{ClientContext, IPAddressPreference, TransportContext};
 use crate::connection::transport::ssl_handler::{SslHandler, Tds7StreamRecoverer};
 use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::handler::handler_factory::SessionSettings;
@@ -11,10 +11,12 @@ use async_trait::async_trait;
 use futures::lock::Mutex;
 use std::io::Error;
 use std::io::ErrorKind::UnexpectedEof;
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tracing::info;
+use tokio::net::{self, TcpStream};
+use tracing::{info, trace};
 
 pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
 
@@ -25,7 +27,74 @@ pub(crate) async fn create_transport<'a>(
     let stream = match &transport_context {
         TransportContext::Tcp { host, port } => {
             info!("Connecting to TCP transport: {}:{}", host, port);
-            TcpStream::connect((host.as_str(), *port)).await?
+
+            // This will cause the DNS resolution of the addresses.
+            let mut socket_addresses = (host.as_str(), *port).to_socket_addrs()?;
+
+            let mut last_error = None;
+            let mut tcp_stream = None;
+
+            // Sort the address list based on the IP address preference
+            match context.ipaddress_preference {
+                IPAddressPreference::UsePlatformDefault => {
+                    // Do nothing. Use whatever the OS returns.
+                    trace!("Using platform default IP address preference");
+                }
+                IPAddressPreference::IPv4First => {
+                    let mut addresses: Vec<_> = socket_addresses.collect();
+                    // Sort IPv4 addresses first
+                    addresses.sort_by_key(|a| a.is_ipv6());
+                    socket_addresses = addresses.into_iter();
+                    trace!("IPv4 addresses first");
+                }
+                IPAddressPreference::IPv6First => {
+                    let mut addresses: Vec<_> = socket_addresses.collect();
+                    // Sort IPv6 addresses first
+                    addresses.sort_by_key(|b| std::cmp::Reverse(b.is_ipv6()));
+                    socket_addresses = addresses.into_iter();
+                    trace!("IPv6 addresses first");
+                }
+            }
+
+            info!("Socket addresses: {:?}", socket_addresses);
+
+            for socket_address in socket_addresses {
+                let socket = if socket_address.is_ipv6() {
+                    net::TcpSocket::new_v6()?
+                } else {
+                    net::TcpSocket::new_v4()?
+                };
+
+                // The defaults for the SQL Server clients are at
+                // https://learn.microsoft.com/en-us/sql/tools/configuration-manager/client-protocols-tcp-ip-properties-protocol-tab?view=sql-server-ver16
+                let keep_alive_settings = socket2::TcpKeepalive::new()
+                    .with_time(Duration::from_millis(30_000))
+                    .with_interval(Duration::from_millis(1_000));
+
+                let socket2_socket = socket2::SockRef::from(&socket);
+                socket2_socket.set_tcp_keepalive(&keep_alive_settings)?;
+                socket2_socket.set_nodelay(true)?;
+
+                tcp_stream = match socket.connect(socket_address).await {
+                    Ok(stream) => {
+                        info!("Connected to TCP transport: {}:{}", host, port);
+                        Some(stream)
+                    }
+                    Err(e) => {
+                        last_error = Some(e);
+                        None
+                    }
+                };
+                if tcp_stream.is_some() {
+                    break;
+                }
+            }
+
+            // We don't have a valid TCP stream, so we need to return the last error.
+            if tcp_stream.is_none() {
+                return Err(crate::error::Error::from(last_error.unwrap()));
+            }
+            tcp_stream.unwrap()
         }
         _ => unimplemented!("Only TCP transport is supported"),
     };

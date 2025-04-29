@@ -9,6 +9,13 @@ mod query_result_reads {
     use futures::StreamExt;
     use tds_x::query::result::QueryResultType;
 
+    use crate::common::init_tracing;
+
+    #[ctor::ctor]
+    fn init() {
+        init_tracing();
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_select_1() {
         let expected = [ExpectedQueryResultType::Result(1)];
