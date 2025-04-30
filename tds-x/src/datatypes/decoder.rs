@@ -301,11 +301,7 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
                     chunk_len = reader.read_uint32().await? as usize;
                 }
 
-                let sql_string = SqlString::new(
-                    plp_buffer,
-                    metadata.type_info.get_collation().unwrap(),
-                    encoding_type,
-                );
+                let sql_string = SqlString::new(plp_buffer, encoding_type);
                 Ok(ColumnValues::String(sql_string))
             }
         } else {
@@ -316,11 +312,7 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
                 let mut buffer = vec![0u8; length];
                 reader.read_bytes(&mut buffer).await?;
 
-                let sql_string = SqlString::new(
-                    buffer,
-                    metadata.type_info.get_collation().unwrap(),
-                    encoding_type,
-                );
+                let sql_string = SqlString::new(buffer, encoding_type);
 
                 Ok(ColumnValues::String(sql_string))
             }

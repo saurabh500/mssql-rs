@@ -9,11 +9,11 @@ mod rpc_results {
         core::TdsResult,
         datatypes::{decoder::ColumnValues, sqldatatypes::TdsDataType},
         message::parameters::rpc_parameters::{RpcParameter, StatusFlags},
-        query::result::QueryResultType,
+        query::result::{BatchResult, QueryResultType},
         token::tokenitems::ReturnValueStatus,
     };
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn test_stored_proc() {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
@@ -45,7 +45,7 @@ mod rpc_results {
         let param2 = RpcParameter::new(
             Some("@OutputInt".to_string()),
             StatusFlags::BY_REF_VALUE, // Output parameter
-            &TdsDataType::IntN,
+            &TdsDataType::Int4,
             false,
             &ColumnValues::Null, // This is an output parameter. Set to null.
         );
@@ -71,6 +71,114 @@ mod rpc_results {
         assert_eq!(returned_parameter.param_name, "@OutputInt".to_string());
         assert_eq!(returned_parameter.value, ColumnValues::Int(45612));
         assert_eq!(returned_parameter.status, ReturnValueStatus::OutputParam);
+    }
+
+    #[tokio::test]
+    async fn test_sp_execute_sql_multi_param() {
+        let query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
+        let database_id_param = RpcParameter::new(
+            Some("@database_id".to_string()),
+            StatusFlags::NONE,
+            &TdsDataType::IntN,
+            false,
+            &ColumnValues::Int(1),
+        );
+
+        let compat_level_param = RpcParameter::new(
+            Some("@compat_level".to_string()),
+            StatusFlags::NONE,
+            &TdsDataType::IntN,
+            false,
+            &ColumnValues::Int(100),
+        );
+
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+
+        let named_parameters = vec![database_id_param, compat_level_param];
+
+        let batch_result = connection
+            .execute_sql_rpc(query.to_string(), named_parameters)
+            .await
+            .unwrap();
+
+        let scalar_value = get_scalar_value(batch_result).await.unwrap();
+
+        if let Some(ColumnValues::String(value)) = scalar_value {
+            assert_eq!(value.to_utf8_string(), "master".to_string());
+        } else {
+            unreachable!("Expected a string value");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sp_execute_sql_single_param() {
+        let query = "select name from sys.databases where database_id = @database_id";
+        let database_id_param = RpcParameter::new(
+            Some("@database_id".to_string()),
+            StatusFlags::NONE,
+            &TdsDataType::IntN,
+            false,
+            &ColumnValues::Int(1),
+        );
+
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+
+        let named_parameters = vec![database_id_param];
+
+        let batch_result = connection
+            .execute_sql_rpc(query.to_string(), named_parameters)
+            .await
+            .unwrap();
+
+        let scalar_value = get_scalar_value(batch_result).await.unwrap();
+
+        if let Some(ColumnValues::String(value)) = scalar_value {
+            assert_eq!(value.to_utf8_string(), "master".to_string());
+        } else {
+            unreachable!("Expected a string value");
+        }
+    }
+
+    // Returns the first column of the first row of the result set, and drains the resultset.
+    async fn get_scalar_value<'a, 'n>(
+        batch_result: BatchResult<'n>,
+    ) -> TdsResult<Option<ColumnValues>>
+    where
+        'n: 'a,
+    {
+        let mut result = None;
+        let mut query_result_stream = batch_result.stream_results();
+
+        while let Some(query_result_type) = query_result_stream.next().await {
+            let qrt = query_result_type.unwrap();
+            match qrt {
+                QueryResultType::Update(_) => {
+                    // Do Nothing. Skip;
+                }
+                QueryResultType::ResultSet(rs) => {
+                    let mut rowstream = rs.into_row_stream().unwrap();
+                    while let Some(row) = rowstream.next().await {
+                        let mut unwrapped_row = row.unwrap();
+
+                        if let Some(cell) = unwrapped_row.next().await {
+                            result = Some(cell.unwrap().get_value());
+                        }
+                        if result.is_some() {
+                            break;
+                        }
+                    }
+                    rowstream.close().await?;
+                }
+            }
+            if result.is_some() {
+                query_result_stream.close().await?;
+                break;
+            }
+        }
+
+        Ok(result)
     }
 
     // Executes the query and reads till the end of the result.

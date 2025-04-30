@@ -6,7 +6,10 @@ use crate::{
     core::TdsResult, read_write::packet_writer::PacketWriter, token::tokens::SqlCollation,
 };
 
-use super::{decoder::ColumnValues, sqldatatypes::TdsDataType};
+use super::{
+    decoder::ColumnValues,
+    sqldatatypes::{FixedLengthTypes, TdsDataType},
+};
 
 #[async_trait]
 pub(crate) trait Encoder {
@@ -49,17 +52,57 @@ impl Encoder for GenericEncode {
         value: &ColumnValues,
         collation: &SqlCollation,
     ) -> TdsResult<()> {
+        // We may have received a nullable type to be sent. In this case, rely on figuring out the right length from the column values.
         match tds_type {
             TdsDataType::IntN => {
-                let size = 4;
+                let size = match value {
+                    ColumnValues::Int(_) => FixedLengthTypes::Int4.get_len(),
+                    ColumnValues::BigInt(_) => FixedLengthTypes::Int8.get_len(),
+                    ColumnValues::SmallInt(_) => FixedLengthTypes::Int2.get_len(),
+                    ColumnValues::TinyInt(_) => FixedLengthTypes::Int1.get_len(),
+                    ColumnValues::Null => {
+                        // Write 0 len to signify a null value.
+                        0
+                    }
+                    _ => {
+                        return Err(crate::error::Error::UsageError(
+                            "Expected an integer value for IntN type".to_string(),
+                        ));
+                    }
+                };
+
                 packet_writer.write_byte_async(tds_type as u8).await?;
-                packet_writer.write_byte_async(size).await?;
+                packet_writer.write_byte_async(size as u8).await?;
 
                 if let ColumnValues::Null = value {
                     // Write 0 len to signify a null value.
                     packet_writer.write_byte_async(0x00).await?;
                 } else {
-                    packet_writer.write_byte_async(size).await?;
+                    packet_writer.write_byte_async(size as u8).await?;
+
+                    if let ColumnValues::Int(value) = value {
+                        packet_writer.write_i32_async(*value).await?;
+                    } else {
+                        return Err(crate::error::Error::UsageError(
+                            "Expected an integer value for IntN type".to_string(),
+                        ));
+                    }
+                }
+            }
+            TdsDataType::Int4 => {
+                // TODO: We need to re-think NULLS and leverage only the nullable types for sending the data.
+                // This is an interesting case, where the OUT params will not have a value, and we have to send a null instead.
+                // However from NULL type or the NULLABLE type, we will not be able to figure out the right length.
+                packet_writer
+                    .write_byte_async(TdsDataType::IntN as u8)
+                    .await?;
+                packet_writer.write_byte_async(4).await?;
+
+                if let ColumnValues::Null = value {
+                    // Write 0 len to signify a null value.
+                    packet_writer.write_byte_async(0x00).await?;
+                } else {
+                    packet_writer.write_byte_async(4).await?;
 
                     if let ColumnValues::Int(value) = value {
                         packet_writer.write_i32_async(*value).await?;
@@ -73,10 +116,10 @@ impl Encoder for GenericEncode {
             TdsDataType::NVarChar => {
                 packet_writer.write_byte_async(tds_type as u8).await?;
                 let optional_string = match value {
-                    ColumnValues::String(value) => value,
+                    ColumnValues::String(value) => Some(value),
                     ColumnValues::Null => {
                         // Write 0 len to signify a null value.
-                        unimplemented!("Null value for NVarChar type");
+                        None
                     }
                     _ => {
                         return Err(crate::error::Error::UsageError(
@@ -85,15 +128,25 @@ impl Encoder for GenericEncode {
                     }
                 };
 
-                // Sql String stores the bytes in UTF-16 format. We can write the length of the bytes array as is
-                packet_writer
-                    .write_i16_async(optional_string.bytes.len() as i16)
-                    .await?;
-                packet_writer.write_u32_async(collation.info).await?;
-                packet_writer.write_byte_async(collation.sort_id).await?;
+                match optional_string {
+                    Some(string) => {
+                        packet_writer
+                            .write_i16_async(string.bytes.len() as i16)
+                            .await?;
+                        packet_writer.write_u32_async(collation.info).await?;
+                        packet_writer.write_byte_async(collation.sort_id).await?;
+                        packet_writer
+                            .write_i16_async(string.bytes.len() as i16)
+                            .await?;
+                        packet_writer.write_async(&string.bytes).await?;
+                    }
+                    None => {
+                        // Write 0 len to signify a null value.
+                        packet_writer.write_i16_async(0).await?;
+                    }
+                }
                 // The UTF-8 value of the string is being persisted.
                 // TODO: Convert to UTF-16 or better, write the byte array as is.
-                packet_writer.write_async(&optional_string.bytes).await?;
             }
             _ => {
                 // Handle other data types here

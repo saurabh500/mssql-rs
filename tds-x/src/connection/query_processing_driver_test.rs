@@ -112,9 +112,7 @@ pub(crate) mod query_processing_driver {
         let database_collation = connection.negotiated_settings.database_collation;
 
         let rpc = SqlRpc::new(
-            RpcType::Named {
-                name: stored_proc_name,
-            },
+            RpcType::Named(stored_proc_name),
             None,
             Some(named_parameters),
             &database_collation,

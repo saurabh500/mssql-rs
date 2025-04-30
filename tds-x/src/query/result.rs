@@ -508,6 +508,10 @@ impl<'result> RowStream<'result> {
             }
         }
     }
+
+    pub async fn close(&mut self) -> TdsResult<()> {
+        self.result_set.lock().await.close().await
+    }
 }
 
 impl Stream for RowStream<'_> {

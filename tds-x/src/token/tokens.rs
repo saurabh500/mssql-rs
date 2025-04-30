@@ -299,7 +299,7 @@ impl SqlCollation {
             panic!("Collation must be exactly 5 bytes long or none.");
         }
 
-        let info = u32::from_le_bytes([
+        let info = u32::from_ne_bytes([
             collation_bytes[0],
             collation_bytes[1],
             collation_bytes[2],

@@ -8,21 +8,19 @@ use super::sqldatatypes::{is_unicode_type, TypeInfoVariant};
 pub enum EncodingType {
     Utf8,
     Utf16,
-    LcidBased,
+    LcidBased(SqlCollation),
 }
 
 #[derive(PartialEq)]
 pub struct SqlString {
     pub bytes: Vec<u8>,
-    pub collation: SqlCollation,
     encoding_type: EncodingType,
 }
 
 impl SqlString {
-    pub fn new(bytes: Vec<u8>, collation: SqlCollation, encoding_type: EncodingType) -> Self {
+    pub fn new(bytes: Vec<u8>, encoding_type: EncodingType) -> Self {
         SqlString {
             bytes,
-            collation,
             encoding_type,
         }
     }
@@ -41,7 +39,7 @@ impl SqlString {
 
                 String::from_utf16(&u16_buffer).unwrap()
             }
-            EncodingType::LcidBased => {
+            EncodingType::LcidBased(_) => {
                 unimplemented!("LCID based encoding not implemented");
             }
         }
@@ -50,20 +48,20 @@ impl SqlString {
 
 impl Debug for SqlString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.encoding_type != EncodingType::LcidBased {
-            write!(f, "{:?}", self.to_utf8_string())
-        } else {
+        if let EncodingType::LcidBased(_) = self.encoding_type {
             write!(f, "{:?}", self.bytes)
+        } else {
+            write!(f, "{:?}", self.to_utf8_string())
         }
     }
 }
 
 impl Display for SqlString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.encoding_type != EncodingType::LcidBased {
-            write!(f, "{}", self.to_utf8_string())
-        } else {
+        if let EncodingType::LcidBased(_) = self.encoding_type {
             write!(f, "{:?}", self.bytes)
+        } else {
+            write!(f, "{}", self.to_utf8_string())
         }
     }
 }
@@ -80,6 +78,6 @@ pub fn get_encoding_type(metadata: &ColumnMetadata) -> EncodingType {
     } else if collation.is_some() && collation.unwrap().utf8() {
         EncodingType::Utf8
     } else {
-        EncodingType::LcidBased
+        EncodingType::LcidBased(collation.unwrap())
     }
 }

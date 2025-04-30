@@ -29,19 +29,14 @@ pub(crate) enum ProcOptions {
 
 /// Enum representing the different types of RPCs
 /// that can be sent to the server.
-pub(crate) enum RpcType<'a> {
-    Named {
-        name: String,
-    },
-    ProcId {
-        proc: RpcProcs,
-        positional_parameters: Option<Vec<RpcParameter<'a>>>,
-    },
+pub(crate) enum RpcType {
+    Named(String),
+    ProcId(RpcProcs),
 }
 
 impl<'a> SqlRpc<'a> {
     pub fn new(
-        rpc_type: RpcType<'a>,
+        rpc_type: RpcType,
         positional_parameters: Option<Vec<RpcParameter<'a>>>,
         named_parameters: Option<Vec<RpcParameter<'a>>>,
         db_collation: &'a SqlCollation,
@@ -98,24 +93,21 @@ impl<'a> SqlRpc<'a> {
 
     async fn write_proc(&self, packet_writer: &mut PacketWriter<'_>) -> TdsResult<()> {
         match &self.rpc_type {
-            RpcType::Named { name: proc_name } => {
+            RpcType::Named(stored_proc_name) => {
                 // Write the procedure name to the packet writer
                 packet_writer
-                    .write_i16_async((proc_name.len() as u8).into())
+                    .write_i16_async((stored_proc_name.len() as u8).into())
                     .await?;
                 packet_writer
-                    .write_string_unicode_async(proc_name.as_str())
+                    .write_string_unicode_async(stored_proc_name.as_str())
                     .await?;
             }
-            RpcType::ProcId {
-                proc: proc_id,
-                positional_parameters: _,
-            } => {
+            RpcType::ProcId(proc) => {
                 // Write the procedure ID to the packet writer
                 packet_writer.write_u16_async(PROC_ID_SWITCH).await?;
                 // Write the int32 value for the procedure ID
                 packet_writer
-                    .write_i16_async(proc_id.get_u8_value().into())
+                    .write_i16_async(proc.get_u8_value().into())
                     .await?;
             }
         }
@@ -128,7 +120,7 @@ impl<'a> SqlRpc<'a> {
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum RpcProcs {
+pub enum RpcProcs {
     Cursor = 1,
     CursorOpen = 2,
     CursorPrepare = 3,
@@ -154,7 +146,7 @@ impl RpcProcs {
 
 pub(crate) struct SqlRpc<'a> {
     pub headers: Vec<TdsHeaders>,
-    pub rpc_type: RpcType<'a>,
+    pub rpc_type: RpcType,
     pub positional_parameters: Option<Vec<RpcParameter<'a>>>,
     pub named_parameters: Option<Vec<RpcParameter<'a>>>,
     pub db_collation: &'a SqlCollation,
