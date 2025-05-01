@@ -25,6 +25,14 @@ impl SqlString {
         }
     }
 
+    pub fn from_utf8_string(string: String) -> Self {
+        let utf16_bytes = string
+            .encode_utf16()
+            .flat_map(|f| f.to_le_bytes())
+            .collect::<Vec<u8>>();
+        SqlString::new(utf16_bytes, EncodingType::Utf16)
+    }
+
     pub fn to_utf8_string(&self) -> String {
         match self.encoding_type {
             // TODO: Investigation needed. When creating a Utf8 strings from the vector, the string is weirdly encoded.

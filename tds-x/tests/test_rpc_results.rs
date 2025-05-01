@@ -141,6 +141,42 @@ mod rpc_results {
         }
     }
 
+    #[tokio::test]
+    async fn test_sp_prepare_and_unprepare_multi_param() {
+        let query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
+        let database_id_param = RpcParameter::new(
+            Some("@database_id".to_string()),
+            StatusFlags::NONE,
+            &TdsDataType::IntN,
+            false,
+            &ColumnValues::Int(1),
+        );
+
+        let compat_level_param = RpcParameter::new(
+            Some("@compat_level".to_string()),
+            StatusFlags::NONE,
+            &TdsDataType::IntN,
+            false,
+            &ColumnValues::Int(100),
+        );
+
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+
+        let named_parameters = vec![database_id_param, compat_level_param];
+
+        let handle = connection
+            .execute_prepare(query.to_string(), named_parameters)
+            .await
+            .unwrap();
+
+        assert!(handle > 0);
+
+        // This should simply complete and be successful.
+        let result = connection.execute_unprepare(handle).await;
+        assert!(result.is_ok());
+    }
+
     // Returns the first column of the first row of the result set, and drains the resultset.
     async fn get_scalar_value<'a, 'n>(
         batch_result: BatchResult<'n>,
