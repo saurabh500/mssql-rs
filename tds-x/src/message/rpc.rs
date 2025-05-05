@@ -37,8 +37,8 @@ pub(crate) enum RpcType {
 impl<'a> SqlRpc<'a> {
     pub fn new(
         rpc_type: RpcType,
-        positional_parameters: Option<Vec<RpcParameter<'a>>>,
-        named_parameters: Option<Vec<RpcParameter<'a>>>,
+        positional_parameters: Option<&'a Vec<RpcParameter<'a>>>,
+        named_parameters: Option<&'a Vec<RpcParameter<'a>>>,
         db_collation: &'a SqlCollation,
         execution_context: &ExecutionContext,
     ) -> Self {
@@ -55,7 +55,12 @@ impl<'a> SqlRpc<'a> {
             positional_parameters,
             named_parameters,
             db_collation,
+            proc_options: ProcOptions::NoMetadata,
         }
+    }
+
+    pub fn set_proc_options(&mut self, proc_options: ProcOptions) {
+        self.proc_options = proc_options;
     }
 
     async fn write_positional_parameters(
@@ -66,7 +71,7 @@ impl<'a> SqlRpc<'a> {
         // Example: Write a placeholder implementation
         if let Some(positional_parameters) = &self.positional_parameters {
             let encoder = GenericEncode::new();
-            for parameter in positional_parameters {
+            for parameter in *positional_parameters {
                 parameter
                     .serialize(packet_writer, self.db_collation, true, &encoder)
                     .await?;
@@ -82,7 +87,7 @@ impl<'a> SqlRpc<'a> {
         // Example: Write a placeholder implementation
         if let Some(parameters) = &self.named_parameters {
             let encoder = GenericEncode::new();
-            for parameter in parameters {
+            for parameter in *parameters {
                 parameter
                     .serialize(packet_writer, self.db_collation, false, &encoder)
                     .await?;
@@ -112,7 +117,7 @@ impl<'a> SqlRpc<'a> {
             }
         }
         packet_writer
-            .write_i16_async(ProcOptions::NoMetadata as i16)
+            .write_i16_async(self.proc_options as i16)
             .await?;
         Ok(())
     }
@@ -147,9 +152,10 @@ impl RpcProcs {
 pub(crate) struct SqlRpc<'a> {
     pub headers: Vec<TdsHeaders>,
     pub rpc_type: RpcType,
-    pub positional_parameters: Option<Vec<RpcParameter<'a>>>,
-    pub named_parameters: Option<Vec<RpcParameter<'a>>>,
+    pub positional_parameters: Option<&'a Vec<RpcParameter<'a>>>,
+    pub named_parameters: Option<&'a Vec<RpcParameter<'a>>>,
     pub db_collation: &'a SqlCollation,
+    pub proc_options: ProcOptions,
 }
 
 #[async_trait]

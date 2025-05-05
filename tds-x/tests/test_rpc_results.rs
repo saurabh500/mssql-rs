@@ -2,7 +2,7 @@
 mod common;
 
 mod rpc_results {
-    use crate::common::{begin_connection, create_context};
+    use crate::common::{begin_connection, create_context, init_tracing};
     use futures::StreamExt;
     use tds_x::{
         connection::tds_connection::TdsConnection,
@@ -12,6 +12,11 @@ mod rpc_results {
         query::result::{BatchResult, QueryResultType},
         token::tokenitems::ReturnValueStatus,
     };
+
+    #[ctor::ctor]
+    fn init() {
+        init_tracing();
+    }
 
     #[tokio::test]
     async fn test_stored_proc() {
@@ -58,7 +63,7 @@ mod rpc_results {
             .execute_stored_procedure(
                 stored_procedure_query.to_string(),
                 None,
-                Some(named_parameters),
+                Some(&named_parameters),
             )
             .await
             .unwrap();
@@ -98,7 +103,7 @@ mod rpc_results {
         let named_parameters = vec![database_id_param, compat_level_param];
 
         let batch_result = connection
-            .execute_sql_rpc(query.to_string(), named_parameters)
+            .execute_sp_executesql(query.to_string(), named_parameters)
             .await
             .unwrap();
 
@@ -128,7 +133,7 @@ mod rpc_results {
         let named_parameters = vec![database_id_param];
 
         let batch_result = connection
-            .execute_sql_rpc(query.to_string(), named_parameters)
+            .execute_sp_executesql(query.to_string(), named_parameters)
             .await
             .unwrap();
 
@@ -166,14 +171,75 @@ mod rpc_results {
         let named_parameters = vec![database_id_param, compat_level_param];
 
         let handle = connection
-            .execute_prepare(query.to_string(), named_parameters)
+            .execute_sp_prepare(query.to_string(), named_parameters)
             .await
             .unwrap();
 
         assert!(handle > 0);
 
         // This should simply complete and be successful.
-        let result = connection.execute_unprepare(handle).await;
+        let result = connection.execute_sp_unprepare(handle).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_sp_prepareexec_and_unprepare_multi_param() {
+        let query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
+        let database_id_param = RpcParameter::new(
+            Some("@database_id".to_string()),
+            StatusFlags::NONE,
+            &TdsDataType::IntN,
+            false,
+            &ColumnValues::Int(1),
+        );
+
+        let compat_level_param = RpcParameter::new(
+            Some("@compat_level".to_string()),
+            StatusFlags::NONE,
+            &TdsDataType::IntN,
+            false,
+            &ColumnValues::Int(100),
+        );
+
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+
+        let named_parameters = vec![database_id_param, compat_level_param];
+
+        let mut batch_result = connection
+            .execute_sp_prepexec(query.to_string(), &named_parameters)
+            .await
+            .unwrap();
+
+        // TODD: WE need to check for data being returned as well, but right now the BatchResult ownership is transferred to
+        // the iterators when retrieving data. Hence we cannot use the close() APis and iterators in tandem right now.
+        // Once Batch result is enhanced we need to enhance this test as well.
+        let out_params = batch_result.close().await.unwrap();
+        assert!(out_params.is_some());
+        let out_params = out_params.unwrap();
+        assert_eq!(out_params.len(), 1);
+
+        let handle_param = out_params.first().unwrap();
+        let retrieved_handle = if let ColumnValues::Int(handle) = handle_param.value {
+            assert!(handle > 0);
+            handle
+        } else {
+            unreachable!("Expected a handle value");
+        };
+        assert_eq!(handle_param.status, ReturnValueStatus::OutputParam);
+
+        let second_result = connection
+            .execute_sp_execute(retrieved_handle, None, Some(&named_parameters))
+            .await
+            .unwrap();
+        let scalar_value = get_scalar_value(second_result).await.unwrap();
+        if let Some(ColumnValues::String(value)) = scalar_value {
+            assert_eq!(value.to_utf8_string(), "master".to_string());
+        } else {
+            unreachable!("Expected a string value");
+        }
+
+        let result = connection.execute_sp_unprepare(retrieved_handle).await;
         assert!(result.is_ok());
     }
 

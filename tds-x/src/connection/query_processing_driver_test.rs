@@ -1,6 +1,7 @@
 #[cfg(test)]
 #[cfg(not(target_os = "macos"))]
 pub(crate) mod query_processing_driver {
+    use core::panic;
     use dotenv::dotenv;
     use std::env;
     use tracing::Level;
@@ -13,12 +14,12 @@ pub(crate) mod query_processing_driver {
         },
         connection_provider::tds_connection_provider::TdsConnectionProvider,
         core::{EncryptionSetting, TdsResult},
-        datatypes::{decoder::ColumnValues, sqldatatypes::TdsDataType},
+        datatypes::{decoder::ColumnValues, sql_string::SqlString, sqldatatypes::TdsDataType},
         message::{
             batch::SqlBatch,
             messages::Request,
-            parameters::rpc_parameters::{RpcParameter, StatusFlags},
-            rpc::{RpcType, SqlRpc},
+            parameters::rpc_parameters::{build_parameter_list_string, RpcParameter, StatusFlags},
+            rpc::{RpcProcs, RpcType, SqlRpc},
         },
         read_write::{
             reader_writer::NetworkReader,
@@ -88,7 +89,7 @@ pub(crate) mod query_processing_driver {
         let param2 = RpcParameter::new(
             Some("@OutputInt".to_string()),
             StatusFlags::BY_REF_VALUE, // Output parameter
-            &TdsDataType::IntN,
+            &TdsDataType::Int4,
             false,
             &ColumnValues::Null, // This is an output parameter. Set to null.
         );
@@ -104,6 +105,117 @@ pub(crate) mod query_processing_driver {
         .unwrap();
     }
 
+    #[tokio::test]
+    async fn test_rpc_no_panic() {
+        dotenv().ok();
+
+        let enable_trace = env::var("ENABLE_TRACE")
+            .unwrap_or_else(|_| "false".to_string())
+            .parse::<bool>()
+            .unwrap();
+
+        if enable_trace {
+            let subscriber = FmtSubscriber::builder()
+                .with_max_level(Level::TRACE)
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("Setting default subscriber failed");
+            // Setup the TDS connection.
+        }
+
+        let transport = TransportContext::Tcp {
+            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
+            port: env::var("DB_PORT")
+                .expect("DB_PORT environment variable not set")
+                .parse::<u16>()
+                .expect("DB_PORT must be a valid u16"),
+        };
+        let context = ClientContext {
+            transport_context: transport,
+            user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
+            password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            encryption: EncryptionSetting::On,
+            // database: "drivers".to_string(),
+            ..Default::default()
+        };
+
+        let mut connection = create_connection(&context).await.unwrap();
+        let query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
+        let database_id_param = RpcParameter::new(
+            Some("@database_id".to_string()),
+            StatusFlags::NONE,
+            &TdsDataType::IntN,
+            false,
+            &ColumnValues::Int(1),
+        );
+
+        let compat_level_param = RpcParameter::new(
+            Some("@compat_level".to_string()),
+            StatusFlags::NONE,
+            &TdsDataType::IntN,
+            false,
+            &ColumnValues::Int(100),
+        );
+
+        let named_parameters = vec![database_id_param, compat_level_param];
+
+        // Use the connection to execute SqlRpc with the stored procedure name and parameters.
+        let database_collation = connection.negotiated_settings.database_collation;
+
+        let sql_statement_value =
+            ColumnValues::String(SqlString::from_utf8_string(query.to_string()));
+
+        // Create the parameter list for sp_execute_sql
+        let statement_parameter = RpcParameter::new(
+            None,
+            StatusFlags::NONE,
+            &TdsDataType::NVarChar,
+            false,
+            &sql_statement_value,
+        );
+
+        // Build the comma separated list of parameters
+        let mut params_list_as_string = String::new();
+
+        build_parameter_list_string(&named_parameters, &mut params_list_as_string);
+
+        print!("Params list: {}", params_list_as_string);
+        let params_as_sql_string =
+            ColumnValues::String(SqlString::from_utf8_string(params_list_as_string));
+
+        let params_parameter = RpcParameter::new(
+            None,
+            StatusFlags::NONE,
+            &TdsDataType::NVarChar,
+            false,
+            &params_as_sql_string,
+        );
+
+        let handle_parameter = RpcParameter::new(
+            None,
+            StatusFlags::BY_REF_VALUE,
+            &TdsDataType::Int4,
+            false,
+            &ColumnValues::Null,
+        );
+
+        let positional_parameters_list =
+            vec![handle_parameter, params_parameter, statement_parameter];
+        let positional_parameters = Some(&positional_parameters_list);
+
+        // Build the RPC request.
+        let rpc = SqlRpc::new(
+            RpcType::ProcId(RpcProcs::PrepExec),
+            positional_parameters,
+            Some(&named_parameters),
+            &database_collation,
+            &connection.execution_context,
+        );
+
+        rpc.serialize(connection.transport.as_mut()).await.unwrap();
+        iterate_over_rpc_tokens(&mut connection).await;
+    }
+
     async fn submit_stored_procedure(
         connection: &mut Box<TdsConnection<'_>>,
         stored_proc_name: String,
@@ -114,13 +226,18 @@ pub(crate) mod query_processing_driver {
         let rpc = SqlRpc::new(
             RpcType::Named(stored_proc_name),
             None,
-            Some(named_parameters),
+            Some(&named_parameters),
             &database_collation,
             &connection.execution_context,
         );
 
         rpc.serialize(connection.transport.as_mut()).await?;
 
+        iterate_over_rpc_tokens(connection).await;
+        Ok(())
+    }
+
+    async fn iterate_over_rpc_tokens(connection: &mut Box<TdsConnection<'_>>) {
         // Now read the results.
         let packet_reader = connection.transport.get_packet_reader();
         let mut token_stream_reader = TokenStreamReader::new(
@@ -155,6 +272,7 @@ pub(crate) mod query_processing_driver {
                 }
                 Tokens::Error(t1) => {
                     println!("Received Error token: {:?}", t1);
+                    panic!("Error token received: {:?}", t1);
                 }
                 Tokens::FeatureExtAck(t1) => {
                     println!("Received FeatureExtAck token: {:?}", t1);
@@ -177,7 +295,6 @@ pub(crate) mod query_processing_driver {
                 }
             }
         }
-        Ok(())
     }
 
     #[tokio::test]

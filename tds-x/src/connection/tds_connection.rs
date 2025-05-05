@@ -10,7 +10,7 @@ use crate::message::messages::Request;
 use crate::message::parameters::rpc_parameters::{
     build_parameter_list_string, RpcParameter, StatusFlags,
 };
-use crate::message::rpc::{RpcProcs, RpcType, SqlRpc};
+use crate::message::rpc::{ProcOptions, RpcProcs, RpcType, SqlRpc};
 use crate::message::transaction_management::{
     TransactionManagementRequest, TransactionManagementType,
 };
@@ -41,8 +41,8 @@ impl<'connection, 'result> TdsConnection<'connection> {
     pub async fn execute_stored_procedure<'rpc_result>(
         &'result mut self,
         stored_procedure_name: String,
-        positional_parameters: Option<Vec<RpcParameter<'rpc_result>>>,
-        named_parameters: Option<Vec<RpcParameter<'rpc_result>>>,
+        positional_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
+        named_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -60,7 +60,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
 
     // Executes a stored procedure with the given proc_id and parameters.
     // The parameters can be either positional or named.
-    pub async fn execute_sql_rpc<'rpc_result>(
+    pub async fn execute_sp_executesql<'rpc_result>(
         &'result mut self,
         sql: String,
         named_params: Vec<RpcParameter<'rpc_result>>,
@@ -97,13 +97,14 @@ impl<'connection, 'result> TdsConnection<'connection> {
         // Create the parameter list for positional parameters of sp_execute_sql.
         // These could be named parameters as well, but we want to avoid sending the name
         // to send less data over the wire.
-        let positional_parameters = Some(vec![statement_parameter, params_parameter]);
+        let positional_parameters_vec = vec![statement_parameter, params_parameter];
+        let positional_parameters = Some(&positional_parameters_vec);
 
         // Build the RPC request.
         let rpc = SqlRpc::new(
             RpcType::ProcId(RpcProcs::ExecuteSql),
             positional_parameters,
-            Some(named_params),
+            Some(&named_params),
             &database_collation,
             &self.execution_context,
         );
@@ -113,7 +114,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
     }
 
     // Prepare a SQL Statement for execution and returns the prepared handle.
-    pub async fn execute_prepare<'rpc_result>(
+    pub async fn execute_sp_prepare<'rpc_result>(
         &'result mut self,
         sql: String,
         named_params: Vec<RpcParameter<'rpc_result>>,
@@ -158,17 +159,18 @@ impl<'connection, 'result> TdsConnection<'connection> {
         // Create the parameter list for positional parameters of sp_execute_sql.
         // These could be named parameters as well, but we want to avoid sending the name
         // to send less data over the wire.
-        let positional_parameters = Some(vec![
+        let positional_parameters_vec = vec![
             output_handler_parameter,
             params_parameter,
             execute_sql_statement_parameter,
-        ]);
+        ];
+        let positional_parameters = Some(&positional_parameters_vec);
 
         // Build the RPC request.
         let rpc = SqlRpc::new(
             RpcType::ProcId(RpcProcs::Prepare),
             positional_parameters,
-            Some(named_params),
+            Some(&named_params),
             &database_collation,
             &self.execution_context,
         );
@@ -202,7 +204,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         }
     }
 
-    pub async fn execute_unprepare(&'result mut self, handle: i32) -> TdsResult<()> {
+    pub async fn execute_sp_unprepare(&'result mut self, handle: i32) -> TdsResult<()> {
         let database_collation = self.negotiated_settings.database_collation;
 
         let handle_value = ColumnValues::Int(handle);
@@ -217,11 +219,12 @@ impl<'connection, 'result> TdsConnection<'connection> {
         // Create the parameter list for positional parameters of sp_execute_sql.
         // These could be named parameters as well, but we want to avoid sending the name
         // to send less data over the wire.
-        let positional_parameters = Some(vec![handle_parameter]);
+        let positional_parameters_vec = vec![handle_parameter];
+        let positional_parameters = Some(&positional_parameters_vec);
 
         // Build the RPC request.
         let rpc = SqlRpc::new(
-            RpcType::ProcId(RpcProcs::Prepare),
+            RpcType::ProcId(RpcProcs::Unprepare),
             positional_parameters,
             None,
             &database_collation,
@@ -234,6 +237,120 @@ impl<'connection, 'result> TdsConnection<'connection> {
         let mut result = BatchResult::new(self);
         result.close().await?;
         Ok(())
+    }
+
+    // Executes sp_prepexec which will prepare the statement for execution, return a result set
+    // as well as a prepared handle.
+    pub async fn execute_sp_prepexec<'rpc_result>(
+        &'result mut self,
+        sql: String,
+        named_params: &Vec<RpcParameter<'rpc_result>>,
+    ) -> TdsResult<BatchResult<'result>> {
+        let database_collation = self.negotiated_settings.database_collation;
+
+        let sql_statement_value = ColumnValues::String(SqlString::from_utf8_string(sql));
+
+        // Create the parameter list for sp_execute_sql
+        let statement_parameter = RpcParameter::new(
+            None,
+            StatusFlags::NONE,
+            &TdsDataType::NVarChar,
+            false,
+            &sql_statement_value,
+        );
+
+        // Build the comma separated list of parameters
+        let mut params_list_as_string = String::new();
+
+        build_parameter_list_string(named_params, &mut params_list_as_string);
+
+        let params_as_sql_string =
+            ColumnValues::String(SqlString::from_utf8_string(params_list_as_string));
+
+        let params_parameter = RpcParameter::new(
+            None,
+            StatusFlags::NONE,
+            &TdsDataType::NVarChar,
+            false,
+            &params_as_sql_string,
+        );
+
+        let handle_parameter = RpcParameter::new(
+            None,
+            StatusFlags::BY_REF_VALUE,
+            &TdsDataType::Int4,
+            false,
+            &ColumnValues::Null,
+        );
+
+        // Create the parameter list for positional parameters of sp_prepareexec.
+        // These could be named parameters as well, but we want to avoid sending the name
+        // to send less data over the wire.
+        let positional_parameters_list =
+            vec![handle_parameter, params_parameter, statement_parameter];
+        let positional_parameters = Some(&positional_parameters_list);
+
+        // Build the RPC request.
+        let rpc = SqlRpc::new(
+            RpcType::ProcId(RpcProcs::PrepExec),
+            positional_parameters,
+            Some(named_params),
+            &database_collation,
+            &self.execution_context,
+        );
+
+        rpc.serialize(self.transport.as_mut()).await?;
+        Ok(BatchResult::new(self))
+    }
+
+    pub async fn execute_sp_execute<'rpc_result>(
+        &'result mut self,
+        handle: i32,
+        positional_parameters: Option<Vec<RpcParameter<'rpc_result>>>,
+        named_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
+    ) -> TdsResult<BatchResult<'result>> {
+        let database_collation = self.negotiated_settings.database_collation;
+
+        let handle_value = ColumnValues::Int(handle);
+        let handle_parameter = RpcParameter::new(
+            None,
+            StatusFlags::NONE, // Output parameter
+            &TdsDataType::Int4,
+            false,
+            &handle_value,
+        );
+
+        // Create the parameter list for positional parameters of sp_execute_sql.
+        // These could be named parameters as well, but we want to avoid sending the name
+        // to send less data over the wire.
+        let mut all_positional_parameters = vec![handle_parameter];
+
+        if let Some(mut params) = positional_parameters {
+            all_positional_parameters.append(&mut params);
+        }
+        let all_positional_parameters = Some(&all_positional_parameters);
+
+        // Build the RPC request.
+        let mut rpc = SqlRpc::new(
+            RpcType::ProcId(RpcProcs::Execute),
+            all_positional_parameters,
+            named_parameters,
+            &database_collation,
+            &self.execution_context,
+        );
+
+        // TODO: This needs to be removed after we enhance the metadata propagation in case of null metadata.
+        // Right now, if NoMetadata is set for the options, the the SQL server doesnt return metadata.
+        // It is expected that the client caches the metadata and reuses MD to read the row tokens.
+        // ReuseMetadata will cause the server to return the metadata with sp_execute. This means that
+        // more information is being sent over the network.
+        rpc.set_proc_options(ProcOptions::ReuseMetadata);
+        rpc.serialize(self.transport.as_mut()).await?;
+
+        // Drain the result set. A successful unprepare will not return any results.
+        let result = BatchResult::new(self);
+
+        Ok(result)
     }
 
     pub async fn transaction(
