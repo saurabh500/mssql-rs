@@ -38,7 +38,7 @@ pub enum TdsDataType {
     NumericN = 0x6C,
     FltN = 0x6D,
     MoneyN = 0x6E,
-    DateTimN = 0x6F,
+    DateTimeN = 0x6F,
     Money4 = 0x7A,
     Int8 = 0x7F,
     BigVarBinary = 0xA5,
@@ -56,6 +56,8 @@ pub enum TdsDataType {
 }
 
 impl TdsDataType {
+    // Function to return the T-SQL name for the datatype.
+    // Will be used to construct the @parameters parameter of the stored procedures.
     pub fn get_meta_type_name(&self) -> &'static str {
         match self {
             TdsDataType::Int8 => "bigint",
@@ -129,7 +131,7 @@ impl TryFrom<u8> for TdsDataType {
             0x6C => Ok(TdsDataType::NumericN),
             0x6D => Ok(TdsDataType::FltN),
             0x6E => Ok(TdsDataType::MoneyN),
-            0x6F => Ok(TdsDataType::DateTimN),
+            0x6F => Ok(TdsDataType::DateTimeN),
             0x7A => Ok(TdsDataType::Money4),
             0x7F => Ok(TdsDataType::Int8),
             0xA5 => Ok(TdsDataType::BigVarBinary),
@@ -230,7 +232,7 @@ impl_try_from_tdstypes!(
         NumericN = TdsDataType::NumericN as u8,
         FltN = TdsDataType::FltN as u8,
         MoneyN = TdsDataType::MoneyN as u8,
-        DateTimN = TdsDataType::DateTimN as u8,
+        DateTimeN = TdsDataType::DateTimeN as u8,
         DateN = TdsDataType::DateN as u8,
         TimeN = TdsDataType::TimeN as u8,
         DateTime2N = TdsDataType::DateTime2N as u8,
@@ -255,7 +257,9 @@ impl_try_from_tdstypes!(
 );
 
 impl VariableLengthTypes {
-    /// Returns the number of bytes that need to be read off the wire, to determine the length of the data type.
+    /// Returns the number of bytes that need to be read off the wire, to determine the length
+    /// of the data type. This either 1, 2 or 4 bytes, depending on if this variable length type is a TDS
+    /// BYTELEN_TYPE, USHORTLEN_TYPE or LONGLEN_TYPE.
     pub fn get_len_byte_count(&self) -> usize {
         match self {
             VariableLengthTypes::BigVarBinary
@@ -274,7 +278,7 @@ impl VariableLengthTypes {
             | VariableLengthTypes::NumericN
             | VariableLengthTypes::FltN
             | VariableLengthTypes::MoneyN
-            | VariableLengthTypes::DateTimN
+            | VariableLengthTypes::DateTimeN
             | VariableLengthTypes::DateN
             | VariableLengthTypes::TimeN
             | VariableLengthTypes::DateTime2N
@@ -295,8 +299,8 @@ impl VariableLengthTypes {
 }
 
 impl_try_from_tdstypes!(
-    /// Partial Length types. This is a subset of types from VariableLengthTypes
-    /// which is sent as PLP in case their metadata length is
+    /// Partial Length types (chunked data types). They do not require the full data length
+    /// to be specified before the actual data is streamed out.
     #[repr(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum PartialLengthType {
@@ -419,6 +423,18 @@ pub async fn read_type_info(
                     type_info_variant: TypeInfoVariant::VarLenScale(vdt, scale),
                 }
             }
+            VariableLengthTypes::MoneyN
+            | VariableLengthTypes::IntN
+            | VariableLengthTypes::FltN
+            | VariableLengthTypes::Guid
+            | VariableLengthTypes::BitN => {
+                let length: usize = reader.read_byte().await? as usize;
+                TypeInfo {
+                    tds_type: data_type,
+                    length,
+                    type_info_variant: TypeInfoVariant::VarLen(var_len_type.unwrap(), length),
+                }
+            }
             VariableLengthTypes::DecimalN
             | VariableLengthTypes::NumericN
             | VariableLengthTypes::Decimal
@@ -490,7 +506,7 @@ pub async fn read_type_info(
                     ),
                 }
             }
-            ty => {
+            VariableLengthTypes::BigVarBinary | VariableLengthTypes::BigBinary => {
                 let len_byte_count = vdt.get_len_byte_count();
                 let length = match len_byte_count {
                     1 => reader.read_byte().await? as usize,
@@ -506,8 +522,12 @@ pub async fn read_type_info(
                 TypeInfo {
                     tds_type: data_type,
                     length,
-                    type_info_variant: TypeInfoVariant::VarLen(ty, length),
+                    type_info_variant: TypeInfoVariant::VarLen(var_len_type.unwrap(), length),
                 }
+            }
+            ty => {
+                println!("Unsupported TDS type: {:?}", ty);
+                unimplemented!("Unsupported TDS type encountered. Cannot retrieve it's type info");
             }
         };
 

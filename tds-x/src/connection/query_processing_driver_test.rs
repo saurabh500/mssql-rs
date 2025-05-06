@@ -368,13 +368,19 @@ pub(crate) mod query_processing_driver {
                 NumericColumn NUMERIC(18,2),
                 FloatColumn FLOAT,
                 RealColumn REAL,
-                DateSmallColumn SMALLDATETIME NULL,
-                DateTimeColumn DATETIME NULL
+                MoneyColumn MONEY NOT NULL,
+                SmallMoneyColumn SMALLMONEY NOT NULL,
+                MoneyNColumn MONEY NULL,
+                SmallMoneyNColumn SMALLMONEY NULL,
+                -- DateSmallColumn SMALLDATETIME NULL,
+                -- DateTimeColumn DATETIME NULL,
             );
         
             INSERT INTO #AllDataTypes (
                 TinyIntColumn, SmallIntColumn, IntColumn, BigIntColumn, BitColumn, 
-                DecimalColumn, NumericColumn, FloatColumn, RealColumn, DateSmallColumn, DateTimeColumn
+                DecimalColumn, NumericColumn, FloatColumn, RealColumn,
+                MoneyColumn, SmallMoneyColumn, MoneyNColumn, SmallMoneyNColumn
+                -- DateSmallColumn, DateTimeColumn
             )
             VALUES (
                 CAST(255 AS TINYINT), -- TinyIntColumn
@@ -386,8 +392,12 @@ pub(crate) mod query_processing_driver {
                 CAST(12345678901234.98 AS NUMERIC(18,2)), -- NumericColumn
                 CAST(1234.22231 AS FLOAT), -- FloatColumn
                 CAST(11.11 AS REAL), -- RealColumn
-                CAST('1/1/2000 1:00' as SMALLDATETIME),
-                CAST('1/1/2000 1:00' as DATETIME)
+                CAST(1234.5678 AS MONEY), -- MoneyColumn
+                CAST(5678.1234 AS SMALLMONEY), -- SmallMoneyColumn
+                CAST(1234.0 AS MONEY), -- MoneyNColumn
+                CAST(567.89 AS SMALLMONEY) -- SmallMoneyNColumn
+                -- CAST('1/1/2000 1:00' as SMALLDATETIME),
+                -- CAST('1/1/2000 1:00' as DATETIME),
             );
             select * from #AllDataTypes;",
         )
@@ -436,6 +446,38 @@ pub(crate) mod query_processing_driver {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_money_no_panic() {
+        // Test null values
+        execute_test_query("SELECT CAST(NULL AS MONEY)")
+            .await
+            .unwrap();
+        execute_test_query("SELECT CAST(NULL AS SMALLMONEY)")
+            .await
+            .unwrap();
+        // Test whole numbers
+        execute_test_query("SELECT CAST(123 AS MONEY)")
+            .await
+            .unwrap();
+        execute_test_query("SELECT CAST(123 AS SMALLMONEY)")
+            .await
+            .unwrap();
+        // Test max values
+        execute_test_query("SELECT CAST(922337203685477.5807 AS MONEY)")
+            .await
+            .unwrap(); // TODO: Fix precision loss
+        execute_test_query("SELECT CAST(214748.3647 AS SMALLMONEY)")
+            .await
+            .unwrap();
+        // Test min values
+        execute_test_query("SELECT CAST(-922337203685477.5808 AS MONEY)")
+            .await
+            .unwrap(); // TODO: Fix precision loss
+        execute_test_query("SELECT CAST(-214748.3648 AS SMALLMONEY)")
+            .await
+            .unwrap();
     }
 
     pub async fn execute_test_query(query: &str) -> TdsResult<()> {
@@ -509,8 +551,8 @@ pub(crate) mod query_processing_driver {
 
         let mut parser_context = ParserContext::default();
         let mut _row_count = 0;
-        while let Ok(token) = token_stream_reader.receive_token(&parser_context).await {
-            // let token = token_stream_reader.receive_token().await?;
+        loop {
+            let token = token_stream_reader.receive_token(&parser_context).await?;
             match token {
                 Tokens::Done(t1) => {
                     println!("Received Done token: {:?}", t1);

@@ -83,6 +83,9 @@ impl PyRow {
                 ColumnValues::Real(re) => handle_py_result!(re.into_pyobject(py)),
                 ColumnValues::Decimal(_decimal_parts) => todo!(),
                 ColumnValues::Numeric(_decimal_parts) => todo!(),
+                ColumnValues::SmallMoney(_) | ColumnValues::Money(_) | ColumnValues::MoneyN(_) => {
+                    todo!()
+                }
                 ColumnValues::Bit(bit) => {
                     let bitpy = bit.into_pyobject(py);
                     match bitpy {
