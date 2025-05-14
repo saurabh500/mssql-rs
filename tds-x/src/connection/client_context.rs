@@ -1,5 +1,6 @@
 use crate::core::EncryptionSetting;
 use crate::message::login_options::{ApplicationIntent, TdsVersion};
+use hostname;
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum IPAddressPreference {
@@ -88,7 +89,7 @@ impl ClientContext {
             tds_authentication_method: TdsAuthenticationMethod::Password,
             user_instance: false,
             user_name: "".to_string(),
-            workstation_id: "".to_string(), // TODO
+            workstation_id: ClientContext::default_workstation_id(hostname::get),
             access_token: None,
             transport_context: TransportContext::Tcp {
                 host: "localhost".to_string(),
@@ -119,6 +120,27 @@ impl Default for ClientContext {
     }
 }
 
+impl ClientContext {
+    /// Generates a default workstation ID based on the hostname.
+    /// If the hostname is longer than 128 characters, it truncates it to 128 characters.
+    /// This function is used to ensure that the workstation ID does not exceed the maximum length
+    /// allowed by the server.
+    fn default_workstation_id<F>(get_hostname: F) -> String
+    where
+        F: Fn() -> Result<std::ffi::OsString, std::io::Error>,
+    {
+        let hostname = get_hostname()
+            .unwrap_or_else(|_| "".into())
+            .to_string_lossy()
+            .to_string();
+        if hostname.len() > 128 {
+            hostname[..128].to_string()
+        } else {
+            hostname
+        }
+    }
+}
+
 #[derive(PartialEq, Clone)]
 pub enum TransportContext {
     Tcp { host: String, port: u16 },
@@ -134,5 +156,23 @@ impl TransportContext {
                 unimplemented!("Transport is not TCP");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_workstation_id_truncation() {
+        // Simulate a long hostname
+        let long_hostname = "a".repeat(150);
+        let truncated_hostname = long_hostname[..128].to_string();
+
+        // Test the default_workstation_id function with a mock closure
+        let result = ClientContext::default_workstation_id(|| {
+            Ok(std::ffi::OsString::from(long_hostname.clone()))
+        });
+        assert_eq!(result, truncated_hostname);
     }
 }

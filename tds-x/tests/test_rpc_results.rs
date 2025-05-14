@@ -2,14 +2,14 @@
 mod common;
 
 mod rpc_results {
-    use crate::common::{begin_connection, create_context, init_tracing};
+    use crate::common::{begin_connection, create_context, get_scalar_value, init_tracing};
     use futures::StreamExt;
     use tds_x::{
         connection::tds_connection::TdsConnection,
         core::TdsResult,
         datatypes::{decoder::ColumnValues, sqldatatypes::TdsDataType},
         message::parameters::rpc_parameters::{RpcParameter, StatusFlags},
-        query::result::{BatchResult, QueryResultType},
+        query::result::QueryResultType,
         token::tokenitems::ReturnValueStatus,
     };
 
@@ -244,46 +244,6 @@ mod rpc_results {
             .execute_sp_unprepare(retrieved_handle, None)
             .await;
         assert!(result.is_ok());
-    }
-
-    // Returns the first column of the first row of the result set, and drains the resultset.
-    async fn get_scalar_value<'a, 'n>(
-        batch_result: BatchResult<'n>,
-    ) -> TdsResult<Option<ColumnValues>>
-    where
-        'n: 'a,
-    {
-        let mut result = None;
-        let mut query_result_stream = batch_result.stream_results();
-
-        while let Some(query_result_type) = query_result_stream.next().await {
-            let qrt = query_result_type.unwrap();
-            match qrt {
-                QueryResultType::Update(_) => {
-                    // Do Nothing. Skip;
-                }
-                QueryResultType::ResultSet(rs) => {
-                    let mut rowstream = rs.into_row_stream().unwrap();
-                    while let Some(row) = rowstream.next().await {
-                        let mut unwrapped_row = row.unwrap();
-
-                        if let Some(cell) = unwrapped_row.next().await {
-                            result = Some(cell.unwrap().get_value());
-                        }
-                        if result.is_some() {
-                            break;
-                        }
-                    }
-                    rowstream.close().await?;
-                }
-            }
-            if result.is_some() {
-                query_result_stream.close().await?;
-                break;
-            }
-        }
-
-        Ok(result)
     }
 
     // Executes the query and reads till the end of the result.

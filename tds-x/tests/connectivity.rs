@@ -1,10 +1,13 @@
 #[cfg(test)]
+mod common;
+
 mod connectivity {
 
     use std::env;
 
     use azure_core::credentials::TokenCredential;
 
+    use crate::common::{create_context, get_scalar_value};
     use azure_identity::{DefaultAzureCredential, TokenCredentialOptions};
     use dotenv::dotenv;
     use futures::StreamExt;
@@ -12,6 +15,7 @@ mod connectivity {
         connection::client_context::{ClientContext, TdsAuthenticationMethod},
         connection_provider::tds_connection_provider::TdsConnectionProvider,
         core::EncryptionSetting,
+        datatypes::decoder::ColumnValues,
         query::result::QueryResultType,
     };
     use tracing::Level;
@@ -39,7 +43,7 @@ mod connectivity {
         secret.to_string()
     }
 
-    pub fn create_context(access_token: String) -> ClientContext {
+    pub fn create_context_with_accesstoken(access_token: String) -> ClientContext {
         dotenv().ok();
         println!("This test expects that `az login --tenant E8F4741A-817A-403A-B28F-200D2B07D656` was run to get a token.");
         let trace_level = Level::DEBUG;
@@ -67,7 +71,7 @@ mod connectivity {
     #[tokio::test]
     pub async fn select_1() {
         let access_token = generate_access_token().await;
-        let context = create_context(access_token);
+        let context = create_context_with_accesstoken(access_token);
         let provider = TdsConnectionProvider {};
         let connection_result = provider.create_connection(&context).await;
         let mut connection = connection_result.unwrap();
@@ -90,6 +94,29 @@ mod connectivity {
                     unreachable!("Shouldn't have reached here");
                 }
             }
+        }
+    }
+
+    #[tokio::test]
+    pub async fn validate_host_name() {
+        let context = create_context();
+        let provider = TdsConnectionProvider {};
+        let connection_result = provider.create_connection(&context).await;
+        let mut connection = connection_result.unwrap();
+        let command =
+            "select host_name from sys.dm_exec_sessions where client_interface_name = 'TdsX'"
+                .to_string();
+        let result = connection.execute(command).await.unwrap();
+        let col_hostname = get_scalar_value(result).await.unwrap();
+        if let Some(column_value) = col_hostname {
+            match column_value {
+                ColumnValues::String(value) => {
+                    assert_eq!(value.to_utf8_string(), context.workstation_id);
+                }
+                _ => unreachable!("Expected a string value"),
+            }
+        } else {
+            unreachable!("Expected a string value");
         }
     }
 }
