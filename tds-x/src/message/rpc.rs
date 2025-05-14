@@ -2,12 +2,9 @@ use async_trait::async_trait;
 use tracing::debug;
 
 use crate::{
-    connection::tds_connection::ExecutionContext,
-    core::TdsResult,
-    datatypes::encoder::GenericEncode,
-    message::messages::PacketType,
-    read_write::{packet_writer::PacketWriter, reader_writer::NetworkWriter},
-    token::tokens::SqlCollation,
+    connection::tds_connection::ExecutionContext, core::TdsResult,
+    datatypes::encoder::GenericEncode, message::messages::PacketType,
+    read_write::packet_writer::PacketWriter, token::tokens::SqlCollation,
 };
 
 use super::{
@@ -149,31 +146,29 @@ impl RpcProcs {
     }
 }
 
-pub(crate) struct SqlRpc<'a> {
+pub(crate) struct SqlRpc<'param> {
     pub headers: Vec<TdsHeaders>,
     pub rpc_type: RpcType,
-    pub positional_parameters: Option<&'a Vec<RpcParameter<'a>>>,
-    pub named_parameters: Option<&'a Vec<RpcParameter<'a>>>,
-    pub db_collation: &'a SqlCollation,
+    pub positional_parameters: Option<&'param Vec<RpcParameter<'param>>>,
+    pub named_parameters: Option<&'param Vec<RpcParameter<'param>>>,
+    pub db_collation: &'param SqlCollation,
     pub proc_options: ProcOptions,
 }
 
 #[async_trait]
-impl<'a> Request<'a> for SqlRpc<'a> {
+impl Request for SqlRpc<'_> {
     fn packet_type(&self) -> PacketType {
         PacketType::RpcRequest
     }
 
-    fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a> {
-        self.packet_type().create_packet_writer(writer)
-    }
-
-    async fn serialize(&self, writer: &mut dyn NetworkWriter) -> TdsResult<()> {
-        let mut packet_writer = self.create_packet_writer(writer);
-        write_headers(&self.headers, &mut packet_writer).await?;
-        self.write_proc(&mut packet_writer).await?;
-        self.write_positional_parameters(&mut packet_writer).await?;
-        self.write_named_parameters(&mut packet_writer).await?;
+    async fn serialize<'a, 'b>(&'a self, packet_writer: &'a mut PacketWriter<'b>) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        write_headers(&self.headers, packet_writer).await?;
+        self.write_proc(packet_writer).await?;
+        self.write_positional_parameters(packet_writer).await?;
+        self.write_named_parameters(packet_writer).await?;
         packet_writer.finalize().await?;
         Ok(())
     }

@@ -1,4 +1,8 @@
+use crate::connection::tds_connection::TdsConnection;
 use crate::core::{NegotiatedEncryptionSetting, TdsResult};
+use crate::read_write::packet_writer::MessageSendState;
+use crate::read_write::packet_writer::MessageSendState::NotStarted;
+use crate::token::tokens::DoneStatus;
 use crate::{
     read_write::{packet_writer::PacketWriter, reader_writer::NetworkWriter},
     token::tokens::ErrorToken,
@@ -27,8 +31,9 @@ where
     pub(crate) fn create_packet_writer(
         &self,
         transport: &'a mut dyn NetworkWriter,
+        timeout: Option<u32>,
     ) -> PacketWriter<'a> {
-        PacketWriter::new(*self, transport)
+        PacketWriter::new(*self, transport, timeout)
     }
 
     pub(crate) async fn first_packet_callback(
@@ -50,6 +55,7 @@ where
 }
 
 /// Represents the status flags for a packet.
+#[repr(u8)]
 pub(crate) enum PacketStatusFlags {
     /// Normal Packet.
     Normal = 0x00,
@@ -68,10 +74,64 @@ pub(crate) enum PacketStatusFlags {
 }
 
 #[async_trait]
-pub(crate) trait Request<'a> {
+pub(crate) trait Request {
     fn packet_type(&self) -> PacketType;
-    fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a>;
-    async fn serialize(&self, _transport: &mut dyn NetworkWriter) -> TdsResult<()>;
+
+    fn create_packet_writer<'a>(
+        &self,
+        writer: &'a mut dyn NetworkWriter,
+        timeout: Option<u32>,
+    ) -> PacketWriter<'a> {
+        self.packet_type().create_packet_writer(writer, timeout)
+    }
+
+    async fn serialize<'a, 'b>(&'a self, writer: &'a mut PacketWriter<'b>) -> TdsResult<()>
+    where
+        'b: 'a;
+
+    async fn serialize_and_handle_timeout<'conn>(
+        &self,
+        connection: &mut TdsConnection<'conn>,
+        timeout: Option<u32>,
+    ) -> TdsResult<()> {
+        let mut timeout_state = None;
+        let serialize_result = {
+            let mut packet_writer =
+                self.create_packet_writer(connection.transport.as_mut(), timeout);
+            let result = self.serialize(&mut packet_writer).await;
+            match &result {
+                Ok(_) => {}
+                Err(err) => {
+                    if let crate::error::Error::TimeoutError(_) = &err {
+                        // Handle the timeout differently depending on the state of the PacketWriter.
+                        timeout_state = Some(packet_writer.get_message_state());
+                        match timeout_state.as_ref().unwrap() {
+                            NotStarted | MessageSendState::Complete => {}
+                            // No-op. For completed requests, handle during batch iteration.
+                            MessageSendState::Partial => {
+                                packet_writer.cancel_current_message().await?;
+                                // Note - more cleanup needed after relinquishing the connection.
+                            }
+                        };
+                    }
+                }
+            }
+            result
+        };
+
+        match timeout_state {
+            None | Some(NotStarted) => {} // No other work needed.
+            Some(MessageSendState::Partial) => {
+                // Drain response until we get a Done with Error to show the message was cancelled.
+                connection.drain_until_done_status(DoneStatus::ERROR).await;
+            }
+            Some(MessageSendState::Complete) => {
+                // Send the attention request.
+                connection.send_attention(None).await?
+            }
+        };
+        serialize_result
+    }
 }
 
 pub(crate) struct TdsError {

@@ -67,7 +67,7 @@ impl ClientContext {
             application_name: "TDSX Rust Client".to_string(),
             attach_db_file: "".to_string(),
             change_password: "".to_string(),
-            connect_retry_count: 1,
+            connect_retry_count: 0,
             connect_timeout: 15,
             database: "".to_string(),
             database_instance: "MSSQLServer".to_string(),

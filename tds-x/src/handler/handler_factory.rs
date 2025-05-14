@@ -273,8 +273,9 @@ impl PreloginHandler<'_, '_> {
             model: &request_model,
         };
 
-        // Serialize it.
-        prelogin_request.serialize(reader_writer).await?;
+        // Serialize it. Note that the login process uses a timeout at a higher level than the request.
+        let mut packet_writer = prelogin_request.create_packet_writer(reader_writer, None);
+        prelogin_request.serialize(&mut packet_writer).await?;
 
         // Return result (which contains data model).
         let response = PreloginResponse {};
@@ -390,13 +391,15 @@ impl LoginHandler<'_, '_> {
         let request = self
             .factory
             .create_login_request(self.prelogin_fedauth_supported, transport_context);
-        let request_model: &LoginRequestModel<'a> = &request.model;
+        let request_model: &LoginRequestModel = &request.model;
 
         if request_model.user_input.integrated_security() {
             todo!("Integrated security is not supported yet");
         }
 
-        request.serialize(reader_writer).await?;
+        // Note that the login process uses a timeout at a higher level than the request.
+        let mut packet_writer = request.create_packet_writer(reader_writer, None);
+        request.serialize(&mut packet_writer).await?;
         Ok(request.model)
     }
 

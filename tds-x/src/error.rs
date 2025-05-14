@@ -1,4 +1,14 @@
 use thiserror::Error;
+use tokio::time::error::Elapsed;
+
+#[derive(Debug, Error)]
+pub enum TimeoutErrorType {
+    #[error("Elapsed: {0}")]
+    Elapsed(Elapsed),
+
+    #[error("{0}")]
+    String(String),
+}
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -13,6 +23,9 @@ pub enum Error {
 
     #[error("TLS Error: {0}")]
     TlsError(#[from] native_tls::Error),
+
+    #[error("Timeout Error: {0}")]
+    TimeoutError(TimeoutErrorType),
 
     #[error("Sql Error: {number}: {class}: {state}: {message} on {} in {} at line {}",
             server_name.clone().unwrap(), proc_name.clone().unwrap(), line_number.unwrap())]

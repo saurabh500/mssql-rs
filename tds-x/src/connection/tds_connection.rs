@@ -5,6 +5,7 @@ use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqldatatypes::TdsDataType;
 use crate::error::Error;
 use crate::handler::handler_factory::NegotiatedSettings;
+use crate::message::attention::AttentionRequest;
 use crate::message::batch::SqlBatch;
 use crate::message::messages::Request;
 use crate::message::parameters::rpc_parameters::{
@@ -15,8 +16,15 @@ use crate::message::transaction_management::{
     TransactionManagementRequest, TransactionManagementType,
 };
 use crate::query::result::BatchResult;
-use crate::token::tokens::{EnvChangeContainer, EnvChangeToken, EnvChangeTokenSubType};
-use tracing::{event, Level};
+use crate::read_write::packet_reader::PacketReader;
+use crate::read_write::token_stream::{
+    GenericTokenParserRegistry, ParserContext, TokenStreamReader,
+};
+use crate::token::tokens::{
+    DoneStatus, EnvChangeContainer, EnvChangeToken, EnvChangeTokenSubType, Tokens,
+};
+use std::time::{Duration, Instant};
+use tracing::{event, info, Level};
 
 pub struct TdsConnection<'a> {
     pub(crate) transport: Box<NetworkTransport<'a>>,
@@ -25,15 +33,25 @@ pub struct TdsConnection<'a> {
 }
 
 impl<'connection, 'result> TdsConnection<'connection> {
-    pub async fn execute(&'result mut self, sql_command: String) -> TdsResult<BatchResult<'result>>
+    pub async fn execute(
+        &'result mut self,
+        sql_command: String,
+        timeout_sec: Option<u32>,
+    ) -> TdsResult<BatchResult<'result>>
     where
         'connection: 'result,
     {
         let batch = SqlBatch::new(sql_command, &self.execution_context);
+        let start = Instant::now();
+        batch
+            .serialize_and_handle_timeout(self, timeout_sec)
+            .await?;
 
-        batch.serialize(self.transport.as_mut()).await?;
-
-        Ok(BatchResult::new(self))
+        let time_limit = match timeout_sec {
+            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
+            None => None,
+        };
+        Ok(BatchResult::new(self, time_limit))
     }
 
     // Executes a stored procedure with the given name and parameters.
@@ -43,6 +61,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         stored_procedure_name: String,
         positional_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
         named_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
+        timeout_sec: Option<u32>,
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -54,8 +73,13 @@ impl<'connection, 'result> TdsConnection<'connection> {
             &self.execution_context,
         );
 
-        rpc.serialize(self.transport.as_mut()).await?;
-        Ok(BatchResult::new(self))
+        let start = Instant::now();
+        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
+        let time_limit = match timeout_sec {
+            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
+            None => None,
+        };
+        Ok(BatchResult::new(self, time_limit))
     }
 
     // Executes a stored procedure with the given proc_id and parameters.
@@ -64,6 +88,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         &'result mut self,
         sql: String,
         named_params: Vec<RpcParameter<'rpc_result>>,
+        timeout_sec: Option<u32>,
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -109,8 +134,13 @@ impl<'connection, 'result> TdsConnection<'connection> {
             &self.execution_context,
         );
 
-        rpc.serialize(self.transport.as_mut()).await?;
-        Ok(BatchResult::new(self))
+        let start = Instant::now();
+        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
+        let time_limit = match timeout_sec {
+            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
+            None => None,
+        };
+        Ok(BatchResult::new(self, time_limit))
     }
 
     // Prepare a SQL Statement for execution and returns the prepared handle.
@@ -118,6 +148,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         &'result mut self,
         sql: String,
         named_params: Vec<RpcParameter<'rpc_result>>,
+        timeout_sec: Option<u32>,
     ) -> TdsResult<i32> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -175,8 +206,13 @@ impl<'connection, 'result> TdsConnection<'connection> {
             &self.execution_context,
         );
 
-        rpc.serialize(self.transport.as_mut()).await?;
-        let mut batch_result = BatchResult::new(self);
+        let start = Instant::now();
+        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
+        let time_limit = match timeout_sec {
+            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
+            None => None,
+        };
+        let mut batch_result = BatchResult::new(self, time_limit);
 
         let return_values = batch_result.close().await?;
 
@@ -204,7 +240,11 @@ impl<'connection, 'result> TdsConnection<'connection> {
         }
     }
 
-    pub async fn execute_sp_unprepare(&'result mut self, handle: i32) -> TdsResult<()> {
+    pub async fn execute_sp_unprepare(
+        &'result mut self,
+        handle: i32,
+        timeout_sec: Option<u32>,
+    ) -> TdsResult<()> {
         let database_collation = self.negotiated_settings.database_collation;
 
         let handle_value = ColumnValues::Int(handle);
@@ -231,10 +271,15 @@ impl<'connection, 'result> TdsConnection<'connection> {
             &self.execution_context,
         );
 
-        rpc.serialize(self.transport.as_mut()).await?;
+        let start = Instant::now();
+        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
 
         // Drain the result set. A successful unprepare will not return any results.
-        let mut result = BatchResult::new(self);
+        let time_limit = match timeout_sec {
+            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
+            None => None,
+        };
+        let mut result = BatchResult::new(self, time_limit);
         result.close().await?;
         Ok(())
     }
@@ -245,6 +290,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         &'result mut self,
         sql: String,
         named_params: &Vec<RpcParameter<'rpc_result>>,
+        timeout_sec: Option<u32>,
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -299,8 +345,14 @@ impl<'connection, 'result> TdsConnection<'connection> {
             &self.execution_context,
         );
 
-        rpc.serialize(self.transport.as_mut()).await?;
-        Ok(BatchResult::new(self))
+        let start = Instant::now();
+        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
+
+        let time_limit = match timeout_sec {
+            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
+            None => None,
+        };
+        Ok(BatchResult::new(self, time_limit))
     }
 
     pub async fn execute_sp_execute<'rpc_result>(
@@ -308,6 +360,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         handle: i32,
         positional_parameters: Option<Vec<RpcParameter<'rpc_result>>>,
         named_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
+        timeout_sec: Option<u32>,
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -345,23 +398,78 @@ impl<'connection, 'result> TdsConnection<'connection> {
         // ReuseMetadata will cause the server to return the metadata with sp_execute. This means that
         // more information is being sent over the network.
         rpc.set_proc_options(ProcOptions::ReuseMetadata);
-        rpc.serialize(self.transport.as_mut()).await?;
+        let start = Instant::now();
+        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
 
         // Drain the result set. A successful unprepare will not return any results.
-        let result = BatchResult::new(self);
+        let time_limit = match timeout_sec {
+            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
+            None => None,
+        };
+        let result = BatchResult::new(self, time_limit);
 
         Ok(result)
     }
 
-    pub async fn transaction(
+    pub async fn send_transaction(
         &'result mut self,
         transaction_params: TransactionManagementType,
+        timeout_sec: Option<u32>,
     ) -> TdsResult<BatchResult<'result>> {
         let transaction =
             TransactionManagementRequest::new(transaction_params, &self.execution_context);
-        transaction.serialize(self.transport.as_mut()).await?;
 
-        Ok(BatchResult::new(self))
+        let start = Instant::now();
+        transaction
+            .serialize_and_handle_timeout(self, timeout_sec)
+            .await?;
+
+        let time_limit = match timeout_sec {
+            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
+            None => None,
+        };
+
+        Ok(BatchResult::new(self, time_limit))
+    }
+
+    pub(crate) async fn send_attention(
+        &'result mut self,
+        timeout_sec: Option<u32>,
+    ) -> TdsResult<()> {
+        let attention = AttentionRequest::new();
+        attention
+            .serialize_and_handle_timeout(self, timeout_sec)
+            .await?;
+
+        self.drain_until_done_status(DoneStatus::ATTN).await;
+        Ok(())
+    }
+
+    pub(crate) async fn drain_until_done_status(&'result mut self, search_status: DoneStatus) {
+        let packet_reader = PacketReader::new(self.transport.as_mut());
+        let mut token_stream_reader = TokenStreamReader::new(
+            packet_reader,
+            Box::new(GenericTokenParserRegistry::default()),
+        );
+        let parser_context = ParserContext::None(());
+
+        // Drain the stream until we receive a Done with the Attention bit set.
+        while let Ok(token) = token_stream_reader
+            .receive_token(&parser_context, None)
+            .await
+        {
+            match token {
+                Tokens::Done(t1) => {
+                    info!(?t1);
+                    if t1.status.contains(search_status) {
+                        break;
+                    }
+                }
+                _ => {
+                    info!(?token);
+                }
+            }
+        }
     }
 }
 

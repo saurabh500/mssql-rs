@@ -1,12 +1,17 @@
-#[cfg(test)]
 #[cfg(not(target_os = "macos"))]
 pub(crate) mod query_processing_driver {
+    use async_trait::async_trait;
     use core::panic;
     use dotenv::dotenv;
     use std::env;
+    use std::time::Duration;
     use tracing::Level;
     use tracing_subscriber::FmtSubscriber;
 
+    use crate::error::Error;
+    use crate::message::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
+    use crate::message::messages::PacketType;
+    use crate::read_write::packet_writer::PacketWriter;
     use crate::{
         connection::{
             client_context::{ClientContext, TransportContext},
@@ -212,7 +217,9 @@ pub(crate) mod query_processing_driver {
             &connection.execution_context,
         );
 
-        rpc.serialize(connection.transport.as_mut()).await.unwrap();
+        rpc.serialize_and_handle_timeout(connection.as_mut(), None)
+            .await
+            .unwrap();
         iterate_over_rpc_tokens(&mut connection).await;
     }
 
@@ -231,7 +238,8 @@ pub(crate) mod query_processing_driver {
             &connection.execution_context,
         );
 
-        rpc.serialize(connection.transport.as_mut()).await?;
+        rpc.serialize_and_handle_timeout(connection.as_mut(), None)
+            .await?;
 
         iterate_over_rpc_tokens(connection).await;
         Ok(())
@@ -247,7 +255,10 @@ pub(crate) mod query_processing_driver {
 
         let mut parser_context = ParserContext::default();
         let mut _row_count = 0;
-        while let Ok(token) = token_stream_reader.receive_token(&parser_context).await {
+        while let Ok(token) = token_stream_reader
+            .receive_token(&parser_context, None)
+            .await
+        {
             // let token = token_stream_reader.receive_token().await?;
             match token {
                 Tokens::Done(t1) => {
@@ -480,6 +491,105 @@ pub(crate) mod query_processing_driver {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn test_cancel_partially_sent_request() {
+        dotenv().ok();
+
+        let enable_trace = env::var("ENABLE_TRACE")
+            .unwrap_or_else(|_| "false".to_string())
+            .parse::<bool>()
+            .unwrap();
+
+        if enable_trace {
+            let subscriber = FmtSubscriber::builder()
+                .with_max_level(Level::TRACE)
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("Setting default subscriber failed");
+            // Setup the TDS connection.
+        }
+
+        let transport = TransportContext::Tcp {
+            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
+            port: env::var("DB_PORT")
+                .expect("DB_PORT environment variable not set")
+                .parse::<u16>()
+                .expect("DB_PORT must be a valid u16"),
+        };
+
+        let context = ClientContext {
+            transport_context: transport,
+            user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
+            password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            encryption: EncryptionSetting::On,
+            //      database: "drivers".to_string(),
+            packet_size: 512, // Minimal packet size for testing.
+            ..Default::default()
+        };
+
+        // Dummy request implementation which sends out a SqlBatch split into multiple packets
+        // with delays in between.
+        struct SlowRequest {
+            pub headers: Vec<TdsHeaders>,
+        }
+
+        impl Default for SlowRequest {
+            fn default() -> Self {
+                let transaction_descriptor_header =
+                    TransactionDescriptorHeader::create_non_transaction_header();
+                Self {
+                    headers: Vec::from([transaction_descriptor_header.into()]),
+                }
+            }
+        }
+
+        #[async_trait]
+        impl Request for SlowRequest {
+            fn packet_type(&self) -> PacketType {
+                PacketType::SqlBatch
+            }
+
+            async fn serialize<'a, 'b>(
+                &'a self,
+                packet_writer: &'a mut PacketWriter<'b>,
+            ) -> TdsResult<()>
+            where
+                'b: 'a,
+            {
+                // Copied from SqlBatch, but with a hard-coded command split into two packets.
+                write_headers(&self.headers, packet_writer).await?;
+                let long_text = "a".repeat(512);
+                packet_writer
+                    .write_string_unicode_async(long_text.as_str())
+                    .await?;
+                // Sleep to force a cancel on the next write.
+                // Note that the timeout interrupts the IO in PacketWriter only, and not the
+                // entire serialize() function to avoid writing partial packets.
+                // This prevents the test from interrupting the sleep function though.
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                packet_writer.finalize().await?;
+                Ok(())
+            }
+        }
+
+        let mut connection = create_connection(&context).await.unwrap();
+        let slow_request = SlowRequest::default();
+        match slow_request
+            .serialize_and_handle_timeout(&mut connection, Some(2))
+            .await
+        {
+            Ok(_) => {
+                std::panic!("Operation should not have succeeded.")
+            }
+            Err(error) => match error {
+                Error::TimeoutError(_) => {} // Success
+                _ => {
+                    std::panic!("Expected timeout error but got {:?}", error);
+                }
+            },
+        }
+    }
+
     pub async fn execute_test_query(query: &str) -> TdsResult<()> {
         dotenv().ok();
 
@@ -541,7 +651,9 @@ pub(crate) mod query_processing_driver {
         sql_command: String,
     ) -> TdsResult<()> {
         let batch = SqlBatch::new(sql_command, &tds_connection.execution_context);
-        batch.serialize(tds_connection.transport.as_mut()).await?;
+        batch
+            .serialize_and_handle_timeout(tds_connection.as_mut(), None)
+            .await?;
 
         let packet_reader = tds_connection.transport.get_packet_reader();
         let mut token_stream_reader = TokenStreamReader::new(
@@ -552,7 +664,9 @@ pub(crate) mod query_processing_driver {
         let mut parser_context = ParserContext::default();
         let mut _row_count = 0;
         loop {
-            let token = token_stream_reader.receive_token(&parser_context).await?;
+            let token = token_stream_reader
+                .receive_token(&parser_context, None)
+                .await?;
             match token {
                 Tokens::Done(t1) => {
                     println!("Received Done token: {:?}", t1);

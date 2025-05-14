@@ -97,7 +97,7 @@ impl Session<'_> {
             "No active connection",
         ))?;
 
-        let batch_results = connection.execute(sql_command).await?;
+        let batch_results = connection.execute(sql_command, None).await?;
         let mut result_stream = batch_results.stream_results();
         while let Some(result) = result_stream.next().await {
             let result_type = result.unwrap();

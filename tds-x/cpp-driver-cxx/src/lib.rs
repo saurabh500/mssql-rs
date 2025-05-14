@@ -213,7 +213,7 @@ impl<'a, 'result> TdsConnection<'a, 'result> {
         sql_command: String,
     ) -> Box<QueryResultTypeStream<'result>> {
         println!("Executing SQL query: {}", sql_command);
-        let batch_results = self.connection.execute(sql_command).await.unwrap();
+        let batch_results = self.connection.execute(sql_command, None).await.unwrap();
         // Demo-only print the result stdout.
         let result_stream = batch_results.stream_results();
         Box::new(QueryResultTypeStream {

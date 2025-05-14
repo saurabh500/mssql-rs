@@ -139,6 +139,7 @@ impl ActiveWriteState {
             PacketType::PreLogin,
             self.packet_id,
             self.current_packet_bytes_remaining == self.payload_bytes_remaining,
+            false,
         );
     }
 }

@@ -1,18 +1,20 @@
-use core::convert::From;
-use std::collections::HashMap;
-
+use super::packet_reader::PacketReader;
 use crate::core::TdsResult;
 use crate::datatypes::decoder::GenericDecoder;
+use crate::error::Error::TimeoutError;
+use crate::error::TimeoutErrorType;
 use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
     EnvChangeTokenParser, ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser,
     InfoTokenParser, LoginAckTokenParser, NbcRowTokenParser, OrderTokenParser,
     ReturnStatusTokenParser, ReturnValueTokenParser, RowTokenParser, TokenParser,
 };
-use crate::token::tokens::{ColMetadataToken, TokenType, Tokens};
+use crate::token::tokens::{ColMetadataToken, DoneStatus, TokenType, Tokens};
+use core::convert::From;
+use std::collections::HashMap;
+use std::time::Duration;
+use tokio::time::timeout;
 use tracing::event;
-
-use super::packet_reader::PacketReader;
 
 pub(crate) struct TokenStreamReader<'a> {
     pub(crate) packet_reader: PacketReader<'a>,
@@ -47,10 +49,45 @@ impl TokenStreamReader<'_> {
         }
     }
 
-    pub(crate) async fn receive_token(&mut self, context: &ParserContext) -> TdsResult<Tokens> {
+    pub(crate) async fn receive_token(
+        &mut self,
+        context: &ParserContext,
+        mut timeout_sec: Option<Duration>,
+    ) -> TdsResult<Tokens> {
         // Read the token type so that we can get the right parser for this token.
         // The first byte of the token is the token type.
-        let token_type_byte = self.packet_reader.read_byte().await?;
+        let token_type_byte = {
+            if let Some(duration) = timeout_sec.take() {
+                let timeout_result: TdsResult<u8> =
+                    match timeout(duration, self.packet_reader.read_byte()).await {
+                        Ok(token_type) => token_type,
+                        Err(elapsed) => {
+                            // If a timeout occurs, send the attention request to tell the server to stop
+                            // then consume the stream until a Done w/attention is received.
+                            self.packet_reader.cancel_read_stream().await?;
+                            let dummy_context = ParserContext::None(());
+                            while let Ok(token) =
+                                Box::pin(self.receive_token(&dummy_context, None)).await
+                            {
+                                if let Tokens::Done(done_token) = token {
+                                    if done_token.status.contains(DoneStatus::ATTN) {
+                                        return Err(TimeoutError(TimeoutErrorType::Elapsed(
+                                            elapsed,
+                                        )));
+                                    }
+                                    // Discard any other token.
+                                }
+                            }
+                            // If we got interrupted for whatever reason, return a timeout.
+                            return Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed)));
+                        }
+                    };
+                timeout_result?
+            } else {
+                self.packet_reader.read_byte().await?
+            }
+        };
+
         let token_type = TokenType::from(token_type_byte);
 
         // We should always have a parser for the token type.

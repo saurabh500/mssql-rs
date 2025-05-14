@@ -1,6 +1,8 @@
 use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
 use crate::core::TdsResult;
 use crate::datatypes::decoder::ColumnValues;
+use crate::error::Error::TimeoutError;
+use crate::error::TimeoutErrorType;
 use crate::query::metadata::ColumnMetadata;
 use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::token_stream::{
@@ -16,6 +18,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
+use std::time::{Duration, Instant};
 use std::vec::IntoIter;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, trace};
@@ -117,8 +120,10 @@ pub struct BatchResult<'result> {
     //  negotiated_settings: &'result mut NegotiatedSettings,
     token_stream_reader: TokenStreamReader<'result>,
     parser_context: ParserContext,
+    received_first: bool,
     received_last: bool,
     execution_context: &'result mut ExecutionContext,
+    time_limit: Option<Instant>,
 }
 
 impl<'connection, 'result> BatchResult<'result>
@@ -127,6 +132,7 @@ where
 {
     pub(crate) fn new(
         tds_connection: &'result mut TdsConnection<'connection>,
+        time_limit: Option<Instant>,
     ) -> BatchResult<'result> {
         debug!("Batch result created.");
         let packet_reader = PacketReader::new(tds_connection.transport.as_mut());
@@ -144,8 +150,10 @@ where
             //negotiated_settings: &mut tds_connection.negotiated_settings,
             token_stream_reader,
             parser_context: ParserContext::default(),
+            received_first: false,
             received_last: false,
             execution_context: &mut tds_connection.execution_context,
+            time_limit,
         }
     }
 
@@ -158,8 +166,23 @@ where
     }
 
     async fn next_token(&mut self) -> TdsResult<Tokens> {
+        let timeout = match &self.time_limit {
+            Some(time_limit) if !self.received_first => {
+                let now = Instant::now();
+                let next_timeout = time_limit.duration_since(now);
+                if next_timeout == Duration::ZERO {
+                    Err(TimeoutError(TimeoutErrorType::String(
+                        "Timeout expired".to_string(),
+                    )))?
+                } else {
+                    Some(next_timeout)
+                }
+            }
+            _ => None,
+        };
+
         self.token_stream_reader
-            .receive_token(&self.parser_context)
+            .receive_token(&self.parser_context, timeout)
             .await
     }
 
@@ -173,11 +196,8 @@ where
         drain_until_first_done: bool,
     ) -> TdsResult<Option<Vec<ReturnValue>>> {
         let mut return_values: Vec<ReturnValue> = Vec::new();
-        while let Ok(token) = self
-            .token_stream_reader
-            .receive_token(&self.parser_context)
-            .await
-        {
+        loop {
+            let token = self.next_token().await?;
             match token {
                 Tokens::Done(t1) => {
                     info!(?t1);
@@ -377,10 +397,8 @@ impl<'result> ResultSet<'result> {
     // Retrieves the next token and updates internal state about this result set and its parent batch.
     async fn next_row_token(&mut self) -> TdsResult<Tokens> {
         let mut parent_batch_mut = self.parent_batch.lock().await;
-        let token_result = parent_batch_mut.next_token().await;
-        let token_ref = token_result.as_ref().unwrap();
-
-        match token_ref {
+        let token = parent_batch_mut.next_token().await?;
+        match &token {
             Tokens::Done(t1) => {
                 debug!(?t1);
                 self.received_last_row = true;
@@ -424,11 +442,11 @@ impl<'result> ResultSet<'result> {
             }
             Tokens::Row(_row) => {}
             _ => {
-                unreachable!("Received unexpected token: {:?}", token_ref)
+                unreachable!("Received unexpected token: {:?}", &token)
             }
         };
 
-        token_result
+        Ok(token)
     }
 
     // Closes the result set by reading up to the first done token which marks the end of the batch.

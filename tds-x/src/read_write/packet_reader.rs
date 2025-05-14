@@ -3,7 +3,9 @@ use tracing::event;
 
 use super::packet_writer::PacketWriter;
 use crate::core::TdsResult;
-use crate::{message::messages::PacketStatusFlags, read_write::reader_writer::NetworkReader};
+use crate::message::attention::AttentionRequest;
+use crate::message::messages::Request;
+use crate::read_write::reader_writer::NetworkReaderWriter;
 use core::panic;
 use std::{
     cmp::min,
@@ -11,10 +13,9 @@ use std::{
 };
 
 pub struct PacketReader<'a> {
-    network_reader: &'a mut dyn NetworkReader,
+    network_reader_writer: &'a mut dyn NetworkReaderWriter,
     buffer_position: usize,
     buffer_length: usize,
-    last_packet: bool,
     max_packet_size: usize,
     working_buffer: Vec<u8>,
 }
@@ -35,52 +36,34 @@ macro_rules! generate_read_fn {
 impl<'a> PacketReader<'a> {
     pub const LENGTHNULL: u16 = 0xffff;
 
-    pub(crate) fn new(network_reader: &'a mut dyn NetworkReader) -> PacketReader<'a> {
-        let packet_size: usize = network_reader.packet_size() as usize;
+    pub(crate) fn new(network_reader_writer: &'a mut dyn NetworkReaderWriter) -> PacketReader<'a> {
+        let packet_size: usize = network_reader_writer.as_writer().packet_size() as usize;
         let packet_storage = packet_size * 2;
         let buffer: Vec<u8> = vec![0; packet_storage]; // Adjust the capacity as needed
 
         PacketReader {
-            network_reader,
+            network_reader_writer,
             buffer_length: 0,
             buffer_position: 0,
-            last_packet: false,
             working_buffer: buffer,
             max_packet_size: packet_size,
         }
     }
 
-    /// Checks if there is data available in the buffer.
-    ///
-    /// This method calculates the remaining bytes in the buffer and checks if the
-    /// last packet has been read. If the last packet has been read and there are
-    /// no remaining bytes, it returns `false`. Otherwise, it returns `true`.
-    ///
-    /// # Returns
-    ///
-    /// * `true` - If there is data available in the buffer.
-    /// * `false` - If there is no data available in the buffer.
-    pub fn is_data_available(&self) -> bool {
-        let remaining_bytes = self.buffer_length - self.buffer_position;
-        if self.last_packet && remaining_bytes == 0 {
-            return false;
-        }
-        true
+    pub(crate) async fn cancel_read_stream(&mut self) -> TdsResult<()> {
+        let attention = AttentionRequest::new();
+        let mut packet_writer =
+            attention.create_packet_writer(self.network_reader_writer.as_writer(), None);
+        attention.serialize(&mut packet_writer).await?;
+        Ok(())
     }
 
     fn do_we_have_enough_data(&self, byte_count: usize) -> bool {
         let remaining_bytes = self.buffer_length - self.buffer_position;
-        if self.last_packet && remaining_bytes == 0 {
-            panic!("More data requested than the packet stream has.");
-        }
         remaining_bytes >= byte_count
     }
 
     async fn read_tds_packet(&mut self) -> TdsResult<()> {
-        if !self.is_data_available() {
-            panic!("Unexpected call to read tds packet. There is no data available to read. We have reached the last packet in the message and all data was consumed.");
-        }
-
         let remaining_bytes = self.buffer_length - self.buffer_position;
 
         if remaining_bytes > 0 {
@@ -112,7 +95,7 @@ impl<'a> PacketReader<'a> {
         let base_offset_to_write = self.buffer_length;
 
         let mut new_packet_byte_length = self
-            .network_reader
+            .network_reader_writer
             .receive(&mut packet_buffer[base_offset_to_write..])
             .await?;
 
@@ -120,7 +103,7 @@ impl<'a> PacketReader<'a> {
         // the header.
         while new_packet_byte_length < PacketWriter::PACKET_HEADER_SIZE {
             new_packet_byte_length += self
-                .network_reader
+                .network_reader_writer
                 .receive(
                     &mut packet_buffer[base_offset_to_write + new_packet_byte_length
                         ..base_offset_to_write + self.max_packet_size],
@@ -131,15 +114,12 @@ impl<'a> PacketReader<'a> {
         let length_from_packet_header =
             BigEndian::read_u16(&packet_buffer[base_offset_to_write + 2..base_offset_to_write + 4]);
 
-        self.last_packet =
-            (packet_buffer[base_offset_to_write + 1] & PacketStatusFlags::Eom as u8) != 0;
-
         let packet_size_from_header: usize = length_from_packet_header as usize;
 
         // Keep reading until we have the complete packet in memory.
         while new_packet_byte_length < packet_size_from_header {
             new_packet_byte_length += self
-                .network_reader
+                .network_reader_writer
                 .receive(
                     &mut packet_buffer[base_offset_to_write + new_packet_byte_length
                         ..base_offset_to_write + self.max_packet_size],
@@ -454,6 +434,10 @@ pub(crate) mod tests {
     use crate::message::messages::PacketType;
 
     use super::*;
+    use crate::connection::transport::network_transport::TransportSslHandler;
+    use crate::core::NegotiatedEncryptionSetting;
+    use crate::handler::handler_factory::SessionSettings;
+    use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
     use async_trait::async_trait;
     use rand::Rng;
 
@@ -535,13 +519,54 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) struct MockNetworkReader {
+    pub(crate) struct MockNetworkReaderWriter {
         pub(crate) data: Vec<u8>,
         pub(crate) position: usize,
     }
 
     #[async_trait]
-    impl NetworkReader for MockNetworkReader {
+    impl NetworkWriter for MockNetworkReaderWriter {
+        async fn send(&mut self, _data: &[u8]) -> TdsResult<()> {
+            todo!()
+        }
+
+        fn packet_size(&self) -> u32 {
+            4096 // Dummy value
+        }
+
+        fn get_encryption_setting(&self) -> NegotiatedEncryptionSetting {
+            todo!()
+        }
+    }
+
+    #[async_trait]
+    impl TransportSslHandler for MockNetworkReaderWriter {
+        async fn enable_ssl(&mut self) -> TdsResult<()> {
+            todo!()
+        }
+
+        async fn disable_ssl(&mut self) -> TdsResult<()> {
+            todo!()
+        }
+    }
+
+    #[async_trait]
+    impl NetworkReaderWriter for MockNetworkReaderWriter {
+        fn notify_encryption_setting_change(&mut self, _setting: NegotiatedEncryptionSetting) {
+            todo!()
+        }
+
+        fn notify_session_setting_change(&mut self, _settings: &SessionSettings) {
+            todo!()
+        }
+
+        fn as_writer(&mut self) -> &mut dyn NetworkWriter {
+            self
+        }
+    }
+
+    #[async_trait]
+    impl NetworkReader for MockNetworkReaderWriter {
         async fn receive(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
             let remaining = self.data.len() - self.position;
             let to_read = min(buffer.len(), remaining);
@@ -573,12 +598,11 @@ pub(crate) mod tests {
         let byte_value = rng.gen::<u8>();
         let builder = binding.append_byte(byte_value);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
         let mut packet_reader = PacketReader::new(&mut mock_reader);
-        // packet_reader.last_packet = true;
         packet_reader.read_tds_packet().await.unwrap();
 
         let byte = packet_reader.read_byte().await.unwrap();
@@ -593,11 +617,11 @@ pub(crate) mod tests {
         let int16_value = rng.gen::<i16>();
         let builder = binding.append_i16(int16_value);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
         packet_reader.read_tds_packet().await.unwrap();
 
         let int16 = packet_reader.read_int16().await.unwrap();
@@ -611,11 +635,11 @@ pub(crate) mod tests {
         let uint16_value = rng.gen::<u16>();
         let builder = binding.append_u16(uint16_value);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
         packet_reader.read_tds_packet().await.unwrap();
 
         let uint16 = packet_reader.read_uint16().await.unwrap();
@@ -629,11 +653,11 @@ pub(crate) mod tests {
         let int32_value = rng.gen::<i32>();
         let builder = binding.append_i32(int32_value);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
         packet_reader.read_tds_packet().await.unwrap();
 
         let int32 = packet_reader.read_int32().await.unwrap();
@@ -647,11 +671,11 @@ pub(crate) mod tests {
         let uint32_value = rng.gen::<u32>();
         let builder = binding.append_u32(uint32_value);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
         packet_reader.read_tds_packet().await.unwrap();
 
         let uint32 = packet_reader.read_uint32().await.unwrap();
@@ -665,11 +689,11 @@ pub(crate) mod tests {
         let int64_value = rng.gen::<i64>();
         let builder = binding.append_i64(int64_value);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
         packet_reader.read_tds_packet().await.unwrap();
 
         let int64 = packet_reader.read_int64().await.unwrap();
@@ -683,11 +707,11 @@ pub(crate) mod tests {
         let uint64_value = rng.gen::<u64>();
         let builder = binding.append_u64(uint64_value);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
         packet_reader.read_tds_packet().await.unwrap();
 
         let uint64 = packet_reader.read_uint64().await.unwrap();
@@ -701,11 +725,11 @@ pub(crate) mod tests {
         let float32_value = rng.gen::<f32>();
         let builder = binding.append_f32(float32_value);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
         packet_reader.read_tds_packet().await.unwrap();
 
         let float32 = packet_reader.read_float32().await.unwrap();
@@ -719,11 +743,11 @@ pub(crate) mod tests {
         let float64_value = rng.gen::<f64>();
         let builder = binding.append_f64(float64_value);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
         packet_reader.read_tds_packet().await.unwrap();
 
         let float64 = packet_reader.read_float64().await.unwrap();
@@ -746,11 +770,11 @@ pub(crate) mod tests {
 
         let builder = binding.append_bytes(&byte_array[0..]);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
         let unicode = packet_reader.read_unicode(utf16_byte_len).await.unwrap();
         assert_eq!(unicode, unicode_string);
     }
@@ -761,11 +785,11 @@ pub(crate) mod tests {
         let bytes = generate_random_bytes(bytes_len);
         let mut binding = TestPacketBuilder::new(PacketType::PreLogin);
         let builder = binding.append_bytes(&bytes[0..]);
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
 
         let mut buffer = vec![0; bytes_len];
         let bytes_read = packet_reader.read_bytes(&mut buffer).await.unwrap();
@@ -783,11 +807,11 @@ pub(crate) mod tests {
         payload_bytes.extend_from_slice(&data_bytes[0..]);
 
         let builder = binding.append_bytes(&payload_bytes[0..]);
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
 
         packet_reader.read_tds_packet().await.unwrap();
 
@@ -805,11 +829,11 @@ pub(crate) mod tests {
         payload_bytes.extend_from_slice(&data_bytes[0..]);
 
         let builder = binding.append_bytes(&payload_bytes[0..]);
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
 
         packet_reader.read_tds_packet().await.unwrap();
 
@@ -833,12 +857,12 @@ pub(crate) mod tests {
 
         let builder = binding.append_bytes(&byte_array[0..]);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
 
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
 
         let varchar = packet_reader.read_varchar_u16_length().await.unwrap();
         // assert_eq!(varchar, Some("ab".to_string()));
@@ -862,12 +886,12 @@ pub(crate) mod tests {
 
         let builder = binding.append_bytes(&byte_array[0..]);
 
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader_writer = MockNetworkReaderWriter {
             data: builder.build(),
             position: 0,
         };
 
-        let mut packet_reader = PacketReader::new(&mut mock_reader);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
 
         let varchar = packet_reader.read_varchar_u8_length().await.unwrap();
         // assert_eq!(varchar, Some("ab".to_string()));

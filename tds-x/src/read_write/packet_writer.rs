@@ -1,8 +1,13 @@
 use super::reader_writer::NetworkWriter;
 use crate::core::TdsResult;
+use crate::error::Error::TimeoutError;
+use crate::error::TimeoutErrorType;
 use crate::message::messages::{PacketStatusFlags, PacketType};
+use crate::read_write::packet_writer::MessageSendState::{Complete, NotStarted, Partial};
 use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
 use std::io::{Cursor, Write};
+use std::time::{Duration, Instant};
+use tokio::time::timeout;
 use tracing::event;
 
 /// A packet writer that writes data to a buffer and if needed flushes it to the network as needed.
@@ -16,6 +21,14 @@ pub struct PacketWriter<'a> {
     payload_cursor: Cursor<Vec<u8>>,
     packet_size: usize,
     is_first_packet: bool, // Note: Cannot just use packet_id because its value can rollover.
+    start_time: Instant,
+    max_timeout_sec: Option<u32>,
+}
+
+pub(crate) enum MessageSendState {
+    NotStarted,
+    Partial,
+    Complete,
 }
 
 impl<'a> PacketWriter<'a> {
@@ -24,6 +37,7 @@ impl<'a> PacketWriter<'a> {
     pub(crate) fn new(
         packet_type: PacketType,
         network_writer: &'a mut dyn NetworkWriter,
+        timeout: Option<u32>,
     ) -> PacketWriter<'a> {
         let packet_size: usize = network_writer.packet_size() as usize;
         // Add additional space for the numeric types.
@@ -41,7 +55,25 @@ impl<'a> PacketWriter<'a> {
             payload_cursor: buffer_cursor,
             packet_size,
             is_first_packet: true,
+            start_time: Instant::now(),
+            max_timeout_sec: timeout,
         }
+    }
+
+    pub(crate) fn get_message_state(&self) -> MessageSendState {
+        if !self.is_first_packet {
+            if self.payload_cursor.position() == 0 {
+                Complete
+            } else {
+                Partial
+            }
+        } else {
+            NotStarted
+        }
+    }
+
+    pub(crate) async fn cancel_current_message(&mut self) -> TdsResult<()> {
+        self.populate_header_and_send(true, true).await
     }
 
     pub(crate) fn position(&self) -> i32 {
@@ -51,7 +83,7 @@ impl<'a> PacketWriter<'a> {
     async fn handle_overflow_if_needed(&mut self) -> TdsResult<()> {
         // If the payload size is greater than the max payload size, send the packet.
         if self.position() >= (self.max_payload_size as i32) {
-            self.populate_header_and_send(false).await?;
+            self.populate_header_and_send(false, false).await?;
 
             let current_position = self.payload_cursor.position();
             let overflow_length = current_position as usize - self.packet_size;
@@ -160,7 +192,7 @@ impl<'a> PacketWriter<'a> {
         if packet_space_left < content.len() {
             let chunk = &content[..packet_space_left];
             let _ = self.payload_cursor.write_all(chunk);
-            self.populate_header_and_send(false).await?;
+            self.populate_header_and_send(false, false).await?;
             self.payload_cursor
                 .set_position(Self::PACKET_HEADER_SIZE as u64);
             Box::pin(self.write_async(&content[packet_space_left..])).await?;
@@ -172,15 +204,36 @@ impl<'a> PacketWriter<'a> {
 
     pub(crate) async fn finalize(&mut self) -> TdsResult<()> {
         if (self.payload_cursor.position()) > Self::PACKET_HEADER_SIZE as u64 {
-            self.populate_header_and_send(true).await?;
+            self.populate_header_and_send(true, false).await?;
             self.payload_cursor
                 .set_position(Self::PACKET_HEADER_SIZE as u64);
         }
         Ok(())
     }
 
-    async fn populate_header_and_send(&mut self, is_last_packet: bool) -> TdsResult<()> {
-        let saved_position = self.payload_cursor.position();
+    /// Builds and sends a packet based on the current payload and the state of the message.
+    ///
+    /// # Arguments
+    ///
+    /// * `is_last_packet` - Flag indicating that this is the last packet of the current message.
+    /// * `is_ignore_packet` - Flag indicating that the current message should be ignored by the
+    ///    server. If this flag is set to true, the `is_last_packet` flag also must be set to true
+    ///    as specified by the TDS protocol.
+    /// ```
+    async fn populate_header_and_send(
+        &mut self,
+        is_last_packet: bool,
+        is_ignore_packet: bool,
+    ) -> TdsResult<()> {
+        // If the ignore bit is set, it must be the end of the message per the protocol.
+        assert!(is_last_packet || !is_ignore_packet);
+
+        // Record the position of the packet payload. Set the payload size to zero if this is an ignore packet.
+        let saved_position = match is_ignore_packet {
+            true => 0,
+            false => self.payload_cursor.position(),
+        };
+
         let packet_length = match saved_position as usize > self.packet_size {
             true => self.packet_size,
             false => saved_position as usize,
@@ -194,9 +247,33 @@ impl<'a> PacketWriter<'a> {
             self.packet_type,
             self.packet_id,
             is_last_packet,
+            is_ignore_packet,
         );
         let data_slice = &self.payload_cursor.get_ref().as_slice()[..packet_length];
-        self.network_writer.send(data_slice).await?;
+
+        // Calculate the timeout based on the start time of this request and the max timeout.
+        if self.max_timeout_sec.is_none() {
+            self.network_writer.send(data_slice).await?;
+        } else {
+            let elapsed = self.start_time.elapsed().as_secs();
+            if elapsed > self.max_timeout_sec.unwrap() as u64 {
+                return Err(TimeoutError(TimeoutErrorType::String(
+                    "Timeout expired".to_string(),
+                )));
+            };
+            let current_timeout = self.max_timeout_sec.unwrap() as u64 - elapsed;
+            match timeout(
+                Duration::from_secs(current_timeout),
+                self.network_writer.send(data_slice),
+            )
+            .await
+            {
+                Ok(result) => result?,
+                Err(elapsed) => {
+                    return Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed)));
+                }
+            };
+        }
 
         event!(
             tracing::Level::DEBUG,
@@ -232,14 +309,18 @@ impl<'a> PacketWriter<'a> {
         packet_type: PacketType,
         packet_id: u8,
         is_last_packet: bool,
+        is_ignore_packet: bool,
     ) -> TdsResult<()> {
         let _ = WriteBytesExt::write_u8(writer, packet_type as u8);
         let status = match is_last_packet {
-            true => PacketStatusFlags::Eom,
-            false => PacketStatusFlags::Normal,
+            true => match is_ignore_packet {
+                true => PacketStatusFlags::Eom as u8 | PacketStatusFlags::Ignore as u8,
+                false => PacketStatusFlags::Eom as u8,
+            },
+            false => PacketStatusFlags::Normal as u8,
         };
 
-        let _ = WriteBytesExt::write_u8(writer, status as u8);
+        let _ = WriteBytesExt::write_u8(writer, status);
 
         let _ = WriteBytesExt::write_u16::<BigEndian>(writer, packet_length as u16);
 
@@ -292,10 +373,6 @@ pub(crate) mod tests {
             self.size
         }
 
-        fn get_packet_writer(&mut self, _: PacketType) -> PacketWriter<'_> {
-            unimplemented!();
-        }
-
         fn get_encryption_setting(&self) -> NegotiatedEncryptionSetting {
             unimplemented!()
         }
@@ -315,7 +392,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_byte_async() {
         let mut mock = MockNetworkWriter::new(8);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
         block_on(writer.write_byte_async(0xAB)).unwrap();
         assert_eq!(writer.payload_cursor.into_inner()[8..], vec![0xAB]);
     }
@@ -323,7 +400,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_i16_async() {
         let mut mock = MockNetworkWriter::new(8);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
         block_on(writer.write_i16_async(0x1234)).unwrap();
         assert_eq!(
             writer.payload_cursor.into_inner()[8..],
@@ -334,7 +411,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_u32_async() {
         let mut mock = MockNetworkWriter::new(8);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
         block_on(writer.write_u32_async(0xDEADBEEF)).unwrap();
         assert_eq!(
             writer.payload_cursor.into_inner()[8..],
@@ -345,7 +422,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_i64_async() {
         let mut mock = MockNetworkWriter::new(16);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
         block_on(writer.write_i64_async(0x1122334455667788)).unwrap();
         assert_eq!(
             writer.payload_cursor.into_inner()[8..],
@@ -356,7 +433,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_i64_overflow_async() {
         let mut mock = MockNetworkWriter::new(16);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
         block_on(writer.write_i32_async(0x1234)).unwrap();
         block_on(writer.write_i64_async(0x1122334455667788)).unwrap();
         assert_eq!(mock.data[8..12], 0x1234i32.to_le_bytes());
@@ -365,7 +442,7 @@ pub(crate) mod tests {
     #[test]
     fn test_finalize_with_data() {
         let mut mock = MockNetworkWriter::new(16);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
         block_on(writer.write_byte_async(0xAB)).unwrap();
         block_on(writer.finalize()).unwrap();
         assert_eq!(
@@ -378,7 +455,7 @@ pub(crate) mod tests {
     #[test]
     fn test_finalize_without_data() {
         let mut mock = MockNetworkWriter::new(16);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
         block_on(writer.finalize()).unwrap();
         assert_eq!(
             writer.payload_cursor.position(),
@@ -390,7 +467,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_at_index() {
         let mut mock = MockNetworkWriter::new(16);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
 
         block_on(writer.write_byte_async(0xAB)).unwrap();
         block_on(writer.write_byte_async(0xAB)).unwrap();
@@ -415,7 +492,7 @@ pub(crate) mod tests {
     fn test_write_string_overflow() {
         let packet_size: usize = 16;
         let mut mock = MockNetworkWriter::new(packet_size as u32);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
         let str_value = "a very very very very very very very very very very very very long string";
         block_on(writer.write_string_unicode_async(str_value)).unwrap();
         block_on(writer.finalize()).unwrap();

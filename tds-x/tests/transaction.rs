@@ -127,7 +127,7 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .transaction(TransactionManagementType::GetDtcAddress)
+            .send_transaction(TransactionManagementType::GetDtcAddress, None)
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
@@ -139,19 +139,25 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                level: TransactionIsolationLevel::ReadCommitted,
-                name: Some("test01".to_string()),
-            }))
+            .send_transaction(
+                TransactionManagementType::Begin(CreateTxnParams {
+                    level: TransactionIsolationLevel::ReadCommitted,
+                    name: Some("test01".to_string()),
+                }),
+                None,
+            )
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
 
         let rollback_result = connection
-            .transaction(TransactionManagementType::Rollback {
-                name: Some("test01".to_string()),
-                create_txn_params: None,
-            })
+            .send_transaction(
+                TransactionManagementType::Rollback {
+                    name: Some("test01".to_string()),
+                    create_txn_params: None,
+                },
+                None,
+            )
             .await;
 
         validate_results(rollback_result.unwrap(), &expected).await;
@@ -163,19 +169,25 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                level: TransactionIsolationLevel::ReadCommitted,
-                name: None,
-            }))
+            .send_transaction(
+                TransactionManagementType::Begin(CreateTxnParams {
+                    level: TransactionIsolationLevel::ReadCommitted,
+                    name: None,
+                }),
+                None,
+            )
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
 
         let rollback_result = connection
-            .transaction(TransactionManagementType::Rollback {
-                name: None,
-                create_txn_params: None,
-            })
+            .send_transaction(
+                TransactionManagementType::Rollback {
+                    name: None,
+                    create_txn_params: None,
+                },
+                None,
+            )
             .await;
 
         validate_results(rollback_result.unwrap(), &expected).await;
@@ -187,10 +199,13 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                level: TransactionIsolationLevel::ReadCommitted,
-                name: Some("test01".to_string()),
-            }))
+            .send_transaction(
+                TransactionManagementType::Begin(CreateTxnParams {
+                    level: TransactionIsolationLevel::ReadCommitted,
+                    name: Some("test01".to_string()),
+                }),
+                None,
+            )
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
@@ -202,10 +217,13 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                level: TransactionIsolationLevel::ReadCommitted,
-                name: None,
-            }))
+            .send_transaction(
+                TransactionManagementType::Begin(CreateTxnParams {
+                    level: TransactionIsolationLevel::ReadCommitted,
+                    name: None,
+                }),
+                None,
+            )
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
@@ -217,10 +235,13 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                level: TransactionIsolationLevel::ReadCommitted,
-                name: Some("test02".to_string()),
-            }))
+            .send_transaction(
+                TransactionManagementType::Begin(CreateTxnParams {
+                    level: TransactionIsolationLevel::ReadCommitted,
+                    name: Some("test02".to_string()),
+                }),
+                None,
+            )
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
@@ -233,10 +254,13 @@ mod transactions {
         .await;
 
         let commit_result = connection
-            .transaction(TransactionManagementType::Commit {
-                name: Some("test02".to_string()),
-                create_txn_params: None,
-            })
+            .send_transaction(
+                TransactionManagementType::Commit {
+                    name: Some("test02".to_string()),
+                    create_txn_params: None,
+                },
+                None,
+            )
             .await;
 
         validate_results(commit_result.unwrap(), &expected).await;
@@ -256,10 +280,13 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                level: TransactionIsolationLevel::ReadCommitted,
-                name: Some("test03".to_string()),
-            }))
+            .send_transaction(
+                TransactionManagementType::Begin(CreateTxnParams {
+                    level: TransactionIsolationLevel::ReadCommitted,
+                    name: Some("test03".to_string()),
+                }),
+                None,
+            )
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
@@ -272,13 +299,16 @@ mod transactions {
         .await;
 
         let commit_result = connection
-            .transaction(TransactionManagementType::Commit {
-                name: Some("test03".to_string()),
-                create_txn_params: Some(CreateTxnParams {
-                    level: TransactionIsolationLevel::NoChange,
-                    name: Some("test04".to_string()),
-                }),
-            })
+            .send_transaction(
+                TransactionManagementType::Commit {
+                    name: Some("test03".to_string()),
+                    create_txn_params: Some(CreateTxnParams {
+                        level: TransactionIsolationLevel::NoChange,
+                        name: Some("test04".to_string()),
+                    }),
+                },
+                None,
+            )
             .await;
 
         validate_results(commit_result.unwrap(), &expected).await;
@@ -293,10 +323,13 @@ mod transactions {
 
         // Commit the new transaction
         let commit_result = connection
-            .transaction(TransactionManagementType::Commit {
-                name: Some("test04".to_string()),
-                create_txn_params: None,
-            })
+            .send_transaction(
+                TransactionManagementType::Commit {
+                    name: Some("test04".to_string()),
+                    create_txn_params: None,
+                },
+                None,
+            )
             .await;
 
         validate_results(commit_result.unwrap(), &expected).await;
@@ -309,10 +342,13 @@ mod transactions {
         let mut connection = begin_connection(&context).await;
 
         let begin_result = connection
-            .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                level: TransactionIsolationLevel::ReadCommitted,
-                name: Some("test05".to_string()),
-            }))
+            .send_transaction(
+                TransactionManagementType::Begin(CreateTxnParams {
+                    level: TransactionIsolationLevel::ReadCommitted,
+                    name: Some("test05".to_string()),
+                }),
+                None,
+            )
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
@@ -325,13 +361,16 @@ mod transactions {
         .await;
 
         let commit_result = connection
-            .transaction(TransactionManagementType::Commit {
-                name: Some("test05".to_string()),
-                create_txn_params: Some(CreateTxnParams {
-                    level: TransactionIsolationLevel::NoChange,
-                    name: None,
-                }),
-            })
+            .send_transaction(
+                TransactionManagementType::Commit {
+                    name: Some("test05".to_string()),
+                    create_txn_params: Some(CreateTxnParams {
+                        level: TransactionIsolationLevel::NoChange,
+                        name: None,
+                    }),
+                },
+                None,
+            )
             .await;
 
         validate_results(commit_result.unwrap(), &expected).await;
@@ -346,10 +385,13 @@ mod transactions {
 
         // Commit the new unnamed transaction
         let commit_result = connection
-            .transaction(TransactionManagementType::Commit {
-                name: None,
-                create_txn_params: None,
-            })
+            .send_transaction(
+                TransactionManagementType::Commit {
+                    name: None,
+                    create_txn_params: None,
+                },
+                None,
+            )
             .await;
 
         validate_results(commit_result.unwrap(), &expected).await;
@@ -364,10 +406,13 @@ mod transactions {
         let mut counter = 0;
         loop {
             let begin_result = connection
-                .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: Some("test05".to_string()),
-                }))
+                .send_transaction(
+                    TransactionManagementType::Begin(CreateTxnParams {
+                        level: TransactionIsolationLevel::ReadCommitted,
+                        name: Some("test05".to_string()),
+                    }),
+                    None,
+                )
                 .await;
 
             validate_results(begin_result.unwrap(), &expected).await;
@@ -380,13 +425,16 @@ mod transactions {
             .await;
 
             let commit_result = connection
-                .transaction(TransactionManagementType::Commit {
-                    name: Some("test05".to_string()),
-                    create_txn_params: Some(CreateTxnParams {
-                        level: TransactionIsolationLevel::NoChange,
-                        name: None,
-                    }),
-                })
+                .send_transaction(
+                    TransactionManagementType::Commit {
+                        name: Some("test05".to_string()),
+                        create_txn_params: Some(CreateTxnParams {
+                            level: TransactionIsolationLevel::NoChange,
+                            name: None,
+                        }),
+                    },
+                    None,
+                )
                 .await;
 
             validate_results(commit_result.unwrap(), &expected).await;
@@ -401,10 +449,13 @@ mod transactions {
 
             // Commit the new unnamed transaction
             let commit_result = connection
-                .transaction(TransactionManagementType::Commit {
-                    name: None,
-                    create_txn_params: None,
-                })
+                .send_transaction(
+                    TransactionManagementType::Commit {
+                        name: None,
+                        create_txn_params: None,
+                    },
+                    None,
+                )
                 .await;
 
             validate_results(commit_result.unwrap(), &expected).await;
@@ -428,10 +479,13 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                level: TransactionIsolationLevel::ReadCommitted,
-                name: Some("test06".to_string()),
-            }))
+            .send_transaction(
+                TransactionManagementType::Begin(CreateTxnParams {
+                    level: TransactionIsolationLevel::ReadCommitted,
+                    name: Some("test06".to_string()),
+                }),
+                None,
+            )
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
@@ -445,13 +499,16 @@ mod transactions {
 
         // Commit the creation of the table and start a new transaction with a new name.
         let commit_result = connection
-            .transaction(TransactionManagementType::Commit {
-                name: Some("test06".to_string()),
-                create_txn_params: Some(CreateTxnParams {
-                    level: TransactionIsolationLevel::NoChange,
-                    name: Some("test07".to_string()),
-                }),
-            })
+            .send_transaction(
+                TransactionManagementType::Commit {
+                    name: Some("test06".to_string()),
+                    create_txn_params: Some(CreateTxnParams {
+                        level: TransactionIsolationLevel::NoChange,
+                        name: Some("test07".to_string()),
+                    }),
+                },
+                None,
+            )
             .await;
 
         validate_results(commit_result.unwrap(), &expected).await;
@@ -465,10 +522,13 @@ mod transactions {
         .await;
 
         let rollback_result = connection
-            .transaction(TransactionManagementType::Rollback {
-                name: Some("test07".to_string()),
-                create_txn_params: None,
-            })
+            .send_transaction(
+                TransactionManagementType::Rollback {
+                    name: Some("test07".to_string()),
+                    create_txn_params: None,
+                },
+                None,
+            )
             .await;
 
         validate_results(rollback_result.unwrap(), &expected).await;
@@ -488,10 +548,13 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                level: TransactionIsolationLevel::ReadCommitted,
-                name: Some("test08".to_string()),
-            }))
+            .send_transaction(
+                TransactionManagementType::Begin(CreateTxnParams {
+                    level: TransactionIsolationLevel::ReadCommitted,
+                    name: Some("test08".to_string()),
+                }),
+                None,
+            )
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
@@ -505,13 +568,16 @@ mod transactions {
 
         // Commit the creation of the table and start a new transaction with a new name.
         let commit_result = connection
-            .transaction(TransactionManagementType::Commit {
-                name: Some("test08".to_string()),
-                create_txn_params: Some(CreateTxnParams {
-                    level: TransactionIsolationLevel::NoChange,
-                    name: Some("test09".to_string()),
-                }),
-            })
+            .send_transaction(
+                TransactionManagementType::Commit {
+                    name: Some("test08".to_string()),
+                    create_txn_params: Some(CreateTxnParams {
+                        level: TransactionIsolationLevel::NoChange,
+                        name: Some("test09".to_string()),
+                    }),
+                },
+                None,
+            )
             .await;
 
         validate_results(commit_result.unwrap(), &expected).await;
@@ -525,13 +591,16 @@ mod transactions {
         .await;
 
         let rollback_result = connection
-            .transaction(TransactionManagementType::Rollback {
-                name: Some("test09".to_string()),
-                create_txn_params: Some(CreateTxnParams {
-                    level: TransactionIsolationLevel::NoChange,
-                    name: Some("test10".to_string()),
-                }),
-            })
+            .send_transaction(
+                TransactionManagementType::Rollback {
+                    name: Some("test09".to_string()),
+                    create_txn_params: Some(CreateTxnParams {
+                        level: TransactionIsolationLevel::NoChange,
+                        name: Some("test10".to_string()),
+                    }),
+                },
+                None,
+            )
             .await;
 
         validate_results(rollback_result.unwrap(), &expected).await;
@@ -546,10 +615,13 @@ mod transactions {
 
         // Commit the new named transaction
         let commit_result = connection
-            .transaction(TransactionManagementType::Commit {
-                name: Some("test10".to_string()),
-                create_txn_params: None,
-            })
+            .send_transaction(
+                TransactionManagementType::Commit {
+                    name: Some("test10".to_string()),
+                    create_txn_params: None,
+                },
+                None,
+            )
             .await;
 
         validate_results(commit_result.unwrap(), &expected).await;
@@ -561,10 +633,13 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                level: TransactionIsolationLevel::ReadCommitted,
-                name: Some("test11".to_string()),
-            }))
+            .send_transaction(
+                TransactionManagementType::Begin(CreateTxnParams {
+                    level: TransactionIsolationLevel::ReadCommitted,
+                    name: Some("test11".to_string()),
+                }),
+                None,
+            )
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
@@ -578,13 +653,16 @@ mod transactions {
 
         // Commit the creation of the table and start a new transaction with a new name.
         let commit_result = connection
-            .transaction(TransactionManagementType::Commit {
-                name: Some("test11".to_string()),
-                create_txn_params: Some(CreateTxnParams {
-                    level: TransactionIsolationLevel::NoChange,
-                    name: Some("test12".to_string()),
-                }),
-            })
+            .send_transaction(
+                TransactionManagementType::Commit {
+                    name: Some("test11".to_string()),
+                    create_txn_params: Some(CreateTxnParams {
+                        level: TransactionIsolationLevel::NoChange,
+                        name: Some("test12".to_string()),
+                    }),
+                },
+                None,
+            )
             .await;
 
         validate_results(commit_result.unwrap(), &expected).await;
@@ -598,13 +676,16 @@ mod transactions {
         .await;
 
         let rollback_result = connection
-            .transaction(TransactionManagementType::Rollback {
-                name: Some("test12".to_string()),
-                create_txn_params: Some(CreateTxnParams {
-                    level: TransactionIsolationLevel::NoChange,
-                    name: None,
-                }),
-            })
+            .send_transaction(
+                TransactionManagementType::Rollback {
+                    name: Some("test12".to_string()),
+                    create_txn_params: Some(CreateTxnParams {
+                        level: TransactionIsolationLevel::NoChange,
+                        name: None,
+                    }),
+                },
+                None,
+            )
             .await;
 
         validate_results(rollback_result.unwrap(), &expected).await;
@@ -619,10 +700,13 @@ mod transactions {
 
         // Commit the new unnamed transaction
         let commit_result = connection
-            .transaction(TransactionManagementType::Commit {
-                name: None,
-                create_txn_params: None,
-            })
+            .send_transaction(
+                TransactionManagementType::Commit {
+                    name: None,
+                    create_txn_params: None,
+                },
+                None,
+            )
             .await;
 
         validate_results(commit_result.unwrap(), &expected).await;
@@ -634,10 +718,13 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .transaction(TransactionManagementType::Begin(CreateTxnParams {
-                level: TransactionIsolationLevel::ReadCommitted,
-                name: Some("test13".to_string()),
-            }))
+            .send_transaction(
+                TransactionManagementType::Begin(CreateTxnParams {
+                    level: TransactionIsolationLevel::ReadCommitted,
+                    name: Some("test13".to_string()),
+                }),
+                None,
+            )
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
@@ -651,7 +738,7 @@ mod transactions {
 
         // Create a savepoint where this table exists.
         let save_result = connection
-            .transaction(TransactionManagementType::Save("test14".to_string()))
+            .send_transaction(TransactionManagementType::Save("test14".to_string()), None)
             .await;
 
         validate_results(save_result.unwrap(), &expected).await;
@@ -666,10 +753,13 @@ mod transactions {
 
         // Rollback to the savepoint
         let rollback_result = connection
-            .transaction(TransactionManagementType::Rollback {
-                name: Some("test14".to_string()),
-                create_txn_params: None,
-            })
+            .send_transaction(
+                TransactionManagementType::Rollback {
+                    name: Some("test14".to_string()),
+                    create_txn_params: None,
+                },
+                None,
+            )
             .await;
 
         validate_results(rollback_result.unwrap(), &expected).await;

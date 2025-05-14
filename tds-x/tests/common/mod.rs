@@ -131,7 +131,7 @@ pub async fn run_query_and_check_results<'a, 'n>(
 ) where
     'n: 'a,
 {
-    let results = connection.execute(query).await;
+    let results = connection.execute(query, None).await;
     validate_results(results.unwrap(), expected_results).await;
 }
 

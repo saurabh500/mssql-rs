@@ -4,7 +4,6 @@ use crate::message::headers::{write_headers, TdsHeaders, TransactionDescriptorHe
 use crate::message::messages::PacketType::TransactionManager;
 use crate::message::messages::{PacketType, Request};
 use crate::read_write::packet_writer::PacketWriter;
-use crate::read_write::reader_writer::NetworkWriter;
 use async_trait::async_trait;
 use std::io::Error;
 
@@ -98,18 +97,16 @@ impl From<&TransactionManagementType> for u16 {
 }
 
 #[async_trait]
-impl<'a> Request<'a> for TransactionManagementRequest {
+impl Request for TransactionManagementRequest {
     fn packet_type(&self) -> PacketType {
         TransactionManager
     }
 
-    fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a> {
-        self.packet_type().create_packet_writer(writer)
-    }
-
-    async fn serialize(&self, writer: &mut dyn NetworkWriter) -> TdsResult<()> {
-        let mut packet_writer = self.create_packet_writer(writer);
-        write_headers(&self.headers, &mut packet_writer).await?;
+    async fn serialize<'a, 'b>(&'a self, packet_writer: &'a mut PacketWriter<'b>) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        write_headers(&self.headers, packet_writer).await?;
         packet_writer
             .write_u16_async(u16::from(&self.transaction_params))
             .await?;
@@ -124,7 +121,7 @@ impl<'a> Request<'a> for TransactionManagementRequest {
                 packet_writer.write_string_unicode_async(payload).await?;
             }
             TransactionManagementType::Begin(payload) => {
-                payload.serialize(&mut packet_writer).await?;
+                payload.serialize(packet_writer).await?;
             }
             TransactionManagementType::Promote => (),
             TransactionManagementType::Commit {
@@ -149,9 +146,7 @@ impl<'a> Request<'a> for TransactionManagementRequest {
                     Some(new_transaction_metadata) => {
                         let flag: u8 = 1u8 << 7;
                         packet_writer.write_byte_async(flag).await?;
-                        new_transaction_metadata
-                            .serialize(&mut packet_writer)
-                            .await?;
+                        new_transaction_metadata.serialize(packet_writer).await?;
                     }
                     None => {
                         packet_writer.write_byte_async(0).await?;

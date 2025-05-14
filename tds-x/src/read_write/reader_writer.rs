@@ -1,16 +1,13 @@
 use super::packet_reader::PacketReader;
-use super::packet_writer::PacketWriter;
 use crate::connection::transport::network_transport::TransportSslHandler;
 use crate::core::{NegotiatedEncryptionSetting, TdsResult};
 use crate::handler::handler_factory::SessionSettings;
-use crate::message::messages::PacketType;
 use async_trait::async_trait;
 
 #[async_trait]
 pub(crate) trait NetworkWriter: Send + Sync + TransportSslHandler {
     async fn send(&mut self, data: &[u8]) -> TdsResult<()>;
     fn packet_size(&self) -> u32;
-    fn get_packet_writer(&mut self, packet_type: PacketType) -> PacketWriter<'_>;
     fn get_encryption_setting(&self) -> NegotiatedEncryptionSetting;
 }
 
@@ -25,6 +22,7 @@ pub(crate) trait NetworkReader: Send {
 pub(crate) trait NetworkReaderWriter: NetworkReader + NetworkWriter {
     fn notify_encryption_setting_change(&mut self, setting: NegotiatedEncryptionSetting);
     fn notify_session_setting_change(&mut self, settings: &SessionSettings);
+    fn as_writer(&mut self) -> &mut dyn NetworkWriter;
 }
 
 #[cfg(test)]

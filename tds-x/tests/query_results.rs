@@ -138,6 +138,7 @@ mod query_result_reads {
                 SELECT * FROM #dummy;
                 SELECT * FROM #dummy"
                         .to_string(),
+                    None,
                 )
                 .await;
 
@@ -215,6 +216,7 @@ mod query_result_reads {
                 INSERT INTO #dummy VALUES(10),(20);
                 SELECT * FROM #dummy;"
                         .to_string(),
+                    None,
                 )
                 .await;
 

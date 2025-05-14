@@ -91,7 +91,7 @@ jobs:
       parameters:
         osType: Linux
         buildType: ${{ parameters.buildType }}
-        testFilter: -E 'not (test(query_processing_driver) | test(query_result) | test(connectivity) | test(transaction) | test(rpc_results))'
+        testFilter: -E 'not (test(query_processing_driver) | test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout))'
 
 - job: Build_MacOS
   displayName: Build MacOS
@@ -112,6 +112,6 @@ jobs:
       parameters:
         osType: MacOS
         buildType: ${{ parameters.buildType }}
-        testFilter: -E 'not (test(query_result) | test(connectivity) | test(transaction) | test(rpc_results))'
+        testFilter: -E 'not (test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout))'
 
 

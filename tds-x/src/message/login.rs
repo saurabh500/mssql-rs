@@ -4,7 +4,7 @@ use crate::message::login_options::{
 };
 use crate::message::messages::{PacketType, Request, TdsError};
 use crate::read_write::packet_writer::PacketWriter;
-use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
+use crate::read_write::reader_writer::NetworkReader;
 use crate::token::fed_auth_info::FedAuthInfoToken;
 use crate::token::login_ack::LoginAckToken;
 use crate::token::tokens::{
@@ -175,16 +175,16 @@ pub struct PhysicalAddress {
     address_bytes: [u8; 6],
 }
 
-pub(crate) struct LoginRequestModel<'a> {
+pub(crate) struct LoginRequestModel<'context> {
     pub option_flags1: OptionFlags1,
     pub option_flags2: OptionFlags2,
     pub option_flags3: OptionFlags3,
     pub type_flags: TypeFlags,
     pub tds_version: TdsVersion,
     // TODO: user_input needs to be login specific user_input. Need to understand how to replicate the C# concept here.
-    pub user_input: &'a ClientContext,
+    pub user_input: &'context ClientContext,
     // This is a transport context, which will be used to get the authoritative server name.
-    pub transport_context: &'a TransportContext,
+    pub transport_context: &'context TransportContext,
     pub features_request: FeaturesRequest,
     pub client_prog_ver: i32,
     pub client_process_id: i32,
@@ -196,7 +196,7 @@ pub(crate) struct LoginRequestModel<'a> {
 
 impl LoginRequestModel<'_> {
     pub(crate) fn from_context<'a, 'b>(
-        context: &'a crate::connection::client_context::ClientContext,
+        context: &'a ClientContext,
         pre_login_fedauth_response: bool,
         transport_context: &'b TransportContext,
     ) -> LoginRequestModel<'b>
@@ -382,26 +382,21 @@ impl LoginResponseModel {
     }
 }
 
-pub(crate) struct LoginRequest<'a> {
-    pub model: LoginRequestModel<'a>,
+pub(crate) struct LoginRequest<'context> {
+    pub model: LoginRequestModel<'context>,
 }
 
 #[async_trait]
-impl<'a> Request<'a> for LoginRequest<'a> {
+impl Request for LoginRequest<'_> {
     fn packet_type(&self) -> PacketType {
         PacketType::Login7
     }
 
-    fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a> {
-        self.packet_type().create_packet_writer(writer)
-    }
-
-    async fn serialize(&self, transport: &mut dyn NetworkWriter) -> TdsResult<()> {
-        // TODO: Log the datamodel.
-        let mut packet_writer = self.create_packet_writer(transport);
-        Serializer::new(&self.model, &mut packet_writer)
-            .serialize()
-            .await
+    async fn serialize<'a, 'b>(&'a self, writer: &'a mut PacketWriter<'b>) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        Serializer::new(&self.model, writer).serialize().await
     }
 }
 
@@ -430,7 +425,10 @@ impl LoginResponse {
         let mut response_model = LoginResponseModel::new(requested_features);
         let parser_context = ParserContext::default();
         loop {
-            match token_stream_reader.receive_token(&parser_context).await {
+            match token_stream_reader
+                .receive_token(&parser_context, None)
+                .await
+            {
                 Ok(token) => {
                     let token_type = token.token_type();
                     event!(
@@ -518,19 +516,19 @@ impl LoginResponse {
     }
 }
 
-struct Serializer<'a> {
-    model: &'a LoginRequestModel<'a>,
-    payload_writer: &'a mut PacketWriter<'a>,
+struct Serializer<'a, 'n, 'context> {
+    model: &'a LoginRequestModel<'context>,
+    payload_writer: &'a mut PacketWriter<'n>,
     features_request: &'a FeaturesRequest,
     content_next_offset: i32,
     deferred_actions_indicator: Vec<LoginDeferredPayload>,
 }
 
-impl Serializer<'_> {
-    pub fn new<'a>(
-        model: &'a LoginRequestModel<'a>,
-        payload_writer: &'a mut PacketWriter<'a>,
-    ) -> Serializer<'a> {
+impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
+    pub fn new(
+        model: &'a LoginRequestModel<'context>,
+        payload_writer: &'a mut PacketWriter<'n>,
+    ) -> Serializer<'a, 'n, 'context> {
         Serializer {
             model,
             payload_writer,

@@ -3,9 +3,7 @@ use crate::connection::transport::ssl_handler::{SslHandler, Tds7StreamRecoverer}
 use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::handler::handler_factory::SessionSettings;
 use crate::message::login_options::TdsVersion;
-use crate::message::messages::PacketType;
 use crate::read_write::packet_reader::PacketReader;
-use crate::read_write::packet_writer::PacketWriter;
 use crate::read_write::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
 use async_trait::async_trait;
 use futures::lock::Mutex;
@@ -208,6 +206,10 @@ impl NetworkReaderWriter for NetworkTransport<'_> {
     fn notify_session_setting_change(&mut self, setting: &SessionSettings) {
         self.packet_size = setting.packet_size;
     }
+
+    fn as_writer(&mut self) -> &mut dyn NetworkWriter {
+        self
+    }
 }
 
 #[async_trait]
@@ -236,10 +238,6 @@ impl NetworkWriter for NetworkTransport<'_> {
         self.packet_size
     }
 
-    fn get_packet_writer(&mut self, packet_type: PacketType) -> PacketWriter<'_> {
-        packet_type.create_packet_writer(self)
-    }
-
     fn get_encryption_setting(&self) -> NegotiatedEncryptionSetting {
         assert!(self.encryption.is_some());
         self.encryption.unwrap()
@@ -247,10 +245,6 @@ impl NetworkWriter for NetworkTransport<'_> {
 }
 
 impl NetworkTransport<'_> {
-    pub(crate) fn get_packet_writer(&mut self, packet_type: PacketType) -> PacketWriter<'_> {
-        packet_type.create_packet_writer(self)
-    }
-
     pub(crate) async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
         self.stream.lock().await.write_all(data).await?;
         Ok(())

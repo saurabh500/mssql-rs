@@ -1,7 +1,7 @@
 use crate::core::{EncryptionSetting, TdsResult};
 use crate::message::messages::{PacketType, Request};
 use crate::read_write::packet_reader::PacketReader;
-use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
+use crate::read_write::reader_writer::NetworkReaderWriter;
 use crate::{
     core::{SQLServerVersion, Version},
     read_write::packet_writer::PacketWriter,
@@ -139,23 +139,21 @@ impl PreloginResponseModel {
     }
 }
 
-pub struct PreloginRequest<'a> {
-    pub model: &'a PreloginRequestModel,
+pub struct PreloginRequest<'model> {
+    pub model: &'model PreloginRequestModel,
 }
 
 #[async_trait]
-impl<'a> Request<'a> for PreloginRequest<'a> {
+impl Request for PreloginRequest<'_> {
     fn packet_type(&self) -> PacketType {
         PacketType::PreLogin
     }
 
-    fn create_packet_writer(&self, writer: &'a mut dyn NetworkWriter) -> PacketWriter<'a> {
-        self.packet_type().create_packet_writer(writer)
-    }
-
-    async fn serialize(&self, writer: &mut dyn NetworkWriter) -> TdsResult<()> {
-        let mut packet_writer = self.create_packet_writer(writer);
-        let mut serializer = Serializer::new(self.model, &mut packet_writer);
+    async fn serialize<'a, 'b>(&'a self, writer: &'a mut PacketWriter<'b>) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        let mut serializer = Serializer::new(self.model, writer);
         serializer.serialize().await?;
         Ok(())
     }
@@ -166,9 +164,9 @@ pub struct PreloginResponse {}
 impl PreloginResponse {
     pub(crate) async fn deserialize(
         &self,
-        reader: &mut dyn NetworkReader,
+        reader_writer: &mut dyn NetworkReaderWriter,
     ) -> PreloginResponseModel {
-        let mut packet_reader = PacketReader::new(reader);
+        let mut packet_reader = PacketReader::new(reader_writer);
         struct OptionContext {
             option: OptionType,
             length: usize,
@@ -409,7 +407,7 @@ pub(crate) mod tests {
     use crate::message::prelogin::{
         OptionType, PreloginRequestModel, PreloginResponse, Serializer,
     };
-    use crate::read_write::packet_reader::tests::MockNetworkReader;
+    use crate::read_write::packet_reader::tests::MockNetworkReaderWriter;
     use crate::read_write::packet_writer::tests::MockNetworkWriter;
     use crate::read_write::packet_writer::PacketWriter;
     use byteorder::{BigEndian, ReadBytesExt};
@@ -425,7 +423,7 @@ pub(crate) mod tests {
             Option::from("MSSQLServer"),
         );
         let mut mock = MockNetworkWriter::new(1024);
-        let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock);
+        let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock, None);
 
         let mut serializer = Serializer::new(&model, &mut packet_writer);
         block_on(serializer.serialize()).unwrap();
@@ -447,7 +445,7 @@ pub(crate) mod tests {
     #[test]
     fn test_deserialize_model() {
         let mut mock = MockNetworkWriter::new(1024);
-        let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock);
+        let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock, None);
         // Write headers.
         block_on(packet_writer.write_byte_async(OptionType::Version as u8)).unwrap();
         block_on(packet_writer.write_i16_be_async(0)).unwrap(); // offset - unused
@@ -473,7 +471,7 @@ pub(crate) mod tests {
         let cursor = packet_writer.get_payload();
 
         // Move the contents written to a reader.
-        let mut mock_reader = MockNetworkReader {
+        let mut mock_reader = MockNetworkReaderWriter {
             data: cursor.into_inner(),
             position: 0,
         };

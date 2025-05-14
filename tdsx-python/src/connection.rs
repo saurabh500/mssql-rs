@@ -49,7 +49,7 @@ impl PyTdsConnection {
             .map_err(|_| PyRuntimeError::new_err("Failed to lock connection"))?;
 
         // Use shared runtime to execute the async function
-        let batch_res = RUNTIME.block_on(async { conn.execute(sql_command).await });
+        let batch_res = RUNTIME.block_on(async { conn.execute(sql_command, None).await });
 
         match batch_res {
             Ok(batch_result) => {

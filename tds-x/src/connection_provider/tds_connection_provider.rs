@@ -1,16 +1,39 @@
+use std::time::Duration;
+use tokio::time::timeout;
 use tracing::info;
 
 use crate::connection::client_context::{ClientContext, TransportContext};
 use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
 use crate::connection::transport::network_transport;
 use crate::core::TdsResult;
-use crate::error::Error;
+use crate::error::Error::TimeoutError;
+use crate::error::{Error, TimeoutErrorType};
 use crate::handler::handler_factory::HandlerFactory;
 
 pub struct TdsConnectionProvider {}
 
 impl TdsConnectionProvider {
     pub async fn create_connection<'a>(
+        &self,
+        context: &'a ClientContext,
+    ) -> TdsResult<TdsConnection<'a>> {
+        let timeout_duration = match context.connect_timeout {
+            1.. => Some(Duration::from_secs(context.connect_timeout.into())),
+            _ => None,
+        };
+
+        match timeout_duration.as_ref() {
+            Some(timeout_duration) => {
+                match timeout(*timeout_duration, self.create_connection_internal(context)).await {
+                    Ok(result) => result,
+                    Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
+                }
+            }
+            None => self.create_connection_internal(context).await,
+        }
+    }
+
+    async fn create_connection_internal<'a>(
         &self,
         context: &'a ClientContext,
     ) -> TdsResult<TdsConnection<'a>> {
