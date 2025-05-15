@@ -106,7 +106,7 @@ mod connectivity {
         let command =
             "select host_name from sys.dm_exec_sessions where client_interface_name = 'TdsX'"
                 .to_string();
-        let result = connection.execute(command).await.unwrap();
+        let result = connection.execute(command, None).await.unwrap();
         let col_hostname = get_scalar_value(result).await.unwrap();
         if let Some(column_value) = col_hostname {
             match column_value {
