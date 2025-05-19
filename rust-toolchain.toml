@@ -1,11 +1,5 @@
 [toolchain]
-# Can be any "MSRustup" version, such as ms-stable, ms-1.54 or ms-stable-20210513.5
-# For supported versions see https://mscodehub.visualstudio.com/Rust/_packaging?_a=package&feed=Rust&view=versions&package=rust.tools-x86_64-pc-windows-msvc&protocolType=NuGet
-# We recommend setting this to a specific numbered version such as `ms-1.68` -- we do not recommend
-# setting it to `ms-stable`, because that could lead to nondeterministic builds (ms-stable could be
-# updated at any time including in the middle of a multi-job build).
-# For details on this, see https://eng.ms/docs/more/rust/topics/conventions#toolchain-usage
-channel = "ms-1.84"
 # Additional targets to install for all builds (in both CI and local builds). The toolchain will
 # always come with support for the host platform.
 targets = ["i686-pc-windows-msvc", "aarch64-pc-windows-msvc"]
+channel = "1.84.0"

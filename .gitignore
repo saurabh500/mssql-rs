@@ -39,3 +39,5 @@ Pipfile
 Pipfile.lock
 
 *.out
+
+*.tar.zst

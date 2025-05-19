@@ -36,6 +36,12 @@ else
     echo "PowerShell is already installed"
 fi
 
+# Install Rustup
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+${SCRIPT_DIR}/install-rustup.sh
+
 echo "Home dir is $HOME"
 echo "Current dir is $(pwd)"
 echo "PATH is $PATH"

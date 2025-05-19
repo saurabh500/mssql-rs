@@ -12,8 +12,9 @@ steps:
   - script: |
       scripts/install-deps.sh
       # This is a workaround for the fact that the PATH variable is not updated in the same shell.
-      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/bin:$PATH"
+      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/bin:$HOME/.cargo/bin:$PATH"      
     displayName: "Install linux dependencies"
+  
 - ${{ if eq(parameters.osType, 'MacOS') }}:
   - script: |
       python --version
@@ -25,9 +26,40 @@ steps:
       if ! command -v python &> /dev/null; then
         brew install python
       fi
+
+      # Install Rustup
+      scripts/install-rustup.sh      
     displayName: "Install MacOS dependencies"
+
 - ${{ if eq(parameters.osType, 'Windows') }}:
   - script: |
       python --version
       pip && pip install pipenv
     displayName: "Check if python is installed"
+
+  - task: PowerShell@2
+    displayName: 'Install Rustup toolchain '
+    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+    inputs:
+      targetType: 'inline'
+      script: |
+        $URL = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe";
+        $FileName = [System.IO.Path]::GetFileName($URL)
+        $DestinationFile = Join-Path $env:Temp $FileName
+
+        try {
+            Write-Host "Downloading rustup from $URL"
+            $wc = New-Object -TypeName System.Net.WebClient
+            $wc.DownloadFile($URL, $DestinationFile)}
+        catch {
+            Write-Error -Message "Failed to download rustup: $_.Message"
+        }
+
+        try{
+            Write-Host "Begin installation of rustup"
+            Start-Process "$DestinationFile" -ArgumentList @("-y") -Wait -NoNewWindow
+            Write-Host "End installation of rustup"
+        }
+        catch {
+            Write-Host "`nException while installing rustup, Error Message: " $_.Exception.Message
+        }

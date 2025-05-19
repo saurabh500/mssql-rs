@@ -40,9 +40,9 @@ steps:
     inputs:
       dockerVersion: '17.09.0-ce'
 
-  - task: CmdLine@2
-    displayName: "Run the docker container on linux"
-    inputs:
-      script: 'docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 -d mcr.microsoft.com/mssql/server:2022-latest'
+  - script: |
+      docker network create testnet
+      docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 --network testnet -d mcr.microsoft.com/mssql/server:2022-latest
+    displayName: "Run SQL in docker"   
     env:
       SQL_PASSWORD: $(SQL_PASSWORD)

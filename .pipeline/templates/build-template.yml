@@ -22,22 +22,8 @@ parameters:
   default: ''
 
 steps:
-- task: RustInstaller@1
-  displayName: Install Rust Toolchain
-  inputs:
-    toolchainFeed: https://sqlclientdrivers.pkgs.visualstudio.com/SqlDevX/_packaging/RustTools/nuget/v3/index.json
-- task: CargoAuthenticate@0
-  displayName: Authenticate with Azure Artifacts
-  inputs:
-    configFile: '.cargo/config.toml'
-
-  # Execute cargo fetch at the start of the pipeline to pull down deps specified in the lockfile.
-  # Subsequent steps will always use --frozen that will use the pre-resolved dependency versions
-  # which are pinned in the lockfile
 - script: cargo fetch
   displayName: Fetch Crates
-  env:
-    CARGO_REGISTRIES_ONELAKECLIENT_TOKEN: $(OneLakeClientSecret)
 
 - script: |
     make
@@ -47,45 +33,54 @@ steps:
 - script: |
     cargo build --frozen 2>&1
   displayName: Rust Debug Build
-  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
 
 - script: |
     cargo build --frozen --release 2>&1
   displayName: Rust Release Build
-  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
 
 - script: cargo bclippy
   displayName: Rust Clippy Lint
-  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
 
 - script: cargo bfmt
   displayName: Check Format
-  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
 
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - script: scripts/buildpythoninterop.sh
     displayName: Build Python Interop
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
     env:
       CARGO_REGISTRIES_ONELAKECLIENT_TOKEN: $(OneLakeClientSecret)
 
 - script: cargo install cargo-llvm-cov cargo-nextest
-  displayName: Install llvm-cov and nextest
-  condition: succeeded()
+  displayName: Install llvm-cov and nextest 
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
 - bash: cargo llvm-cov clean --workspace
   displayName: Clean up old coverage files
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
+- ${{ if eq(parameters.osType, 'Linux') }}:
+  - script: |
+      echo "##vso[task.setvariable variable=ARCHIVE_NAME;isOutput=false]tdslib-nextest.tar.zst"   
+      cargo install cargo-nextest   
+      cd tds-x && cargo nextest archive --archive-file tdslib-nextest.tar.zst && cp tdslib-nextest.tar.zst $(Build.ArtifactStagingDirectory) && mv tdslib-nextest.tar.zst ../ 
+    displayName: Archive nextest results
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
  
 - script: |
       cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets -p tds-x --no-fail-fast --profile ci --success-output immediate
   displayName: Run tests
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
   env:
     SQL_PASSWORD: $(SQL_PASSWORD)
     RUST_BACKTRACE: full
 
 - task: PublishTestResults@2
-  condition: succeededOrFailed()
+  condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
   displayName: "Publish test results"
   inputs:
     testResultsFormat: "JUnit"
@@ -93,20 +88,22 @@ steps:
     testRunTitle: $(System.PhaseName)
 
 - script: cargo llvm-cov report --lcov --output-path "$(Build.SourcesDirectory)/target/lcov.info"
-  condition: succeededOrFailed()
+  condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
   workingDirectory: "$(Build.SourcesDirectory)"
   displayName: Save code coverage in lcov format
 
 - ${{ if eq(parameters.osType, 'Windows') }}:
   - task: PublishCodeCoverageResults@2
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
     displayName: "Publish coverage results"
     inputs:
       summaryFileLocation: "$(Build.SourcesDirectory)/target/lcov.info"
       pathToSources: "$(Build.SourcesDirectory)"
 
+
 - task: CopyFiles@2
   displayName: Copy Rust Debug Build
-  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'),  or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
   inputs:
     SourceFolder: '$(CARGO_TARGET_DIR)/debug'
     Contents: |
@@ -116,7 +113,7 @@ steps:
 
 - task: CopyFiles@2
   displayName: Copy Rust Release Build
-  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'), or( eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
   inputs:
     SourceFolder: '$(CARGO_TARGET_DIR)/release'
     Contents: |

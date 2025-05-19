@@ -1,12 +1,3 @@
-[registries]
-RustTools = { index = "sparse+https://sqlclientdrivers.pkgs.visualstudio.com/SqlDevX/_packaging/RustTools/Cargo/index/" }
-
-[registry]
-global-credential-providers = ["cargo:token", "cargo:wincred"]
-
-[source.crates-io]
-replace-with = "RustTools"
-
 [alias]
 bfmt = "fmt -- --check"
 bclippy = "clippy --frozen --all-features --all-targets -- -D warnings"
