@@ -118,13 +118,12 @@ stages:
           buildType: ${{ parameters.buildType }}
           testFilter: -E 'not (test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout))'
 
-- stage: Test
+- stage: Test_amd64
   condition: ne(variables['Build.Reason'], 'PullRequest')
-  displayName: Test Stage
+  displayName: Test amd64
   jobs:
-    - job: Test_Matrix
-      displayName: Linux x64 image.
-      strategy:
+    - template: templates/test-matrix-template.yml
+      parameters:
         matrix:
           DebianBookworm:
             container: debian:bookworm
@@ -141,43 +140,11 @@ stages:
           SLES15:
             container: registry.suse.com/suse/sle15
             entry: sles.sh
-      pool:
-        name: RUST-1ES-POOL-WUS3
-        demands:
-          - imageOverride -equals RUST-1ES-UBU
-      steps:
-        - task: DockerInstaller@0
-          inputs:
-            dockerVersion: '17.09.0-ce'
-        - task: DownloadPipelineArtifact@2
-          inputs:
-            buildType: 'current'
-            artifactName: 'Build_Linux'
-            # targetPath: '$(Build.SourcesDirectory)/artifacts'
-          displayName: 'Download Pipeline Artifacts'
-        - script: |
-            echo $(container)
-            echo $(entry)
-            echo $container
-            if command -v docker >/dev/null 2>&1
-            then
-              cp $(Pipeline.Workspace)/tdslib-nextest.tar.zst $(Build.SourcesDirectory)
-              docker network create testnet
-              docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 --network testnet -d mcr.microsoft.com/mssql/server:2022-latest
-              
-              docker run --entrypoint bash -v "$PWD:/workspace" -e "DB_USERNAME=sa" -e "DB_HOST=sql1" -e "DB_PORT=1433" -e "SQL_PASSWORD=$(SQL_PASSWORD)" -e "ARCHIVE_NAME=tdslib-nextest.tar.zst" --network testnet $(container) /workspace/scripts/dockerentry/$(entry)
-            fi
-          workingDirectory: "$(Build.SourcesDirectory)"
-          displayName: Run docker test
-          condition: succeeded()
-          env :
-            SQL_PASSWORD: $(SQL_PASSWORD)
-        - task: PublishTestResults@2
-          condition: succeededOrFailed()
-          displayName: "Publish test results"
-          inputs:
-            testResultsFormat: "JUnit"
-            testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
-            testRunTitle: $(System.PhaseName)
+          Ubuntu22:
+            container: ubuntu:22.04
+            entry: deb-bookworm.sh
+          Ubuntu24:
+            container: ubuntu:24.04
+            entry: deb-bookworm.sh
 
 

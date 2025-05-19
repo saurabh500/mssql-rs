@@ -100,10 +100,13 @@ The configuration is done in the `.cargo/config.toml` file.
 I want to build the tests in one place, and run the binaries on a different machine/OS
 
 On the source machine with source code, build the tests and archive them
-`cargo nextest archive --archive-file /tmp/nextext.tar.zst`
+` cd tds-x && cargo nextest archive --archive-file tdslib-nextest.tar.zst && mv tdslib-nextest.tar.zst ..`
 
 Copy the archive file to a destination which has cargo and nextest installed, no source code needed. The tests can be executed using.
-`cargo nextest run --archive-file /tmp/nextext.tar.zst`
+`cargo nextest run --archive-file tdslib-nextest.tar.zst`
+
+Running inside docker container
+`docker run -it --entrypoint bash -v "$PWD:/workspace" -e "DB_USERNAME=sa" -e "DB_HOST=sql1" -e "DB_PORT=1433" -e "SQL_PASSWORD=HappyPass1234" -e "ARCHIVE_NAME=tdslib-nextest.tar.zst" --network testnet ubuntu:24.04 /workspace/scripts/dockerentry/deb-bookworm.sh`
 
 
 # Docker dev environment for linux
