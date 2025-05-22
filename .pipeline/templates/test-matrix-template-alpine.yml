@@ -15,27 +15,27 @@ jobs:
       - task: DockerInstaller@0
         inputs:
           dockerVersion: '17.09.0-ce'
-      - template: install-ubuntu-dependency.yaml
-        parameters:
-          installAzCli: true
-      - template: azure-cli-login-template.yml
-
       - task: DownloadPipelineArtifact@2
         inputs:
           buildType: 'current'
-          artifactName: 'Build_Linux'
+          artifactName: 'Build_Alpine'
         displayName: 'Download Pipeline Artifacts'
+      - template: install-ubuntu-dependency.yaml
+        parameters:
+          installAzCli: true
+        
+      - template: azure-cli-login-template.yml
+
       - script: |
-          az acr login -n tdslibrs
           echo $(container)
           echo $(entry)
           echo $container
           if command -v docker >/dev/null 2>&1
           then
-            cp $(Pipeline.Workspace)/tdslib-nextest.tar.zst $(Build.SourcesDirectory)
+            cp $(Pipeline.Workspace)/tdslib-nextest-musl.tar.zst $(Build.SourcesDirectory)
             docker network create testnet
             docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 --network testnet -d mcr.microsoft.com/mssql/server:2022-latest
-            docker run --entrypoint bash -v "$PWD:/workspace" -e "DB_USERNAME=sa" -e "DB_HOST=sql1" -e "DB_PORT=1433" -e "SQL_PASSWORD=$(SQL_PASSWORD)" -e "ARCHIVE_NAME=tdslib-nextest.tar.zst" --network testnet $(container) /workspace/scripts/dockerentry/$(entry)
+            docker run -v "$PWD:/workspace" -e "DB_USERNAME=sa" -e "DB_HOST=sql1" -e "DB_PORT=1433" -e "SQL_PASSWORD=$(SQL_PASSWORD)" -e "ARCHIVE_NAME=tdslib-nextest-musl.tar.zst" --network testnet $(container) /workspace/scripts/dockerentry/$(entry)
           fi
         workingDirectory: "$(Build.SourcesDirectory)"
         displayName: Run docker test

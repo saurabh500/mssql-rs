@@ -6,11 +6,16 @@ parameters:
   - Windows
   - Linux
   - MacOS
-  
+
+- name: installdepsparams
+  displayName: Install dependencies parameters
+  type: string
+  default: ''
+ 
 steps:
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - script: |
-      scripts/install-deps.sh
+      scripts/install-deps.sh ${{ parameters.installdepsparams }}
       # This is a workaround for the fact that the PATH variable is not updated in the same shell.
       echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/bin:$HOME/.cargo/bin:$PATH"      
     displayName: "Install linux dependencies"
@@ -28,7 +33,7 @@ steps:
       fi
 
       # Install Rustup
-      scripts/install-rustup.sh      
+      scripts/install-rustup.sh
     displayName: "Install MacOS dependencies"
 
 - ${{ if eq(parameters.osType, 'Windows') }}:

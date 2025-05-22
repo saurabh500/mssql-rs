@@ -30,7 +30,3 @@ cd /workspace
 cd tds-x
 cargo build
 cargo nextest archive --archive-file tdslib-nextest-musl.tar.zst && mv tdslib-nextest-musl.tar.zst .. 
-
-cd ..
-
-cargo nextest run -E 'not (test(connectivity))' --workspace-remap /workspace --archive-file tdslib-nextest-musl.tar.zst --no-fail-fast --profile ci --success-output immediate

@@ -22,6 +22,12 @@ parameters:
   default: ''
 
 steps:
+# - task: Docker@2
+#   displayName: Login to registry
+#   inputs: 
+#     command: login
+#     containerRegistry: 'tdslibrs' # variable with Service Connection name
+    
 - script: cargo fetch
   displayName: Fetch Crates
 
