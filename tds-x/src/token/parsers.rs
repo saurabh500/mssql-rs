@@ -436,10 +436,10 @@ impl<'a> TokenParser<'a> for FedAuthInfoTokenParser {
         reader: &'a mut PacketReader,
         _context: &ParserContext,
     ) -> TdsResult<Tokens> {
-        let _length = reader.read_int32().await?;
+        let length = reader.read_int32().await?;
 
         let options_count = reader.read_uint32().await?;
-        let data_left = _length - size_of::<u32>() as i32;
+        let data_left = length - size_of::<u32>() as i32;
 
         let mut token_data: Vec<u8> = vec![0; data_left as usize];
         reader.read_bytes(&mut token_data[0..]).await?;
@@ -467,8 +467,12 @@ impl<'a> TokenParser<'a> for FedAuthInfoTokenParser {
                 [option_data_offset as usize..(option_data_offset + option_data_length) as usize]
                 .try_into()
                 .unwrap();
-            let value = String::from_utf8(string_bytes.to_vec()).map_err(|_| {
-                Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8 sequence")
+            let u16_slice: Vec<u16> = string_bytes
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect();
+            let value = String::from_utf16(&u16_slice).map_err(|_| {
+                Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-16 sequence")
             })?;
 
             debug!(
@@ -847,5 +851,75 @@ impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for NbcRowTokenPar
             }
         }
         Ok(Tokens::from(RowToken::new(all_values)))
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use crate::{
+        core::TdsResult,
+        message::messages::PacketType,
+        read_write::{
+            packet_reader::{
+                tests::{MockNetworkReaderWriter, TestPacketBuilder},
+                PacketReader,
+            },
+            token_stream::ParserContext,
+        },
+        token::{
+            fed_auth_info::{FedAuthInfoId, FedAuthInfoToken},
+            parsers::{FedAuthInfoTokenParser, TokenParser},
+            tokens::{TokenType, Tokens},
+        },
+    };
+
+    #[tokio::test]
+    async fn test_fedauth_info_token_parser() -> TdsResult<()> {
+        let mut builder = TestPacketBuilder::new(PacketType::TabularResult);
+        builder.append_byte(TokenType::FedAuthInfo as u8);
+
+        // Option Length
+        builder.append_i32(0xcc);
+        builder.append_u32(2); // Option Count.
+        builder.append_byte(FedAuthInfoId::SPN as u8);
+        builder.append_u32(0x3a);
+        builder.append_u32(0x16);
+        builder.append_byte(FedAuthInfoId::STSUrl as u8);
+        builder.append_u32(0x7c);
+        builder.append_u32(0x50);
+
+        "https://database.windows.net/"
+            .encode_utf16()
+            .for_each(|c| {
+                builder.append_u16(c);
+            });
+
+        "https://login.windows.net/72F988BF-86F1-41AF-91AB-2D7CD011DB47"
+            .encode_utf16()
+            .for_each(|c| {
+                builder.append_u16(c);
+            });
+
+        let mut reader_writer = MockNetworkReaderWriter {
+            data: builder.build(),
+            position: 0,
+        };
+        let mut reader = PacketReader::new(&mut reader_writer);
+        let parser = FedAuthInfoTokenParser::default();
+        // Skip the token type byte
+        reader.read_byte().await?;
+        let token = parser.parse(&mut reader, &ParserContext::default()).await?;
+
+        if let Tokens::FedAuthInfo(FedAuthInfoToken { spn, sts_url }) = token {
+            assert_eq!(
+                sts_url,
+                "https://login.windows.net/72F988BF-86F1-41AF-91AB-2D7CD011DB47"
+            );
+            assert_eq!(spn, "https://database.windows.net/");
+        } else {
+            panic!("Expected FedAuthInfoToken");
+        }
+
+        Ok(())
     }
 }

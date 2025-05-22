@@ -1,4 +1,6 @@
-use crate::core::EncryptionSetting;
+use async_trait::async_trait;
+
+use crate::core::{EncryptionSetting, TdsResult};
 use crate::message::login_options::{ApplicationIntent, TdsVersion};
 use hostname;
 
@@ -14,7 +16,18 @@ pub enum NetworkTracerOutput {
     Console = 1,
 }
 
-#[derive(PartialEq, Copy, Clone)]
+/// Provides a trait for creating Entra ID tokens.
+#[async_trait]
+pub trait EntraIdTokenFactory: Send + Sync {
+    async fn create_token(
+        &self,
+        spn: String,
+        sts_url: String,
+        auth_method: TdsAuthenticationMethod,
+    ) -> TdsResult<Vec<u8>>;
+}
+
+#[derive(Clone, Hash, Eq, PartialEq)]
 pub enum TdsAuthenticationMethod {
     Password,
     SSPI, // Integrated Authentication with AD.
@@ -23,12 +36,14 @@ pub enum TdsAuthenticationMethod {
     ActiveDirectoryDeviceCodeFlow,
     ActiveDirectoryServicePrincipal,
     ActiveDirectoryManagedIdentity,
-    ActiveDirectoryMSI,
     ActiveDirectoryDefault,
+    ActiveDirectoryMSI,
     ActiveDirectoryWorkloadIdentity,
     ActiveDirectoryIntegrated,
     AccessToken,
 }
+
+use std::collections::HashMap;
 
 pub struct ClientContext {
     pub application_intent: ApplicationIntent,
@@ -45,6 +60,7 @@ pub struct ClientContext {
     pub ipaddress_preference: IPAddressPreference,
     pub language: String,
     pub library_name: String,
+    pub auth_method_map: HashMap<TdsAuthenticationMethod, Box<dyn EntraIdTokenFactory>>,
     pub mars_enabled: bool,
     pub network_tracer_enabled: bool,
     pub network_tracer_output: NetworkTracerOutput,
@@ -78,6 +94,7 @@ impl ClientContext {
             ipaddress_preference: IPAddressPreference::UsePlatformDefault,
             language: "us_english".to_string(),
             library_name: "TdsX".to_string(),
+            auth_method_map: HashMap::new(),
             mars_enabled: false,
             network_tracer_enabled: false,
             network_tracer_output: NetworkTracerOutput::Console,

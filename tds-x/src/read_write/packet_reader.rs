@@ -444,7 +444,7 @@ pub(crate) mod tests {
     //append_method!(append_i64, i64, 8, write_i64);
     macro_rules! append_method {
         ($name:ident, $type:ty, $size:expr, $write_fn:ident) => {
-            fn $name(&mut self, number: $type) -> &mut TestPacketBuilder {
+            pub(crate) fn $name(&mut self, number: $type) -> &mut TestPacketBuilder {
                 let mut buffer = [0u8; $size];
                 LittleEndian::$write_fn(&mut buffer, number);
                 self.data.extend_from_slice(&buffer);
@@ -454,7 +454,7 @@ pub(crate) mod tests {
         };
     }
 
-    struct TestPacketBuilder {
+    pub(crate) struct TestPacketBuilder {
         data: Vec<u8>,
         packet_type: PacketType,
         payload_length: u16,
@@ -479,7 +479,7 @@ pub(crate) mod tests {
     ///   Finalizes the packet by writing the length in big-endian format to the appropriate position in the data,
     ///   and returns a clone of the packet data.
     impl TestPacketBuilder {
-        fn new(packet_type: PacketType) -> TestPacketBuilder {
+        pub(crate) fn new(packet_type: PacketType) -> TestPacketBuilder {
             let mut data: Vec<u8> = vec![0; 8];
             // Set status to EOM by default
             data[1] = 0x1;
@@ -492,13 +492,13 @@ pub(crate) mod tests {
             }
         }
 
-        fn append_byte(&mut self, byte: u8) -> &mut TestPacketBuilder {
+        pub(crate) fn append_byte(&mut self, byte: u8) -> &mut TestPacketBuilder {
             self.data.push(byte);
             self.payload_length += 1;
             self
         }
 
-        fn append_bytes(&mut self, bytes: &[u8]) -> &mut TestPacketBuilder {
+        pub(crate) fn append_bytes(&mut self, bytes: &[u8]) -> &mut TestPacketBuilder {
             self.data.extend_from_slice(bytes);
             self.payload_length += bytes.len() as u16;
             self
@@ -513,7 +513,7 @@ pub(crate) mod tests {
         append_method!(append_i32, i32, 4, write_i32);
         append_method!(append_u64, u64, 8, write_u64);
 
-        fn build(&mut self) -> Vec<u8> {
+        pub(crate) fn build(&mut self) -> Vec<u8> {
             BigEndian::write_u16(&mut self.data[2..4], self.payload_length);
             self.data.clone()
         }

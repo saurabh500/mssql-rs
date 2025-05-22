@@ -2,8 +2,8 @@ use crate::connection::client_context::{ClientContext, TransportContext};
 use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::error::Error;
 use crate::message::login::{
-    EnvChangeProperties, Feature, FeaturesRequest, LoginRequest, LoginRequestModel, LoginResponse,
-    LoginResponseModel, LoginResponseStatus,
+    EnvChangeProperties, Feature, FeaturesRequest, FedAuthTokenRequest, LoginRequest,
+    LoginRequestModel, LoginResponse, LoginResponseModel, LoginResponseStatus,
 };
 use crate::message::messages::Request;
 use crate::message::prelogin::{
@@ -362,15 +362,47 @@ impl LoginHandler<'_, '_> {
             reader_writer.enable_ssl().await?;
         }
 
-        let _request_model = self
+        let request_model = self
             .send_login7_request(reader_writer, transport_context)
             .await?;
-        let requested_features = _request_model.features_request;
-        let login_response = self
-            .get_login_response(reader_writer, requested_features)
+        let requested_features = request_model.features_request;
+        let mut login_response = self
+            .get_login_response(reader_writer, requested_features.clone())
             .await?;
 
-        // TODO Handle the response.
+        // Handle the case where federated authentication was requested, and now we have to respond.
+        login_response = if login_response.get_status() == LoginResponseStatus::WaitingForFedAuth {
+            let fed_auth_info = match &login_response.fed_auth_info {
+                Some(fed_auth_info) => fed_auth_info,
+                None => {
+                    unreachable!("Federated authentication info should be present, if the status is WaitingForFedAuth.");
+                }
+            };
+            let context = self.factory.context;
+            let entra_id_token_factory = context
+                .auth_method_map
+                .get(&self.factory.context.tds_authentication_method)
+                .expect("There was no callback registered for the authentication method");
+
+            let token = entra_id_token_factory
+                .create_token(
+                    fed_auth_info.spn.clone(),
+                    fed_auth_info.sts_url.clone(),
+                    self.factory.context.tds_authentication_method.clone(),
+                )
+                .await?;
+            let fed_auth_request = FedAuthTokenRequest {
+                access_token_bytes: token,
+            };
+
+            let mut packet_writer = fed_auth_request.create_packet_writer(reader_writer, None);
+            fed_auth_request.serialize(&mut packet_writer).await?;
+            self.get_login_response(reader_writer, requested_features)
+                .await?
+        } else {
+            login_response
+        };
+
         let response_status = login_response.get_status();
 
         Ok(LoginResult {

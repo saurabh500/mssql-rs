@@ -84,6 +84,23 @@ pub(crate) trait Feature: Send + Sync {
     fn deserialize(&self, data: &[u8]);
     fn is_acknowledged(&self) -> bool;
     fn set_acknowledged(&mut self, _acknowledged: bool);
+    fn clone_box(&self) -> Box<dyn Feature>;
+}
+
+// Implement Clone for Box<dyn Feature>
+impl Clone for Box<dyn Feature> {
+    fn clone(&self) -> Box<dyn Feature> {
+        self.clone_box()
+    }
+}
+
+// Implement Clone for FeaturesRequest
+impl Clone for FeaturesRequest {
+    fn clone(&self) -> Self {
+        FeaturesRequest {
+            features: self.features.iter().map(|(k, v)| (*k, v.clone())).collect(),
+        }
+    }
 }
 
 pub(crate) struct FeaturesRequest {
@@ -238,7 +255,7 @@ impl LoginRequestModel<'_> {
         };
 
         let features_request = FeaturesRequest::build(
-            context.tds_authentication_method,
+            context.tds_authentication_method.clone(),
             context.access_token.clone(),
             pre_login_fedauth_response,
         );
@@ -271,6 +288,7 @@ pub(crate) struct LoginResponseModel {
 }
 
 #[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum LoginResponseStatus {
     NoResponse = 0x00,
     Success = 0x01,
@@ -397,6 +415,32 @@ impl Request for LoginRequest<'_> {
         'b: 'a,
     {
         Serializer::new(&self.model, writer).serialize().await
+    }
+}
+
+pub(crate) struct FedAuthTokenRequest {
+    pub access_token_bytes: Vec<u8>,
+}
+
+#[async_trait]
+impl Request for FedAuthTokenRequest {
+    fn packet_type(&self) -> PacketType {
+        PacketType::FedAuthToken
+    }
+
+    async fn serialize<'a, 'b>(&'a self, writer: &'a mut PacketWriter<'b>) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // The token bytes as well as the length of the token bytes are written to the packet.
+        let len = self.access_token_bytes.len() + size_of::<u32>();
+        writer.write_u32_async(len as u32).await?;
+        writer
+            .write_u32_async(self.access_token_bytes.len() as u32)
+            .await?;
+        writer.write_async(&self.access_token_bytes).await?;
+        writer.finalize().await?;
+        Ok(())
     }
 }
 
@@ -782,7 +826,10 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
 
     /// Writes the value of the username of the client to the login packet if the authentication method is Password.
     async fn write_username(&mut self) -> TdsResult<()> {
-        if self.model.user_input.tds_authentication_method == TdsAuthenticationMethod::Password {
+        if matches!(
+            self.model.user_input.tds_authentication_method,
+            TdsAuthenticationMethod::Password
+        ) {
             if self
                 .write_metadata(self.model.user_input.user_name.len() as i16)
                 .await?
@@ -1029,10 +1076,16 @@ impl ClientContext {
     /// FedAuth or AccessToken authentication is accounted for, in the Feature extension data.
     fn calculate_byte_length_for_authentication(&self) -> i32 {
         let mut length = 0;
-        if self.tds_authentication_method == TdsAuthenticationMethod::Password {
+        if matches!(
+            self.tds_authentication_method,
+            TdsAuthenticationMethod::Password
+        ) {
             length += self.password.len_bytes();
             length += self.user_name.len_bytes();
-        } else if self.tds_authentication_method == TdsAuthenticationMethod::SSPI {
+        } else if matches!(
+            self.tds_authentication_method,
+            TdsAuthenticationMethod::SSPI
+        ) {
             todo!("SSPI authentication not implemented yet. Add logic to compute the length of the SSPI information to be sent to the server.");
         }
         length

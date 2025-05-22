@@ -46,4 +46,8 @@ impl Feature for Utf8Feature {
     fn set_acknowledged(&mut self, acknowledged: bool) {
         self.acknowledged = acknowledged;
     }
+
+    fn clone_box(&self) -> Box<dyn Feature> {
+        Box::new(*self)
+    }
 }
