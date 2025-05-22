@@ -1,5 +1,5 @@
 use super::transport::network_transport::NetworkTransport;
-use crate::core::TdsResult;
+use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::decoder::ColumnValues;
 use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqldatatypes::TdsDataType;
@@ -37,6 +37,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         &'result mut self,
         sql_command: String,
         timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'result>>
     where
         'connection: 'result,
@@ -44,14 +45,14 @@ impl<'connection, 'result> TdsConnection<'connection> {
         let batch = SqlBatch::new(sql_command, &self.execution_context);
         let start = Instant::now();
         batch
-            .serialize_and_handle_timeout(self, timeout_sec)
+            .serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
             .await?;
 
         let time_limit = match timeout_sec {
             Some(t) => start.checked_add(Duration::from_secs(t as u64)),
             None => None,
         };
-        Ok(BatchResult::new(self, time_limit))
+        Ok(BatchResult::new(self, time_limit, cancel_handle))
     }
 
     // Executes a stored procedure with the given name and parameters.
@@ -62,6 +63,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         positional_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
         named_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
         timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -74,12 +76,13 @@ impl<'connection, 'result> TdsConnection<'connection> {
         );
 
         let start = Instant::now();
-        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
+        rpc.serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
+            .await?;
         let time_limit = match timeout_sec {
             Some(t) => start.checked_add(Duration::from_secs(t as u64)),
             None => None,
         };
-        Ok(BatchResult::new(self, time_limit))
+        Ok(BatchResult::new(self, time_limit, cancel_handle))
     }
 
     // Executes a stored procedure with the given proc_id and parameters.
@@ -89,6 +92,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         sql: String,
         named_params: Vec<RpcParameter<'rpc_result>>,
         timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -135,12 +139,13 @@ impl<'connection, 'result> TdsConnection<'connection> {
         );
 
         let start = Instant::now();
-        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
+        rpc.serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
+            .await?;
         let time_limit = match timeout_sec {
             Some(t) => start.checked_add(Duration::from_secs(t as u64)),
             None => None,
         };
-        Ok(BatchResult::new(self, time_limit))
+        Ok(BatchResult::new(self, time_limit, cancel_handle))
     }
 
     // Prepare a SQL Statement for execution and returns the prepared handle.
@@ -149,6 +154,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         sql: String,
         named_params: Vec<RpcParameter<'rpc_result>>,
         timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<i32> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -207,12 +213,13 @@ impl<'connection, 'result> TdsConnection<'connection> {
         );
 
         let start = Instant::now();
-        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
+        rpc.serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
+            .await?;
         let time_limit = match timeout_sec {
             Some(t) => start.checked_add(Duration::from_secs(t as u64)),
             None => None,
         };
-        let mut batch_result = BatchResult::new(self, time_limit);
+        let mut batch_result = BatchResult::new(self, time_limit, cancel_handle);
 
         let return_values = batch_result.close().await?;
 
@@ -244,6 +251,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         &'result mut self,
         handle: i32,
         timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<()> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -272,14 +280,15 @@ impl<'connection, 'result> TdsConnection<'connection> {
         );
 
         let start = Instant::now();
-        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
+        rpc.serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
+            .await?;
 
         // Drain the result set. A successful unprepare will not return any results.
         let time_limit = match timeout_sec {
             Some(t) => start.checked_add(Duration::from_secs(t as u64)),
             None => None,
         };
-        let mut result = BatchResult::new(self, time_limit);
+        let mut result = BatchResult::new(self, time_limit, cancel_handle);
         result.close().await?;
         Ok(())
     }
@@ -291,6 +300,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         sql: String,
         named_params: &Vec<RpcParameter<'rpc_result>>,
         timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -346,13 +356,14 @@ impl<'connection, 'result> TdsConnection<'connection> {
         );
 
         let start = Instant::now();
-        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
+        rpc.serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
+            .await?;
 
         let time_limit = match timeout_sec {
             Some(t) => start.checked_add(Duration::from_secs(t as u64)),
             None => None,
         };
-        Ok(BatchResult::new(self, time_limit))
+        Ok(BatchResult::new(self, time_limit, cancel_handle))
     }
 
     pub async fn execute_sp_execute<'rpc_result>(
@@ -361,6 +372,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         positional_parameters: Option<Vec<RpcParameter<'rpc_result>>>,
         named_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
         timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -399,14 +411,15 @@ impl<'connection, 'result> TdsConnection<'connection> {
         // more information is being sent over the network.
         rpc.set_proc_options(ProcOptions::ReuseMetadata);
         let start = Instant::now();
-        rpc.serialize_and_handle_timeout(self, timeout_sec).await?;
+        rpc.serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
+            .await?;
 
         // Drain the result set. A successful unprepare will not return any results.
         let time_limit = match timeout_sec {
             Some(t) => start.checked_add(Duration::from_secs(t as u64)),
             None => None,
         };
-        let result = BatchResult::new(self, time_limit);
+        let result = BatchResult::new(self, time_limit, cancel_handle);
 
         Ok(result)
     }
@@ -415,13 +428,14 @@ impl<'connection, 'result> TdsConnection<'connection> {
         &'result mut self,
         transaction_params: TransactionManagementType,
         timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'result>> {
         let transaction =
             TransactionManagementRequest::new(transaction_params, &self.execution_context);
 
         let start = Instant::now();
         transaction
-            .serialize_and_handle_timeout(self, timeout_sec)
+            .serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
             .await?;
 
         let time_limit = match timeout_sec {
@@ -429,7 +443,11 @@ impl<'connection, 'result> TdsConnection<'connection> {
             None => None,
         };
 
-        Ok(BatchResult::new(self, time_limit))
+        Ok(BatchResult::new(self, time_limit, cancel_handle))
+    }
+
+    pub async fn cancel(&'result mut self) -> TdsResult<()> {
+        Ok(())
     }
 
     pub(crate) async fn send_attention(
@@ -438,7 +456,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
     ) -> TdsResult<()> {
         let attention = AttentionRequest::new();
         attention
-            .serialize_and_handle_timeout(self, timeout_sec)
+            .serialize_and_handle_timeout(self, timeout_sec, None)
             .await?;
 
         self.drain_until_done_status(DoneStatus::ATTN).await;
@@ -455,7 +473,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
 
         // Drain the stream until we receive a Done with the Attention bit set.
         while let Ok(token) = token_stream_reader
-            .receive_token(&parser_context, None)
+            .receive_token(&parser_context, None, None)
             .await
         {
             match token {

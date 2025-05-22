@@ -274,7 +274,7 @@ impl PreloginHandler<'_, '_> {
         };
 
         // Serialize it. Note that the login process uses a timeout at a higher level than the request.
-        let mut packet_writer = prelogin_request.create_packet_writer(reader_writer, None);
+        let mut packet_writer = prelogin_request.create_packet_writer(reader_writer, None, None);
         prelogin_request.serialize(&mut packet_writer).await?;
 
         // Return result (which contains data model).
@@ -398,7 +398,7 @@ impl LoginHandler<'_, '_> {
         }
 
         // Note that the login process uses a timeout at a higher level than the request.
-        let mut packet_writer = request.create_packet_writer(reader_writer, None);
+        let mut packet_writer = request.create_packet_writer(reader_writer, None, None);
         request.serialize(&mut packet_writer).await?;
         Ok(request.model)
     }

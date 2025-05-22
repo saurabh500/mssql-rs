@@ -27,6 +27,9 @@ pub enum Error {
     #[error("Timeout Error: {0}")]
     TimeoutError(TimeoutErrorType),
 
+    #[error("Operation Cancelled Error: {0}")]
+    OperationCancelledError(String),
+
     #[error("Sql Error: {number}: {class}: {state}: {message} on {} in {} at line {}",
             server_name.clone().unwrap(), proc_name.clone().unwrap(), line_number.unwrap())]
     SqlServerError {

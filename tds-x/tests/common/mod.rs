@@ -105,7 +105,7 @@ pub async fn begin_connection(client_context: &ClientContext) -> Box<TdsConnecti
 
 pub async fn create_connection(context: &ClientContext) -> TdsResult<Box<TdsConnection>> {
     let provider = TdsConnectionProvider {};
-    let connection_result = provider.create_connection(context).await?;
+    let connection_result = provider.create_connection(context, None).await?;
     Ok(Box::new(connection_result))
 }
 
@@ -132,7 +132,7 @@ pub async fn run_query_and_check_results<'a, 'n>(
 ) where
     'n: 'a,
 {
-    let results = connection.execute(query, None).await;
+    let results = connection.execute(query, None, None).await;
     validate_results(results.unwrap(), expected_results).await;
 }
 

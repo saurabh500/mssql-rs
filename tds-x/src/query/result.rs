@@ -1,5 +1,5 @@
 use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
-use crate::core::TdsResult;
+use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::decoder::ColumnValues;
 use crate::error::Error::TimeoutError;
 use crate::error::TimeoutErrorType;
@@ -124,6 +124,7 @@ pub struct BatchResult<'result> {
     received_last: bool,
     execution_context: &'result mut ExecutionContext,
     time_limit: Option<Instant>,
+    cancel_handle: Option<CancelHandle>,
 }
 
 impl<'connection, 'result> BatchResult<'result>
@@ -133,6 +134,7 @@ where
     pub(crate) fn new(
         tds_connection: &'result mut TdsConnection<'connection>,
         time_limit: Option<Instant>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> BatchResult<'result> {
         debug!("Batch result created.");
         let packet_reader = PacketReader::new(tds_connection.transport.as_mut());
@@ -154,6 +156,7 @@ where
             received_last: false,
             execution_context: &mut tds_connection.execution_context,
             time_limit,
+            cancel_handle: cancel_handle.map(|handle| handle.child_handle()),
         }
     }
 
@@ -182,7 +185,7 @@ where
         };
 
         self.token_stream_reader
-            .receive_token(&self.parser_context, timeout)
+            .receive_token(&self.parser_context, timeout, self.cancel_handle.as_ref())
             .await
     }
 
@@ -268,7 +271,7 @@ pub struct QueryResultTypeStream<'result> {
     batch_result: Arc<Mutex<BatchResult<'result>>>,
     processing_flag: Arc<AtomicBool>,
     executing_future:
-        Option<Pin<Box<dyn Future<Output = TdsResult<QueryResultType<'result>>> + 'result>>>,
+        Option<Pin<Box<dyn Future<Output = TdsResult<QueryResultType<'result>>> + 'result + Send>>>,
 }
 
 impl<'result> QueryResultTypeStream<'result> {
@@ -472,7 +475,7 @@ impl Drop for ResultSet<'_> {
 pub struct RowStream<'result> {
     result_set: Arc<Mutex<ResultSet<'result>>>,
     processing_flag: Arc<AtomicBool>,
-    executing_future: Option<Pin<Box<dyn Future<Output = TdsResult<RowData>> + 'result>>>,
+    executing_future: Option<Pin<Box<dyn Future<Output = TdsResult<RowData>> + 'result + Send>>>,
 }
 
 impl<'result> RowStream<'result> {

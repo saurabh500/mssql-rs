@@ -423,7 +423,7 @@ pub(crate) mod tests {
             Option::from("MSSQLServer"),
         );
         let mut mock = MockNetworkWriter::new(1024);
-        let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock, None);
+        let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock, None, None);
 
         let mut serializer = Serializer::new(&model, &mut packet_writer);
         block_on(serializer.serialize()).unwrap();
@@ -445,7 +445,7 @@ pub(crate) mod tests {
     #[test]
     fn test_deserialize_model() {
         let mut mock = MockNetworkWriter::new(1024);
-        let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock, None);
+        let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock, None, None);
         // Write headers.
         block_on(packet_writer.write_byte_async(OptionType::Version as u8)).unwrap();
         block_on(packet_writer.write_i16_be_async(0)).unwrap(); // offset - unused

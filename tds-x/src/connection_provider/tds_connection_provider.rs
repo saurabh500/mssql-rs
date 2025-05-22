@@ -1,12 +1,13 @@
 use std::time::Duration;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::connection::client_context::{ClientContext, TransportContext};
 use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
 use crate::connection::transport::network_transport;
-use crate::core::TdsResult;
-use crate::error::Error::TimeoutError;
+use crate::core::{CancelHandle, TdsResult};
+use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::{Error, TimeoutErrorType};
 use crate::handler::handler_factory::HandlerFactory;
 
@@ -16,26 +17,41 @@ impl TdsConnectionProvider {
     pub async fn create_connection<'a>(
         &self,
         context: &'a ClientContext,
+        cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<TdsConnection<'a>> {
-        let timeout_duration = match context.connect_timeout {
-            1.. => Some(Duration::from_secs(context.connect_timeout.into())),
-            _ => None,
-        };
+        CancelHandle::run_until_cancelled(cancel_handle, async move {
+            let timeout_duration = match context.connect_timeout {
+                1.. => Some(Duration::from_secs(context.connect_timeout.into())),
+                _ => None,
+            };
 
-        match timeout_duration.as_ref() {
-            Some(timeout_duration) => {
-                match timeout(*timeout_duration, self.create_connection_internal(context)).await {
-                    Ok(result) => result,
-                    Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
+            let cancellation_token = cancel_handle.map(|handle| handle.cancel_token.child_token());
+
+            match timeout_duration.as_ref() {
+                Some(timeout_duration) => {
+                    match timeout(
+                        *timeout_duration,
+                        self.create_connection_internal(context, cancellation_token),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
+                    }
+                }
+                None => {
+                    self.create_connection_internal(context, cancellation_token)
+                        .await
                 }
             }
-            None => self.create_connection_internal(context).await,
-        }
+        })
+        .await
     }
 
     async fn create_connection_internal<'a>(
         &self,
         context: &'a ClientContext,
+        cancellation_token: Option<CancellationToken>,
     ) -> TdsResult<TdsConnection<'a>> {
         let mut redirect_count = 0;
         let max_redirects = 10;
@@ -46,6 +62,15 @@ impl TdsConnectionProvider {
         // Loop until we either get a successful connection or we hit the max redirects
         // or an error that is not a redirection
         loop {
+            if cancellation_token
+                .as_ref()
+                .map_or_else(|| false, |token| token.is_cancelled())
+            {
+                return Err(OperationCancelledError(
+                    "Login has been cancelled.".to_string(),
+                ));
+            };
+
             match connection_result {
                 Ok(connection) => {
                     return Ok(connection);

@@ -53,7 +53,7 @@ impl<'a> PacketReader<'a> {
     pub(crate) async fn cancel_read_stream(&mut self) -> TdsResult<()> {
         let attention = AttentionRequest::new();
         let mut packet_writer =
-            attention.create_packet_writer(self.network_reader_writer.as_writer(), None);
+            attention.create_packet_writer(self.network_reader_writer.as_writer(), None, None);
         attention.serialize(&mut packet_writer).await?;
         Ok(())
     }

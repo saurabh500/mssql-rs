@@ -217,7 +217,7 @@ pub(crate) mod query_processing_driver {
             &connection.execution_context,
         );
 
-        rpc.serialize_and_handle_timeout(connection.as_mut(), None)
+        rpc.serialize_and_handle_timeout(connection.as_mut(), None, None)
             .await
             .unwrap();
         iterate_over_rpc_tokens(&mut connection).await;
@@ -238,7 +238,7 @@ pub(crate) mod query_processing_driver {
             &connection.execution_context,
         );
 
-        rpc.serialize_and_handle_timeout(connection.as_mut(), None)
+        rpc.serialize_and_handle_timeout(connection.as_mut(), None, None)
             .await?;
 
         iterate_over_rpc_tokens(connection).await;
@@ -256,7 +256,7 @@ pub(crate) mod query_processing_driver {
         let mut parser_context = ParserContext::default();
         let mut _row_count = 0;
         while let Ok(token) = token_stream_reader
-            .receive_token(&parser_context, None)
+            .receive_token(&parser_context, None, None)
             .await
         {
             // let token = token_stream_reader.receive_token().await?;
@@ -575,7 +575,7 @@ pub(crate) mod query_processing_driver {
         let mut connection = create_connection(&context).await.unwrap();
         let slow_request = SlowRequest::default();
         match slow_request
-            .serialize_and_handle_timeout(&mut connection, Some(2))
+            .serialize_and_handle_timeout(&mut connection, Some(2), None)
             .await
         {
             Ok(_) => {
@@ -642,7 +642,7 @@ pub(crate) mod query_processing_driver {
 
     pub async fn create_connection(context: &ClientContext) -> TdsResult<Box<TdsConnection>> {
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(context).await?;
+        let connection_result = provider.create_connection(context, None).await?;
         Ok(Box::new(connection_result))
     }
 
@@ -652,7 +652,7 @@ pub(crate) mod query_processing_driver {
     ) -> TdsResult<()> {
         let batch = SqlBatch::new(sql_command, &tds_connection.execution_context);
         batch
-            .serialize_and_handle_timeout(tds_connection.as_mut(), None)
+            .serialize_and_handle_timeout(tds_connection.as_mut(), None, None)
             .await?;
 
         let packet_reader = tds_connection.transport.get_packet_reader();
@@ -665,7 +665,7 @@ pub(crate) mod query_processing_driver {
         let mut _row_count = 0;
         loop {
             let token = token_stream_reader
-                .receive_token(&parser_context, None)
+                .receive_token(&parser_context, None, None)
                 .await?;
             match token {
                 Tokens::Done(t1) => {

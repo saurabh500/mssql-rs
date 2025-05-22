@@ -1,5 +1,5 @@
 use super::reader_writer::NetworkWriter;
-use crate::core::TdsResult;
+use crate::core::{CancelHandle, TdsResult};
 use crate::error::Error::TimeoutError;
 use crate::error::TimeoutErrorType;
 use crate::message::messages::{PacketStatusFlags, PacketType};
@@ -23,6 +23,7 @@ pub struct PacketWriter<'a> {
     is_first_packet: bool, // Note: Cannot just use packet_id because its value can rollover.
     start_time: Instant,
     max_timeout_sec: Option<u32>,
+    cancel_handle: Option<CancelHandle>,
 }
 
 pub(crate) enum MessageSendState {
@@ -38,6 +39,7 @@ impl<'a> PacketWriter<'a> {
         packet_type: PacketType,
         network_writer: &'a mut dyn NetworkWriter,
         timeout: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> PacketWriter<'a> {
         let packet_size: usize = network_writer.packet_size() as usize;
         // Add additional space for the numeric types.
@@ -57,6 +59,7 @@ impl<'a> PacketWriter<'a> {
             is_first_packet: true,
             start_time: Instant::now(),
             max_timeout_sec: timeout,
+            cancel_handle: cancel_handle.map(|handle| handle.child_handle()),
         }
     }
 
@@ -252,8 +255,13 @@ impl<'a> PacketWriter<'a> {
         let data_slice = &self.payload_cursor.get_ref().as_slice()[..packet_length];
 
         // Calculate the timeout based on the start time of this request and the max timeout.
+        let send_data_fut = CancelHandle::run_until_cancelled(
+            self.cancel_handle.as_ref(),
+            self.network_writer.send(data_slice),
+        );
+
         if self.max_timeout_sec.is_none() {
-            self.network_writer.send(data_slice).await?;
+            send_data_fut.await?;
         } else {
             let elapsed = self.start_time.elapsed().as_secs();
             if elapsed > self.max_timeout_sec.unwrap() as u64 {
@@ -262,12 +270,7 @@ impl<'a> PacketWriter<'a> {
                 )));
             };
             let current_timeout = self.max_timeout_sec.unwrap() as u64 - elapsed;
-            match timeout(
-                Duration::from_secs(current_timeout),
-                self.network_writer.send(data_slice),
-            )
-            .await
-            {
+            match timeout(Duration::from_secs(current_timeout), send_data_fut).await {
                 Ok(result) => result?,
                 Err(elapsed) => {
                     return Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed)));
@@ -392,7 +395,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_byte_async() {
         let mut mock = MockNetworkWriter::new(8);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
         block_on(writer.write_byte_async(0xAB)).unwrap();
         assert_eq!(writer.payload_cursor.into_inner()[8..], vec![0xAB]);
     }
@@ -400,7 +403,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_i16_async() {
         let mut mock = MockNetworkWriter::new(8);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
         block_on(writer.write_i16_async(0x1234)).unwrap();
         assert_eq!(
             writer.payload_cursor.into_inner()[8..],
@@ -411,7 +414,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_u32_async() {
         let mut mock = MockNetworkWriter::new(8);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
         block_on(writer.write_u32_async(0xDEADBEEF)).unwrap();
         assert_eq!(
             writer.payload_cursor.into_inner()[8..],
@@ -422,7 +425,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_i64_async() {
         let mut mock = MockNetworkWriter::new(16);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
         block_on(writer.write_i64_async(0x1122334455667788)).unwrap();
         assert_eq!(
             writer.payload_cursor.into_inner()[8..],
@@ -433,7 +436,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_i64_overflow_async() {
         let mut mock = MockNetworkWriter::new(16);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
         block_on(writer.write_i32_async(0x1234)).unwrap();
         block_on(writer.write_i64_async(0x1122334455667788)).unwrap();
         assert_eq!(mock.data[8..12], 0x1234i32.to_le_bytes());
@@ -442,7 +445,7 @@ pub(crate) mod tests {
     #[test]
     fn test_finalize_with_data() {
         let mut mock = MockNetworkWriter::new(16);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
         block_on(writer.write_byte_async(0xAB)).unwrap();
         block_on(writer.finalize()).unwrap();
         assert_eq!(
@@ -455,7 +458,7 @@ pub(crate) mod tests {
     #[test]
     fn test_finalize_without_data() {
         let mut mock = MockNetworkWriter::new(16);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
         block_on(writer.finalize()).unwrap();
         assert_eq!(
             writer.payload_cursor.position(),
@@ -467,7 +470,7 @@ pub(crate) mod tests {
     #[test]
     fn test_write_at_index() {
         let mut mock = MockNetworkWriter::new(16);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
 
         block_on(writer.write_byte_async(0xAB)).unwrap();
         block_on(writer.write_byte_async(0xAB)).unwrap();
@@ -492,7 +495,7 @@ pub(crate) mod tests {
     fn test_write_string_overflow() {
         let packet_size: usize = 16;
         let mut mock = MockNetworkWriter::new(packet_size as u32);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
         let str_value = "a very very very very very very very very very very very very long string";
         block_on(writer.write_string_unicode_async(str_value)).unwrap();
         block_on(writer.finalize()).unwrap();

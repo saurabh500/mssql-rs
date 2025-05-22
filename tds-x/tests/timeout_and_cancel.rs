@@ -1,0 +1,184 @@
+#[cfg(test)]
+mod common;
+
+mod timeout_and_cancel_tests {
+    use crate::common::{
+        begin_connection, create_context, run_query_and_check_results, ExpectedQueryResultType,
+    };
+    use std::time::{Duration, Instant};
+    use tds_x::connection::client_context::ClientContext;
+    use tds_x::connection_provider::tds_connection_provider::TdsConnectionProvider;
+    use tds_x::core::{CancelHandle, EncryptionSetting, TdsResult};
+    use tds_x::error::Error;
+    use tds_x::error::Error::OperationCancelledError;
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+
+    #[tokio::test]
+    pub async fn timeout_test_no_retry() {
+        timeout_test_with_retries(0).await;
+    }
+
+    #[tokio::test]
+    pub async fn query_timeout_e2e() {
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+
+        let start_time = Instant::now();
+        let batch_result = connection
+            .execute("WAITFOR DELAY '00:00:05'".to_string(), Some(2), None)
+            .await;
+
+        // Timeout could happen during send.
+        if batch_result.is_err() {
+            verify_duration(batch_result, start_time, 1500, 3000);
+            return;
+        }
+
+        // Or it can happen when getting results (more likely).
+        let close_result = batch_result.unwrap().close().await;
+        verify_duration(close_result, start_time, 1500, 3000);
+
+        // Re-use the connection just to make sure it still works.
+        let expected = [ExpectedQueryResultType::Result(1)];
+        run_query_and_check_results(&mut connection, "SELECT 1".to_string(), &expected).await;
+    }
+
+    #[tokio::test]
+    pub async fn login_cancel() {
+        // Setup the cancellation handle.
+        let cancel_handle = CancelHandle::new();
+        let child_handle = cancel_handle.child_handle();
+
+        // Spawn a local TCP server with a random port
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+
+        // Create a client context with a two-second timeout that points to localhost:1433.
+        let client_context = ClientContext {
+            transport_context: tds_x::connection::client_context::TransportContext::Tcp {
+                host: "localhost".to_string(),
+                port: listener.local_addr().unwrap().port(),
+            },
+            database: "master".to_string(),
+            encryption: EncryptionSetting::PreferOff,
+            ..Default::default()
+        };
+
+        let provider = TdsConnectionProvider {};
+        let join_handle = tokio::spawn(async move {
+            // Start a timer.
+            let start_time = Instant::now();
+            let result = provider
+                .create_connection(&client_context, Some(&child_handle))
+                .await;
+            verify_duration(result, start_time, 1000, 2500);
+        });
+
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        cancel_handle.cancel();
+        join_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    pub async fn query_cancel() {
+        // Setup the cancellation handle.
+        let cancel_handle = CancelHandle::new();
+        let child_handle = cancel_handle.child_handle();
+
+        // Create a channel so that we know when we are connected and we don't accidentally
+        // cancel the connection process.
+        let (tx, rx) = oneshot::channel();
+
+        let join_handle = tokio::spawn(async move {
+            let context = create_context();
+            let mut connection = begin_connection(&context).await;
+            tx.send(true).unwrap();
+
+            let start_time = Instant::now();
+            let batch = connection
+                .execute(
+                    "WAITFOR DELAY '00:00:05'".to_string(),
+                    None,
+                    Some(&child_handle),
+                )
+                .await;
+            let result = batch.unwrap().close().await;
+            verify_duration(result, start_time, 1000, 2500);
+
+            // Re-use the connection just to make sure it still works.
+            let expected = [ExpectedQueryResultType::Result(1)];
+            run_query_and_check_results(&mut connection, "SELECT 1".to_string(), &expected).await;
+        });
+
+        // Sleep to send the request then cancel the root CancelHandle to terminate the operation.
+        rx.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        cancel_handle.cancel();
+
+        // Validation happens within the closure. Block until the closure finishes.
+        join_handle.await.unwrap();
+    }
+
+    fn verify_duration<T>(
+        result: TdsResult<T>,
+        start_time: Instant,
+        expected_duration_lower: u64,
+        expected_duration_upper: u64,
+    ) {
+        match result {
+            Ok(_) => {
+                panic!("Operation should not have succeeded.")
+            }
+            Err(error) => match error {
+                OperationCancelledError(_) | Error::TimeoutError(_) => {
+                    let duration = start_time.elapsed();
+
+                    assert!(
+                        duration < Duration::from_millis(expected_duration_upper),
+                        "Expected duration < {:?}ms, got {:?}",
+                        expected_duration_upper,
+                        duration
+                    );
+                    assert!(
+                        duration > Duration::from_millis(expected_duration_lower),
+                        "Expected duration > {:?}ms, got {:?}",
+                        expected_duration_lower,
+                        duration
+                    );
+                }
+                _ => panic!("Expected timeoutError error, got {:?}", error),
+            },
+        };
+    }
+
+    async fn timeout_test_with_retries(retry_count: u8) {
+        // Spawn a local TCP server with a random port
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+
+        // Create a client context with a two-second timeout that points to localhost:1433.
+        let client_context = ClientContext {
+            transport_context: tds_x::connection::client_context::TransportContext::Tcp {
+                host: "localhost".to_string(),
+                port: listener.local_addr().unwrap().port(),
+            },
+            database: "master".to_string(),
+            encryption: EncryptionSetting::PreferOff,
+            connect_timeout: 2,
+            connect_retry_count: retry_count as u32,
+            ..Default::default()
+        };
+
+        // Try to connect.
+        let provider = TdsConnectionProvider {};
+
+        // Start a timer.
+        let start_time = Instant::now();
+        let connection_result = provider.create_connection(&client_context, None).await;
+        verify_duration(
+            connection_result,
+            start_time,
+            1500 * (1 + retry_count) as u64,
+            3000 * (1 + retry_count) as u64,
+        );
+    }
+}

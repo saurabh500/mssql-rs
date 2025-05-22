@@ -97,7 +97,7 @@ impl Session<'_> {
             "No active connection",
         ))?;
 
-        let batch_results = connection.execute(sql_command, None).await?;
+        let batch_results = connection.execute(sql_command, None, None).await?;
         let mut result_stream = batch_results.stream_results();
         while let Some(result) = result_stream.next().await {
             let result_type = result.unwrap();
@@ -163,7 +163,7 @@ pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
     let provider = TdsConnectionProvider {};
-    let connection_result = provider.create_connection(&context).await;
+    let connection_result = provider.create_connection(&context, None).await;
     let mut session = match connection_result {
         Ok(_connection) => {
             println!("Successfully connected");

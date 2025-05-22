@@ -1,7 +1,7 @@
 use super::packet_reader::PacketReader;
-use crate::core::TdsResult;
+use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::decoder::GenericDecoder;
-use crate::error::Error::TimeoutError;
+use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::TimeoutErrorType;
 use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
@@ -53,39 +53,33 @@ impl TokenStreamReader<'_> {
         &mut self,
         context: &ParserContext,
         mut timeout_sec: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<Tokens> {
         // Read the token type so that we can get the right parser for this token.
         // The first byte of the token is the token type.
         let token_type_byte = {
-            if let Some(duration) = timeout_sec.take() {
-                let timeout_result: TdsResult<u8> =
-                    match timeout(duration, self.packet_reader.read_byte()).await {
-                        Ok(token_type) => token_type,
-                        Err(elapsed) => {
-                            // If a timeout occurs, send the attention request to tell the server to stop
-                            // then consume the stream until a Done w/attention is received.
-                            self.packet_reader.cancel_read_stream().await?;
-                            let dummy_context = ParserContext::None(());
-                            while let Ok(token) =
-                                Box::pin(self.receive_token(&dummy_context, None)).await
-                            {
-                                if let Tokens::Done(done_token) = token {
-                                    if done_token.status.contains(DoneStatus::ATTN) {
-                                        return Err(TimeoutError(TimeoutErrorType::Elapsed(
-                                            elapsed,
-                                        )));
-                                    }
-                                    // Discard any other token.
-                                }
-                            }
-                            // If we got interrupted for whatever reason, return a timeout.
-                            return Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed)));
-                        }
-                    };
-                timeout_result?
+            let read_token_fut =
+                CancelHandle::run_until_cancelled(cancel_handle, self.packet_reader.read_byte());
+
+            let operation_result = if let Some(duration) = timeout_sec.take() {
+                let timeout_result: TdsResult<u8> = timeout(duration, read_token_fut)
+                    .await
+                    .unwrap_or_else(|elapsed| {
+                        // If we got interrupted for whatever reason, return a timeout.
+                        Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed)))
+                    });
+                timeout_result
             } else {
-                self.packet_reader.read_byte().await?
-            }
+                read_token_fut.await
+            };
+
+            match &operation_result {
+                Err(TimeoutError(_)) | Err(OperationCancelledError(_)) => {
+                    Box::pin(self.cancel_read_stream_and_wait()).await?;
+                    operation_result
+                }
+                _ => operation_result,
+            }?
         };
 
         let token_type = TokenType::from(token_type_byte);
@@ -136,6 +130,24 @@ impl TokenStreamReader<'_> {
                 parser.parse(&mut self.packet_reader, context).await
             }
         }
+    }
+
+    /// Tells the server to stop sending tokens for the token stream being read and waits for
+    /// an acknowledgement.
+    async fn cancel_read_stream_and_wait(&mut self) -> TdsResult<()> {
+        self.packet_reader.cancel_read_stream().await?;
+        let dummy_context = ParserContext::None(());
+        // This method is intended to be called from receive_token(). We enforce only one level
+        // of recursion by preventing timeout and cancellation on the internal receive_token() call.
+        while let Ok(token) = self.receive_token(&dummy_context, None, None).await {
+            if let Tokens::Done(done_token) = token {
+                if done_token.status.contains(DoneStatus::ATTN) {
+                    break;
+                }
+                // Discard any other token.
+            }
+        }
+        Ok(())
     }
 }
 

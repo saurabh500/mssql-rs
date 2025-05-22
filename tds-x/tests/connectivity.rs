@@ -73,10 +73,10 @@ mod connectivity {
         let access_token = generate_access_token().await;
         let context = create_context_with_accesstoken(access_token);
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(&context).await;
+        let connection_result = provider.create_connection(&context, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
-        let result = connection.execute(command, None).await.unwrap();
+        let result = connection.execute(command, None, None).await.unwrap();
         let mut stream = result.stream_results();
         while let Some(qrt) = stream.next().await {
             let res = qrt.unwrap();
@@ -101,12 +101,12 @@ mod connectivity {
     pub async fn validate_host_name() {
         let context = create_context();
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(&context).await;
+        let connection_result = provider.create_connection(&context, None).await;
         let mut connection = connection_result.unwrap();
         let command =
             "select host_name from sys.dm_exec_sessions where client_interface_name = 'TdsX'"
                 .to_string();
-        let result = connection.execute(command, None).await.unwrap();
+        let result = connection.execute(command, None, None).await.unwrap();
         let col_hostname = get_scalar_value(result).await.unwrap();
         if let Some(column_value) = col_hostname {
             match column_value {

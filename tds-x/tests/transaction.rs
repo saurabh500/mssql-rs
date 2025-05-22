@@ -127,7 +127,7 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(&context).await;
         let begin_result = connection
-            .send_transaction(TransactionManagementType::GetDtcAddress, None)
+            .send_transaction(TransactionManagementType::GetDtcAddress, None, None)
             .await;
 
         validate_results(begin_result.unwrap(), &expected).await;
@@ -145,6 +145,7 @@ mod transactions {
                     name: Some("test01".to_string()),
                 }),
                 None,
+                None,
             )
             .await;
 
@@ -156,6 +157,7 @@ mod transactions {
                     name: Some("test01".to_string()),
                     create_txn_params: None,
                 },
+                None,
                 None,
             )
             .await;
@@ -175,6 +177,7 @@ mod transactions {
                     name: None,
                 }),
                 None,
+                None,
             )
             .await;
 
@@ -186,6 +189,7 @@ mod transactions {
                     name: None,
                     create_txn_params: None,
                 },
+                None,
                 None,
             )
             .await;
@@ -205,6 +209,7 @@ mod transactions {
                     name: Some("test01".to_string()),
                 }),
                 None,
+                None,
             )
             .await;
 
@@ -222,6 +227,7 @@ mod transactions {
                     level: TransactionIsolationLevel::ReadCommitted,
                     name: None,
                 }),
+                None,
                 None,
             )
             .await;
@@ -241,6 +247,7 @@ mod transactions {
                     name: Some("test02".to_string()),
                 }),
                 None,
+                None,
             )
             .await;
 
@@ -259,6 +266,7 @@ mod transactions {
                     name: Some("test02".to_string()),
                     create_txn_params: None,
                 },
+                None,
                 None,
             )
             .await;
@@ -286,6 +294,7 @@ mod transactions {
                     name: Some("test03".to_string()),
                 }),
                 None,
+                None,
             )
             .await;
 
@@ -308,6 +317,7 @@ mod transactions {
                     }),
                 },
                 None,
+                None,
             )
             .await;
 
@@ -329,6 +339,7 @@ mod transactions {
                     create_txn_params: None,
                 },
                 None,
+                None,
             )
             .await;
 
@@ -347,6 +358,7 @@ mod transactions {
                     level: TransactionIsolationLevel::ReadCommitted,
                     name: Some("test05".to_string()),
                 }),
+                None,
                 None,
             )
             .await;
@@ -370,6 +382,7 @@ mod transactions {
                     }),
                 },
                 None,
+                None,
             )
             .await;
 
@@ -391,6 +404,7 @@ mod transactions {
                     create_txn_params: None,
                 },
                 None,
+                None,
             )
             .await;
 
@@ -411,6 +425,7 @@ mod transactions {
                         level: TransactionIsolationLevel::ReadCommitted,
                         name: Some("test05".to_string()),
                     }),
+                    None,
                     None,
                 )
                 .await;
@@ -434,6 +449,7 @@ mod transactions {
                         }),
                     },
                     None,
+                    None,
                 )
                 .await;
 
@@ -454,6 +470,7 @@ mod transactions {
                         name: None,
                         create_txn_params: None,
                     },
+                    None,
                     None,
                 )
                 .await;
@@ -485,6 +502,7 @@ mod transactions {
                     name: Some("test06".to_string()),
                 }),
                 None,
+                None,
             )
             .await;
 
@@ -508,6 +526,7 @@ mod transactions {
                     }),
                 },
                 None,
+                None,
             )
             .await;
 
@@ -527,6 +546,7 @@ mod transactions {
                     name: Some("test07".to_string()),
                     create_txn_params: None,
                 },
+                None,
                 None,
             )
             .await;
@@ -554,6 +574,7 @@ mod transactions {
                     name: Some("test08".to_string()),
                 }),
                 None,
+                None,
             )
             .await;
 
@@ -576,6 +597,7 @@ mod transactions {
                         name: Some("test09".to_string()),
                     }),
                 },
+                None,
                 None,
             )
             .await;
@@ -600,6 +622,7 @@ mod transactions {
                     }),
                 },
                 None,
+                None,
             )
             .await;
 
@@ -621,6 +644,7 @@ mod transactions {
                     create_txn_params: None,
                 },
                 None,
+                None,
             )
             .await;
 
@@ -638,6 +662,7 @@ mod transactions {
                     level: TransactionIsolationLevel::ReadCommitted,
                     name: Some("test11".to_string()),
                 }),
+                None,
                 None,
             )
             .await;
@@ -662,6 +687,7 @@ mod transactions {
                     }),
                 },
                 None,
+                None,
             )
             .await;
 
@@ -685,6 +711,7 @@ mod transactions {
                     }),
                 },
                 None,
+                None,
             )
             .await;
 
@@ -706,6 +733,7 @@ mod transactions {
                     create_txn_params: None,
                 },
                 None,
+                None,
             )
             .await;
 
@@ -724,6 +752,7 @@ mod transactions {
                     name: Some("test13".to_string()),
                 }),
                 None,
+                None,
             )
             .await;
 
@@ -738,7 +767,11 @@ mod transactions {
 
         // Create a savepoint where this table exists.
         let save_result = connection
-            .send_transaction(TransactionManagementType::Save("test14".to_string()), None)
+            .send_transaction(
+                TransactionManagementType::Save("test14".to_string()),
+                None,
+                None,
+            )
             .await;
 
         validate_results(save_result.unwrap(), &expected).await;
@@ -758,6 +791,7 @@ mod transactions {
                     name: Some("test14".to_string()),
                     create_txn_params: None,
                 },
+                None,
                 None,
             )
             .await;

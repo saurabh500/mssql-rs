@@ -65,6 +65,7 @@ mod rpc_results {
                 None,
                 Some(&named_parameters),
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -104,7 +105,7 @@ mod rpc_results {
         let named_parameters = vec![database_id_param, compat_level_param];
 
         let batch_result = connection
-            .execute_sp_executesql(query.to_string(), named_parameters, None)
+            .execute_sp_executesql(query.to_string(), named_parameters, None, None)
             .await
             .unwrap();
 
@@ -134,7 +135,7 @@ mod rpc_results {
         let named_parameters = vec![database_id_param];
 
         let batch_result = connection
-            .execute_sp_executesql(query.to_string(), named_parameters, None)
+            .execute_sp_executesql(query.to_string(), named_parameters, None, None)
             .await
             .unwrap();
 
@@ -172,14 +173,14 @@ mod rpc_results {
         let named_parameters = vec![database_id_param, compat_level_param];
 
         let handle = connection
-            .execute_sp_prepare(query.to_string(), named_parameters, None)
+            .execute_sp_prepare(query.to_string(), named_parameters, None, None)
             .await
             .unwrap();
 
         assert!(handle > 0);
 
         // This should simply complete and be successful.
-        let result = connection.execute_sp_unprepare(handle, None).await;
+        let result = connection.execute_sp_unprepare(handle, None, None).await;
         assert!(result.is_ok());
     }
 
@@ -208,7 +209,7 @@ mod rpc_results {
         let named_parameters = vec![database_id_param, compat_level_param];
 
         let mut batch_result = connection
-            .execute_sp_prepexec(query.to_string(), &named_parameters, None)
+            .execute_sp_prepexec(query.to_string(), &named_parameters, None, None)
             .await
             .unwrap();
 
@@ -230,7 +231,7 @@ mod rpc_results {
         assert_eq!(handle_param.status, ReturnValueStatus::OutputParam);
 
         let second_result = connection
-            .execute_sp_execute(retrieved_handle, None, Some(&named_parameters), None)
+            .execute_sp_execute(retrieved_handle, None, Some(&named_parameters), None, None)
             .await
             .unwrap();
         let scalar_value = get_scalar_value(second_result).await.unwrap();
@@ -241,7 +242,7 @@ mod rpc_results {
         }
 
         let result = connection
-            .execute_sp_unprepare(retrieved_handle, None)
+            .execute_sp_unprepare(retrieved_handle, None, None)
             .await;
         assert!(result.is_ok());
     }
@@ -254,7 +255,7 @@ mod rpc_results {
     where
         'n: 'a,
     {
-        let batch_result = connection.execute(query, None).await?;
+        let batch_result = connection.execute(query, None, None).await?;
         let mut query_result_stream = batch_result.stream_results();
 
         while let Some(query_result_type) = query_result_stream.next().await {

@@ -1,5 +1,6 @@
 use crate::connection::tds_connection::TdsConnection;
-use crate::core::{NegotiatedEncryptionSetting, TdsResult};
+use crate::core::{CancelHandle, NegotiatedEncryptionSetting, TdsResult};
+use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::read_write::packet_writer::MessageSendState;
 use crate::read_write::packet_writer::MessageSendState::NotStarted;
 use crate::token::tokens::DoneStatus;
@@ -32,8 +33,9 @@ where
         &self,
         transport: &'a mut dyn NetworkWriter,
         timeout: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> PacketWriter<'a> {
-        PacketWriter::new(*self, transport, timeout)
+        PacketWriter::new(*self, transport, timeout, cancel_handle)
     }
 
     pub(crate) async fn first_packet_callback(
@@ -81,8 +83,10 @@ pub(crate) trait Request {
         &self,
         writer: &'a mut dyn NetworkWriter,
         timeout: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> PacketWriter<'a> {
-        self.packet_type().create_packet_writer(writer, timeout)
+        self.packet_type()
+            .create_packet_writer(writer, timeout, cancel_handle)
     }
 
     async fn serialize<'a, 'b>(&'a self, writer: &'a mut PacketWriter<'b>) -> TdsResult<()>
@@ -93,33 +97,37 @@ pub(crate) trait Request {
         &self,
         connection: &mut TdsConnection<'conn>,
         timeout: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<()> {
-        let mut timeout_state = None;
+        let mut message_state = None;
         let serialize_result = {
             let mut packet_writer =
-                self.create_packet_writer(connection.transport.as_mut(), timeout);
+                self.create_packet_writer(connection.transport.as_mut(), timeout, cancel_handle);
             let result = self.serialize(&mut packet_writer).await;
             match &result {
                 Ok(_) => {}
                 Err(err) => {
-                    if let crate::error::Error::TimeoutError(_) = &err {
-                        // Handle the timeout differently depending on the state of the PacketWriter.
-                        timeout_state = Some(packet_writer.get_message_state());
-                        match timeout_state.as_ref().unwrap() {
-                            NotStarted | MessageSendState::Complete => {}
-                            // No-op. For completed requests, handle during batch iteration.
-                            MessageSendState::Partial => {
-                                packet_writer.cancel_current_message().await?;
-                                // Note - more cleanup needed after relinquishing the connection.
-                            }
-                        };
+                    match err {
+                        OperationCancelledError(_) | TimeoutError(_) => {
+                            // Handle the timeout differently depending on the state of the PacketWriter.
+                            message_state = Some(packet_writer.get_message_state());
+                            match message_state.as_ref().unwrap() {
+                                NotStarted | MessageSendState::Complete => {}
+                                // No-op. For completed requests, handle during batch iteration.
+                                MessageSendState::Partial => {
+                                    packet_writer.cancel_current_message().await?;
+                                    // Note - more cleanup needed after relinquishing the connection.
+                                }
+                            };
+                        }
+                        _ => {}
                     }
                 }
             }
             result
         };
 
-        match timeout_state {
+        match message_state {
             None | Some(NotStarted) => {} // No other work needed.
             Some(MessageSendState::Partial) => {
                 // Drain response until we get a Done with Error to show the message was cancelled.

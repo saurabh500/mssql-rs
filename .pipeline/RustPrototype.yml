@@ -95,7 +95,7 @@ stages:
         parameters:
           osType: Linux
           buildType: ${{ parameters.buildType }}
-          testFilter: -E 'not (test(query_processing_driver) | test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout))'
+          testFilter: -E 'not (test(query_processing_driver) | test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout_and_cancel))'
   - job: Build_Alpine
     displayName: Build Alpine
     pool:

@@ -175,7 +175,7 @@ async fn create_connection_async_internal(
     use tracing::Level;
     use tracing_subscriber::FmtSubscriber;
     let provider = TdsConnectionProvider {};
-    match provider.create_connection(&context.context).await {
+    match provider.create_connection(&context.context, None).await {
         Ok(connection) => {
             println!("Successfully connected");
             Ok(Box::new(TdsConnection {
@@ -213,7 +213,11 @@ impl<'a, 'result> TdsConnection<'a, 'result> {
         sql_command: String,
     ) -> Box<QueryResultTypeStream<'result>> {
         println!("Executing SQL query: {}", sql_command);
-        let batch_results = self.connection.execute(sql_command, None).await.unwrap();
+        let batch_results = self
+            .connection
+            .execute(sql_command, None, None)
+            .await
+            .unwrap();
         // Demo-only print the result stdout.
         let result_stream = batch_results.stream_results();
         Box::new(QueryResultTypeStream {

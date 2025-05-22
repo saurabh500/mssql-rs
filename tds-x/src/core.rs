@@ -1,6 +1,59 @@
 use crate::error::Error;
+use crate::error::Error::OperationCancelledError;
+use std::future::Future;
+use tokio_util::sync::CancellationToken;
 
 pub type TdsResult<T> = Result<T, Error>;
+
+pub struct CancelHandle {
+    pub(crate) cancel_token: CancellationToken,
+}
+
+impl CancelHandle {
+    pub fn new() -> Self {
+        CancelHandle {
+            cancel_token: CancellationToken::new(),
+        }
+    }
+
+    pub fn cancel(self) {
+        self.cancel_token.cancel();
+    }
+
+    pub fn child_handle(&self) -> Self {
+        Self::from(self.cancel_token.child_token())
+    }
+
+    pub(crate) async fn run_until_cancelled<F, ResultType>(
+        cancel_handle: Option<&CancelHandle>,
+        f: F,
+    ) -> F::Output
+    where
+        F: Future<Output = TdsResult<ResultType>> + Send,
+    {
+        match cancel_handle {
+            Some(handle) => match handle.cancel_token.run_until_cancelled(f).await {
+                Some(result) => result,
+                None => Err(OperationCancelledError("Request was cancelled".to_string())),
+            },
+            None => f.await,
+        }
+    }
+}
+
+impl From<CancellationToken> for CancelHandle {
+    fn from(value: CancellationToken) -> Self {
+        CancelHandle {
+            cancel_token: value,
+        }
+    }
+}
+
+impl Default for CancelHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(PartialEq, Debug)]
 pub enum SQLServerVersion {

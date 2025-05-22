@@ -426,7 +426,7 @@ impl LoginResponse {
         let parser_context = ParserContext::default();
         loop {
             match token_stream_reader
-                .receive_token(&parser_context, None)
+                .receive_token(&parser_context, None, None)
                 .await
             {
                 Ok(token) => {
