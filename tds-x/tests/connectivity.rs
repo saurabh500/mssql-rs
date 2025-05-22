@@ -16,6 +16,7 @@ mod connectivity {
         connection_provider::tds_connection_provider::TdsConnectionProvider,
         core::EncryptionSetting,
         datatypes::decoder::ColumnValues,
+        message::login_options::ApplicationIntent,
         query::result::QueryResultType,
     };
     use tracing::Level;
@@ -117,6 +118,28 @@ mod connectivity {
             }
         } else {
             unreachable!("Expected a string value");
+        }
+    }
+
+    #[tokio::test]
+    pub async fn validate_app_intent_doesnt_cause_problems() {
+        let mut context = create_context();
+        context.application_intent = ApplicationIntent::ReadOnly;
+        let provider = TdsConnectionProvider {};
+        let connection_result = provider.create_connection(&context).await;
+        let mut connection = connection_result.unwrap();
+        let command = "select 1".to_string();
+        let result = connection.execute(command, None).await.unwrap();
+        let col_hostname = get_scalar_value(result).await.unwrap();
+        if let Some(column_value) = col_hostname {
+            match column_value {
+                ColumnValues::Int(value) => {
+                    assert_eq!(value, 1);
+                }
+                _ => unreachable!("Expected a int value"),
+            }
+        } else {
+            unreachable!("Expected a int value");
         }
     }
 }
