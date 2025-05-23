@@ -395,7 +395,8 @@ impl LoginHandler<'_, '_> {
                 access_token_bytes: token,
             };
 
-            let mut packet_writer = fed_auth_request.create_packet_writer(reader_writer, None);
+            let mut packet_writer =
+                fed_auth_request.create_packet_writer(reader_writer, None, None);
             fed_auth_request.serialize(&mut packet_writer).await?;
             self.get_login_response(reader_writer, requested_features)
                 .await?

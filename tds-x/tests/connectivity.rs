@@ -165,10 +165,10 @@ mod connectivity {
         let context =
             create_context_with_auth_method(TdsAuthenticationMethod::ActiveDirectoryDefault);
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(&context).await;
+        let connection_result = provider.create_connection(&context, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
-        let result = connection.execute(command, None).await.unwrap();
+        let result = connection.execute(command, None, None).await.unwrap();
         let mut stream = result.stream_results();
         while let Some(qrt) = stream.next().await {
             let res = qrt.unwrap();
