@@ -52,36 +52,37 @@ impl TokenStreamReader<'_> {
     pub(crate) async fn receive_token(
         &mut self,
         context: &ParserContext,
-        mut timeout_sec: Option<Duration>,
+        remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<Tokens> {
-        // Read the token type so that we can get the right parser for this token.
-        // The first byte of the token is the token type.
-        let token_type_byte = {
-            let read_token_fut =
-                CancelHandle::run_until_cancelled(cancel_handle, self.packet_reader.read_byte());
-
-            let operation_result = if let Some(duration) = timeout_sec.take() {
-                let timeout_result: TdsResult<u8> = timeout(duration, read_token_fut)
-                    .await
-                    .unwrap_or_else(|elapsed| {
-                        // If we got interrupted for whatever reason, return a timeout.
-                        Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed)))
-                    });
-                timeout_result
-            } else {
-                read_token_fut.await
-            };
-
-            match &operation_result {
-                Err(TimeoutError(_)) | Err(OperationCancelledError(_)) => {
-                    Box::pin(self.cancel_read_stream_and_wait()).await?;
-                    operation_result
+        let cancellable_receive_token =
+            CancelHandle::run_until_cancelled(cancel_handle, self.receive_token_internal(context));
+        let token_result = match remaining_request_timeout.as_ref() {
+            Some(remaining_request_timeout) => {
+                match timeout(*remaining_request_timeout, cancellable_receive_token).await {
+                    Ok(result) => result,
+                    Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
                 }
-                _ => operation_result,
-            }?
+            }
+            None => cancellable_receive_token.await,
         };
 
+        match &token_result {
+            Ok(_) => {}
+            Err(err) => match err {
+                OperationCancelledError(_) | TimeoutError(_) => {
+                    self.cancel_read_stream_and_wait().await?;
+                }
+                _ => {}
+            },
+        }
+        token_result
+    }
+
+    async fn receive_token_internal(&mut self, context: &ParserContext) -> TdsResult<Tokens> {
+        // Read the token type so that we can get the right parser for this token.
+        // The first byte of the token is the token type.
+        let token_type_byte = self.packet_reader.read_byte().await?;
         let token_type = TokenType::from(token_type_byte);
 
         // We should always have a parser for the token type.
@@ -139,7 +140,7 @@ impl TokenStreamReader<'_> {
         let dummy_context = ParserContext::None(());
         // This method is intended to be called from receive_token(). We enforce only one level
         // of recursion by preventing timeout and cancellation on the internal receive_token() call.
-        while let Ok(token) = self.receive_token(&dummy_context, None, None).await {
+        while let Ok(token) = self.receive_token_internal(&dummy_context).await {
             if let Tokens::Done(done_token) = token {
                 if done_token.status.contains(DoneStatus::ATTN) {
                     break;

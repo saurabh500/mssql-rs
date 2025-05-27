@@ -1,8 +1,6 @@
 use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::decoder::ColumnValues;
-use crate::error::Error::TimeoutError;
-use crate::error::TimeoutErrorType;
 use crate::query::metadata::ColumnMetadata;
 use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::token_stream::{
@@ -120,10 +118,9 @@ pub struct BatchResult<'result> {
     //  negotiated_settings: &'result mut NegotiatedSettings,
     token_stream_reader: TokenStreamReader<'result>,
     parser_context: ParserContext,
-    received_first: bool,
     received_last: bool,
     execution_context: &'result mut ExecutionContext,
-    time_limit: Option<Instant>,
+    remaining_request_timeout: Option<Duration>,
     cancel_handle: Option<CancelHandle>,
 }
 
@@ -133,7 +130,7 @@ where
 {
     pub(crate) fn new(
         tds_connection: &'result mut TdsConnection<'connection>,
-        time_limit: Option<Instant>,
+        remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
     ) -> BatchResult<'result> {
         debug!("Batch result created.");
@@ -152,10 +149,9 @@ where
             //negotiated_settings: &mut tds_connection.negotiated_settings,
             token_stream_reader,
             parser_context: ParserContext::default(),
-            received_first: false,
             received_last: false,
             execution_context: &mut tds_connection.execution_context,
-            time_limit,
+            remaining_request_timeout,
             cancel_handle: cancel_handle.map(|handle| handle.child_handle()),
         }
     }
@@ -169,24 +165,24 @@ where
     }
 
     async fn next_token(&mut self) -> TdsResult<Tokens> {
-        let timeout = match &self.time_limit {
-            Some(time_limit) if !self.received_first => {
-                let now = Instant::now();
-                let next_timeout = time_limit.duration_since(now);
-                if next_timeout == Duration::ZERO {
-                    Err(TimeoutError(TimeoutErrorType::String(
-                        "Timeout expired".to_string(),
-                    )))?
-                } else {
-                    Some(next_timeout)
-                }
+        let start = Instant::now();
+        let result = self
+            .token_stream_reader
+            .receive_token(
+                &self.parser_context,
+                self.remaining_request_timeout,
+                self.cancel_handle.as_ref(),
+            )
+            .await;
+        self.remaining_request_timeout = self.remaining_request_timeout.map(|t| {
+            let elapsed = start.elapsed();
+            if elapsed > t {
+                Duration::ZERO
+            } else {
+                t.abs_diff(elapsed)
             }
-            _ => None,
-        };
-
-        self.token_stream_reader
-            .receive_token(&self.parser_context, timeout, self.cancel_handle.as_ref())
-            .await
+        });
+        result
     }
 
     pub async fn close(&mut self) -> TdsResult<Option<Vec<ReturnValue>>> {

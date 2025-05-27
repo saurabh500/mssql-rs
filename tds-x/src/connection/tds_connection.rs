@@ -48,11 +48,9 @@ impl<'connection, 'result> TdsConnection<'connection> {
             .serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
             .await?;
 
-        let time_limit = match timeout_sec {
-            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
-            None => None,
-        };
-        Ok(BatchResult::new(self, time_limit, cancel_handle))
+        let remaining_timeout =
+            timeout_sec.map(|t| Duration::from_secs(t as u64) - start.elapsed());
+        Ok(BatchResult::new(self, remaining_timeout, cancel_handle))
     }
 
     // Executes a stored procedure with the given name and parameters.
@@ -78,11 +76,9 @@ impl<'connection, 'result> TdsConnection<'connection> {
         let start = Instant::now();
         rpc.serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
             .await?;
-        let time_limit = match timeout_sec {
-            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
-            None => None,
-        };
-        Ok(BatchResult::new(self, time_limit, cancel_handle))
+        let remaining_timeout =
+            timeout_sec.map(|t| Duration::from_secs(t as u64) - start.elapsed());
+        Ok(BatchResult::new(self, remaining_timeout, cancel_handle))
     }
 
     // Executes a stored procedure with the given proc_id and parameters.
@@ -141,11 +137,9 @@ impl<'connection, 'result> TdsConnection<'connection> {
         let start = Instant::now();
         rpc.serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
             .await?;
-        let time_limit = match timeout_sec {
-            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
-            None => None,
-        };
-        Ok(BatchResult::new(self, time_limit, cancel_handle))
+        let remaining_timeout =
+            timeout_sec.map(|t| Duration::from_secs(t as u64) - start.elapsed());
+        Ok(BatchResult::new(self, remaining_timeout, cancel_handle))
     }
 
     // Prepare a SQL Statement for execution and returns the prepared handle.
@@ -215,11 +209,9 @@ impl<'connection, 'result> TdsConnection<'connection> {
         let start = Instant::now();
         rpc.serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
             .await?;
-        let time_limit = match timeout_sec {
-            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
-            None => None,
-        };
-        let mut batch_result = BatchResult::new(self, time_limit, cancel_handle);
+        let remaining_timeout =
+            timeout_sec.map(|t| Duration::from_secs(t as u64) - start.elapsed());
+        let mut batch_result = BatchResult::new(self, remaining_timeout, cancel_handle);
 
         let return_values = batch_result.close().await?;
 
@@ -284,11 +276,9 @@ impl<'connection, 'result> TdsConnection<'connection> {
             .await?;
 
         // Drain the result set. A successful unprepare will not return any results.
-        let time_limit = match timeout_sec {
-            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
-            None => None,
-        };
-        let mut result = BatchResult::new(self, time_limit, cancel_handle);
+        let remaining_timeout =
+            timeout_sec.map(|t| Duration::from_secs(t as u64) - start.elapsed());
+        let mut result = BatchResult::new(self, remaining_timeout, cancel_handle);
         result.close().await?;
         Ok(())
     }
@@ -358,12 +348,9 @@ impl<'connection, 'result> TdsConnection<'connection> {
         let start = Instant::now();
         rpc.serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
             .await?;
-
-        let time_limit = match timeout_sec {
-            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
-            None => None,
-        };
-        Ok(BatchResult::new(self, time_limit, cancel_handle))
+        let remaining_timeout =
+            timeout_sec.map(|t| Duration::from_secs(t as u64) - start.elapsed());
+        Ok(BatchResult::new(self, remaining_timeout, cancel_handle))
     }
 
     pub async fn execute_sp_execute<'rpc_result>(
@@ -415,11 +402,9 @@ impl<'connection, 'result> TdsConnection<'connection> {
             .await?;
 
         // Drain the result set. A successful unprepare will not return any results.
-        let time_limit = match timeout_sec {
-            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
-            None => None,
-        };
-        let result = BatchResult::new(self, time_limit, cancel_handle);
+        let remaining_timeout =
+            timeout_sec.map(|t| Duration::from_secs(t as u64) - start.elapsed());
+        let result = BatchResult::new(self, remaining_timeout, cancel_handle);
 
         Ok(result)
     }
@@ -438,16 +423,9 @@ impl<'connection, 'result> TdsConnection<'connection> {
             .serialize_and_handle_timeout(self, timeout_sec, cancel_handle)
             .await?;
 
-        let time_limit = match timeout_sec {
-            Some(t) => start.checked_add(Duration::from_secs(t as u64)),
-            None => None,
-        };
-
-        Ok(BatchResult::new(self, time_limit, cancel_handle))
-    }
-
-    pub async fn cancel(&'result mut self) -> TdsResult<()> {
-        Ok(())
+        let remaining_timeout =
+            timeout_sec.map(|t| Duration::from_secs(t as u64) - start.elapsed());
+        Ok(BatchResult::new(self, remaining_timeout, cancel_handle))
     }
 
     pub(crate) async fn send_attention(
