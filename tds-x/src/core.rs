@@ -108,6 +108,29 @@ impl Version {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub struct EncryptionOptions {
+    pub mode: EncryptionSetting,
+    pub trust_server_certificate: bool,
+    pub host_name_in_cert: Option<String>,
+}
+
+impl EncryptionOptions {
+    pub fn new() -> Self {
+        EncryptionOptions {
+            mode: EncryptionSetting::Strict,
+            trust_server_certificate: false,
+            host_name_in_cert: None,
+        }
+    }
+}
+
+impl Default for EncryptionOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum EncryptionSetting {
     PreferOff, // Don't use encryption if the server allows this or doesn't support encryption.

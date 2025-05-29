@@ -8,6 +8,7 @@ pub(crate) mod query_processing_driver {
     use tracing::Level;
     use tracing_subscriber::FmtSubscriber;
 
+    use crate::core::EncryptionOptions;
     use crate::error::Error;
     use crate::message::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
     use crate::message::messages::PacketType;
@@ -62,7 +63,11 @@ pub(crate) mod query_processing_driver {
             transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
-            encryption: EncryptionSetting::On,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: false,
+                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            },
             // database: "drivers".to_string(),
             ..Default::default()
         };
@@ -139,7 +144,11 @@ pub(crate) mod query_processing_driver {
             transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
-            encryption: EncryptionSetting::On,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: false,
+                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            },
             // database: "drivers".to_string(),
             ..Default::default()
         };
@@ -521,7 +530,11 @@ pub(crate) mod query_processing_driver {
             transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
-            encryption: EncryptionSetting::On,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: false,
+                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            },
             //      database: "drivers".to_string(),
             packet_size: 512, // Minimal packet size for testing.
             ..Default::default()
@@ -604,7 +617,11 @@ pub(crate) mod query_processing_driver {
             transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
-            encryption: EncryptionSetting::On,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: false,
+                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            },
             // database: "drivers".to_string(),
             ..Default::default()
         };
@@ -627,7 +644,11 @@ pub(crate) mod query_processing_driver {
             transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
-            encryption: EncryptionSetting::On,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: false,
+                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            },
             // database: "drivers".to_string(),
             ..Default::default()
         };

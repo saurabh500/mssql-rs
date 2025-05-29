@@ -10,32 +10,52 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_native_tls::TlsStream;
 use tracing::{debug, error, info};
 
+use super::network_transport::PRE_NEGOTIATED_PACKET_SIZE;
+use crate::core::{EncryptionOptions, TdsResult};
 #[cfg(target_os = "macos")]
 use std::io::{ErrorKind, Write};
 
-use super::network_transport::PRE_NEGOTIATED_PACKET_SIZE;
-
 pub(crate) struct SslHandler {
     pub(crate) server_host_name: String,
+    pub(crate) encryption_options: EncryptionOptions,
 }
 
 impl SslHandler {
     pub(crate) async fn enable_ssl_async(
         &self,
         mut base_stream: Box<dyn Stream>,
-    ) -> Result<Box<dyn Stream>, Error> {
+    ) -> TdsResult<Box<dyn Stream>> {
         base_stream.tls_handshake_starting();
 
         // Build the native TlsConnector directly because tokio-native-tls's version
         // is missing some functionality.
-        let connector = NativeTlsConnector::builder()
-            .danger_accept_invalid_certs(true)
-            .build()
-            .unwrap();
+        let mut builder = NativeTlsConnector::builder();
+        if self.encryption_options.trust_server_certificate {
+            builder.danger_accept_invalid_certs(true);
+        }
+        let host_name = self
+            .encryption_options
+            .host_name_in_cert
+            .as_ref()
+            .map_or_else(
+                || &self.server_host_name,
+                |host_name| {
+                    if host_name.is_empty() {
+                        &self.server_host_name
+                    } else {
+                        host_name
+                    }
+                },
+            );
 
-        info!("Starting TLS handshake to {}", self.server_host_name);
+        let connector = builder.build()?;
+
+        info!(
+            "Starting TLS handshake to {} using host {}",
+            self.server_host_name, host_name
+        );
         let encrypted_stream = tokio_native_tls::TlsConnector::from(connector)
-            .connect(&self.server_host_name, base_stream)
+            .connect(host_name, base_stream)
             .await;
 
         match encrypted_stream {
@@ -47,7 +67,7 @@ impl SslHandler {
                     .tls_handshake_completed();
                 Ok(Box::new(stream))
             }
-            Err(e) => Err(Error::new(std::io::ErrorKind::Other, e)),
+            Err(e) => Err(crate::error::Error::TlsError(e)),
         }
     }
 }

@@ -56,7 +56,7 @@ impl PyClientContext {
 
 impl From<PyClientContext> for ClientContext {
     fn from(py_ctx: PyClientContext) -> Self {
-        ClientContext {
+        let mut context = ClientContext {
             transport_context: TransportContext::Tcp {
                 host: py_ctx.server_name,
                 port: py_ctx.port,
@@ -64,8 +64,9 @@ impl From<PyClientContext> for ClientContext {
             user_name: py_ctx.user_name,
             password: py_ctx.password,
             database: py_ctx.database,
-            encryption: EncryptionSetting::On,
             ..Default::default()
-        }
+        };
+        context.encryption_options.mode = EncryptionSetting::On;
+        context
     }
 }

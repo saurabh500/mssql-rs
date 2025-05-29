@@ -266,7 +266,7 @@ impl PreloginHandler<'_, '_> {
         let request_model = PreloginRequestModel::new(
             Uuid::new_v4(),
             Option::from(self.factory.context.mars_enabled),
-            Option::from(self.factory.context.encryption),
+            Option::from(self.factory.context.encryption_options.mode),
             Option::from(self.factory.context.database_instance.as_str()),
         );
         let prelogin_request = PreloginRequest {

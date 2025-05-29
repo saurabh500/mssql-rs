@@ -1,11 +1,12 @@
 #[cfg(test)]
+use std::default::Default;
 use std::env;
 use std::sync::Once;
 
 use dotenv::dotenv;
 use futures::StreamExt;
 use tds_x::connection::client_context::TransportContext;
-use tds_x::core::TdsResult;
+use tds_x::core::{EncryptionOptions, TdsResult};
 use tds_x::datatypes::decoder::ColumnValues;
 use tds_x::{
     connection::{client_context::ClientContext, tds_connection::TdsConnection},
@@ -15,7 +16,6 @@ use tds_x::{
 };
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
-
 // This module will have a lot of allow(dead_code). This is because some of the capabilities are being used only in
 // some tests. Each test leads to a new binary being created. So if a test is not using parts of Common module, the functions in common
 // will end up being analyzed as dead code. So we will allow dead code in this module.
@@ -94,7 +94,11 @@ pub fn create_context() -> ClientContext {
         user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
         password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
         database: "master".to_string(),
-        encryption: EncryptionSetting::On,
+        encryption_options: EncryptionOptions {
+            mode: EncryptionSetting::On,
+            trust_server_certificate: false,
+            host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+        },
         ..Default::default()
     }
 }

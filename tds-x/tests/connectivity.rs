@@ -13,6 +13,7 @@ mod connectivity {
     };
     use dotenv::dotenv;
     use futures::StreamExt;
+    use tds_x::core::EncryptionOptions;
     use tds_x::{
         connection::client_context::{ClientContext, EntraIdTokenFactory, TdsAuthenticationMethod},
         connection_provider::tds_connection_provider::TdsConnectionProvider,
@@ -95,7 +96,11 @@ mod connectivity {
             // user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
             // password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
             database: "master".to_string(),
-            encryption: EncryptionSetting::On,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: false,
+                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            },
             tds_authentication_method: TdsAuthenticationMethod::AccessToken,
             access_token: Some(access_token),
             ..Default::default()
@@ -123,7 +128,11 @@ mod connectivity {
                 port: 1433,
             },
             database: "master".to_string(),
-            encryption: EncryptionSetting::On,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: false,
+                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            },
             tds_authentication_method: auth_method,
             auth_method_map,
             connect_timeout: 3600,
@@ -213,6 +222,36 @@ mod connectivity {
             let utf16: Vec<u16> = token.encode_utf16().collect();
             let bytes: Vec<u8> = utf16.iter().flat_map(|u| u.to_le_bytes()).collect();
             Ok(bytes)
+        }
+    }
+
+    #[tokio::test]
+    pub async fn trust_server_cert() {
+        let access_token = generate_access_token().await;
+        let mut context = create_context_with_accesstoken(access_token);
+        context.encryption_options.trust_server_certificate = true;
+        let provider = TdsConnectionProvider {};
+        let connection_result = provider.create_connection(&context, None).await;
+        let mut connection = connection_result.unwrap();
+        let command = "select 1".to_string();
+        let result = connection.execute(command, None, None).await.unwrap();
+        let mut stream = result.stream_results();
+        while let Some(qrt) = stream.next().await {
+            let res = qrt.unwrap();
+            match res {
+                QueryResultType::ResultSet(rs) => {
+                    let mut row_stream = rs.into_row_stream().unwrap();
+                    while let Some(row) = row_stream.next().await {
+                        let mut unwrapped_row = row.unwrap();
+                        while let Some(cell) = unwrapped_row.next().await {
+                            print!("{:?},", cell.unwrap().get_value());
+                        }
+                    }
+                }
+                _ => {
+                    unreachable!("Shouldn't have reached here");
+                }
+            }
         }
     }
 

@@ -121,6 +121,7 @@ pub(crate) async fn create_transport<'a>(
                 stream: Arc::new(Mutex::new(base_stream)),
                 ssl_handler: SslHandler {
                     server_host_name: transport_context.get_server_name().to_string(),
+                    encryption_options: context.encryption_options.clone(),
                 },
                 stream_recoverer: Box::new(stream_recoverer),
                 packet_size: PRE_NEGOTIATED_PACKET_SIZE,
@@ -134,6 +135,7 @@ pub(crate) async fn create_transport<'a>(
             // Enable TLS over TCP immediately in TDS 8.0
             let ssl_handler = SslHandler {
                 server_host_name: transport_context.get_server_name().to_string(),
+                encryption_options: context.encryption_options.clone(),
             };
             let encrypted_stream = ssl_handler
                 .enable_ssl_async(stream_recoverer.recover_base_stream())
@@ -329,7 +331,7 @@ impl TransportSslHandler for NetworkTransport<'_> {
     }
 
     async fn disable_ssl(&mut self) -> TdsResult<()> {
-        let encryption_type_check = match self.context.encryption {
+        let encryption_type_check = match self.context.encryption_options.mode {
             EncryptionSetting::Strict => {
                 // TODO: Evaluate this error.
                 Err(crate::error::Error::from(Error::new(
@@ -355,6 +357,7 @@ pub(crate) mod tests {
     use crate::connection::client_context::ClientContext;
     use crate::connection::transport::network_transport::Stream; // Your custom trait
     use crate::connection::transport::ssl_handler::SslHandler;
+    use crate::core::EncryptionOptions;
     use bytes::Bytes;
     use futures::SinkExt;
     use futures::StreamExt;
@@ -396,6 +399,7 @@ pub(crate) mod tests {
 
         let ssl_handler = SslHandler {
             server_host_name: context.transport_context.get_server_name().clone(),
+            encryption_options: context.encryption_options.clone(),
         };
         let stream_recoverer = Box::new(MockStreamRecoverer {});
 
@@ -419,6 +423,7 @@ pub(crate) mod tests {
 
         let ssl_handler = SslHandler {
             server_host_name: context.transport_context.get_server_name().clone(),
+            encryption_options: context.encryption_options.clone(),
         };
         let stream_recoverer = Box::new(MockStreamRecoverer {});
 
@@ -437,6 +442,7 @@ pub(crate) mod tests {
                 stream: Arc::new(Mutex::new(server_side)),
                 ssl_handler: SslHandler {
                     server_host_name: context.transport_context.get_server_name().clone(),
+                    encryption_options: context.encryption_options.clone(),
                 },
                 stream_recoverer: Box::new(MockStreamRecoverer {}),
                 packet_size: context.packet_size as u32,
@@ -446,8 +452,14 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_network_transport_send() {
-        let mut context = ClientContext::new();
-        context.encryption = EncryptionSetting::Strict;
+        let context = ClientContext {
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: true,
+                ..EncryptionOptions::default()
+            },
+            ..Default::default()
+        };
         let (mut transport, server_side) = create_readable_network_transport(&context);
 
         // Fill data_to_send with random values
@@ -482,10 +494,21 @@ pub(crate) mod tests {
 
         // Mocks and defaults.
         let stream_recoverer = Box::new(MockStreamRecoverer {});
-        let mut context = ClientContext::new();
-        context.encryption = EncryptionSetting::Strict;
+        let context = ClientContext {
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: true,
+                ..EncryptionOptions::default()
+            },
+            ..Default::default()
+        };
         let ssl_handler = SslHandler {
             server_host_name: context.transport_context.get_server_name().clone(),
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: true,
+                ..EncryptionOptions::default()
+            },
         };
 
         // Optionally, shut down the writer so the reader sees EOF if all data is read

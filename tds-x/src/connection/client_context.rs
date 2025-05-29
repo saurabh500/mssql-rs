@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::core::{EncryptionSetting, TdsResult};
+use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
 use crate::message::login_options::{ApplicationIntent, TdsVersion};
 use hostname;
 
@@ -55,7 +55,7 @@ pub struct ClientContext {
     pub database: String,
     pub database_instance: String,
     pub enlist: bool,
-    pub encryption: EncryptionSetting,
+    pub encryption_options: EncryptionOptions,
     pub failover_partner: String,
     pub ipaddress_preference: IPAddressPreference,
     pub language: String,
@@ -89,7 +89,7 @@ impl ClientContext {
             database: "".to_string(),
             database_instance: "MSSQLServer".to_string(),
             enlist: false,
-            encryption: EncryptionSetting::Strict,
+            encryption_options: EncryptionOptions::new(),
             failover_partner: "".to_string(),
             ipaddress_preference: IPAddressPreference::UsePlatformDefault,
             language: "us_english".to_string(),
@@ -123,7 +123,7 @@ impl ClientContext {
     }
 
     pub fn tds_version(&self) -> TdsVersion {
-        if matches!(self.encryption, EncryptionSetting::Strict) {
+        if matches!(self.encryption_options.mode, EncryptionSetting::Strict) {
             TdsVersion::V8_0
         } else {
             TdsVersion::V7_4

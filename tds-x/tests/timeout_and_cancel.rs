@@ -8,7 +8,7 @@ mod timeout_and_cancel_tests {
     use std::time::{Duration, Instant};
     use tds_x::connection::client_context::ClientContext;
     use tds_x::connection_provider::tds_connection_provider::TdsConnectionProvider;
-    use tds_x::core::{CancelHandle, EncryptionSetting, TdsResult};
+    use tds_x::core::{CancelHandle, EncryptionOptions, EncryptionSetting, TdsResult};
     use tds_x::error::Error;
     use tds_x::error::Error::OperationCancelledError;
     use tokio::net::TcpListener;
@@ -54,15 +54,21 @@ mod timeout_and_cancel_tests {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
 
         // Create a client context with a two-second timeout that points to localhost:1433.
-        let client_context = ClientContext {
+        let mut client_context = ClientContext {
             transport_context: tds_x::connection::client_context::TransportContext::Tcp {
                 host: "localhost".to_string(),
                 port: listener.local_addr().unwrap().port(),
             },
             database: "master".to_string(),
-            encryption: EncryptionSetting::PreferOff,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::PreferOff,
+                trust_server_certificate: false,
+                ..Default::default()
+            },
             ..Default::default()
         };
+
+        client_context.encryption_options.mode = EncryptionSetting::PreferOff;
 
         let provider = TdsConnectionProvider {};
         let join_handle = tokio::spawn(async move {
@@ -156,17 +162,23 @@ mod timeout_and_cancel_tests {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
 
         // Create a client context with a two-second timeout that points to localhost:1433.
-        let client_context = ClientContext {
+        let mut client_context = ClientContext {
             transport_context: tds_x::connection::client_context::TransportContext::Tcp {
                 host: "localhost".to_string(),
                 port: listener.local_addr().unwrap().port(),
             },
             database: "master".to_string(),
-            encryption: EncryptionSetting::PreferOff,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::PreferOff,
+                trust_server_certificate: false,
+                ..Default::default()
+            },
             connect_timeout: 2,
             connect_retry_count: retry_count as u32,
             ..Default::default()
         };
+
+        client_context.encryption_options.mode = EncryptionSetting::PreferOff;
 
         // Try to connect.
         let provider = TdsConnectionProvider {};
