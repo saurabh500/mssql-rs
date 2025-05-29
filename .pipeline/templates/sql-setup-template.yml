@@ -41,8 +41,67 @@ steps:
       dockerVersion: '17.09.0-ce'
 
   - script: |
+      set -euo pipefail
+      # Setup Certificate
+
+      echo '[req]
+      default_bits       = 2048
+      prompt             = no
+      default_md         = sha256
+      distinguished_name = dn
+      x509_extensions    = ext
+
+      [dn]
+      CN = sql1
+
+      [ext]
+      subjectAltName = @alt_names
+
+      [alt_names]
+      DNS.1 = sql1' >> openssl.cnf
+
+      export CERT_HOST_NAME=sql1
+      echo "##vso[task.setvariable variable=CERT_HOST_NAME;isOutput=true]sql1"
+      
+      cat openssl.cnf
+
+      openssl req -x509 -nodes -newkey rsa:2048 -keyout mssql.key -out mssql.pem -days 365 -config openssl.cnf
+
+      cp mssql.pem mssql.crt
+
+      cat mssql.crt
+
+      chmod 440 mssql.pem
+      chmod 440 mssql.key
+      echo '[network]
+      tlscert = /etc/ssl/certs/mssql.pem
+      tlskey = /etc/ssl/private/mssql.key
+      tlsprotocols = 1.2
+      forceencryption = 1' >> mssql.conf
+
+      cat mssql.conf
+      sudo chown 10001:0 mssql.*
       docker network create testnet
-      docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 --network testnet -d mcr.microsoft.com/mssql/server:2022-latest
+
+      # Todo move away from Root container.
+
+      docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 --network testnet -v $PWD/mssql.conf:/var/opt/mssql/mssql.conf -v $PWD/mssql.pem:/etc/ssl/certs/mssql.pem -v $PWD/mssql.key:/etc/ssl/private/mssql.key -u 0:0 -d mcr.microsoft.com/mssql/server:2022-latest
+
+
+      
+
     displayName: "Run SQL in docker"   
     env:
       SQL_PASSWORD: $(SQL_PASSWORD)
+
+  - script: |
+      sudo cp mssql.crt /usr/local/share/ca-certificates/mssql.crt
+
+      cat /etc/ssl/certs/ca-certificates.crt
+      sudo update-ca-certificates
+      echo $?
+      sudo openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt mssql.crt
+      # Sleep to allow ssh.
+      # This is a workaround since the update-ca-certificates command does not return a non-zero exit code on warning. The warning is typically nascent. 
+      exit 0
+    displayName: "Update CA certificates on the client"

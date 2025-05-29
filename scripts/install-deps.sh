@@ -21,7 +21,6 @@ sudo apt install wget apt-transport-https software-properties-common -y
 pip --version && pip install pipenv
 
 # Enable and start SSH service
-sudo apt update
 sudo apt install openssh-server -y
 sudo systemctl enable ssh
 sudo systemctl start ssh
@@ -34,8 +33,24 @@ then
     sudo apt install openssl -y
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-${SCRIPT_DIR}/install-ssh-ubuntu.sh
+
+# Create a new user for SSH login
+SSH_USER="sshuser"
+SSH_PASS=$(openssl rand -base64 16)
+
+echo "Generated SSH password for $SSH_USER: $SSH_PASS"
+
+if ! id "$SSH_USER" &>/dev/null; then
+    sudo useradd -m -s /bin/bash "$SSH_USER"
+    echo "$SSH_USER:$SSH_PASS" | sudo chpasswd
+    sudo usermod -aG sudo "$SSH_USER"
+    echo "User $SSH_USER created with password for SSH login."
+else
+    echo "User $SSH_USER already exists."
+fi
+
+# SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+./install-ssh-ubuntu.sh
 
 # Install az cli
 if ! command -v az &> /dev/null
@@ -50,12 +65,6 @@ fi
 if ! command -v pwsh &> /dev/null
 then
     echo "PowerShell not found, installing..."
-    # Import the public repository GPG keys
-    wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
-    sudo dpkg -i packages-microsoft-prod.deb
-
-    # Update the list of products
-    sudo apt update
 
     # Install PowerShell
     sudo apt install -y powershell
@@ -83,4 +92,5 @@ echo "PATH is $PATH"
 
 
 popd  
+
 

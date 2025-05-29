@@ -10,6 +10,13 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 cargo install cargo-nextest --version 0.9.96
 
+
 cd /workspace
+
+cp mssql.crt /etc/pki/ca-trust/source/anchors/
+
+update-ca-trust extract
+
+openssl verify -CAfile /etc/pki/ca-trust/extracted/openssl/ca-bundle.trust.crt mssql.crt
 
 cargo nextest run -E 'not (test(connectivity))' --workspace-remap /workspace --archive-file "$ARCHIVE_NAME" --no-fail-fast --profile ci --success-output immediate

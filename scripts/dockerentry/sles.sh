@@ -26,4 +26,8 @@ cargo install cargo-nextest --version 0.9.96
 
 cd /workspace
 
+cp mssql.crt /etc/pki/trust/anchors/mssql.pem
+
+update-ca-certificates
+
 cargo nextest run -E 'not (test(connectivity))' --workspace-remap /workspace --archive-file "$ARCHIVE_NAME" --no-fail-fast --profile ci --success-output immediate
