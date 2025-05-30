@@ -26,7 +26,7 @@ cargo install cargo-nextest --version 0.9.96
 
 cd /workspace
 
-cp mssql.crt /etc/pki/trust/anchors/mssql.pem
+cp ca.crt /etc/pki/trust/anchors
 
 update-ca-certificates
 

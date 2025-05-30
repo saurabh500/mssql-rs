@@ -21,7 +21,7 @@ cd /workspace
 
 # Setup the certificate 
 
-cp mssql.pem /usr/local/share/ca-certificates/mssql.crt
+cp ca.crt /usr/local/share/ca-certificates
 update-ca-certificates
 # Verify the certificate
 openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt mssql.pem

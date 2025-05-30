@@ -27,11 +27,12 @@ cargo install cargo-nextest --version 0.9.96
 
 cd /workspace
 
-# Setup the certificate 
+# Setup the certificate
+cp ca.crt /usr/local/share/ca-certificates
 
-cp mssql.pem /usr/local/share/ca-certificates/mssql.crt
 update-ca-certificates
+
 # Verify the certificate
-openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt mssql.pem
+openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt mssql.crt
 
 cargo nextest run -E 'not (test(connectivity))' --workspace-remap /workspace --archive-file "$ARCHIVE_NAME" --no-fail-fast --profile ci --success-output immediate

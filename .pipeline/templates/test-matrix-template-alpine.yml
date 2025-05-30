@@ -31,47 +31,16 @@ jobs:
           echo $(entry)
           echo $container
 
-          echo '[req]
-          default_bits       = 2048
-          prompt             = no
-          default_md         = sha256
-          distinguished_name = dn
-          x509_extensions    = ext
-
-          [dn]
-          CN = sql1
-
-          [ext]
-          subjectAltName = @alt_names
-
-          [alt_names]
-          DNS.1 = sql1
-          DNS.2 = localhost' >> openssl.cnf
-          
-          cat openssl.cnf
-
-          openssl req -x509 -nodes -newkey rsa:2048 -keyout mssql.key -out mssql.pem -days 365 -config openssl.cnf
-
-          cp mssql.pem mssql.crt
-
-          cat mssql.crt
-
-          chmod 440 mssql.pem
-          chmod 440 mssql.key
-          echo '[network]
-          tlscert = /etc/ssl/certs/mssql.pem
-          tlskey = /etc/ssl/private/mssql.key
-          tlsprotocols = 1.2
-          forceencryption = 1' >> mssql.conf
-
-          cat mssql.conf
+          scripts/generate_cert.sh
           sudo chown 10001:0 mssql.*
 
           if command -v docker >/dev/null 2>&1
           then
             cp $(Pipeline.Workspace)/tdslib-nextest-musl.tar.zst $(Build.SourcesDirectory)
+            
             docker network create testnet
-            docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 --network testnet -v $PWD/mssql.conf:/var/opt/mssql/mssql.conf -v $PWD/mssql.pem:/etc/ssl/certs/mssql.pem -v $PWD/mssql.key:/etc/ssl/private/mssql.key -u 0:0 -d mcr.microsoft.com/mssql/server:2022-latest
+
+            docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 --network testnet -v $PWD/conf/mssql.conf:/var/opt/mssql/mssql.conf -v $PWD/mssql.pem:/etc/ssl/certs/mssql.pem -v $PWD/mssql.key:/etc/ssl/private/mssql.key -u 0:0 -d mcr.microsoft.com/mssql/server:2022-latest
 
             docker run -v "$PWD:/workspace" -e "DB_USERNAME=sa" -e "DB_HOST=sql1" -e "DB_PORT=1433" -e "SQL_PASSWORD=$(SQL_PASSWORD)" -e "ARCHIVE_NAME=tdslib-nextest-musl.tar.zst" --network testnet $(container) /workspace/scripts/dockerentry/$(entry)
           fi

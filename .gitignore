@@ -41,3 +41,9 @@ Pipfile.lock
 *.out
 
 *.tar.zst
+
+*.crt
+*.key
+*.pem
+*.csr
+openssl.cnf
