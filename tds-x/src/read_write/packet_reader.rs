@@ -261,6 +261,26 @@ impl<'a> PacketReader<'a> {
         Ok(total_read)
     }
 
+    /// Skips a specified number of bytes in the packet stream.
+    pub async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()> {
+        let mut length_to_read = skip_count;
+        while length_to_read > 0 {
+            if !self.do_we_have_enough_data(min(self.max_packet_size, length_to_read)) {
+                self.read_tds_packet().await?;
+            }
+            let available = self.buffer_length - self.buffer_position;
+
+            // We can read the minimum of what is available, or the actual length needed or the packet size.
+            let to_read = min(available, min(length_to_read, self.max_packet_size - 8));
+
+            if to_read > 0 {
+                length_to_read -= to_read;
+                self.consume_bytes(to_read);
+            }
+        }
+        Ok(())
+    }
+
     /// Reads an array of bytes where the array length is specified by the
     /// byte value before the array of bytes.
     ///

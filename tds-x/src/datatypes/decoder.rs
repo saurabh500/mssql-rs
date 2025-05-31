@@ -223,7 +223,9 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
             | TdsDataType::BigChar
             | TdsDataType::BigVarChar
             | TdsDataType::Char
-            | TdsDataType::VarChar => self.string_decoder.decode(reader, metadata).await?,
+            | TdsDataType::VarChar
+            | TdsDataType::NText
+            | TdsDataType::Text => self.string_decoder.decode(reader, metadata).await?,
             TdsDataType::DateTime => {
                 let value = self.read_datetime(reader).await?;
                 ColumnValues::DateTime(value)
@@ -313,6 +315,10 @@ impl StringDecoder {
     fn new() -> Self {
         StringDecoder { db_collation: None }
     }
+
+    fn is_long_len_type(data_type: TdsDataType) -> bool {
+        matches!(data_type, TdsDataType::NText | TdsDataType::Text)
+    }
 }
 
 #[async_trait]
@@ -347,6 +353,27 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
                 }
 
                 let sql_string = SqlString::new(plp_buffer, encoding_type);
+                Ok(ColumnValues::String(sql_string))
+            }
+        } else if Self::is_long_len_type(metadata.data_type) {
+            // If it is a long length type (NText, Text), read the length as uint16.
+            let text_ptr_len = reader.read_byte().await? as usize;
+
+            let length = if text_ptr_len > 0 {
+                const TIMESTAMP_BYTE_COUNT: usize = 8;
+                reader.skip_bytes(text_ptr_len).await?;
+                reader.skip_bytes(TIMESTAMP_BYTE_COUNT).await?;
+                reader.read_uint32().await? as usize
+            } else {
+                0
+            };
+
+            if length == 0 {
+                return Ok(ColumnValues::Null);
+            } else {
+                let mut buffer = vec![0u8; length];
+                reader.read_bytes(&mut buffer).await?;
+                let sql_string = SqlString::new(buffer, encoding_type);
                 Ok(ColumnValues::String(sql_string))
             }
         } else {

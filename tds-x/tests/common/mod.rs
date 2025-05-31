@@ -96,7 +96,7 @@ pub fn create_context() -> ClientContext {
         database: "master".to_string(),
         encryption_options: EncryptionOptions {
             mode: EncryptionSetting::On,
-            trust_server_certificate: false,
+            trust_server_certificate: trust_server_certificate(),
             host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
         },
         ..Default::default()
@@ -189,4 +189,10 @@ where
     }
 
     Ok(result)
+}
+
+pub fn trust_server_certificate() -> bool {
+    env::var("TRUST_SERVER_CERTIFICATE")
+        .map(|v| v.parse().unwrap_or(false))
+        .unwrap_or(false)
 }

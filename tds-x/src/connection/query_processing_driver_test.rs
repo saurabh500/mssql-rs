@@ -65,7 +65,7 @@ pub(crate) mod query_processing_driver {
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
-                trust_server_certificate: false,
+                trust_server_certificate: trust_server_certificate(),
                 host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
             },
             // database: "drivers".to_string(),
@@ -146,7 +146,7 @@ pub(crate) mod query_processing_driver {
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
-                trust_server_certificate: false,
+                trust_server_certificate: trust_server_certificate(),
                 host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
             },
             // database: "drivers".to_string(),
@@ -433,7 +433,11 @@ pub(crate) mod query_processing_driver {
             SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS VARCHAR(500)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; 
             SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS CHAR(500)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; 
             SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS NVARCHAR(MAX)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; 
-            SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS VARCHAR(MAX)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; ",
+            SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS VARCHAR(MAX)) COLLATE Latin1_General_100_CI_AS_SC_UTF8; 
+            SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' as NTEXT);
+            SELECT CAST(NULL as NTEXT);
+            SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' as TEXT) as TextColumn;
+            SELECT CAST(NULL as TEXT);",
         )
         .await
         .unwrap();
@@ -532,7 +536,7 @@ pub(crate) mod query_processing_driver {
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
-                trust_server_certificate: false,
+                trust_server_certificate: trust_server_certificate(),
                 host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
             },
             //      database: "drivers".to_string(),
@@ -619,7 +623,7 @@ pub(crate) mod query_processing_driver {
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
-                trust_server_certificate: false,
+                trust_server_certificate: trust_server_certificate(),
                 host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
             },
             // database: "drivers".to_string(),
@@ -646,7 +650,7 @@ pub(crate) mod query_processing_driver {
             password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
-                trust_server_certificate: false,
+                trust_server_certificate: trust_server_certificate(),
                 host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
             },
             // database: "drivers".to_string(),
@@ -734,5 +738,11 @@ pub(crate) mod query_processing_driver {
             }
         }
         Ok(())
+    }
+
+    fn trust_server_certificate() -> bool {
+        env::var("TRUST_SERVER_CERTIFICATE")
+            .map(|v| v.parse().unwrap_or(false))
+            .unwrap_or(false)
     }
 }

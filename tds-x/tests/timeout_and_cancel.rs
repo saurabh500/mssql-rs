@@ -3,7 +3,8 @@ mod common;
 
 mod timeout_and_cancel_tests {
     use crate::common::{
-        begin_connection, create_context, run_query_and_check_results, ExpectedQueryResultType,
+        begin_connection, create_context, run_query_and_check_results, trust_server_certificate,
+        ExpectedQueryResultType,
     };
     use std::time::{Duration, Instant};
     use tds_x::connection::client_context::ClientContext;
@@ -62,7 +63,7 @@ mod timeout_and_cancel_tests {
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: false,
+                trust_server_certificate: trust_server_certificate(),
                 ..Default::default()
             },
             ..Default::default()
