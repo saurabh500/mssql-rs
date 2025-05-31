@@ -392,15 +392,15 @@ pub(crate) mod query_processing_driver {
                 SmallMoneyColumn SMALLMONEY NOT NULL,
                 MoneyNColumn MONEY NULL,
                 SmallMoneyNColumn SMALLMONEY NULL,
-                -- DateSmallColumn SMALLDATETIME NULL,
-                -- DateTimeColumn DATETIME NULL,
+                DateSmallColumn SMALLDATETIME NULL,
+                DateTimeColumn DATETIME NULL,
             );
         
             INSERT INTO #AllDataTypes (
                 TinyIntColumn, SmallIntColumn, IntColumn, BigIntColumn, BitColumn, 
                 DecimalColumn, NumericColumn, FloatColumn, RealColumn,
                 MoneyColumn, SmallMoneyColumn, MoneyNColumn, SmallMoneyNColumn
-                -- DateSmallColumn, DateTimeColumn
+                DateSmallColumn, DateTimeColumn
             )
             VALUES (
                 CAST(255 AS TINYINT), -- TinyIntColumn
@@ -416,8 +416,8 @@ pub(crate) mod query_processing_driver {
                 CAST(5678.1234 AS SMALLMONEY), -- SmallMoneyColumn
                 CAST(1234.0 AS MONEY), -- MoneyNColumn
                 CAST(567.89 AS SMALLMONEY) -- SmallMoneyNColumn
-                -- CAST('1/1/2000 1:00' as SMALLDATETIME),
-                -- CAST('1/1/2000 1:00' as DATETIME),
+                CAST('1/1/2000 1:00' as SMALLDATETIME),
+                CAST('1/1/2000 1:00' as DATETIME),
             );
             select * from #AllDataTypes;",
         )
@@ -500,6 +500,38 @@ pub(crate) mod query_processing_driver {
             .await
             .unwrap(); // TODO: Fix precision loss
         execute_test_query("SELECT CAST(-214748.3648 AS SMALLMONEY)")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_datetimes_no_panic() {
+        // Test null values
+        execute_test_query("SELECT CAST(NULL AS SMALLDATETIME)")
+            .await
+            .unwrap();
+        execute_test_query("SELECT CAST(NULL AS DATETIME)")
+            .await
+            .unwrap();
+        // Test whole numbers
+        execute_test_query("SELECT CAST('2019-06-06 12:01:01' AS SMALLDATETIME)")
+            .await
+            .unwrap();
+        execute_test_query("SELECT CAST('2019-06-06 12:01:01.11' AS DATETIME)")
+            .await
+            .unwrap();
+        // Test max values
+        execute_test_query("SELECT CAST('2079-06-06 23:59:59' AS SMALLDATETIME)")
+            .await
+            .unwrap();
+        execute_test_query("SELECT CAST(214748.3647 AS SMALLMONEY)")
+            .await
+            .unwrap();
+        // Test min values
+        execute_test_query("SELECT CAST('1900-01-01 00:00:00' AS SMALLDATETIME)")
+            .await
+            .unwrap();
+        execute_test_query("SELECT CAST('9999-12-31  23:59:59.997' AS DATETIME)")
             .await
             .unwrap();
     }

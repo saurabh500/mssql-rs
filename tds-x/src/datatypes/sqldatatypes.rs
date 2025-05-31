@@ -424,6 +424,7 @@ pub async fn read_type_info(
                 }
             }
             VariableLengthTypes::MoneyN
+            | VariableLengthTypes::DateTimeN
             | VariableLengthTypes::IntN
             | VariableLengthTypes::FltN
             | VariableLengthTypes::Guid
@@ -432,7 +433,7 @@ pub async fn read_type_info(
                 TypeInfo {
                     tds_type: data_type,
                     length,
-                    type_info_variant: TypeInfoVariant::VarLen(var_len_type.unwrap(), length),
+                    type_info_variant: TypeInfoVariant::VarLen(var_len_type?, length),
                 }
             }
             VariableLengthTypes::DecimalN
