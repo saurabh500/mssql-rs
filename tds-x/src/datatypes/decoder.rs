@@ -1,7 +1,6 @@
+use async_trait::async_trait;
 use core::fmt;
 use std::{fmt::Debug, io::Error};
-
-use async_trait::async_trait;
 use uuid::Uuid;
 
 use super::{
@@ -36,6 +35,17 @@ pub enum ColumnValues {
     Bit(bool),
     String(SqlString),
     DateTime((i32, u32)),
+    Date(u32),
+    Time(u64),
+    DateTime2 {
+        days: u32,
+        time_nanos: u64,
+    },
+    DateTimeOffset {
+        days: u32,
+        time_nanos: u64,
+        offset: i16,
+    },
     SmallMoney(MoneyParts),
     Money(MoneyParts),
     MoneyN(MoneyParts),
@@ -107,9 +117,45 @@ impl GenericDecoder {
         Ok((days, minutes))
     }
 
-    async fn read_date(&self, reader: &mut PacketReader<'_>) -> TdsResult<i32> {
-        let days = reader.read_int32().await?;
+    async fn read_date(&self, reader: &mut PacketReader<'_>) -> TdsResult<u32> {
+        let days = reader.read_uint24().await?;
         Ok(days)
+    }
+
+    async fn read_time(&self, reader: &mut PacketReader<'_>, byte_len: u8) -> TdsResult<u64> {
+        let nanoseconds = match byte_len {
+            3 => reader.read_uint24().await? as u64,
+            4 => reader.read_uint32().await? as u64,
+            _ => reader.read_uint40().await?,
+        };
+        Ok(nanoseconds)
+    }
+
+    async fn read_datetime2(
+        &self,
+        reader: &mut PacketReader<'_>,
+        byte_len: u8,
+    ) -> TdsResult<ColumnValues> {
+        let days = self.read_date(reader).await?;
+        let time_nanos = self.read_time(reader, byte_len - 3).await?;
+
+        Ok(ColumnValues::DateTime2 { days, time_nanos })
+    }
+
+    async fn read_datetime_offset(
+        &self,
+        reader: &mut PacketReader<'_>,
+        byte_len: u8,
+    ) -> TdsResult<ColumnValues> {
+        let days = self.read_date(reader).await?;
+        let time_nanos = self.read_time(reader, byte_len - 3).await?;
+        let offset = reader.read_int16().await?;
+
+        Ok(ColumnValues::DateTimeOffset {
+            days,
+            time_nanos,
+            offset,
+        })
     }
 
     async fn read_intn(
@@ -296,6 +342,36 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                     return Ok(ColumnValues::DateTime(self.read_datetime(reader).await?));
                 }
             }
+            TdsDataType::DateN => {
+                let length = reader.read_byte().await?;
+                if length == 0 {
+                    return Ok(ColumnValues::Null);
+                } else {
+                    // length == 3.
+                    return Ok(ColumnValues::Date(self.read_date(reader).await?));
+                }
+            }
+            TdsDataType::TimeN => {
+                let length = reader.read_byte().await?;
+                match length {
+                    0 => return Ok(ColumnValues::Null),
+                    _ => return Ok(ColumnValues::Time(self.read_time(reader, length).await?)),
+                }
+            }
+            TdsDataType::DateTime2N => {
+                let length = reader.read_byte().await?;
+                match length {
+                    0 => Ok(ColumnValues::Null),
+                    _ => self.read_datetime2(reader, length).await,
+                }
+            }?,
+            TdsDataType::DateTimeOffsetN => {
+                let length = reader.read_byte().await?;
+                match length {
+                    0 => Ok(ColumnValues::Null),
+                    _ => self.read_datetime_offset(reader, length).await,
+                }
+            }?,
             _ => unimplemented!("Data type not implemented: {:?}", metadata.data_type),
         };
         Ok(result)

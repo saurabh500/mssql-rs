@@ -474,66 +474,73 @@ pub(crate) mod query_processing_driver {
 
     #[tokio::test]
     async fn test_money_no_panic() {
-        // Test null values
-        execute_test_query("SELECT CAST(NULL AS MONEY)")
-            .await
-            .unwrap();
-        execute_test_query("SELECT CAST(NULL AS SMALLMONEY)")
-            .await
-            .unwrap();
-        // Test whole numbers
-        execute_test_query("SELECT CAST(123 AS MONEY)")
-            .await
-            .unwrap();
-        execute_test_query("SELECT CAST(123 AS SMALLMONEY)")
-            .await
-            .unwrap();
-        // Test max values
-        execute_test_query("SELECT CAST(922337203685477.5807 AS MONEY)")
-            .await
-            .unwrap(); // TODO: Fix precision loss
-        execute_test_query("SELECT CAST(214748.3647 AS SMALLMONEY)")
-            .await
-            .unwrap();
-        // Test min values
-        execute_test_query("SELECT CAST(-922337203685477.5808 AS MONEY)")
-            .await
-            .unwrap(); // TODO: Fix precision loss
-        execute_test_query("SELECT CAST(-214748.3648 AS SMALLMONEY)")
-            .await
-            .unwrap();
+        execute_test_query(
+            "
+                -- Test null values
+                SELECT CAST(NULL AS MONEY);
+                SELECT CAST(NULL AS SMALLMONEY);
+                -- Test whole numbers
+                SELECT CAST(123 AS MONEY);
+                SELECT CAST(123 AS SMALLMONEY);
+                -- Test max values
+                SELECT CAST(922337203685477.5807 AS MONEY);
+                SELECT CAST(214748.3647 AS SMALLMONEY); -- TODO: Fix precision lost
+                SELECT CAST(-922337203685477.5808 AS MONEY);
+                SELECT CAST(-214748.3648 AS SMALLMONEY); -- TODO: Fix precision lost
+                ",
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
     async fn test_datetimes_no_panic() {
-        // Test null values
-        execute_test_query("SELECT CAST(NULL AS SMALLDATETIME)")
-            .await
-            .unwrap();
-        execute_test_query("SELECT CAST(NULL AS DATETIME)")
-            .await
-            .unwrap();
-        // Test whole numbers
-        execute_test_query("SELECT CAST('2019-06-06 12:01:01' AS SMALLDATETIME)")
-            .await
-            .unwrap();
-        execute_test_query("SELECT CAST('2019-06-06 12:01:01.11' AS DATETIME)")
-            .await
-            .unwrap();
-        // Test max values
-        execute_test_query("SELECT CAST('2079-06-06 23:59:59' AS SMALLDATETIME)")
-            .await
-            .unwrap();
-        execute_test_query("SELECT CAST(214748.3647 AS SMALLMONEY)")
-            .await
-            .unwrap();
-        // Test min values
-        execute_test_query("SELECT CAST('1900-01-01 00:00:00' AS SMALLDATETIME)")
-            .await
-            .unwrap();
-        execute_test_query("SELECT CAST('9999-12-31  23:59:59.997' AS DATETIME)")
-            .await
-            .unwrap();
+        execute_test_query(
+            "
+        -- Test null values
+        SELECT CAST(NULL AS SMALLDATETIME);
+        SELECT CAST(NULL AS DATETIME);
+        -- Test typical values
+        SELECT CAST('2019-06-06 12:01:01' AS SMALLDATETIME);
+        SELECT CAST('2019-06-06 12:01:01.11' AS DATETIME);
+        -- Test max values
+        SELECT CAST('2079-06-06 23:59:59' AS SMALLDATETIME);
+        SELECT CAST('9999-12-31  23:59:59.997' AS DATETIME)
+        -- Test min values
+        SELECT CAST('1900-01-01 00:00:00' AS SMALLDATETIME);
+        SELECT CAST('1900-01-01 00:00:00' AS DATETIME)",
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_tds73_datetimes_no_panic() {
+        execute_test_query(
+            "
+        -- Test null values
+        SELECT CAST(NULL AS DATE);
+        SELECT CAST(NULL AS TIME);
+        SELECT CAST(NULL AS DATETIME2);
+        SELECT CAST(NULL AS DATETIMEOFFSET);
+        -- Test typical values
+        SELECT CAST('2019-06-06' AS DATE);
+        SELECT CAST('12:10:15.113244' AS TIME);
+        SELECT CAST('2019-06-06 12:01:01.11' AS DATETIME2);
+        SELECT CAST('2019-06-06 12:01:01.11 10:12' AS DATETIMEOFFSET);
+        -- Test max values
+        SELECT CAST('9999-12-31' AS DATE);
+        SELECT CAST('12:10:15.113244' AS TIME);
+        SELECT CAST('9999-12-31 23:59:59.9999999' AS DATETIME2);
+        SELECT CAST('9999-12-31 23:59:59.9999999 14:00' AS DATETIMEOFFSET);
+        -- Test min values
+        SELECT CAST('SELECT CAST('0001-01-01' AS DATE);
+        SELECT CAST('SELECT CAST('00:00:00' AS TIME);
+        SELECT CAST('0001-01-01 00:00:00' AS DATETIME2);
+        SELECT CAST('0001-01-01 00:00:00 -14:00' AS DATETIMEOFFSET)",
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

@@ -436,6 +436,11 @@ pub async fn read_type_info(
                     type_info_variant: TypeInfoVariant::VarLen(var_len_type?, length),
                 }
             }
+            VariableLengthTypes::DateN => TypeInfo {
+                tds_type: data_type,
+                length: 0,
+                type_info_variant: TypeInfoVariant::VarLen(var_len_type?, 0),
+            },
             VariableLengthTypes::DecimalN
             | VariableLengthTypes::NumericN
             | VariableLengthTypes::Decimal

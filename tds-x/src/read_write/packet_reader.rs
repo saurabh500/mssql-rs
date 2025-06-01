@@ -200,10 +200,22 @@ impl<'a> PacketReader<'a> {
         Ok(result)
     }
 
+    pub async fn read_uint40(&mut self) -> TdsResult<u64> {
+        if !self.do_we_have_enough_data(5) {
+            self.read_tds_packet().await?;
+        }
+
+        let result = LittleEndian::read_uint(&self.working_buffer[self.buffer_position..], 5);
+        self.consume_bytes(5);
+        Ok(result)
+    }
+
     generate_read_fn!(read_float32, f32, 4, read_f32);
     generate_read_fn!(read_float64, f64, 8, read_f64);
     generate_read_fn!(read_int16, i16, 2, read_i16);
     generate_read_fn!(read_uint16, u16, 2, read_u16);
+    generate_read_fn!(read_int24, i32, 3, read_i24);
+    generate_read_fn!(read_uint24, u32, 3, read_u24);
     generate_read_fn!(read_int32, i32, 4, read_i32);
     generate_read_fn!(read_uint32, u32, 4, read_u32);
     generate_read_fn!(read_int64, i64, 8, read_i64);

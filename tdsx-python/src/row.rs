@@ -86,6 +86,12 @@ impl PyRow {
                 ColumnValues::SmallMoney(_) | ColumnValues::Money(_) | ColumnValues::MoneyN(_) => {
                     todo!()
                 }
+                ColumnValues::Date(_)
+                | ColumnValues::Time(_)
+                | ColumnValues::DateTime2 { .. }
+                | ColumnValues::DateTimeOffset { .. } => {
+                    todo!()
+                }
                 ColumnValues::Bit(bit) => {
                     let bitpy = bit.into_pyobject(py);
                     match bitpy {
