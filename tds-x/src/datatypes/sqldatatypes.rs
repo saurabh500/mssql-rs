@@ -559,6 +559,17 @@ pub async fn read_type_info(
                                 None,
                             ),
                         }),
+                        TypeInfoVariant::VarLen(_, _) => Ok(TypeInfo {
+                            tds_type: data_type,
+                            length: type_info.length,
+                            type_info_variant: TypeInfoVariant::PartialLen(
+                                plp_type.unwrap(),
+                                Some(type_info.length),
+                                None,
+                                None,
+                                None,
+                            ),
+                        }),
                         _ => {
                             unimplemented!("Other PLP types apart from strings are not implemented")
                         }

@@ -72,6 +72,10 @@ pub(crate) struct GenericDecoder {
 }
 
 impl GenericDecoder {
+    const SHORTLEN_MAXVALUE: usize = 65535;
+    const SQL_PLP_NULL: usize = 0xffffffffffffffff;
+    const SQL_PLP_UNKNOWNLEN: usize = 0xfffffffffffffffe;
+
     async fn read_decimal(
         &self,
         reader: &mut PacketReader<'_>,
@@ -210,6 +214,35 @@ impl GenericDecoder {
         };
         Ok(value)
     }
+
+    async fn read_plp_bytes(reader: &mut PacketReader<'_>) -> TdsResult<Option<Vec<u8>>> {
+        let long_len = reader.read_int64().await? as u64;
+
+        // If the length is SQL_PLP_NULL, it means the value is NULL.
+        if long_len as usize == Self::SQL_PLP_NULL {
+            Ok(None)
+        } else {
+            // If the length is SQL_PLP_UNKNOWNLEN, it means the length is unknown and we have to
+            // gather all the chunks until we reach the end of the PLP data which is a zero length
+            // chunk.
+            if long_len as usize == Self::SQL_PLP_UNKNOWNLEN {
+                // Read the length of the data.
+                unimplemented!("Unknown length not implemented");
+            } else {
+                let mut plp_buffer = vec![0u8; long_len as usize];
+                let mut chunk_len = reader.read_uint32().await? as usize;
+                let mut offset = 0;
+                while chunk_len > 0 {
+                    let chunk_size_read = reader
+                        .read_bytes(&mut plp_buffer[offset..offset + chunk_len])
+                        .await?;
+                    offset += chunk_size_read;
+                    chunk_len = reader.read_uint32().await? as usize;
+                }
+                Ok(Some(plp_buffer))
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -288,11 +321,25 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                     None => ColumnValues::Null,
                 }
             }
-            TdsDataType::BigBinary | TdsDataType::BigVarBinary => {
+            TdsDataType::BigBinary => {
                 let length = reader.read_uint16().await?;
                 let mut bytes = vec![0u8; length as usize];
                 reader.read_bytes(&mut bytes).await?;
                 ColumnValues::Bytes(bytes)
+            }
+            TdsDataType::BigVarBinary => {
+                if metadata.is_plp() {
+                    let some_bytes = GenericDecoder::read_plp_bytes(reader).await?;
+                    match some_bytes {
+                        Some(bytes) => ColumnValues::Bytes(bytes),
+                        None => ColumnValues::Null,
+                    }
+                } else {
+                    let length = reader.read_uint16().await?;
+                    let mut bytes = vec![0u8; length as usize];
+                    reader.read_bytes(&mut bytes).await?;
+                    ColumnValues::Bytes(bytes)
+                }
             }
             TdsDataType::BitN => {
                 let byte_len = reader.read_byte().await?;
@@ -385,9 +432,6 @@ struct StringDecoder {
 }
 
 impl StringDecoder {
-    const SHORTLEN_MAXVALUE: usize = 65535;
-    const SQL_PLP_NULL: usize = 0xffffffffffffffff;
-    const SQL_PLP_UNKNOWNLEN: usize = 0xfffffffffffffffe;
     fn new() -> Self {
         StringDecoder { db_collation: None }
     }
@@ -408,28 +452,10 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
 
         // If Plp Column. (BIGVARCHARTYPE, BIGVARBINARYTYPE, NVARCHARTYPE with md.length == ushort.max)
         if metadata.is_plp() {
-            let long_len = reader.read_int64().await? as u64;
-
-            if long_len as usize == Self::SQL_PLP_NULL {
-                return Ok(ColumnValues::Null);
-            } else {
-                let mut plp_buffer = vec![0u8; long_len as usize];
-                if long_len as usize == Self::SQL_PLP_UNKNOWNLEN {
-                    // Read the length of the data.
-                    unimplemented!("Unknown length not implemented");
-                }
-                let mut chunk_len = reader.read_uint32().await? as usize;
-                let mut offset = 0;
-                while chunk_len > 0 {
-                    let chunk_size_read = reader
-                        .read_bytes(&mut plp_buffer[offset..offset + chunk_len])
-                        .await?;
-                    offset += chunk_size_read;
-                    chunk_len = reader.read_uint32().await? as usize;
-                }
-
-                let sql_string = SqlString::new(plp_buffer, encoding_type);
-                Ok(ColumnValues::String(sql_string))
+            let some_bytes = GenericDecoder::read_plp_bytes(reader).await?;
+            match some_bytes {
+                Some(bytes) => Ok(ColumnValues::String(SqlString::new(bytes, encoding_type))),
+                None => Ok(ColumnValues::Null),
             }
         } else if Self::is_long_len_type(metadata.data_type) {
             // If it is a long length type (NText, Text), read the length as uint16.

@@ -444,6 +444,21 @@ pub(crate) mod query_processing_driver {
     }
 
     #[tokio::test]
+    async fn test_binary_type_no_panic() {
+        execute_test_query(
+            "
+                SELECT CAST(NULL AS BINARY(10));
+                SELECT CAST(0x010203040506060708091011 AS BINARY(100));
+                SELECT CAST(NULL AS VARBINARY(10));
+                SELECT CAST(0x010203040506060708091011 AS VARBINARY(100));
+                SELECT CAST(0x010203040506060708091011010203040506060708091011010203040506060708091011 AS VARBINARY(MAX));
+             ",
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn test_data_types_numerics_null_values_no_panic() {
         execute_test_query(
             "
