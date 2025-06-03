@@ -3,6 +3,11 @@ parameters:
     type: boolean
     default: false
     displayName: Install Azure CLI
+  - name: installDocker
+    type: boolean
+    default: false
+    displayName: Install Docker
+
 
 steps:
 - ${{ if eq(parameters.installAzCli, true) }}:
@@ -15,4 +20,20 @@ steps:
           echo "Azure CLI is already installed"
       fi
     displayName: Install Az CLI
+    condition: succeeded()
+
+- ${{ if eq(parameters.installDocker, true) }}:
+  - script: |
+      ARCH=$(arch)
+      if [ "$ARCH" = "aarch64" ]; then
+          export DEBIAN_FRONTEND=noninteractive
+          echo "Docker not found, installing..."
+          sudo apt-get update
+          sudo apt-get install docker.io -y
+          sudo usermod -aG docker $USER
+          sudo groupadd docker
+          echo "Changing permissions for docker.sock"
+          sudo chmod 666 /var/run/docker.sock
+      fi
+    displayName: Install Docker
     condition: succeeded()

@@ -1,22 +1,58 @@
 #!/bin/bash
 
-ip addr 
+export DEBIAN_FRONTEND=noninteractive
+
+arch 
+
+echo "Current dir is $(pwd)"
+
+ip addr
+
+# Parse optional arch argument
+ARCH=$(arch)
+
+if [ "$ARCH" = "x86_64" ]; then
+    DEPS="azureauth \
+        jq \
+        unzip \
+        build-essential \
+        pkg-config \
+        libssl-dev \
+        python-is-python3 \
+        python3.10-venv \
+        pip \
+        python3-pip \
+        wget \
+        apt-transport-https \
+        software-properties-common"
+elif [ "$ARCH" = "aarch64" ]; then
+    DEPS="azureauth \
+        jq \
+        unzip \
+        build-essential \
+        pkg-config \
+        libssl-dev \
+        python-is-python3 \
+        python3.10-venv \
+        pip \
+        python3-pip \
+        wget \
+        apt-transport-https \
+        software-properties-common \
+        docker.io"
+else
+    echo "Unknown arch: $ARCH"
+    exit 1
+fi
 
 pushd /tmp  
+
 wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
 sudo dpkg -i packages-microsoft-prod.deb
 sudo apt update
 
-# Install the Azure CLI
-sudo apt install azureauth -y
-
 # Needed for msrustup download and essentials for building rust binaries.
-sudo apt install jq unzip build-essential pkg-config libssl-dev -y
-
-# Python stuff
-sudo apt install python-is-python3 python3.10-venv pip -y
-
-sudo apt install wget apt-transport-https software-properties-common -y
+sudo apt install $DEPS -y
 
 pip --version && pip install pipenv
 
@@ -33,12 +69,16 @@ then
     sudo apt install openssl -y
 fi
 
+if [ "$ARCH" = "aarch64" ]; then
+    echo "Changing permissions for docker.sock"
+    sudo chmod 666 /var/run/docker.sock
+fi
 
 # Create a new user for SSH login
 SSH_USER="sshuser"
 SSH_PASS=$(openssl rand -base64 16)
 
-echo "Generated SSH password for $SSH_USER: $SSH_PASS"
+echo "======================== Generated SSH password for $SSH_USER: $SSH_PASS"
 
 if ! id "$SSH_USER" &>/dev/null; then
     sudo useradd -m -s /bin/bash "$SSH_USER"
@@ -49,8 +89,11 @@ else
     echo "User $SSH_USER already exists."
 fi
 
-# SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-./install-ssh-ubuntu.sh
+sudo groupadd docker
+echo "INFO: Docker group created"
+
+sudo usermod -aG docker $USER
+echo "INFO: User $USER added to docker group. You may need to log out and back in for this to take effect."
 
 # Install az cli
 if ! command -v az &> /dev/null
@@ -61,23 +104,9 @@ else
     echo "Azure CLI is already installed"
 fi
 
-# Check if PowerShell is installed
-if ! command -v pwsh &> /dev/null
-then
-    echo "PowerShell not found, installing..."
-
-    # Install PowerShell
-    sudo apt install -y powershell
-else
-    echo "PowerShell is already installed"
-fi
-
 install_rustup() {
     # Install Rustup
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    "${SCRIPT_DIR}/install-rustup.sh"
 }
 
 if [[ "$1" != "--skip-rustup" ]]; then
@@ -90,7 +119,7 @@ echo "Home dir is $HOME"
 echo "Current dir is $(pwd)"
 echo "PATH is $PATH"
 
+popd
 
-popd  
 
-
+# sleep 3000

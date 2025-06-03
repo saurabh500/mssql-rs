@@ -1,0 +1,67 @@
+# filepath: .pipeline/templates/test-matrix-template.yml
+parameters:
+  matrix: {}
+
+jobs:
+  - job: Test_Matrix_arm64
+    displayName: Linux arm64
+    strategy:
+      matrix: ${{ parameters.matrix }}
+    pool:
+      name: RUST-1ES-POOL-ARM-WUS3
+      demands:
+        - imageOverride -equals RUST-UBUNTU-ARM64
+    steps:
+      - task: DockerInstaller@0
+        inputs:
+          dockerVersion: '17.09.0-ce'
+      - template: install-ubuntu-dependency.yaml
+        parameters:
+          installAzCli: true
+          installDocker: true
+      - template: azure-cli-login-template.yml
+
+      - task: DownloadPipelineArtifact@2
+        inputs:
+          buildType: 'current'
+          artifactName: 'Build_Linux_ARM'
+        displayName: 'Download Pipeline Artifacts'
+      - script: |
+          az acr login -n tdslibrs
+          echo $(container)
+          echo $(entry)
+          echo $container
+
+          scripts/generate_cert.sh
+          
+          sudo chown 10001:0 mssql.*
+
+          if command -v docker >/dev/null 2>&1
+          then
+            cp $(Pipeline.Workspace)/tdslib-nextest.tar.zst $(Build.SourcesDirectory)
+            
+            docker network create testnet
+                       
+            docker run --entrypoint bash -v "$PWD:/workspace" -e "DB_USERNAME=saurabh" -e "DB_HOST=10.224.0.10" -e "DB_PORT=14333" -e "SQL_PASSWORD=$(SQL_PASSWORD_K8S)" -e "ARCHIVE_NAME=tdslib-nextest.tar.zst" -e "TRUST_SERVER_CERTIFICATE=true" --network testnet $(container) /workspace/scripts/dockerentry/$(entry)
+          fi
+        workingDirectory: "$(Build.SourcesDirectory)"
+        displayName: Run docker test
+        condition: succeeded()
+        env :
+          SQL_PASSWORD: $(SQL_PASSWORD)
+      - task: PublishTestResults@2
+        condition: succeededOrFailed()
+        displayName: "Publish test results"
+        inputs:
+          testResultsFormat: "JUnit"
+          testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
+          testRunTitle: $(System.PhaseName)
+      - script: |
+          sleep 3100
+        workingDirectory: "$(Build.SourcesDirectory)"
+        displayName: Sleep
+        condition: succeededOrFailed()
+        env :
+          SQL_PASSWORD: $(SQL_PASSWORD)
+      
+      

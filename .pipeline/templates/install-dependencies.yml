@@ -15,11 +15,15 @@ parameters:
 steps:
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - script: |
-      scripts/install-deps.sh ${{ parameters.installdepsparams }}
+      scripts/install-deps.sh ${{ parameters.installdepsparams }} 
       # This is a workaround for the fact that the PATH variable is not updated in the same shell.
       echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/bin:$HOME/.cargo/bin:$PATH"      
     displayName: "Install linux dependencies"
-  
+
+  - script: |
+      docker ps
+    displayName: "Test Docker installation"
+
 - ${{ if eq(parameters.osType, 'MacOS') }}:
   - script: |
       python --version
