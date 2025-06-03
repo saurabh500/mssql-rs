@@ -399,7 +399,7 @@ pub(crate) mod query_processing_driver {
             INSERT INTO #AllDataTypes (
                 TinyIntColumn, SmallIntColumn, IntColumn, BigIntColumn, BitColumn, 
                 DecimalColumn, NumericColumn, FloatColumn, RealColumn,
-                MoneyColumn, SmallMoneyColumn, MoneyNColumn, SmallMoneyNColumn
+                MoneyColumn, SmallMoneyColumn, MoneyNColumn, SmallMoneyNColumn,
                 DateSmallColumn, DateTimeColumn
             )
             VALUES (
@@ -415,9 +415,9 @@ pub(crate) mod query_processing_driver {
                 CAST(1234.5678 AS MONEY), -- MoneyColumn
                 CAST(5678.1234 AS SMALLMONEY), -- SmallMoneyColumn
                 CAST(1234.0 AS MONEY), -- MoneyNColumn
-                CAST(567.89 AS SMALLMONEY) -- SmallMoneyNColumn
+                CAST(567.89 AS SMALLMONEY), -- SmallMoneyNColumn
                 CAST('1/1/2000 1:00' as SMALLDATETIME),
-                CAST('1/1/2000 1:00' as DATETIME),
+                CAST('1/1/2000 1:00' as DATETIME)
             );
             select * from #AllDataTypes;",
         )
@@ -504,7 +504,7 @@ pub(crate) mod query_processing_driver {
         SELECT CAST('2019-06-06 12:01:01' AS SMALLDATETIME);
         SELECT CAST('2019-06-06 12:01:01.11' AS DATETIME);
         -- Test max values
-        SELECT CAST('2079-06-06 23:59:59' AS SMALLDATETIME);
+        SELECT CAST('2079-06-06 23:59:00' AS SMALLDATETIME);
         SELECT CAST('9999-12-31  23:59:59.997' AS DATETIME)
         -- Test min values
         SELECT CAST('1900-01-01 00:00:00' AS SMALLDATETIME);
@@ -754,6 +754,7 @@ pub(crate) mod query_processing_driver {
                 }
                 Tokens::Error(t1) => {
                     println!("Received Error token: {:?}", t1);
+                    panic!("Error token received: {:?}", t1);
                 }
                 Tokens::FeatureExtAck(t1) => {
                     println!("Received FeatureExtAck token: {:?}", t1);
