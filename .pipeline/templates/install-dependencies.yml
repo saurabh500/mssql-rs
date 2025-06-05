@@ -15,6 +15,11 @@ parameters:
 steps:
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - script: |
+      # This causes unexpected failures in APT package installation.
+      sudo systemctl disable unattended-upgrades
+    displayName: "Disable unattended upgrades"
+
+  - script: |
       scripts/install-deps.sh ${{ parameters.installdepsparams }} 
       # This is a workaround for the fact that the PATH variable is not updated in the same shell.
       echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/bin:$HOME/.cargo/bin:$PATH"      

@@ -5,3 +5,4 @@ steps:
     scriptType: 'bash'
     scriptLocation: 'inlineScript'
     inlineScript: 'az acr login -n tdslibrs'
+  retryCountOnTaskFailure: 5

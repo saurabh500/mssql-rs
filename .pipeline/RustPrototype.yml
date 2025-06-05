@@ -212,17 +212,17 @@ stages:
             entry: deb-bookworm.sh
 
 
-# - stage: Test_arm64
-#   dependsOn: Build
-#   condition: ne(variables['Build.Reason'], 'PullRequest')
-#   displayName: Test arm64
-#   jobs:
-#     - template: templates/test-matrix-template-arm64.yml
-#       parameters:
-#         matrix:
-#           DebianBookworm:
-#             container: tdslibrs.azurecr.io/arm64/debian:bookworm
-#             entry: deb-bookworm.sh
+- stage: Test_arm64
+  dependsOn: Build
+  condition: ne(variables['Build.Reason'], 'PullRequest')
+  displayName: Test arm64
+  jobs:
+    - template: templates/test-matrix-template-arm64.yml
+      parameters:
+        matrix:
+          DebianBookworm:
+            container: tdslibrs.azurecr.io/arm64/debian:bookworm
+            entry: deb-bookworm.sh
           # AzLinux3:
           #   container: mcr.microsoft.com/azurelinux/base/core:3.0
           #   entry: azlinux3.sh
@@ -235,9 +235,9 @@ stages:
           # SLES15:
           #   container: registry.suse.com/suse/sle15
           #   entry: sles.sh
-          # Ubuntu22:
-          #   container: tdslibrs.azurecr.io/ubuntu:22.04
-          #   entry: deb-bookworm.sh
-          # Ubuntu24:
-          #   container: tdslibrs.azurecr.io/ubuntu:24.04
-          #   entry: deb-bookworm.sh
+          Ubuntu22:
+            container: tdslibrs.azurecr.io/arm64/ubuntu:22.04
+            entry: deb-bookworm.sh
+          Ubuntu24:
+            container: tdslibrs.azurecr.io/arm64/ubuntu:24.04
+            entry: deb-bookworm.sh

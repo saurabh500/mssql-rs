@@ -2,11 +2,13 @@
 
 export DEBIAN_FRONTEND=noninteractive
 
-arch 
+print_info() {
+    arch
+    echo "Current dir is $(pwd)"
+    ip addr
+}
 
-echo "Current dir is $(pwd)"
-
-ip addr
+print_info
 
 # Parse optional arch argument
 ARCH=$(arch)
@@ -48,11 +50,26 @@ fi
 pushd /tmp  
 
 wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
-sudo dpkg -i packages-microsoft-prod.deb
-sudo apt update
+
+for i in {1..5}; do
+    sudo dpkg -i packages-microsoft-prod.deb && break
+    echo "dpkg install failed, retrying in $((5 * i)) seconds... (attempt $i/5)"
+    sleep $((5 * i))
+done
+
+for i in {1..5}; do
+    sudo apt update && break
+    echo "apt update failed, retrying in 5 seconds... (attempt $i/5)"
+    sleep 5
+done
 
 # Needed for msrustup download and essentials for building rust binaries.
-sudo apt install $DEPS -y
+# Try installing dependencies up to 5 times if it fails
+for i in {1..5}; do
+    sudo apt install $DEPS -y && break
+    echo "apt install failed, retrying in 5 seconds... (attempt $i/5)"
+    sleep 5
+done
 
 pip --version && pip install pipenv
 
@@ -99,7 +116,11 @@ echo "INFO: User $USER added to docker group. You may need to log out and back i
 if ! command -v az &> /dev/null
 then
     echo "Azure CLI not found, installing..."
-    curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+    for i in {1..5}; do
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash && break
+        echo "Az Cli install failed, retrying in 5 seconds... (attempt $i/5)"
+        sleep 5
+    done
 else
     echo "Azure CLI is already installed"
 fi
@@ -120,6 +141,3 @@ echo "Current dir is $(pwd)"
 echo "PATH is $PATH"
 
 popd
-
-
-# sleep 3000

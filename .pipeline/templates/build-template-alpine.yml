@@ -27,12 +27,11 @@ parameters:
   default: 'tdslibrs.azurecr.io/alpine:3.18'
 
 steps:
-
 - script: |
     echo "##vso[task.setvariable variable=ARCHIVE_NAME;isOutput=false]tdslib-nextest-musl.tar.zst"
-    
-  displayName: Archive file name set
+  displayName: Set Archive file name 
   condition: succeeded()
+  
 - template: azure-cli-login-template.yml
 
 - script: |
