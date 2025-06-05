@@ -89,7 +89,10 @@ pub fn create_context() -> ClientContext {
     ClientContext {
         transport_context: TransportContext::Tcp {
             host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
-            port: 1433,
+            port: env::var("DB_PORT")
+                .ok()
+                .map(|v| v.parse::<u16>().expect("DB_PORT must be a valid u16"))
+                .unwrap_or(1433),
         },
         user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
         password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
