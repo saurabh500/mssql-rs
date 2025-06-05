@@ -2,6 +2,7 @@
 pub(crate) mod query_processing_driver {
     use crate::core::EncryptionOptions;
     use crate::error::Error;
+    use crate::error::Error::ProtocolError;
     use crate::message::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
     use crate::message::messages::PacketType;
     use crate::read_write::packet_writer::PacketWriter;
@@ -84,9 +85,13 @@ pub(crate) mod query_processing_driver {
             END;";
 
         // This should setup the temp stored procedure on this connection.
-        submit_sql_batch(&mut connection, stored_procedure_setup_query.to_string())
-            .await
-            .unwrap();
+        submit_sql_batch(
+            &mut connection,
+            stored_procedure_setup_query.to_string(),
+            true,
+        )
+        .await
+        .unwrap();
 
         let param1 = RpcParameter::new(
             Some("@InputInt".to_string()),
@@ -345,7 +350,7 @@ pub(crate) mod query_processing_driver {
             SELECT @Result AS EchoedOutput;";
 
         let all_queries = vec![query1, query2];
-        execute_test_multi_query(all_queries).await.unwrap();
+        execute_test_multi_query(all_queries, true).await.unwrap();
     }
 
     #[tokio::test]
@@ -599,7 +604,6 @@ pub(crate) mod query_processing_driver {
     }
 
     #[tokio::test]
-    #[ignore] // TODO: Fix this test in a subsequent PR.
     async fn test_xml_with_schema() {
         dotenv().ok();
 
@@ -607,27 +611,47 @@ pub(crate) mod query_processing_driver {
             .ok()
             .unwrap_or(Uuid::new_v4().simple().to_string());
 
-        execute_test_multi_query(vec![
-            format!(
-                "CREATE XML SCHEMA COLLECTION [{}] AS '
+        let test_result = execute_test_multi_query(
+            vec![
+                format!(
+                    "CREATE XML SCHEMA COLLECTION [{}] AS '
                     <schema xmlns=\"http://www.w3.org/2001/XMLSchema\">
                         <element name=\"root\" type=\"string\"/>
                     </schema>
                     '",
-                test_sys_identifier
-            )
-            .as_str(),
-            format!(
-                "CREATE TABLE #xml_test (Col1 xml([{}]))",
-                test_sys_identifier
-            )
-            .as_str(),
-            "INSERT INTO #xml_test VALUES ('<?xml version=\"1.0\"?><root>Test</root>')",
-            "SELECT * FROM #xml_test",
-            format!("DROP XML SCHEMA COLLECTION [{}];", test_sys_identifier).as_str(),
-        ])
-        .await
-        .unwrap();
+                    test_sys_identifier
+                )
+                .as_str(),
+                format!(
+                    "CREATE TABLE xml_test_{0} (Col1 xml([{0}]))",
+                    test_sys_identifier
+                )
+                .as_str(),
+                format!(
+                    "INSERT INTO xml_test_{} VALUES ('<?xml version=\"1.0\"?><root>Test</root>')",
+                    test_sys_identifier
+                )
+                .as_str(),
+                format!("SELECT * FROM xml_test_{}", test_sys_identifier).as_str(),
+                format!("DROP TABLE xml_test_{}", test_sys_identifier).as_str(),
+                format!("DROP XML SCHEMA COLLECTION [{}];", test_sys_identifier).as_str(),
+            ],
+            false,
+        )
+        .await;
+
+        // Clean-up regardless of pass/fail case
+        let _ = execute_test_multi_query(
+            vec![
+                format!("DROP TABLE xml_test_{}", test_sys_identifier).as_str(),
+                format!("DROP XML SCHEMA COLLECTION [{}];", test_sys_identifier).as_str(),
+            ],
+            false,
+        )
+        .await;
+
+        // Evaluate the actual test result.
+        test_result.unwrap();
     }
 
     #[tokio::test]
@@ -757,10 +781,10 @@ pub(crate) mod query_processing_driver {
         };
         let mut connection = create_connection(&context).await.unwrap();
 
-        submit_sql_batch(&mut connection, query.to_string()).await
+        submit_sql_batch(&mut connection, query.to_string(), true).await
     }
 
-    pub async fn execute_test_multi_query(query: Vec<&str>) -> TdsResult<()> {
+    pub async fn execute_test_multi_query(query: Vec<&str>, panic_on_error: bool) -> TdsResult<()> {
         dotenv().ok();
 
         let transport = TransportContext::Tcp {
@@ -785,7 +809,7 @@ pub(crate) mod query_processing_driver {
         let mut connection = create_connection(&context).await.unwrap();
         for q in query {
             println!("Executing query: {}", q);
-            submit_sql_batch(&mut connection, q.to_string()).await?;
+            submit_sql_batch(&mut connection, q.to_string(), panic_on_error).await?;
         }
         Ok(())
         // submit_sql_batch(connection, query.to_string()).await
@@ -800,6 +824,7 @@ pub(crate) mod query_processing_driver {
     pub async fn submit_sql_batch(
         tds_connection: &mut Box<TdsConnection<'_>>,
         sql_command: String,
+        panic_on_error: bool,
     ) -> TdsResult<()> {
         let batch = SqlBatch::new(sql_command, &tds_connection.execution_context);
         batch
@@ -841,7 +866,13 @@ pub(crate) mod query_processing_driver {
                 }
                 Tokens::Error(t1) => {
                     println!("Received Error token: {:?}", t1);
-                    panic!("Error token received: {:?}", t1);
+                    if panic_on_error {
+                        panic!("Error token received: {:?}", t1);
+                    } else {
+                        eprintln!("Error token received: {:?}", t1);
+                        eprintln!("Backtrace: {}", std::backtrace::Backtrace::capture());
+                        return Err(ProtocolError("A query in the batch failed.".to_string()));
+                    }
                 }
                 Tokens::FeatureExtAck(t1) => {
                     println!("Received FeatureExtAck token: {:?}", t1);
