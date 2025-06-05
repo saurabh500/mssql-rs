@@ -476,20 +476,9 @@ pub async fn read_type_info(
             | VariableLengthTypes::NText
             | VariableLengthTypes::NChar
             | VariableLengthTypes::NVarChar => {
-                let len_byte_count = vdt.get_len_byte_count();
-                let length = match len_byte_count {
-                    1 => reader.read_byte().await? as usize,
-                    2 => reader.read_uint16().await? as usize,
-                    4 => reader.read_int32().await? as usize,
-                    _ => {
-                        unreachable!(
-                            "Invalid tds length {:?} for type: {:?}",
-                            len_byte_count, data_type
-                        )
-                    }
-                };
+                let length = get_variable_length(reader, &vdt).await?;
 
-                // BIGCHARTYPE, BIGVARCHARTYPE, TEXTTYPE, NTEXTTYPE,
+                // Collation is only applicable to BIGCHARTYPE, BIGVARCHARTYPE, TEXTTYPE, NTEXTTYPE,
                 // NCHARTYPE, or NVARCHARTYPE
                 let collation = {
                     let mut collation_bytes: [u8; 5] = [0; 5];
@@ -512,19 +501,17 @@ pub async fn read_type_info(
                     ),
                 }
             }
+            VariableLengthTypes::Image => {
+                let length = get_variable_length(reader, &vdt).await?;
+                TypeInfo {
+                    tds_type: data_type,
+                    length,
+                    type_info_variant: TypeInfoVariant::VarLen(var_len_type.unwrap(), length),
+                }
+            }
             VariableLengthTypes::BigVarBinary | VariableLengthTypes::BigBinary => {
-                let len_byte_count = vdt.get_len_byte_count();
-                let length = match len_byte_count {
-                    1 => reader.read_byte().await? as usize,
-                    2 => reader.read_uint16().await? as usize,
-                    4 => reader.read_int32().await? as usize,
-                    _ => {
-                        unreachable!(
-                            "Invalid tds length {:?} for type: {:?}",
-                            len_byte_count, data_type
-                        )
-                    }
-                };
+                let length = get_variable_length(reader, &vdt).await?;
+
                 TypeInfo {
                     tds_type: data_type,
                     length,
@@ -593,4 +580,24 @@ pub async fn read_type_info(
 
 pub fn is_unicode_type(data_type: TdsDataType) -> bool {
     matches!(data_type, TdsDataType::NVarChar | TdsDataType::NChar)
+}
+
+// Reads the variable length data type from the reader and returns the length of the data.
+pub async fn get_variable_length(
+    reader: &mut PacketReader<'_>,
+    data_type: &VariableLengthTypes,
+) -> TdsResult<usize> {
+    let len_byte_count = data_type.get_len_byte_count();
+    let length = match len_byte_count {
+        1 => reader.read_byte().await? as usize,
+        2 => reader.read_uint16().await? as usize,
+        4 => reader.read_int32().await? as usize,
+        _ => {
+            unreachable!(
+                "Invalid tds length {:?} for type: {:?}",
+                len_byte_count, data_type
+            )
+        }
+    };
+    Ok(length)
 }

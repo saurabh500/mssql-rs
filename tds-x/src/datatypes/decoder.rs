@@ -419,6 +419,26 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                     _ => self.read_datetime_offset(reader, length).await,
                 }
             }?,
+            TdsDataType::Image => {
+                let text_ptr_len = reader.read_byte().await? as usize;
+
+                let length = if text_ptr_len > 0 {
+                    const TIMESTAMP_BYTE_COUNT: usize = 8;
+                    reader.skip_bytes(text_ptr_len).await?;
+                    reader.skip_bytes(TIMESTAMP_BYTE_COUNT).await?;
+                    reader.read_uint32().await? as usize
+                } else {
+                    0
+                };
+
+                if length == 0 {
+                    ColumnValues::Null
+                } else {
+                    let mut buffer = vec![0u8; length];
+                    reader.read_bytes(&mut buffer).await?;
+                    ColumnValues::Bytes(buffer)
+                }
+            }
             _ => unimplemented!("Data type not implemented: {:?}", metadata.data_type),
         };
         Ok(result)

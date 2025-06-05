@@ -452,6 +452,8 @@ pub(crate) mod query_processing_driver {
                 SELECT CAST(NULL AS VARBINARY(10));
                 SELECT CAST(0x010203040506060708091011 AS VARBINARY(100));
                 SELECT CAST(0x010203040506060708091011010203040506060708091011010203040506060708091011 AS VARBINARY(MAX));
+                select CAST(NULL as IMAGE);
+                select CAST(0x010203040506 as IMAGE);
              ",
         )
         .await
