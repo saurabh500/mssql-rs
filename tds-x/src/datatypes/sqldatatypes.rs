@@ -518,13 +518,18 @@ pub async fn read_type_info(
                     type_info_variant: TypeInfoVariant::VarLen(var_len_type.unwrap(), length),
                 }
             }
+            VariableLengthTypes::Xml => TypeInfo {
+                tds_type: data_type,
+                length: 0xffff,
+                type_info_variant: TypeInfoVariant::VarLen(var_len_type.unwrap(), 0xffff),
+            },
             ty => {
                 println!("Unsupported TDS type: {:?}", ty);
                 unimplemented!("Unsupported TDS type encountered. Cannot retrieve it's type info");
             }
         };
 
-        // At this point, its possible that we have a data type which could be PLP
+        // At this point, it is possible that we have a data type which could be PLP
         // Check if the data type matches the PLP types, and if so, convert it to PLP
         match data_type {
             TdsDataType::Xml
@@ -534,6 +539,36 @@ pub async fn read_type_info(
             | TdsDataType::Json => {
                 let plp_type = PartialLengthType::try_from(data_type);
                 if type_info.length == 0xFFFF {
+                    let xml_data = if data_type == TdsDataType::Xml {
+                        let schema_present = reader.read_byte().await?;
+                        let db_name = if schema_present == 0x01 {
+                            Some(reader.read_varchar_u8_length().await?)
+                        } else {
+                            None
+                        };
+
+                        let owning_schema = if schema_present == 0x01 {
+                            Some(reader.read_varchar_u8_length().await?)
+                        } else {
+                            None
+                        };
+
+                        let xml_schema_collection = if schema_present == 0x01 {
+                            reader.read_varchar_u16_length().await?
+                        } else {
+                            None
+                        };
+
+                        Some(XmlInfo {
+                            schema_present,
+                            db_name,
+                            owning_schema,
+                            xml_schema_collection,
+                        })
+                    } else {
+                        None
+                    };
+
                     match type_info.type_info_variant {
                         TypeInfoVariant::VarLenString(_, _, collation) => Ok(TypeInfo {
                             tds_type: data_type,
@@ -542,7 +577,7 @@ pub async fn read_type_info(
                                 plp_type.unwrap(),
                                 Some(type_info.length),
                                 collation,
-                                None,
+                                xml_data,
                                 None,
                             ),
                         }),
@@ -553,7 +588,7 @@ pub async fn read_type_info(
                                 plp_type.unwrap(),
                                 Some(type_info.length),
                                 None,
-                                None,
+                                xml_data,
                                 None,
                             ),
                         }),

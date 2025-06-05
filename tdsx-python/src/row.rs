@@ -101,6 +101,9 @@ impl PyRow {
                 }
                 ColumnValues::DateTime(dt) => handle_py_result!((dt).into_pyobject(py)),
                 ColumnValues::Bytes(items) => handle_py_result!(items.into_pyobject(py)),
+                ColumnValues::Xml(_) => {
+                    todo!()
+                }
                 ColumnValues::Null => py.None(),
                 ColumnValues::Uuid(uuid) => handle_py_result!(uuid.to_string().into_pyobject(py)),
             };

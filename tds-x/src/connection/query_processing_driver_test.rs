@@ -1,13 +1,5 @@
 #[cfg(not(target_os = "macos"))]
 pub(crate) mod query_processing_driver {
-    use async_trait::async_trait;
-    use core::panic;
-    use dotenv::dotenv;
-    use std::env;
-    use std::time::Duration;
-    use tracing::Level;
-    use tracing_subscriber::FmtSubscriber;
-
     use crate::core::EncryptionOptions;
     use crate::error::Error;
     use crate::message::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
@@ -33,6 +25,14 @@ pub(crate) mod query_processing_driver {
         },
         token::tokens::{DoneStatus, Tokens},
     };
+    use async_trait::async_trait;
+    use core::panic;
+    use dotenv::dotenv;
+    use std::env;
+    use std::time::Duration;
+    use tracing::Level;
+    use tracing_subscriber::FmtSubscriber;
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn test_stored_proc_execution_no_panic() {
@@ -556,6 +556,76 @@ pub(crate) mod query_processing_driver {
         SELECT CAST('0001-01-01 00:00:00' AS DATETIME2);
         SELECT CAST('0001-01-01 00:00:00 -14:00' AS DATETIMEOFFSET)",
         )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_xml_no_panic() {
+        let xml_document = "<?xml version=\"1.0\"?>
+<catalog>
+   <book id=\"bk101\">
+      <author>Gambardella, Matthew</author>
+      <title>XML Developer Guide</title>
+      <genre>Computer</genre>
+      <price>44.95</price>
+      <publish_date>2000-10-01</publish_date>
+      <description>An in-depth look at creating applications
+      with XML.</description>
+   </book>
+   <book id=\"bk102\">
+      <author>Ralls, Kim</author>
+      <title>Midnight Rain</title>
+      <genre>Fantasy</genre>
+      <price>5.95</price>
+      <publish_date>2000-12-16</publish_date>
+      <description>A former architect battles corporate zombies,
+      an evil sorceress, and her own childhood to become queen
+      of the world.</description>
+   </book>
+   </catalog>"
+            .to_string();
+        execute_test_query(
+            format!(
+                "
+        SELECT CAST(NULL AS XML);
+        SELECT CAST('{}' AS XML) as foo",
+                xml_document
+            )
+            .as_str(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore] // TODO: Fix this test in a subsequent PR.
+    async fn test_xml_with_schema() {
+        dotenv().ok();
+
+        let test_sys_identifier = env::var("TEST_SYS_IDENTIFER")
+            .ok()
+            .unwrap_or(Uuid::new_v4().simple().to_string());
+
+        execute_test_multi_query(vec![
+            format!(
+                "CREATE XML SCHEMA COLLECTION [{}] AS '
+                    <schema xmlns=\"http://www.w3.org/2001/XMLSchema\">
+                        <element name=\"root\" type=\"string\"/>
+                    </schema>
+                    '",
+                test_sys_identifier
+            )
+            .as_str(),
+            format!(
+                "CREATE TABLE #xml_test (Col1 xml([{}]))",
+                test_sys_identifier
+            )
+            .as_str(),
+            "INSERT INTO #xml_test VALUES ('<?xml version=\"1.0\"?><root>Test</root>')",
+            "SELECT * FROM #xml_test",
+            format!("DROP XML SCHEMA COLLECTION [{}];", test_sys_identifier).as_str(),
+        ])
         .await
         .unwrap();
     }

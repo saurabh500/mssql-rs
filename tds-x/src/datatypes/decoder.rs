@@ -22,6 +22,23 @@ pub(crate) trait SqlTypeDecode<'a> {
     ) -> TdsResult<ColumnValues>;
 }
 
+#[derive(Debug, PartialOrd, PartialEq)]
+pub struct SqlXml {
+    pub bytes: Vec<u8>,
+}
+
+impl SqlXml {
+    pub fn as_string(&self) -> String {
+        let mut u16_buffer = Vec::with_capacity(self.bytes.len() / 2);
+        self.bytes
+            .chunks(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .for_each(|item| u16_buffer.push(item));
+
+        String::from_utf16(&u16_buffer).unwrap()
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum ColumnValues {
     TinyInt(u8),
@@ -50,6 +67,7 @@ pub enum ColumnValues {
     Money(MoneyParts),
     MoneyN(MoneyParts),
     Bytes(Vec<u8>),
+    Xml(SqlXml),
     Null,
     Uuid(Uuid),
 }
@@ -225,22 +243,26 @@ impl GenericDecoder {
             // If the length is SQL_PLP_UNKNOWNLEN, it means the length is unknown and we have to
             // gather all the chunks until we reach the end of the PLP data which is a zero length
             // chunk.
-            if long_len as usize == Self::SQL_PLP_UNKNOWNLEN {
-                // Read the length of the data.
-                unimplemented!("Unknown length not implemented");
+            let mut vector_capacity = if long_len as usize != Self::SQL_PLP_UNKNOWNLEN {
+                long_len as usize
             } else {
-                let mut plp_buffer = vec![0u8; long_len as usize];
-                let mut chunk_len = reader.read_uint32().await? as usize;
-                let mut offset = 0;
-                while chunk_len > 0 {
-                    let chunk_size_read = reader
-                        .read_bytes(&mut plp_buffer[offset..offset + chunk_len])
-                        .await?;
-                    offset += chunk_size_read;
-                    chunk_len = reader.read_uint32().await? as usize;
-                }
-                Ok(Some(plp_buffer))
+                0
+            };
+            let mut plp_buffer = vec![0u8; vector_capacity];
+            let mut chunk_len = reader.read_uint32().await? as usize;
+            let mut offset = 0;
+            while chunk_len > 0 {
+                if long_len as usize == Self::SQL_PLP_UNKNOWNLEN {
+                    vector_capacity += chunk_len;
+                    plp_buffer.resize(vector_capacity, 0);
+                };
+                let chunk_size_read = reader
+                    .read_bytes(&mut plp_buffer[offset..offset + chunk_len])
+                    .await?;
+                offset += chunk_size_read;
+                chunk_len = reader.read_uint32().await? as usize;
             }
+            Ok(Some(plp_buffer))
         }
     }
 }
@@ -339,6 +361,14 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                     let mut bytes = vec![0u8; length as usize];
                     reader.read_bytes(&mut bytes).await?;
                     ColumnValues::Bytes(bytes)
+                }
+            }
+            TdsDataType::Xml => {
+                assert!(metadata.is_plp());
+                let some_bytes = GenericDecoder::read_plp_bytes(reader).await?;
+                match some_bytes {
+                    Some(bytes) => ColumnValues::Xml(SqlXml { bytes }),
+                    None => ColumnValues::Null,
                 }
             }
             TdsDataType::BitN => {
