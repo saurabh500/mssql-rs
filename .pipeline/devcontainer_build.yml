@@ -7,13 +7,26 @@ trigger:
 - main
 
 pool:
-  vmImage: ubuntu-latest
+  name: RUST-1ES-POOL-WUS3
+  demands:
+    - imageOverride -equals RUST-1ES-UBU
 
 steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+- template: templates/install-ubuntu-dependency.yaml
+  parameters:
+    installAzCli: true
+
+- template: templates/azure-cli-login-template.yml
 
 - script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+    cd containers
+    ./buildimages-x64.sh
+  displayName: 'Build and publish container images.'
+
+# - task: AzureCLI@2
+#   inputs:
+#     azureSubscription: 'Magnitude Test'
+#     scriptType: 'bash'
+#     scriptLocation: 'inlineScript'
+#     inlineScript: 'cd containers && ./buildimages-arm64.sh'
+#   retryCountOnTaskFailure: 5
