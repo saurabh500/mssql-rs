@@ -32,6 +32,8 @@ jobs:
           echo $(entry)
           echo $container
 
+          scripts/generate_cert.sh
+          
           cp $(Pipeline.Workspace)/tdslib-nextest.tar.zst $(Build.SourcesDirectory)
           docker network create testnet
           docker run --entrypoint bash -v "$PWD:/workspace" -e "DB_USERNAME=sa" -e "DB_HOST=$(ACI_SQL_HOST_2022)" -e "DB_PORT=14333" -e "SQL_PASSWORD=$(ACI_SQL_PASSWORD)" -e "ARCHIVE_NAME=tdslib-nextest.tar.zst" -e "TRUST_SERVER_CERTIFICATE=true" --network testnet $(container) /workspace/scripts/dockerentry/$(entry)

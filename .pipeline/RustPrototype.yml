@@ -223,18 +223,18 @@ stages:
           DebianBookworm:
             container: tdslibrs.azurecr.io/arm64/debian:bookworm
             entry: deb-bookworm.sh
-          # AzLinux3:
-          #   container: mcr.microsoft.com/azurelinux/base/core:3.0
-          #   entry: azlinux3.sh
-          # RHEL9:
-          #   container: tdslibrs.azurecr.io/arm64/redhat/ubi9:latest
-          #   entry: rhel.sh
-          # OracleLinux9:
-          #   container: tdslibrs.azurecr.io/arm64/oraclelinux:9
-          #   entry: rhel.sh
-          # SLES15:
-          #   container: registry.suse.com/suse/sle15
-          #   entry: sles.sh
+          AzLinux3:
+            container: mcr.microsoft.com/azurelinux/base/core:3.0
+            entry: azlinux3.sh
+          RHEL9:
+            container: tdslibrs.azurecr.io/arm64/redhat/ubi9:latest
+            entry: rhel.sh
+          OracleLinux9:
+            container: tdslibrs.azurecr.io/arm64/oraclelinux:9
+            entry: rhel.sh
+          SLES15:
+            container: registry.suse.com/suse/sle15
+            entry: sles.sh
           Ubuntu22:
             container: tdslibrs.azurecr.io/arm64/ubuntu:22.04
             entry: deb-bookworm.sh
