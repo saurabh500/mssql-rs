@@ -40,7 +40,7 @@ jobs:
             
             docker network create testnet
 
-            docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 --network testnet -v $PWD/conf/mssql.conf:/var/opt/mssql/mssql.conf -v $PWD/mssql.pem:/etc/ssl/certs/mssql.pem -v $PWD/mssql.key:/etc/ssl/private/mssql.key -u 0:0 -d mcr.microsoft.com/mssql/server:2022-latest
+            docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 --network testnet -v $PWD/conf/mssql.conf:/var/opt/mssql/mssql.conf -v $PWD/mssql.pem:/etc/ssl/certs/mssql.pem -v $PWD/mssql.key:/etc/ssl/private/mssql.key -u 0:0 -d mcr.microsoft.com/mssql/server:2025-latest
 
             docker run -v "$PWD:/workspace" -e "DB_USERNAME=sa" -e "DB_HOST=sql1" -e "DB_PORT=1433" -e "SQL_PASSWORD=$(SQL_PASSWORD)" -e "ARCHIVE_NAME=tdslib-nextest-musl.tar.zst" --network testnet $(container) /workspace/scripts/dockerentry/$(entry)
           fi

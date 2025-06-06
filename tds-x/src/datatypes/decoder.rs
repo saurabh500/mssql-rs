@@ -7,7 +7,7 @@ use super::{
     sql_string::{get_encoding_type, SqlString},
     sqldatatypes::{TdsDataType, TypeInfoVariant},
 };
-use crate::core::TdsResult;
+use crate::{core::TdsResult, datatypes::sql_json::SqlJson};
 use crate::{
     query::metadata::ColumnMetadata, read_write::packet_reader::PacketReader,
     token::tokens::SqlCollation,
@@ -70,6 +70,7 @@ pub enum ColumnValues {
     Xml(SqlXml),
     Null,
     Uuid(Uuid),
+    Json(SqlJson),
 }
 
 impl From<u8> for ColumnValues {
@@ -368,6 +369,14 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                 let some_bytes = GenericDecoder::read_plp_bytes(reader).await?;
                 match some_bytes {
                     Some(bytes) => ColumnValues::Xml(SqlXml { bytes }),
+                    None => ColumnValues::Null,
+                }
+            }
+            TdsDataType::Json => {
+                assert!(metadata.is_plp());
+                let some_bytes = GenericDecoder::read_plp_bytes(reader).await?;
+                match some_bytes {
+                    Some(bytes) => ColumnValues::Json(SqlJson::new(bytes)),
                     None => ColumnValues::Null,
                 }
             }

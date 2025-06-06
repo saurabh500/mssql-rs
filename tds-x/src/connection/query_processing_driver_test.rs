@@ -380,6 +380,40 @@ pub(crate) mod query_processing_driver {
     }
 
     #[tokio::test]
+    async fn test_json_support() {
+        let emoji_json: &str = r#"
+        {
+        "happy": "😀 😃 😄 😁 😆",
+        "sad": "😢 😭 😞 😔 😟",
+        "animals": "🐶 🐱 🦁 🐯 🐸",
+        "food": "🍎 🍔 🍕 🍣 🍩",
+        "flags": "🇺🇸 🇬🇧 🇮🇳 🇯🇵 🇫🇷",
+        "weather": "☀️ 🌤️ ⛈️ 🌧️ ❄️",
+        "activities": "⚽ 🏀 🏈 🎾 🏓",
+        "transport": "🚗 🚕 🚙 🚌 🚎",
+        "symbols": "❤️ 💔 💯 💡 🔥",
+        "mixed": "👩‍💻👨‍🔬🧑‍🚀👩‍🚒👨‍🎨",
+        "family": "👨‍👩‍👧‍👦 👩‍👩‍👧 👨‍👨‍👦",
+        "skin_tones": "👍🏻 👍🏼 👍🏽 👍🏾 👍🏿",
+        "complex": "👩🏽‍🚒👨🏻‍🎤🧑🏿‍🦽👩‍🦼"
+        }
+        "#;
+        execute_test_query(
+            format!(
+                "
+            select CAST(NULL as JSON); 
+            select CAST('[]' as JSON);
+            select CAST('{}' as JSON);
+        ",
+                emoji_json
+            )
+            .as_str(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn test_data_types_numerics_no_panic() {
         execute_test_query(
             "
@@ -389,8 +423,8 @@ pub(crate) mod query_processing_driver {
                 IntColumn INT,
                 BigIntColumn BIGINT,
                 BitColumn BIT,
-                DecimalColumn DECIMAL(18,2),
                 NumericColumn NUMERIC(18,2),
+                DecimalColumn DECIMAL(18,2),
                 FloatColumn FLOAT,
                 RealColumn REAL,
                 MoneyColumn MONEY NOT NULL,

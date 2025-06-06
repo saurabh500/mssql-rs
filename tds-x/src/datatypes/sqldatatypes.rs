@@ -518,7 +518,7 @@ pub async fn read_type_info(
                     type_info_variant: TypeInfoVariant::VarLen(var_len_type.unwrap(), length),
                 }
             }
-            VariableLengthTypes::Xml => TypeInfo {
+            VariableLengthTypes::Xml | VariableLengthTypes::Json => TypeInfo {
                 tds_type: data_type,
                 length: 0xffff,
                 type_info_variant: TypeInfoVariant::VarLen(var_len_type.unwrap(), 0xffff),

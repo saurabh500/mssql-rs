@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: sqlserver
-          image: tdslibrs.azurecr.io/mssql/server:2022-latest
+          image: tdslibrs.azurecr.io/mssql/server:2025-latest
           env:
             - name: ACCEPT_EULA
               value: "Y"

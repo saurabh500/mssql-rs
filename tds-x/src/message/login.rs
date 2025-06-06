@@ -1,4 +1,5 @@
 use crate::connection::client_context::{ClientContext, TdsAuthenticationMethod, TransportContext};
+use crate::message::features::jsonfeature::JsonFeature;
 use crate::message::login_options::{
     OptionFlags1, OptionFlags2, OptionFlags3, OptionsValue, TdsVersion, TypeFlags,
 };
@@ -55,6 +56,7 @@ pub(crate) enum FeatureExtension {
     DataClassification = 0x09,
     Utf8Support = 0x0A,
     SqlDnsCaching = 0x0B,
+    Json = 0x0D,
     Terminator = 0xFF,
 }
 
@@ -69,6 +71,7 @@ impl From<u8> for FeatureExtension {
             0x09 => FeatureExtension::DataClassification,
             0x0A => FeatureExtension::Utf8Support,
             0x0B => FeatureExtension::SqlDnsCaching,
+            0x0D => FeatureExtension::Json,
             0xFF => FeatureExtension::Terminator,
             _ => unreachable!("Invalid Feature Extension."),
         }
@@ -118,6 +121,8 @@ impl FeaturesRequest {
             FeatureExtension::Utf8Support,
             Box::new(Utf8Feature::default()),
         );
+
+        features.insert(FeatureExtension::Json, Box::new(JsonFeature::default()));
 
         if authentication_options != TdsAuthenticationMethod::SSPI
             && authentication_options != TdsAuthenticationMethod::Password
