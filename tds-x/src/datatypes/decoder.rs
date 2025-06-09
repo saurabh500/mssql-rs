@@ -478,6 +478,14 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                     ColumnValues::Bytes(buffer)
                 }
             }
+            TdsDataType::Udt => {
+                assert!(metadata.is_plp());
+                let some_bytes = GenericDecoder::read_plp_bytes(reader).await?;
+                match some_bytes {
+                    Some(bytes) => ColumnValues::Bytes(bytes),
+                    None => ColumnValues::Null,
+                }
+            }
             _ => unimplemented!("Data type not implemented: {:?}", metadata.data_type),
         };
         Ok(result)

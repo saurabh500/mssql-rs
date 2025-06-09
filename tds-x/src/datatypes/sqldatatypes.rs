@@ -247,12 +247,10 @@ impl_try_from_tdstypes!(
         BigChar = TdsDataType::BigChar as u8,
         NVarChar = TdsDataType::NVarChar as u8,
         NChar = TdsDataType::NChar as u8,
-        Xml = TdsDataType::Xml as u8,
         Text = TdsDataType::Text as u8,
         Image = TdsDataType::Image as u8,
         NText = TdsDataType::NText as u8,
         SsVariant = TdsDataType::SsVariant as u8,
-        Json = TdsDataType::Json as u8,
     }
 );
 
@@ -291,9 +289,7 @@ impl VariableLengthTypes {
             VariableLengthTypes::Image
             | VariableLengthTypes::NText
             | VariableLengthTypes::SsVariant
-            | VariableLengthTypes::Text
-            | VariableLengthTypes::Xml
-            | VariableLengthTypes::Json => size_of::<u32>(),
+            | VariableLengthTypes::Text => size_of::<u32>(),
         }
     }
 }
@@ -518,11 +514,6 @@ pub async fn read_type_info(
                     type_info_variant: TypeInfoVariant::VarLen(var_len_type.unwrap(), length),
                 }
             }
-            VariableLengthTypes::Xml | VariableLengthTypes::Json => TypeInfo {
-                tds_type: data_type,
-                length: 0xffff,
-                type_info_variant: TypeInfoVariant::VarLen(var_len_type.unwrap(), 0xffff),
-            },
             ty => {
                 println!("Unsupported TDS type: {:?}", ty);
                 unimplemented!("Unsupported TDS type encountered. Cannot retrieve it's type info");
@@ -532,44 +523,10 @@ pub async fn read_type_info(
         // At this point, it is possible that we have a data type which could be PLP
         // Check if the data type matches the PLP types, and if so, convert it to PLP
         match data_type {
-            TdsDataType::Xml
-            | TdsDataType::BigVarChar
-            | TdsDataType::BigVarBinary
-            | TdsDataType::NVarChar
-            | TdsDataType::Json => {
+            TdsDataType::BigVarChar | TdsDataType::BigVarBinary | TdsDataType::NVarChar => {
                 let plp_type = PartialLengthType::try_from(data_type);
                 if type_info.length == 0xFFFF {
-                    let xml_data = if data_type == TdsDataType::Xml {
-                        let schema_present = reader.read_byte().await?;
-                        let db_name = if schema_present == 0x01 {
-                            Some(reader.read_varchar_u8_length().await?)
-                        } else {
-                            None
-                        };
-
-                        let owning_schema = if schema_present == 0x01 {
-                            Some(reader.read_varchar_u8_length().await?)
-                        } else {
-                            None
-                        };
-
-                        let xml_schema_collection = if schema_present == 0x01 {
-                            reader.read_varchar_u16_length().await?
-                        } else {
-                            None
-                        };
-
-                        Some(XmlInfo {
-                            schema_present,
-                            db_name,
-                            owning_schema,
-                            xml_schema_collection,
-                        })
-                    } else {
-                        None
-                    };
-
-                    match type_info.type_info_variant {
+                    let info = match type_info.type_info_variant {
                         TypeInfoVariant::VarLenString(_, _, collation) => Ok(TypeInfo {
                             tds_type: data_type,
                             length: type_info.length,
@@ -577,7 +534,7 @@ pub async fn read_type_info(
                                 plp_type.unwrap(),
                                 Some(type_info.length),
                                 collation,
-                                xml_data,
+                                None,
                                 None,
                             ),
                         }),
@@ -588,29 +545,108 @@ pub async fn read_type_info(
                                 plp_type.unwrap(),
                                 Some(type_info.length),
                                 None,
-                                xml_data,
+                                None,
                                 None,
                             ),
                         }),
                         _ => {
-                            unimplemented!("Other PLP types apart from strings are not implemented")
+                            unreachable!("Other PLP types apart from strings are not handled.");
                         }
-                    }
+                    };
+                    return info;
                 } else {
-                    Ok(type_info)
+                    return Ok(type_info);
                 }
             }
-            _ => Ok(type_info),
+            _ => return Ok(type_info),
         }
-    } else {
-        unimplemented!(
-            "Couldnt find the Variable length equivalent of data_type.
-            Is this UDT: {:?}",
-            data_type
-        )
     }
 
-    // TODO: We are only left with UDT type now
+    let plp_type = PartialLengthType::try_from(data_type);
+
+    if let Ok(pt) = plp_type {
+        let type_info = match pt {
+            PartialLengthType::Udt => {
+                let len = reader.read_uint16().await? as usize;
+                let db_name = reader.read_varchar_u8_length().await?;
+                let schema_name = reader.read_varchar_u8_length().await?;
+                let type_name = reader.read_varchar_u8_length().await?;
+                // let assembly_qualified_name_length = reader.read_uint16().await? as usize;
+                let assembly_qualified_name = reader.read_varchar_u16_length().await?;
+                let assembly_qualified_name: String = match assembly_qualified_name {
+                    Some(name) => name,
+                    None => {
+                        return Err(Error::ProtocolError(
+                            "Missing UDT assembly qualified name".to_string(),
+                        ))
+                    }
+                };
+                TypeInfo {
+                    tds_type: data_type,
+                    length: len,
+                    type_info_variant: TypeInfoVariant::PartialLen(
+                        pt,
+                        Some(len),
+                        None,
+                        None,
+                        Some(UdtInfo::InColMetadata(UdtInfoInColMetadata {
+                            max_byte_size: len as u16,
+                            db_name,
+                            schema_name,
+                            type_name,
+                            assembly_qualified_name,
+                        })),
+                    ),
+                }
+            }
+            PartialLengthType::Json => TypeInfo {
+                tds_type: data_type,
+                length: 0xffff,
+                type_info_variant: TypeInfoVariant::PartialLen(pt, None, None, None, None),
+            },
+            PartialLengthType::Xml => {
+                let schema_present = reader.read_byte().await?;
+                let db_name = if schema_present == 0x01 {
+                    Some(reader.read_varchar_u8_length().await?)
+                } else {
+                    None
+                };
+
+                let owning_schema = if schema_present == 0x01 {
+                    Some(reader.read_varchar_u8_length().await?)
+                } else {
+                    None
+                };
+
+                let xml_schema_collection = if schema_present == 0x01 {
+                    reader.read_varchar_u16_length().await?
+                } else {
+                    None
+                };
+
+                let xml_info = Some(XmlInfo {
+                    schema_present,
+                    db_name,
+                    owning_schema,
+                    xml_schema_collection,
+                });
+
+                TypeInfo {
+                    tds_type: data_type,
+                    length: 0xffff,
+                    type_info_variant: TypeInfoVariant::PartialLen(pt, None, None, xml_info, None),
+                }
+            }
+            _ => unreachable!("We shouldn't have reached here with a PLP type that is not UDT"),
+        };
+        return Ok(type_info);
+    }
+
+    unimplemented!(
+        "Couldnt find the Variable length equivalent of data_type.
+        Is this UDT: {:?}",
+        data_type
+    )
 }
 
 pub fn is_unicode_type(data_type: TdsDataType) -> bool {

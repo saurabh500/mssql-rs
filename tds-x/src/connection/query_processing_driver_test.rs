@@ -689,6 +689,13 @@ pub(crate) mod query_processing_driver {
     }
 
     #[tokio::test]
+    async fn test_select_point() {
+        let query = "select CAST(NULL as geography);
+        select geography::Point(47.6062, -122.3321, 4326);";
+        execute_test_query(query).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_cancel_partially_sent_request() {
         dotenv().ok();
 
