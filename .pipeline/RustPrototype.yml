@@ -96,6 +96,12 @@ stages:
           osType: Linux
           buildType: ${{ parameters.buildType }}
           testFilter: -E 'not (test(query_processing_driver) | test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout_and_cancel))'
+      - template: templates/build-template-alpine.yml
+        parameters:
+          osType: Linux
+          buildType: ${{ parameters.buildType }}
+          testFilter: -E 'not (test(connectivity))'
+          alpineimagetag: 'tdslibrs.azurecr.io/build/arm64/alpine:3.18'
   - job: Build_Alpine
     displayName: Build Alpine
     pool:
@@ -153,7 +159,7 @@ stages:
           buildTarget: MacOS
       - template: templates/install-dependencies.yml
         parameters:
-          osType: MacOS
+          osType: MacOS 
       - template: templates/build-template.yml
         parameters:
           osType: MacOS
