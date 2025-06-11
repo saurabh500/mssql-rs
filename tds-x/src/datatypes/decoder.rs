@@ -1,13 +1,17 @@
 use async_trait::async_trait;
 use core::fmt;
-use std::{fmt::Debug, io::Error};
+use std::{fmt::Debug, io::Error, vec};
 use uuid::Uuid;
 
 use super::{
     sql_string::{get_encoding_type, SqlString},
     sqldatatypes::{TdsDataType, TypeInfoVariant},
 };
-use crate::{core::TdsResult, datatypes::sql_json::SqlJson};
+use crate::datatypes::sqldatatypes::TypeInfo;
+use crate::{
+    core::TdsResult,
+    datatypes::{sql_json::SqlJson, sql_string::EncodingType, sqldatatypes::FixedLengthTypes},
+};
 use crate::{
     query::metadata::ColumnMetadata, read_write::packet_reader::PacketReader,
     token::tokens::SqlCollation,
@@ -63,6 +67,10 @@ pub enum ColumnValues {
         time_nanos: u64,
         offset: i16,
     },
+    SmallDateTime {
+        day: u16,
+        time: u16,
+    },
     SmallMoney(MoneyParts),
     Money(MoneyParts),
     MoneyN(MoneyParts),
@@ -95,6 +103,101 @@ impl GenericDecoder {
     const SQL_PLP_NULL: usize = 0xffffffffffffffff;
     const SQL_PLP_UNKNOWNLEN: usize = 0xfffffffffffffffe;
 
+    // Reads a SQL_VARIANT type from the TDS stream.
+    async fn read_sql_variant(&self, reader: &mut PacketReader<'_>) -> TdsResult<ColumnValues> {
+        let length = reader.read_uint32().await?;
+        let variant_base_type = reader.read_byte().await?;
+        let tds_type = TdsDataType::try_from(variant_base_type)?;
+        let variant_prop_bytes = reader.read_byte().await?;
+        let bytes_for_type_and_properties_byte = 2;
+        let data_length = length - bytes_for_type_and_properties_byte - (variant_prop_bytes as u32);
+
+        let col_value = match variant_prop_bytes {
+            0 => {
+                self.decode_zero_propbyte_variant(reader, tds_type, data_length)
+                    .await?
+            }
+            1 => {
+                // TIMENTYPE, DATETIME2NTYPE, DATETIMEOFFSETNTYPE
+                self.decode_one_byte_variant(reader, tds_type, data_length)
+                    .await?
+            }
+            2 => {
+                decode_two_propbyte_variant(reader, variant_base_type, tds_type, data_length)
+                    .await?
+            }
+            7 => {
+                // BIGVARCHARTYPE, BIGCHARTYPE, NVARCHARTYPE, NCHARTYPE
+                decode_seven_propbyte_variant(reader, tds_type, data_length).await?
+            }
+            _ => {
+                unreachable!("Unexpected variant properties length: {}. This shouldn't have happened. Did the server send the wrong payload?", variant_prop_bytes);
+            }
+        };
+        Ok(col_value)
+    }
+
+    async fn decode_zero_propbyte_variant(
+        &self,
+        reader: &mut PacketReader<'_>,
+        tds_type: TdsDataType,
+        data_length: u32,
+    ) -> Result<ColumnValues, crate::error::Error> {
+        let fixed_length_type_result = FixedLengthTypes::try_from(tds_type);
+
+        // The type may be a fixed length type, or it may be a variable length type like Guid/DateN
+        if let Ok(fixed_length_type) = fixed_length_type_result {
+            let type_info = TypeInfo {
+                tds_type,
+                length: data_length as usize,
+                type_info_variant: TypeInfoVariant::FixedLen(fixed_length_type),
+            };
+            let variant_actual_type_md = ColumnMetadata {
+                user_type: 0,
+                flags: 0,
+                type_info,
+                data_type: tds_type,
+                column_name: "".to_string(),
+                multi_part_name: None,
+            };
+            self.decode(reader, &variant_actual_type_md).await
+        } else {
+            // If the type is not a fixed length type, we should not reach here.
+            match tds_type {
+                TdsDataType::Guid => Self::read_guid(reader, data_length as u8).await,
+                TdsDataType::DateN => Self::read_daten(reader, data_length as u8).await,
+                _ => {
+                    unreachable!(
+                        "For 0 byte property, only Guid and DateN are expected, but got: {:?}",
+                        tds_type
+                    );
+                }
+            }
+        }
+    }
+
+    async fn decode_one_byte_variant(
+        &self,
+        reader: &mut PacketReader<'_>,
+        tds_type: TdsDataType,
+        data_length: u32,
+    ) -> TdsResult<ColumnValues> {
+        let _scale = reader.read_byte().await?;
+        Ok(match tds_type {
+            TdsDataType::TimeN => {
+                let time_nanos = self.read_time(reader, data_length as u8).await?;
+                ColumnValues::Time(time_nanos)
+            }
+            TdsDataType::DateTime2N => self.read_datetime2(reader, data_length as u8).await?,
+            TdsDataType::DateTimeOffsetN => {
+                self.read_datetime_offset(reader, data_length as u8).await?
+            }
+            _ => {
+                unreachable!("For 1 byte property, only TimeN, DateTime2N and DateTimeOffsetN are expected, but got: {:?}", tds_type);
+            }
+        })
+    }
+
     async fn read_decimal(
         &self,
         reader: &mut PacketReader<'_>,
@@ -102,6 +205,22 @@ impl GenericDecoder {
     ) -> TdsResult<Option<DecimalParts>> {
         // Decimal/numeric data type has 1 byte length.
         let length = reader.read_byte().await?;
+        if let TypeInfoVariant::VarLenPrecisionScale(_, _, precision, scale) =
+            metadata.type_info.type_info_variant
+        {
+            GenericDecoder::read_decimal_data(reader, length, precision, scale).await
+        } else {
+            unreachable!("Should never get here")
+        }
+    }
+
+    async fn read_decimal_data(
+        reader: &mut PacketReader<'_>,
+        length: u8,
+        precision: u8,
+        scale: u8,
+    ) -> TdsResult<Option<DecimalParts>> {
+        // If length is 0, then it is NULL.
         if length == 0 {
             return Ok(None);
         }
@@ -113,18 +232,13 @@ impl GenericDecoder {
         for part_index in 0..number_of_int_parts {
             int_parts[part_index as usize] = reader.read_int32().await?;
         }
-        if let TypeInfoVariant::VarLenPrecisionScale(_, _, precision, scale) =
-            metadata.type_info.type_info_variant
-        {
-            Ok(Some(DecimalParts {
-                is_positive,
-                scale,
-                precision,
-                int_parts,
-            }))
-        } else {
-            unreachable!("Should never get here")
-        }
+
+        Ok(Some(DecimalParts {
+            is_positive,
+            scale,
+            precision,
+            int_parts,
+        }))
     }
 
     async fn read_datetime(&self, reader: &mut PacketReader<'_>) -> TdsResult<(i32, u32)> {
@@ -140,7 +254,7 @@ impl GenericDecoder {
         Ok((days, minutes))
     }
 
-    async fn read_date(&self, reader: &mut PacketReader<'_>) -> TdsResult<u32> {
+    async fn read_date(reader: &mut PacketReader<'_>) -> TdsResult<u32> {
         let days = reader.read_uint24().await?;
         Ok(days)
     }
@@ -159,7 +273,7 @@ impl GenericDecoder {
         reader: &mut PacketReader<'_>,
         byte_len: u8,
     ) -> TdsResult<ColumnValues> {
-        let days = self.read_date(reader).await?;
+        let days = Self::read_date(reader).await?;
         let time_nanos = self.read_time(reader, byte_len - 3).await?;
 
         Ok(ColumnValues::DateTime2 { days, time_nanos })
@@ -170,7 +284,7 @@ impl GenericDecoder {
         reader: &mut PacketReader<'_>,
         byte_len: u8,
     ) -> TdsResult<ColumnValues> {
-        let days = self.read_date(reader).await?;
+        let days = Self::read_date(reader).await?;
         let time_nanos = self.read_time(reader, byte_len - 3).await?;
         let offset = reader.read_int16().await?;
 
@@ -232,6 +346,26 @@ impl GenericDecoder {
             }
         };
         Ok(value)
+    }
+
+    async fn read_daten(reader: &mut PacketReader<'_>, length: u8) -> TdsResult<ColumnValues> {
+        if length == 0 {
+            Ok(ColumnValues::Null)
+        } else {
+            // length == 3.
+            Ok(ColumnValues::Date(Self::read_date(reader).await?))
+        }
+    }
+
+    async fn read_guid(reader: &mut PacketReader<'_>, length: u8) -> TdsResult<ColumnValues> {
+        if length > 0 {
+            let mut bytes = vec![0u8; length as usize];
+            reader.read_bytes(&mut bytes).await?;
+            let unique_id = uuid::Uuid::from_slice_le(&bytes).unwrap();
+            Ok(ColumnValues::Uuid(unique_id))
+        } else {
+            Ok(ColumnValues::Null)
+        }
     }
 
     async fn read_plp_bytes(reader: &mut PacketReader<'_>) -> TdsResult<Option<Vec<u8>>> {
@@ -391,14 +525,7 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
             }
             TdsDataType::Guid => {
                 let length = reader.read_byte().await?;
-                if length > 0 {
-                    let mut bytes = vec![0u8; length as usize];
-                    reader.read_bytes(&mut bytes).await?;
-                    let unique_id = uuid::Uuid::from_slice_le(&bytes).unwrap();
-                    ColumnValues::Uuid(unique_id)
-                } else {
-                    ColumnValues::Null
-                }
+                Self::read_guid(reader, length).await?
             }
             TdsDataType::FltN => {
                 // This is variable length float, hence the length needs to be read first
@@ -430,12 +557,7 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
             }
             TdsDataType::DateN => {
                 let length = reader.read_byte().await?;
-                if length == 0 {
-                    return Ok(ColumnValues::Null);
-                } else {
-                    // length == 3.
-                    return Ok(ColumnValues::Date(self.read_date(reader).await?));
-                }
+                return Self::read_daten(reader, length).await;
             }
             TdsDataType::TimeN => {
                 let length = reader.read_byte().await?;
@@ -484,6 +606,15 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                 match some_bytes {
                     Some(bytes) => ColumnValues::Bytes(bytes),
                     None => ColumnValues::Null,
+                }
+            }
+            TdsDataType::SsVariant => self.read_sql_variant(reader).await?,
+            TdsDataType::DateTim4 => {
+                let daypart = reader.read_uint16().await?;
+                let timepart = reader.read_uint16().await?;
+                ColumnValues::SmallDateTime {
+                    day: daypart,
+                    time: timepart,
                 }
             }
             _ => unimplemented!("Data type not implemented: {:?}", metadata.data_type),
@@ -760,4 +891,72 @@ impl From<&MoneyParts> for TdsResult<f32> {
                                 // TODO: For max (& min) value of smallmoney (214748.3647), the f32 value is 214748.36, which is not accurate. Debug & fix this.
                                 //       See test test_money_no_panic. Trying to query these max values from SSMS or ODBC gives correct value.
     }
+}
+
+async fn decode_two_propbyte_variant(
+    reader: &mut PacketReader<'_>,
+    variant_base_type: u8,
+    tds_type: TdsDataType,
+    data_length: u32,
+) -> TdsResult<ColumnValues> {
+    Ok(match tds_type {
+        // BIGVARBINARYTYPE, BIGBINARYTYPE
+        TdsDataType::BigVarBinary | TdsDataType::BigBinary => {
+            let _max_length = reader.read_uint16().await?;
+            let mut buffer = vec![0u8; data_length as usize];
+            reader.read_bytes(&mut buffer).await?;
+            ColumnValues::Bytes(buffer)
+        }
+        TdsDataType::NumericN | TdsDataType::DecimalN => {
+            let precision = reader.read_byte().await?;
+            let scale = reader.read_byte().await?;
+            let decimal_parts =
+                GenericDecoder::read_decimal_data(reader, data_length as u8, precision, scale)
+                    .await?;
+
+            if matches!(tds_type, TdsDataType::NumericN) {
+                match decimal_parts {
+                    Some(value) => ColumnValues::Numeric(value),
+                    None => ColumnValues::Null,
+                }
+            } else {
+                match decimal_parts {
+                    Some(value) => ColumnValues::Decimal(value),
+                    None => ColumnValues::Null,
+                }
+            }
+        }
+        _ => {
+            unreachable!(
+                "Unexpected variant base type for len(2) prop bytes: {:?}",
+                variant_base_type
+            );
+        }
+    })
+}
+
+async fn decode_seven_propbyte_variant(
+    reader: &mut PacketReader<'_>,
+    tds_type: TdsDataType,
+    data_length: u32,
+) -> TdsResult<ColumnValues> {
+    assert!(matches!(
+        tds_type,
+        TdsDataType::BigVarChar | TdsDataType::BigChar | TdsDataType::NVarChar | TdsDataType::NChar
+    ));
+    let mut collation_bytes = vec![0u8; 5];
+    reader.read_bytes(&mut collation_bytes).await?;
+    let _max_length = reader.read_uint16().await? as usize;
+    let collation = SqlCollation::new(&collation_bytes);
+    let mut buffer = vec![0u8; data_length as usize];
+    reader.read_bytes(&mut buffer).await?;
+    let encoding = if matches!(tds_type, TdsDataType::NVarChar | TdsDataType::NChar) {
+        EncodingType::Utf16
+    } else if collation.utf8() {
+        EncodingType::Utf8
+    } else {
+        EncodingType::LcidBased(collation)
+    };
+    let sql_string = SqlString::new(buffer, encoding);
+    Ok(ColumnValues::String(sql_string))
 }

@@ -696,6 +696,48 @@ pub(crate) mod query_processing_driver {
     }
 
     #[tokio::test]
+    async fn test_select_sql_variant_no_panic() {
+        execute_test_query(
+            "
+            select cast(1 as sql_variant);
+            select cast(cast ( 1 as bit) as sql_variant);
+            select cast(cast ( 1 as bigint) as sql_variant);
+            select cast(cast ( 1 as float) as sql_variant);
+            select cast(cast ( 1 as real) as sql_variant);
+            select cast(cast ( NULL as real) as sql_variant);
+            select cast('1234' as sql_variant);
+            select cast(1234.2223 as sql_variant);
+            select cast(CAST('0001-01-01 00:00:00 -14:00' AS DATETIMEOFFSET) as sql_variant);
+            SELECT CAST(cast('2019-06-06 12:01:01.11 +10:12' AS DATETIMEOFFSET) as sql_variant);
+            select cast(CAST(272.01 AS DECIMAL(18, 2)) as sql_variant);
+            select cast(CAST(12345678901234.98 AS NUMERIC(18, 2)) as sql_variant) as NumericColumn;
+            select cast(CAST('550e8400-e29b-41d4-a716-446655440000' AS uniqueidentifier) as sql_variant);
+            select cast(CAST(272.01 AS REAL) as sql_variant);
+            select cast(CAST(272.01 AS FLOAT) as sql_variant);
+            select cast(CAST(1 AS BIT) as sql_variant);
+            select cast(CAST(2 AS tinyint) as sql_variant);
+            select cast(CAST(2 AS smallint) as sql_variant);
+            select cast(CAST('2025-06-06 14:30:00' AS DATETIME) as sql_variant);
+            select cast(CAST('2025-06-06 14:30:00' AS SMALLDATETIME) as sql_variant);
+            select cast(CAST('2025-06-06' AS DATE) as sql_variant) as DateN;
+
+            select cast(cast(1234.12 as MONEY) as sql_variant);
+            select cast(cast(1234.12 as SMALLMONEY) as sql_variant);
+            select cast(CAST('14:30:00' AS TIME) as sql_variant);
+            SELECT CAST(cast('2025-06-06 14:30:00.1234567' AS DATETIME2) as Sql_Variant) AS HighPrecisionTime;
+            SELECT CAST(CAST(0xDEADBEEFCAFEBABE AS BINARY(500)) as Sql_Variant) AS BinaryExample;
+            SELECT CAST(CAST(0xDEADBEEFCAFEBABE AS VARBINARY(500)) as Sql_Variant) AS VarbinaryExample;
+            SELECT CAST(CAST('VariantText For Testing' AS Varchar(500)) as Sql_Variant);
+            SELECT CAST(CAST('VariantText For Testing' AS NVarchar(500)) as Sql_Variant);
+            SELECT CAST(CAST('VariantText For Testing' AS NChar(500)) as Sql_Variant);
+            SELECT CAST(CAST('VariantText For Testing' AS Char(500)) as Sql_Variant);
+        ",
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn test_cancel_partially_sent_request() {
         dotenv().ok();
 

@@ -349,7 +349,7 @@ pub enum TypeInfoVariant {
     FixedLen(FixedLengthTypes),
     VarLenString(VariableLengthTypes, Length, Option<SqlCollation>),
     VarLenPrecisionScale(VariableLengthTypes, Length, Precision, Scale),
-    VarLenScale(VariableLengthTypes, Precision),
+    VarLenScale(VariableLengthTypes, Scale),
     VarLen(VariableLengthTypes, Length),
     PartialLen(
         PartialLengthType,
@@ -508,6 +508,14 @@ pub async fn read_type_info(
             VariableLengthTypes::BigVarBinary | VariableLengthTypes::BigBinary => {
                 let length = get_variable_length(reader, &vdt).await?;
 
+                TypeInfo {
+                    tds_type: data_type,
+                    length,
+                    type_info_variant: TypeInfoVariant::VarLen(var_len_type.unwrap(), length),
+                }
+            }
+            VariableLengthTypes::SsVariant => {
+                let length = get_variable_length(reader, &vdt).await?;
                 TypeInfo {
                     tds_type: data_type,
                     length,

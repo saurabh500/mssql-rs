@@ -107,6 +107,7 @@ impl PyRow {
                 ColumnValues::Null => py.None(),
                 ColumnValues::Uuid(uuid) => handle_py_result!(uuid.to_string().into_pyobject(py)),
                 ColumnValues::Json(json) => handle_py_result!(json.as_string().into_pyobject(py)),
+                ColumnValues::SmallDateTime { day: _, time: _ } => todo!(),
             };
             results.push(py_value);
         }
