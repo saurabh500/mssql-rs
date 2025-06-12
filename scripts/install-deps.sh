@@ -14,8 +14,7 @@ print_info
 ARCH=$(arch)
 
 if [ "$ARCH" = "x86_64" ]; then
-    DEPS="azureauth \
-        jq \
+    DEPS="jq \
         unzip \
         build-essential \
         pkg-config \
@@ -28,8 +27,7 @@ if [ "$ARCH" = "x86_64" ]; then
         apt-transport-https \
         software-properties-common"
 elif [ "$ARCH" = "aarch64" ]; then
-    DEPS="azureauth \
-        jq \
+    DEPS="jq \
         unzip \
         build-essential \
         pkg-config \
@@ -47,15 +45,15 @@ else
     exit 1
 fi
 
-pushd /tmp  
+# pushd /tmp  
 
-wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+# wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
 
-for i in {1..5}; do
-    sudo dpkg -i packages-microsoft-prod.deb && break
-    echo "dpkg install failed, retrying in $((5 * i)) seconds... (attempt $i/5)"
-    sleep $((5 * i))
-done
+# for i in {1..5}; do
+#     sudo dpkg -i packages-microsoft-prod.deb && break
+#     echo "dpkg install failed, retrying in $((5 * i)) seconds... (attempt $i/5)"
+#     sleep $((5 * i))
+# done
 
 for i in {1..5}; do
     sudo apt update && break
