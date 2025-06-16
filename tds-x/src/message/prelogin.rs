@@ -471,10 +471,7 @@ pub(crate) mod tests {
         let cursor = packet_writer.get_payload();
 
         // Move the contents written to a reader.
-        let mut mock_reader = MockNetworkReaderWriter {
-            data: cursor.into_inner(),
-            position: 0,
-        };
+        let mut mock_reader = MockNetworkReaderWriter::new(cursor.into_inner(), 0);
 
         let response = PreloginResponse {};
         let response_model = block_on(response.deserialize(&mut mock_reader));

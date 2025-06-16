@@ -901,10 +901,7 @@ pub(crate) mod tests {
                 builder.append_u16(c);
             });
 
-        let mut reader_writer = MockNetworkReaderWriter {
-            data: builder.build(),
-            position: 0,
-        };
+        let mut reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
         let mut reader = PacketReader::new(&mut reader_writer);
         let parser = FedAuthInfoTokenParser::default();
         // Skip the token type byte

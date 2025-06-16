@@ -332,6 +332,11 @@ impl<'a> PacketWriter<'a> {
         let _ = WriteBytesExt::write_u8(writer, packet_id);
         Ok(WriteBytesExt::write_u8(writer, 0)?)
     }
+
+    #[cfg(test)]
+    pub(crate) fn get_cursor(&self) -> &Cursor<Vec<u8>> {
+        &self.payload_cursor
+    }
 }
 
 #[cfg(test)]
