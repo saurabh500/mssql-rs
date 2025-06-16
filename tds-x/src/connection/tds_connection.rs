@@ -1,6 +1,6 @@
 use super::transport::network_transport::NetworkTransport;
 use crate::core::{CancelHandle, TdsResult};
-use crate::datatypes::decoder::ColumnValues;
+use crate::datatypes::column_values::ColumnValues;
 use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqldatatypes::TdsDataType;
 use crate::error::Error;

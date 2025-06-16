@@ -14,11 +14,11 @@ mod connectivity {
     use dotenv::dotenv;
     use futures::StreamExt;
     use tds_x::core::EncryptionOptions;
+    use tds_x::datatypes::column_values::ColumnValues;
     use tds_x::{
         connection::client_context::{ClientContext, EntraIdTokenFactory, TdsAuthenticationMethod},
         connection_provider::tds_connection_provider::TdsConnectionProvider,
         core::{EncryptionSetting, TdsResult},
-        datatypes::decoder::ColumnValues,
         message::login_options::ApplicationIntent,
         query::result::QueryResultType,
     };
@@ -158,7 +158,7 @@ mod connectivity {
                     while let Some(row) = row_stream.next().await {
                         let mut unwrapped_row = row.unwrap();
                         while let Some(cell) = unwrapped_row.next().await {
-                            print!("{:?},", cell.unwrap().get_value());
+                            print!("{:?},", cell.unwrap());
                         }
                     }
                 }
@@ -187,7 +187,7 @@ mod connectivity {
                     while let Some(row) = row_stream.next().await {
                         let mut unwrapped_row = row.unwrap();
                         while let Some(cell) = unwrapped_row.next().await {
-                            print!("{:?},", cell.unwrap().get_value());
+                            print!("{:?},", cell.unwrap());
                         }
                     }
                 }
@@ -244,7 +244,7 @@ mod connectivity {
                     while let Some(row) = row_stream.next().await {
                         let mut unwrapped_row = row.unwrap();
                         while let Some(cell) = unwrapped_row.next().await {
-                            print!("{:?},", cell.unwrap().get_value());
+                            print!("{:?},", cell.unwrap());
                         }
                     }
                 }

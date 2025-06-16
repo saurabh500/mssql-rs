@@ -111,7 +111,7 @@ impl Session<'_> {
                     while let Some(some_row) = row_stream.next().await {
                         let mut row = some_row?;
                         while let Some(cell) = row.next().await {
-                            print!("{:?} | ", cell.unwrap().get_value());
+                            print!("{:?} | ", cell.unwrap());
                         }
                         println!();
                     }

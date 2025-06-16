@@ -5,8 +5,8 @@ use super::{
     login_ack::LoginAckToken,
     tokenitems::ReturnValueStatus,
 };
+use crate::datatypes::column_values::ColumnValues;
 use crate::{
-    datatypes::decoder::ColumnValues,
     message::login::{FeatureExtension, RoutingInfo},
     query::metadata::ColumnMetadata,
 };

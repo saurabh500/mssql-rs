@@ -2,13 +2,10 @@ use std::collections::HashSet;
 
 use async_trait::async_trait;
 
+use super::sqldatatypes::{FixedLengthTypes, TdsDataType};
+use crate::datatypes::column_values::ColumnValues;
 use crate::{
     core::TdsResult, read_write::packet_writer::PacketWriter, token::tokens::SqlCollation,
-};
-
-use super::{
-    decoder::ColumnValues,
-    sqldatatypes::{FixedLengthTypes, TdsDataType},
 };
 
 #[async_trait]

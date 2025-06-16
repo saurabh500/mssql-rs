@@ -16,7 +16,8 @@ use crate::core::TdsResult;
 use crate::{
     core::Version,
     datatypes::{
-        decoder::{ColumnValues, SqlTypeDecode},
+        column_values::ColumnValues,
+        decoder::SqlTypeDecode,
         sqldatatypes::{read_type_info, TdsDataType},
     },
     message::{

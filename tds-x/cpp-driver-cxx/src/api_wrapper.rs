@@ -7,7 +7,7 @@ use std::future::Future;
 use std::marker;
 use std::pin::Pin;
 use tds_x::core::TdsResult;
-use tds_x::datatypes::decoder::ColumnValues;
+use tds_x::datatypes::column_values::ColumnValues;
 
 pub struct TdsConnection<'a, 'result>
 where
@@ -48,11 +48,7 @@ pub struct RowStream<'result> {
 
 pub struct RowData {
     pub(crate) row_data: tds_x::query::result::RowData,
-    pub(crate) current_cell: Option<tds_x::query::result::CellData>,
-}
-
-pub struct CellData {
-    pub(crate) cell_data: Option<tds_x::query::result::CellData>,
+    pub(crate) current_cell: Option<ColumnValues>,
 }
 
 pub struct ColumnValue {

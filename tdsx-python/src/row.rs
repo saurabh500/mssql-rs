@@ -1,10 +1,8 @@
 use crate::RUNTIME;
 use futures::StreamExt;
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
-use tds_x::{
-    datatypes::decoder::ColumnValues,
-    query::result::{RowData, RowStream},
-};
+use tds_x::datatypes::column_values::ColumnValues;
+use tds_x::query::result::{RowData, RowStream};
 
 #[pyclass(unsendable)]
 pub struct PyRowStream {
@@ -73,7 +71,7 @@ impl PyRow {
         while let Some(col_val) = RUNTIME.block_on(column_values.next()) {
             // Map the error to a Python Runtime error.
             let col_val = col_val.map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            let py_value: PyObject = match col_val.get_value() {
+            let py_value: PyObject = match col_val {
                 ColumnValues::Int(i) => handle_py_result!(i.into_pyobject(py)),
                 ColumnValues::String(s) => handle_py_result!(s.to_utf8_string().into_pyobject(py)),
                 ColumnValues::Float(f) => handle_py_result!(f.into_pyobject(py)),

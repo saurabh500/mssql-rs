@@ -1,6 +1,7 @@
 #[cfg(not(target_os = "macos"))]
 pub(crate) mod query_processing_driver {
     use crate::core::EncryptionOptions;
+    use crate::datatypes::column_values::ColumnValues;
     use crate::error::Error;
     use crate::error::Error::ProtocolError;
     use crate::message::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
@@ -13,7 +14,7 @@ pub(crate) mod query_processing_driver {
         },
         connection_provider::tds_connection_provider::TdsConnectionProvider,
         core::{EncryptionSetting, TdsResult},
-        datatypes::{decoder::ColumnValues, sql_string::SqlString, sqldatatypes::TdsDataType},
+        datatypes::{sql_string::SqlString, sqldatatypes::TdsDataType},
         message::{
             batch::SqlBatch,
             messages::Request,

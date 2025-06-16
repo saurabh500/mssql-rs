@@ -1,6 +1,6 @@
 use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
 use crate::core::{CancelHandle, TdsResult};
-use crate::datatypes::decoder::ColumnValues;
+use crate::datatypes::column_values::ColumnValues;
 use crate::query::metadata::ColumnMetadata;
 use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::token_stream::{
@@ -380,7 +380,7 @@ impl<'result> ResultSet<'result> {
         }
     }
 
-    pub async fn get_all_data(self) -> TdsResult<Vec<Vec<CellData>>> {
+    pub async fn get_all_data(self) -> TdsResult<Vec<Vec<ColumnValues>>> {
         // Internally iterate over the row data and cache all the CellDatas into vectors.
         todo!();
     }
@@ -583,39 +583,11 @@ impl RowData {
 // to use the row as a Stream to avoid having to change calling code when the implementation
 // changes to use a streaming token parser.
 impl Stream for RowData {
-    type Item = TdsResult<CellData>;
+    type Item = TdsResult<ColumnValues>;
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let result = self.iterator.next();
-        result.map_or(Poll::Ready(None), |value| {
-            Poll::Ready(Some(Ok(CellData::new(value))))
-        })
-    }
-}
-
-pub struct CellData {
-    protocol_data: Vec<u8>,
-    column_value: ColumnValues,
-}
-
-impl CellData {
-    fn new(column_value: ColumnValues) -> CellData {
-        CellData {
-            protocol_data: Vec::new(),
-            column_value,
-        }
-    }
-
-    pub fn get_value(self) -> ColumnValues {
-        self.column_value
-    }
-
-    fn into_byte_stream(self) -> bytes::Bytes {
-        todo!()
-    }
-
-    fn get_bytes(&self) -> &[u8] {
-        self.protocol_data.as_ref()
+        result.map_or(Poll::Ready(None), |value| Poll::Ready(Some(Ok(value))))
     }
 }
 

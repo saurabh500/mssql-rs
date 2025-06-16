@@ -1,7 +1,7 @@
 mod api_wrapper;
 
 use crate::api_wrapper::{
-    BoolFuture, CellData, ClientContext, ColumnValue, QueryResultType, QueryResultTypeFuture,
+    BoolFuture, ClientContext, ColumnValue, QueryResultType, QueryResultTypeFuture,
     QueryResultTypeStream, RowData, RowStream, TdsConnection, TdsConnectionFuture,
 };
 use futures::StreamExt;
@@ -41,7 +41,6 @@ mod ffi {
         type QueryResultType<'result>;
         type RowStream<'result>;
         type RowData;
-        type CellData;
         type ColumnValue;
 
         // TdsConnection methods.
@@ -88,9 +87,7 @@ mod ffi {
 
         // RowData methods
         unsafe fn next(self: &mut RowData) -> Result<bool>;
-        unsafe fn current_cell(self: &mut RowData) -> Result<Box<CellData>>;
-
-        unsafe fn take_column_value(self: &mut CellData) -> Result<Box<ColumnValue>>;
+        unsafe fn current_cell(self: &mut RowData) -> Result<Box<ColumnValue>>;
 
         // ColumnValue methods
         unsafe fn print_column_value(self: &mut ColumnValue) -> Result<()>;
@@ -350,10 +347,10 @@ impl RowData {
         )
     }
 
-    pub fn current_cell(&mut self) -> TdsResult<Box<CellData>> {
+    pub fn current_cell(&mut self) -> TdsResult<Box<ColumnValue>> {
         if let Some(current_cell) = self.current_cell.take() {
-            Ok(Box::new(CellData {
-                cell_data: Some(current_cell),
+            Ok(Box::new(ColumnValue {
+                value: Some(current_cell),
             }))
         } else {
             Err(Error::ProtocolError("No row available.".to_string()))
@@ -361,19 +358,6 @@ impl RowData {
     }
 }
 
-impl CellData {
-    pub fn take_column_value(&mut self) -> TdsResult<Box<ColumnValue>> {
-        if let Some(unwrapped_api_cell) = self.cell_data.take() {
-            Ok(Box::new(ColumnValue {
-                value: Some(unwrapped_api_cell.get_value()),
-            }))
-        } else {
-            Err(Error::ProtocolError(
-                "CellData already consumed.".to_string(),
-            ))
-        }
-    }
-}
 impl ColumnValue {
     pub fn print_column_value(&mut self) -> TdsResult<()> {
         if let Some(unwrapped_column_value) = self.value.take() {

@@ -7,7 +7,7 @@ use dotenv::dotenv;
 use futures::StreamExt;
 use tds_x::connection::client_context::TransportContext;
 use tds_x::core::{EncryptionOptions, TdsResult};
-use tds_x::datatypes::decoder::ColumnValues;
+use tds_x::datatypes::column_values::ColumnValues;
 use tds_x::{
     connection::{client_context::ClientContext, tds_connection::TdsConnection},
     connection_provider::tds_connection_provider::TdsConnectionProvider,
@@ -68,7 +68,7 @@ pub async fn assert_matches_expected(qrt: QueryResultType<'_>, expected: &Expect
                 let mut unwrapped_row = row.unwrap();
                 print!("Row {:?}: ", actual_rows);
                 while let Some(cell) = unwrapped_row.next().await {
-                    print!("{:?},", cell.unwrap().get_value());
+                    print!("{:?},", cell.unwrap());
                 }
                 println!();
                 actual_rows += 1;
@@ -176,7 +176,7 @@ where
                     let mut unwrapped_row = row.unwrap();
 
                     if let Some(cell) = unwrapped_row.next().await {
-                        result = Some(cell.unwrap().get_value());
+                        result = Some(cell.unwrap());
                     }
                     if result.is_some() {
                         break;

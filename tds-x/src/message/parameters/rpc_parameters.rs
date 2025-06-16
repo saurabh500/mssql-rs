@@ -1,8 +1,9 @@
 use bitflags::bitflags;
 
+use crate::datatypes::column_values::ColumnValues;
 use crate::{
     core::TdsResult,
-    datatypes::{decoder::ColumnValues, encoder::Encoder, sqldatatypes::TdsDataType},
+    datatypes::{encoder::Encoder, sqldatatypes::TdsDataType},
     error::Error,
     read_write::packet_writer::PacketWriter,
     token::tokens::SqlCollation,

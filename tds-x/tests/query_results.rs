@@ -165,7 +165,7 @@ mod query_result_reads {
                             let mut unwrapped_row = row.unwrap();
                             print!("Row {:?}: ", row_number);
                             while let Some(cell) = unwrapped_row.next().await {
-                                print!("{:?},", cell.unwrap().get_value());
+                                print!("{:?},", cell.unwrap());
                             }
                             println!();
                             row_number += 1;

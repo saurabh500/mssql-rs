@@ -1,3 +1,4 @@
+pub mod column_values;
 pub mod decoder;
 pub(crate) mod encoder;
 pub mod sql_json;

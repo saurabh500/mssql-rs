@@ -1,9 +1,10 @@
 use uuid::Uuid;
 
+use crate::datatypes::column_values::SqlXml;
 use crate::{
     core::TdsResult,
     datatypes::{
-        decoder::{DecimalParts, MoneyParts, SqlXml},
+        decoder::{DecimalParts, MoneyParts},
         sql_string::SqlString,
         sqldatatypes::TdsDataType,
     },

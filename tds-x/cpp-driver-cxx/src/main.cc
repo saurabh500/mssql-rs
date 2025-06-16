@@ -16,8 +16,7 @@ void display_results_sync(
         auto row_data = result_set->current_row();
         while (row_data->next()) {
           auto cell = row_data->current_cell();
-          auto column_value = cell->take_column_value();
-          column_value->print_column_value();
+          cell->print_column_value();
           std::cout << ", ";
         }
         std::cout << std::endl;
@@ -57,8 +56,7 @@ void display_results_async(
         auto row_data = result_set->current_row();
         while (row_data->next_async()->await_bool()) {
           auto cell = row_data->current_cell();
-          auto column_value = cell->take_column_value();
-          column_value->print_column_value();
+          cell->print_column_value();
           std::cout << ", ";
         }
         std::cout << std::endl;

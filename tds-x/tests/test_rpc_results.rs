@@ -4,10 +4,11 @@ mod common;
 mod rpc_results {
     use crate::common::{begin_connection, create_context, get_scalar_value, init_tracing};
     use futures::StreamExt;
+    use tds_x::datatypes::column_values::ColumnValues;
     use tds_x::{
         connection::tds_connection::TdsConnection,
         core::TdsResult,
-        datatypes::{decoder::ColumnValues, sqldatatypes::TdsDataType},
+        datatypes::sqldatatypes::TdsDataType,
         message::parameters::rpc_parameters::{RpcParameter, StatusFlags},
         query::result::QueryResultType,
         token::tokenitems::ReturnValueStatus,
