@@ -57,11 +57,14 @@ pub enum ColumnValues {
     String(SqlString),
     DateTime((i32, u32)),
     Date(u32),
+    // TODO: Will be migrated to the time struct in future
     Time(u64),
+    // TODO: Will be migrated to a Datetime2 struct
     DateTime2 {
         days: u32,
         time_nanos: u64,
     },
+    // TODO: Will be migrated to a DateTimeOffset struct
     DateTimeOffset {
         days: u32,
         time_nanos: u64,
