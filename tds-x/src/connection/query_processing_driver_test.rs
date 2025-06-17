@@ -1,7 +1,8 @@
 #[cfg(not(target_os = "macos"))]
 pub(crate) mod query_processing_driver {
     use crate::core::EncryptionOptions;
-    use crate::datatypes::column_values::ColumnValues;
+
+    use crate::datatypes::sqltypes::SqlType;
     use crate::error::Error;
     use crate::error::Error::ProtocolError;
     use crate::message::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
@@ -14,7 +15,7 @@ pub(crate) mod query_processing_driver {
         },
         connection_provider::tds_connection_provider::TdsConnectionProvider,
         core::{EncryptionSetting, TdsResult},
-        datatypes::{sql_string::SqlString, sqldatatypes::TdsDataType},
+        datatypes::sql_string::SqlString,
         message::{
             batch::SqlBatch,
             messages::Request,
@@ -94,20 +95,18 @@ pub(crate) mod query_processing_driver {
         .await
         .unwrap();
 
+        let input_value = SqlType::Int(Some(45612));
         let param1 = RpcParameter::new(
             Some("@InputInt".to_string()),
             StatusFlags::NONE,
-            &crate::datatypes::sqldatatypes::TdsDataType::IntN,
-            false,
-            &ColumnValues::Int(45612),
+            &input_value,
         );
 
+        let output_param = SqlType::Int(None);
         let param2 = RpcParameter::new(
             Some("@OutputInt".to_string()),
             StatusFlags::BY_REF_VALUE, // Output parameter
-            &TdsDataType::Int4,
-            false,
-            &ColumnValues::Null, // This is an output parameter. Set to null.
+            &output_param,
         );
 
         let named_parameters = vec![param1, param2];
@@ -164,17 +163,13 @@ pub(crate) mod query_processing_driver {
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
-            &TdsDataType::IntN,
-            false,
-            &ColumnValues::Int(1),
+            &SqlType::Int(Some(1)),
         );
 
         let compat_level_param = RpcParameter::new(
             Some("@compat_level".to_string()),
             StatusFlags::NONE,
-            &TdsDataType::IntN,
-            false,
-            &ColumnValues::Int(100),
+            &SqlType::Int(Some(100)),
         );
 
         let named_parameters = vec![database_id_param, compat_level_param];
@@ -182,17 +177,12 @@ pub(crate) mod query_processing_driver {
         // Use the connection to execute SqlRpc with the stored procedure name and parameters.
         let database_collation = connection.negotiated_settings.database_collation;
 
-        let sql_statement_value =
-            ColumnValues::String(SqlString::from_utf8_string(query.to_string()));
+        let statement_parameter_val =
+            &SqlType::NVarcharMax(Some(SqlString::from_utf8_string(query.to_string())));
 
         // Create the parameter list for sp_execute_sql
-        let statement_parameter = RpcParameter::new(
-            None,
-            StatusFlags::NONE,
-            &TdsDataType::NVarChar,
-            false,
-            &sql_statement_value,
-        );
+        let statement_parameter =
+            RpcParameter::new(None, StatusFlags::NONE, statement_parameter_val);
 
         // Build the comma separated list of parameters
         let mut params_list_as_string = String::new();
@@ -200,24 +190,14 @@ pub(crate) mod query_processing_driver {
         build_parameter_list_string(&named_parameters, &mut params_list_as_string);
 
         print!("Params list: {}", params_list_as_string);
+
         let params_as_sql_string =
-            ColumnValues::String(SqlString::from_utf8_string(params_list_as_string));
+            SqlType::NVarcharMax(Some(SqlString::from_utf8_string(params_list_as_string)));
 
-        let params_parameter = RpcParameter::new(
-            None,
-            StatusFlags::NONE,
-            &TdsDataType::NVarChar,
-            false,
-            &params_as_sql_string,
-        );
+        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, &params_as_sql_string);
 
-        let handle_parameter = RpcParameter::new(
-            None,
-            StatusFlags::BY_REF_VALUE,
-            &TdsDataType::Int4,
-            false,
-            &ColumnValues::Null,
-        );
+        let out_param_value = SqlType::Int(None);
+        let handle_parameter = RpcParameter::new(None, StatusFlags::BY_REF_VALUE, &out_param_value);
 
         let positional_parameters_list =
             vec![handle_parameter, params_parameter, statement_parameter];

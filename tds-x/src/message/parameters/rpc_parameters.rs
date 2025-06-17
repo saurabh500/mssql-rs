@@ -1,12 +1,10 @@
 use bitflags::bitflags;
 
-use crate::datatypes::column_values::ColumnValues;
+use crate::datatypes::encoder::SqlValueEncoder;
+use crate::datatypes::sqltypes::SqlType;
 use crate::{
-    core::TdsResult,
-    datatypes::{encoder::Encoder, sqldatatypes::TdsDataType},
-    error::Error,
-    read_write::packet_writer::PacketWriter,
-    token::tokens::SqlCollation,
+    core::TdsResult, datatypes::sqldatatypes::TdsDataType, error::Error,
+    read_write::packet_writer::PacketWriter, token::tokens::SqlCollation,
 };
 
 bitflags! {
@@ -29,44 +27,49 @@ pub struct RpcParameter<'a> {
     /// represents whether the parameter is input, output, or both, as well as the encryption setting.
     options: StatusFlags,
 
-    /// The data type of the parameter.
-    pub(crate) data_type: &'a TdsDataType,
-
-    /// is the parameter null?
-    is_null: bool,
-
-    /// Is this the correct datatype?
-    value: &'a ColumnValues,
+    /// The data type and value of the parameter.
+    ///  This is used to determine how to serialize the value.
+    value: &'a SqlType,
 }
 
 impl<'b> RpcParameter<'b> {
-    pub fn new(
-        name: Option<String>,
-        options: StatusFlags,
-        data_type: &'b TdsDataType,
-        is_null: bool,
-        value: &'b ColumnValues,
-    ) -> Self {
+    pub fn new(name: Option<String>, options: StatusFlags, value: &'b SqlType) -> Self {
         Self {
             name,
             options,
-            data_type,
-            is_null,
             value,
         }
     }
 
-    pub(crate) fn get_sql_name(&self) -> &str {
+    pub(crate) fn get_sql_name(&self) -> String {
         // For nullable types, we need to check the actual datatype to derive the name.
-        match self.data_type {
-            TdsDataType::IntN => match self.value {
-                ColumnValues::Int(_) => TdsDataType::Int4.get_meta_type_name(),
-                ColumnValues::BigInt(_) => TdsDataType::Int8.get_meta_type_name(),
-                ColumnValues::SmallInt(_) => TdsDataType::Int2.get_meta_type_name(),
-                ColumnValues::TinyInt(_) => TdsDataType::Int1.get_meta_type_name(),
-                _ => unreachable!("Unexpected value type for IntN"),
-            },
-            _ => self.data_type.get_meta_type_name(),
+        let tds_type = TdsDataType::from(self.value);
+        let type_name = tds_type.get_meta_type_name();
+
+        let len_in_metadata = match self.value {
+            SqlType::NVarchar(_, len) => {
+                // The user may have specified an incorrect length.
+                // But we will send it across without tampering and let the server handle it.
+                // We want to send the length as a string based on the intention of API usage, so
+                // that the intention of the user is translated. The same params will also be used by server
+                // for prepared statements. Hence we shouldn't try to be intelligent here.
+                len.to_string()
+            }
+            SqlType::NVarcharMax(_) => "MAX".to_string(),
+            SqlType::Varchar(_, len) => {
+                if *len <= 8000 {
+                    len.to_string()
+                } else {
+                    "MAX".to_string()
+                }
+            }
+            _ => "".to_string(),
+        };
+
+        if len_in_metadata.is_empty() {
+            type_name.to_string()
+        } else {
+            format!("{}({})", type_name, len_in_metadata).to_string()
         }
     }
 
@@ -74,7 +77,7 @@ impl<'b> RpcParameter<'b> {
     /// The `encoder` is used to encode the parameter value based on its data type.
     /// The `db_collation` is used for string types to determine the collation.
     /// The `is_positional` flag indicates whether the parameter is positional or named.
-    pub(crate) async fn serialize<T: Encoder>(
+    pub(crate) async fn serialize<T: SqlValueEncoder>(
         &self,
         packet_writer: &mut PacketWriter<'_>,
         db_collation: &SqlCollation,
@@ -114,7 +117,7 @@ impl<'b> RpcParameter<'b> {
         packet_writer.write_byte_async(self.options.bits()).await?;
 
         encoder
-            .encode(packet_writer, *self.data_type, self.value, db_collation)
+            .encode_sqlvalue(packet_writer, self.value, db_collation)
             .await?;
         Ok(())
     }
@@ -137,6 +140,49 @@ pub(crate) fn build_parameter_list_string(
                 params_list.push_str(", ");
             }
             params_list.push_str(&format!("{} {} ", param_name, param_type_name));
+        }
+    }
+}
+
+impl From<&SqlType> for TdsDataType {
+    fn from(value: &SqlType) -> TdsDataType {
+        match value {
+            SqlType::Bit(_) => TdsDataType::Bit,
+            SqlType::TinyInt(_) => TdsDataType::Int1,
+            SqlType::SmallInt(_) => TdsDataType::Int2,
+            SqlType::Int(_) => TdsDataType::Int4,
+            SqlType::BigInt(_) => TdsDataType::Int8,
+            SqlType::Real(_) => TdsDataType::Flt4,
+            SqlType::Float(_) => TdsDataType::Flt8,
+            SqlType::Decimal(_) => TdsDataType::DecimalN,
+            SqlType::Numeric(_) => TdsDataType::NumericN,
+            SqlType::NVarchar(_, _) => TdsDataType::NVarChar,
+            SqlType::VarBinary(_, _) => TdsDataType::BigVarBinary,
+            SqlType::Binary(_, _) => TdsDataType::BigBinary,
+            SqlType::Char(_, _) => TdsDataType::Char,
+            SqlType::NChar(_, _) => TdsDataType::NChar,
+            SqlType::Text(_) => TdsDataType::Text,
+            SqlType::NText(_) => TdsDataType::NText,
+            SqlType::Json(_) => TdsDataType::Json,
+            SqlType::Money(_) => todo!(),
+            SqlType::SmallMoney(_) => todo!(),
+            SqlType::Time(_) => todo!(),
+            SqlType::DateTime2 {
+                days: _,
+                time_nanos: _,
+            } => todo!(),
+            SqlType::DateTimeOffset {
+                days: _,
+                time_nanos: _,
+                offset: _,
+            } => todo!(),
+            SqlType::SmallDateTime { day: _, time: _ } => todo!(),
+            SqlType::NVarcharMax(_) => todo!(),
+            SqlType::Varchar(_, _) => todo!(),
+            SqlType::VarcharMax(_) => todo!(),
+            SqlType::VarBinaryMax(_) => todo!(),
+            SqlType::Xml(_) => todo!(),
+            SqlType::Uuid(_) => todo!(),
         }
     }
 }

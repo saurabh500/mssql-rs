@@ -2,7 +2,7 @@ use super::transport::network_transport::NetworkTransport;
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::column_values::ColumnValues;
 use crate::datatypes::sql_string::SqlString;
-use crate::datatypes::sqldatatypes::TdsDataType;
+use crate::datatypes::sqltypes::SqlType;
 use crate::error::Error;
 use crate::handler::handler_factory::NegotiatedSettings;
 use crate::message::attention::AttentionRequest;
@@ -92,16 +92,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
-        let sql_statement_value = ColumnValues::String(SqlString::from_utf8_string(sql));
+        let sql_statement_value = SqlType::NVarcharMax(Some(SqlString::from_utf8_string(sql)));
 
         // Create the parameter list for sp_execute_sql
-        let statement_parameter = RpcParameter::new(
-            None,
-            StatusFlags::NONE,
-            &TdsDataType::NVarChar,
-            false,
-            &sql_statement_value,
-        );
+        let statement_parameter = RpcParameter::new(None, StatusFlags::NONE, &sql_statement_value);
 
         // Build the comma separated list of parameters
         let mut params_list_as_string = String::new();
@@ -109,15 +103,9 @@ impl<'connection, 'result> TdsConnection<'connection> {
         build_parameter_list_string(&named_params, &mut params_list_as_string);
 
         let params_as_sql_string =
-            ColumnValues::String(SqlString::from_utf8_string(params_list_as_string));
+            SqlType::NVarcharMax(Some(SqlString::from_utf8_string(params_list_as_string)));
 
-        let params_parameter = RpcParameter::new(
-            None,
-            StatusFlags::NONE,
-            &TdsDataType::NVarChar,
-            false,
-            &params_as_sql_string,
-        );
+        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, &params_as_sql_string);
 
         // Create the parameter list for positional parameters of sp_execute_sql.
         // These could be named parameters as well, but we want to avoid sending the name
@@ -152,16 +140,11 @@ impl<'connection, 'result> TdsConnection<'connection> {
     ) -> TdsResult<i32> {
         let database_collation = self.negotiated_settings.database_collation;
 
-        let sql_statement_value = ColumnValues::String(SqlString::from_utf8_string(sql));
+        let sql_statement_value = SqlType::NVarcharMax(Some(SqlString::from_utf8_string(sql)));
 
         // Create the parameter list for sp_execute_sql
-        let execute_sql_statement_parameter = RpcParameter::new(
-            None,
-            StatusFlags::NONE,
-            &TdsDataType::NVarChar,
-            false,
-            &sql_statement_value,
-        );
+        let execute_sql_statement_parameter =
+            RpcParameter::new(None, StatusFlags::NONE, &sql_statement_value);
 
         // Build the comma separated list of parameters
         let mut params_list_as_string = String::new();
@@ -169,22 +152,16 @@ impl<'connection, 'result> TdsConnection<'connection> {
         build_parameter_list_string(&named_params, &mut params_list_as_string);
 
         let params_as_sql_string =
-            ColumnValues::String(SqlString::from_utf8_string(params_list_as_string));
+            SqlType::NVarcharMax(Some(SqlString::from_utf8_string(params_list_as_string)));
 
-        let params_parameter = RpcParameter::new(
-            None,
-            StatusFlags::NONE,
-            &TdsDataType::NVarChar,
-            false,
-            &params_as_sql_string,
-        );
+        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, &params_as_sql_string);
+
+        let output_handler_value = SqlType::Int(None);
 
         let output_handler_parameter = RpcParameter::new(
             None,
             StatusFlags::BY_REF_VALUE, // Output parameter
-            &TdsDataType::Int4,
-            false,
-            &ColumnValues::Null, // This is an output parameter. Set to null.
+            &output_handler_value,
         );
 
         // Create the parameter list for positional parameters of sp_execute_sql.
@@ -247,12 +224,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
     ) -> TdsResult<()> {
         let database_collation = self.negotiated_settings.database_collation;
 
-        let handle_value = ColumnValues::Int(handle);
+        let handle_value = SqlType::Int(Some(handle));
         let handle_parameter = RpcParameter::new(
             None,
             StatusFlags::NONE, // Output parameter
-            &TdsDataType::Int4,
-            false,
             &handle_value,
         );
 
@@ -294,16 +269,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
-        let sql_statement_value = ColumnValues::String(SqlString::from_utf8_string(sql));
+        let sql_statement_value = SqlType::NVarcharMax(Some(SqlString::from_utf8_string(sql)));
 
         // Create the parameter list for sp_execute_sql
-        let statement_parameter = RpcParameter::new(
-            None,
-            StatusFlags::NONE,
-            &TdsDataType::NVarChar,
-            false,
-            &sql_statement_value,
-        );
+        let statement_parameter = RpcParameter::new(None, StatusFlags::NONE, &sql_statement_value);
 
         // Build the comma separated list of parameters
         let mut params_list_as_string = String::new();
@@ -311,23 +280,13 @@ impl<'connection, 'result> TdsConnection<'connection> {
         build_parameter_list_string(named_params, &mut params_list_as_string);
 
         let params_as_sql_string =
-            ColumnValues::String(SqlString::from_utf8_string(params_list_as_string));
+            SqlType::NVarcharMax(Some(SqlString::from_utf8_string(params_list_as_string)));
 
-        let params_parameter = RpcParameter::new(
-            None,
-            StatusFlags::NONE,
-            &TdsDataType::NVarChar,
-            false,
-            &params_as_sql_string,
-        );
+        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, &params_as_sql_string);
 
-        let handle_parameter = RpcParameter::new(
-            None,
-            StatusFlags::BY_REF_VALUE,
-            &TdsDataType::Int4,
-            false,
-            &ColumnValues::Null,
-        );
+        let handle_value = SqlType::Int(None);
+
+        let handle_parameter = RpcParameter::new(None, StatusFlags::BY_REF_VALUE, &handle_value);
 
         // Create the parameter list for positional parameters of sp_prepareexec.
         // These could be named parameters as well, but we want to avoid sending the name
@@ -363,12 +322,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
     ) -> TdsResult<BatchResult<'result>> {
         let database_collation = self.negotiated_settings.database_collation;
 
-        let handle_value = ColumnValues::Int(handle);
+        let handle_value = SqlType::Int(Some(handle));
         let handle_parameter = RpcParameter::new(
             None,
             StatusFlags::NONE, // Output parameter
-            &TdsDataType::Int4,
-            false,
             &handle_value,
         );
 

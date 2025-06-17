@@ -5,10 +5,10 @@ mod rpc_results {
     use crate::common::{begin_connection, create_context, get_scalar_value, init_tracing};
     use futures::StreamExt;
     use tds_x::datatypes::column_values::ColumnValues;
+    use tds_x::datatypes::sqltypes::SqlType;
     use tds_x::{
         connection::tds_connection::TdsConnection,
         core::TdsResult,
-        datatypes::sqldatatypes::TdsDataType,
         message::parameters::rpc_parameters::{RpcParameter, StatusFlags},
         query::result::QueryResultType,
         token::tokenitems::ReturnValueStatus,
@@ -39,21 +39,17 @@ mod rpc_results {
             .unwrap();
 
         // Do the actual test of the stored procedure.
-
+        let param_value = SqlType::Int(Some(45612));
         let param1 = RpcParameter::new(
             Some("@InputInt".to_string()),
             StatusFlags::NONE,
-            &TdsDataType::IntN,
-            false,
-            &ColumnValues::Int(45612),
+            &param_value,
         );
 
         let param2 = RpcParameter::new(
             Some("@OutputInt".to_string()),
             StatusFlags::BY_REF_VALUE, // Output parameter
-            &TdsDataType::Int4,
-            false,
-            &ColumnValues::Null, // This is an output parameter. Set to null.
+            &SqlType::Int(None),       // This is an output parameter. Set to null.
         );
 
         let named_parameters = vec![param1, param2];
@@ -87,17 +83,13 @@ mod rpc_results {
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
-            &TdsDataType::IntN,
-            false,
-            &ColumnValues::Int(1),
+            &SqlType::Int(Some(1)),
         );
 
         let compat_level_param = RpcParameter::new(
             Some("@compat_level".to_string()),
             StatusFlags::NONE,
-            &TdsDataType::IntN,
-            false,
-            &ColumnValues::Int(100),
+            &SqlType::Int(Some(100)),
         );
 
         let context = create_context();
@@ -125,9 +117,7 @@ mod rpc_results {
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
-            &TdsDataType::IntN,
-            false,
-            &ColumnValues::Int(1),
+            &SqlType::Int(Some(1)),
         );
 
         let context = create_context();
@@ -155,17 +145,13 @@ mod rpc_results {
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
-            &TdsDataType::IntN,
-            false,
-            &ColumnValues::Int(1),
+            &SqlType::Int(Some(1)),
         );
 
         let compat_level_param = RpcParameter::new(
             Some("@compat_level".to_string()),
             StatusFlags::NONE,
-            &TdsDataType::IntN,
-            false,
-            &ColumnValues::Int(100),
+            &SqlType::Int(Some(100)),
         );
 
         let context = create_context();
@@ -191,17 +177,13 @@ mod rpc_results {
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
-            &TdsDataType::IntN,
-            false,
-            &ColumnValues::Int(1),
+            &SqlType::Int(Some(1)),
         );
 
         let compat_level_param = RpcParameter::new(
             Some("@compat_level".to_string()),
             StatusFlags::NONE,
-            &TdsDataType::IntN,
-            false,
-            &ColumnValues::Int(100),
+            &SqlType::Int(Some(100)),
         );
 
         let context = create_context();

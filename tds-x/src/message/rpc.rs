@@ -3,7 +3,7 @@ use tracing::debug;
 
 use crate::{
     connection::tds_connection::ExecutionContext, core::TdsResult,
-    datatypes::encoder::GenericEncode, message::messages::PacketType,
+    datatypes::encoder::GenericEncoder, message::messages::PacketType,
     read_write::packet_writer::PacketWriter, token::tokens::SqlCollation,
 };
 
@@ -67,7 +67,7 @@ impl<'a> SqlRpc<'a> {
         // Implement the logic for writing positional parameters
         // Example: Write a placeholder implementation
         if let Some(positional_parameters) = &self.positional_parameters {
-            let encoder = GenericEncode::new();
+            let encoder = GenericEncoder::new();
             for parameter in *positional_parameters {
                 parameter
                     .serialize(packet_writer, self.db_collation, true, &encoder)
@@ -83,7 +83,7 @@ impl<'a> SqlRpc<'a> {
         // Implement the logic for writing parameters
         // Example: Write a placeholder implementation
         if let Some(parameters) = &self.named_parameters {
-            let encoder = GenericEncode::new();
+            let encoder = GenericEncoder::new();
             for parameter in *parameters {
                 parameter
                     .serialize(packet_writer, self.db_collation, false, &encoder)
