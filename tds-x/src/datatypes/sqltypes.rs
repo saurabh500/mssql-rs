@@ -86,6 +86,11 @@ pub(crate) const NULL_LENGTH: u8 = 0u8;
 // The fixed size for Decimal in TDS is 17 bytes.
 pub(crate) const DECIMAL_FIXED_SIZE: u8 = 17;
 
+// The short data length which signifies that the data is being sent as PLP (Partial Length Packet).
+pub(crate) const MAX_SHORT_DATA_LENGTH: u16 = 0xFFFF;
+
+pub(crate) const PLP_TERMINATOR_CHUNK_LEN: u32 = 0x00000000;
+
 impl SqlType {
     fn get_nullable_type(&self) -> NullableTdsType {
         match self {
@@ -98,8 +103,8 @@ impl SqlType {
             SqlType::Decimal(_) => TdsDataType::NumericN,
             SqlType::Numeric(_) => TdsDataType::NumericN,
             SqlType::NVarchar(_, _) => TdsDataType::NVarChar,
-            SqlType::VarBinary(_items, _size) => todo!(),
-            SqlType::Binary(_items, _) => todo!(),
+            SqlType::VarBinary(_items, _size) => TdsDataType::BigVarBinary,
+            SqlType::Binary(_items, _) => TdsDataType::BigBinary,
             SqlType::Char(_, _) => TdsDataType::BigChar,
             SqlType::NChar(_, _) => TdsDataType::NChar,
             SqlType::Text(_sql_string) => todo!(),
@@ -157,11 +162,7 @@ impl SqlType {
                 self.serialize_decimalparts(packet_writer, decimal_parts)
                     .await?
             }
-            SqlType::NVarchar(sql_string, _) => {
-                self.serialize_nvarchar(packet_writer, db_collation, sql_string)
-                    .await?
-            }
-            SqlType::VarBinary(_items, _) => todo!(),
+
             SqlType::Binary(_items, _) => todo!(),
             SqlType::Char(_sql_string, _) => todo!(),
             SqlType::NChar(_sql_string, _) => todo!(),
@@ -181,6 +182,10 @@ impl SqlType {
                 offset: _,
             } => todo!(),
             SqlType::SmallDateTime { day: _, time: _ } => todo!(),
+            SqlType::NVarchar(sql_string, _) => {
+                self.serialize_nvarchar(packet_writer, db_collation, sql_string)
+                    .await?
+            }
             SqlType::NVarcharMax(sql_string) => {
                 self.serialize_nvarchar(packet_writer, db_collation, sql_string)
                     .await?
@@ -193,7 +198,12 @@ impl SqlType {
                 self.serialize_nvarchar(packet_writer, db_collation, sql_string)
                     .await?
             }
-            SqlType::VarBinaryMax(_items) => todo!(),
+            SqlType::VarBinary(binary_data, _) => {
+                self.serialize_binary(packet_writer, binary_data).await?
+            }
+            SqlType::VarBinaryMax(binary_data) => {
+                self.serialize_binary(packet_writer, binary_data).await?
+            }
             SqlType::Xml(_sql_xml) => todo!(),
             SqlType::Uuid(_uuid) => todo!(),
         }
@@ -439,7 +449,7 @@ impl SqlType {
                     packet_writer.write_async(&string.bytes).await?;
                 } else {
                     // Write FFFF indicating that data is being sent as PLP.
-                    packet_writer.write_u16_async(0xFFFF).await?;
+                    packet_writer.write_u16_async(MAX_SHORT_DATA_LENGTH).await?;
                     packet_writer.write_u32_async(db_collation.info).await?;
                     packet_writer.write_byte_async(db_collation.sort_id).await?;
 
@@ -455,7 +465,9 @@ impl SqlType {
                     packet_writer.write_async(&string.bytes).await?;
 
                     // Write a zero-length PLP chunk terminator to signal the end of the PLP stream.
-                    packet_writer.write_u32_async(0).await?;
+                    packet_writer
+                        .write_u32_async(PLP_TERMINATOR_CHUNK_LEN)
+                        .await?;
                 }
             }
             None => {
@@ -463,6 +475,53 @@ impl SqlType {
                 packet_writer.write_i16_async(2).await?;
                 packet_writer.write_u32_async(db_collation.info).await?;
                 packet_writer.write_byte_async(db_collation.sort_id).await?;
+                // Write 0 data length to signify that the data is NULL.
+                packet_writer.write_u16_async(VAR_NULL_LENGTH).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn serialize_binary(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        binary_data: &Option<Vec<u8>>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+        let optional_binary = match binary_data {
+            Some(binary) => Some(binary),
+            None => None,
+        };
+        match optional_binary {
+            Some(data) => {
+                let should_send_as_plp = data.len() > VAR_TDS_MAX_LENGTH as usize;
+                if !should_send_as_plp {
+                    // Write the length for the metadata.
+                    packet_writer.write_i16_async(data.len() as i16).await?;
+
+                    // Write the length of the actual data.
+                    packet_writer.write_i16_async(data.len() as i16).await?;
+                    // Write the data.
+                    packet_writer.write_async(data).await?;
+                } else {
+                    // Write FFFF indicating that data is being sent as PLP.
+                    packet_writer.write_u16_async(MAX_SHORT_DATA_LENGTH).await?;
+
+                    // Write the PLP length.
+                    packet_writer.write_u64_async(data.len() as u64).await?;
+
+                    // Write the data chunk length, which is the same as PLP length.
+                    packet_writer.write_u32_async(data.len() as u32).await?;
+                    packet_writer.write_async(data).await?;
+
+                    // Write a zero-length PLP chunk terminator to signal the end of the PLP stream.
+                    packet_writer.write_u32_async(0).await?;
+                }
+            }
+            None => {
+                // Write 2 len to signify that the actual data length is going to be 2 bytes.
+                packet_writer.write_i16_async(2).await?;
                 // Write 0 data length to signify that the data is NULL.
                 packet_writer.write_u16_async(VAR_NULL_LENGTH).await?;
             }
@@ -491,6 +550,141 @@ impl TryFrom<&SqlType> for FixedLengthTypes {
 }
 
 #[cfg(test)]
+mod binary_tests {
+    use std::io::Cursor;
+
+    use bytes::Buf;
+
+    use crate::{
+        datatypes::{
+            sqldatatypes::TdsDataType,
+            sqltypes::{SqlType, MAX_SHORT_DATA_LENGTH, PLP_TERMINATOR_CHUNK_LEN, VAR_NULL_LENGTH},
+        },
+        message::messages::PacketType,
+        read_write::{packet_reader::tests::MockNetworkReaderWriter, packet_writer::PacketWriter},
+    };
+
+    #[tokio::test]
+    async fn test_write_small_binary() {
+        let payload: Vec<u8> = (0..10).collect();
+        // Doesn't matter for serialization, but we need a length.
+        let len = payload.len() / 2;
+        let byte_len = payload.len() as u32;
+        let val = Some(payload.clone());
+        let bit = SqlType::VarBinary(val, len as u32);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let copied_bytes = payload.clone();
+        let val = Some(payload);
+        bit.serialize_binary(&mut packet_writer, &val)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::BigVarBinary as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_i16_le(), byte_len as i16);
+
+        assert_eq!(test_cursor.get_i16_le(), byte_len as i16);
+        let mut written_bytes = vec![0u8; byte_len as usize];
+        test_cursor.copy_to_slice(&mut written_bytes);
+        assert_eq!(written_bytes, copied_bytes); // size for Some Data
+    }
+
+    #[tokio::test]
+    async fn test_write_large_binary() {
+        let payload: Vec<u8> = vec![0xAB; 9000];
+        // Doesn't matter for serialization, but we need a length.
+        let len = payload.len() / 2;
+        let byte_len = payload.len() as u32;
+        let val = Some(payload.clone());
+        let bit = SqlType::VarBinary(val, len as u32);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let copied_bytes = payload.clone();
+        let val = Some(payload);
+        bit.serialize_binary(&mut packet_writer, &val)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let written_payload = mock_reader_writer.get_written_data();
+        let payload_chunks: Vec<&[u8]> = written_payload.chunks(4096).collect();
+
+        let mut reassembled_packet: Vec<u8> = Vec::new();
+        for chunk in payload_chunks.iter() {
+            if chunk.len() > 8 {
+                reassembled_packet.extend_from_slice(&chunk[8..]);
+            }
+        }
+
+        let mut test_cursor = Cursor::new(reassembled_packet);
+
+        assert_eq!(test_cursor.get_u8(), TdsDataType::BigVarBinary as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u16_le(), MAX_SHORT_DATA_LENGTH);
+
+        // The PLP length is the total length of the data.
+        assert_eq!(test_cursor.get_u64_le(), byte_len as u64);
+
+        // Chunk length.
+        assert_eq!(test_cursor.get_u32_le(), byte_len);
+        let mut written_bytes = vec![0u8; byte_len as usize];
+        test_cursor.copy_to_slice(&mut written_bytes);
+
+        // Verify the string bytes.
+        assert_eq!(written_bytes, copied_bytes); // size for Some Data
+
+        // The data is followed by a PLP terminator chunk.
+        assert_eq!(test_cursor.get_u32_le(), PLP_TERMINATOR_CHUNK_LEN); // size for Some Data
+    }
+
+    #[tokio::test]
+    async fn test_write_null_binary() {
+        let bit = SqlType::VarBinary(None, 100);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+        let val = None;
+
+        bit.serialize_binary(&mut packet_writer, &val)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::BigVarBinary as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_i16_le(), 2i16); // Size of type. 2 bytes when NULL.
+        assert_eq!(test_cursor.get_i16_le(), VAR_NULL_LENGTH as i16);
+    }
+}
+
+#[cfg(test)]
 mod nvarchar_tests {
     use std::io::Cursor;
 
@@ -500,7 +694,7 @@ mod nvarchar_tests {
         datatypes::{
             sql_string::SqlString,
             sqldatatypes::TdsDataType,
-            sqltypes::{SqlType, VAR_NULL_LENGTH},
+            sqltypes::{SqlType, MAX_SHORT_DATA_LENGTH, PLP_TERMINATOR_CHUNK_LEN, VAR_NULL_LENGTH},
         },
         message::messages::PacketType,
         read_write::{packet_reader::tests::MockNetworkReaderWriter, packet_writer::PacketWriter},
@@ -589,14 +783,23 @@ mod nvarchar_tests {
         let mut test_cursor = Cursor::new(reassembled_packet);
 
         assert_eq!(test_cursor.get_u8(), TdsDataType::NVarChar as u8); // Valdate tds type
-        assert_eq!(test_cursor.get_u16_le(), 0xFFFF);
+        assert_eq!(test_cursor.get_u16_le(), MAX_SHORT_DATA_LENGTH);
         let _ignore_collation_info = test_cursor.get_u32();
         let _ignore_collation_sortid = test_cursor.get_u8();
+
+        // The PLP length is the total length of the data.
         assert_eq!(test_cursor.get_u64_le(), byte_len as u64);
+
+        // Chunk length.
         assert_eq!(test_cursor.get_u32_le(), byte_len);
         let mut written_bytes = vec![0u8; byte_len as usize];
         test_cursor.copy_to_slice(&mut written_bytes);
+
+        // Verify the string bytes.
         assert_eq!(written_bytes, copied_bytes); // size for Some Data
+
+        // The data is followed by a PLP terminator chunk.
+        assert_eq!(test_cursor.get_u32_le(), PLP_TERMINATOR_CHUNK_LEN); // size for Some Data
     }
 
     #[tokio::test]

@@ -41,27 +41,20 @@ impl<'b> RpcParameter<'b> {
         }
     }
 
-    pub(crate) fn get_sql_name(&self) -> String {
+    pub(crate) fn get_sql_name(value: &SqlType) -> String {
         // For nullable types, we need to check the actual datatype to derive the name.
-        let tds_type = TdsDataType::from(self.value);
+        let tds_type = TdsDataType::from(value);
         let type_name = tds_type.get_meta_type_name();
 
-        let len_in_metadata = match self.value {
-            SqlType::NVarchar(_, len) => {
+        let len_in_metadata = match value {
+            SqlType::NVarcharMax(_) | SqlType::VarBinaryMax(_) => "MAX".to_string(),
+            SqlType::Varchar(_, len) | SqlType::VarBinary(_, len) | SqlType::NVarchar(_, len) => {
                 // The user may have specified an incorrect length.
                 // But we will send it across without tampering and let the server handle it.
                 // We want to send the length as a string based on the intention of API usage, so
                 // that the intention of the user is translated. The same params will also be used by server
                 // for prepared statements. Hence we shouldn't try to be intelligent here.
                 len.to_string()
-            }
-            SqlType::NVarcharMax(_) => "MAX".to_string(),
-            SqlType::Varchar(_, len) => {
-                if *len <= 8000 {
-                    len.to_string()
-                } else {
-                    "MAX".to_string()
-                }
             }
             _ => "".to_string(),
         };
@@ -133,7 +126,7 @@ pub(crate) fn build_parameter_list_string(
         if let Some(param_name) = &param.name {
             // TODO: while persisting types with length, we need to compute the length and
             // add the length after the type name. e.g. Nvarchar(200), varchar(100) etc.
-            let param_type_name = param.get_sql_name();
+            let param_type_name = RpcParameter::get_sql_name(param.value);
             if first_param {
                 first_param = false;
             } else {
