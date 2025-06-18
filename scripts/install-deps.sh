@@ -138,4 +138,3 @@ echo "Home dir is $HOME"
 echo "Current dir is $(pwd)"
 echo "PATH is $PATH"
 
-popd

@@ -43,7 +43,8 @@ steps:
   - script: |
       set -euo pipefail
       # Setup Certificate
-
+      ls /var/run/docker.sock
+      sudo chmod 666 /var/run/docker.sock
       scripts/generate_cert.sh    
       sudo chown 10001:0 mssql.*
 

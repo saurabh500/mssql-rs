@@ -32,8 +32,8 @@ steps:
           sudo apt-get install docker.io -y
           sudo usermod -aG docker $USER
           sudo groupadd docker
-          echo "Changing permissions for docker.sock"
-          sudo chmod 666 /var/run/docker.sock
       fi
+      echo "Changing permissions for docker.sock"
+      sudo chmod 666 /var/run/docker.sock
     displayName: Install Docker
     condition: succeeded()
