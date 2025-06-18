@@ -194,6 +194,41 @@ where
     Ok(result)
 }
 
+// Returns the first row of the result set, and drains the resultset.
+#[allow(dead_code)]
+pub async fn get_first_row<'a, 'n>(batch_result: BatchResult<'n>) -> TdsResult<Vec<ColumnValues>>
+where
+    'n: 'a,
+{
+    let mut result: Vec<ColumnValues> = Vec::new();
+    let mut query_result_stream = batch_result.stream_results();
+
+    while let Some(query_result_type) = query_result_stream.next().await {
+        let qrt = query_result_type.unwrap();
+        match qrt {
+            QueryResultType::Update(_) => {
+                // Do Nothing. Skip;
+            }
+            QueryResultType::ResultSet(rs) => {
+                let mut rowstream = rs.into_row_stream().unwrap();
+                while let Some(row) = rowstream.next().await {
+                    let mut unwrapped_row = row.unwrap();
+                    while let Some(cell) = unwrapped_row.next().await {
+                        result.push(cell.unwrap());
+                    }
+                }
+                rowstream.close().await?;
+            }
+        }
+        if !result.is_empty() {
+            query_result_stream.close().await?;
+            break;
+        }
+    }
+
+    Ok(result)
+}
+
 pub fn trust_server_certificate() -> bool {
     env::var("TRUST_SERVER_CERTIFICATE")
         .map(|v| v.parse().unwrap_or(false))
