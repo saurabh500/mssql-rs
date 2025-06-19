@@ -128,7 +128,7 @@ impl SqlType {
             SqlType::VarcharMax(_) => TdsDataType::BigVarChar,
             SqlType::VarBinaryMax(_) => todo!(),
             SqlType::Xml(_) => todo!(),
-            SqlType::Uuid(_) => todo!(),
+            SqlType::Uuid(_) => TdsDataType::Guid,
         }
     }
 
@@ -205,7 +205,7 @@ impl SqlType {
                 self.serialize_binary(packet_writer, binary_data).await?
             }
             SqlType::Xml(_sql_xml) => todo!(),
-            SqlType::Uuid(_uuid) => todo!(),
+            SqlType::Uuid(uuid) => self.serialize_uuid(packet_writer, uuid).await?,
         }
         Ok(())
     }
@@ -526,6 +526,30 @@ impl SqlType {
                 packet_writer.write_u16_async(VAR_NULL_LENGTH).await?;
             }
         }
+        Ok(())
+    }
+
+    async fn serialize_uuid(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        uuid: &Option<Uuid>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+        let byte_length = 16u8;
+        // Write the type size. For Guid there is no other variant. Hence 16 is always sent
+        packet_writer.write_byte_async(byte_length).await?;
+        match uuid {
+            Some(u) => {
+                // Write the data length.
+                packet_writer.write_byte_async(byte_length).await?;
+
+                // Send the actual data size.
+                let guid_bytes = u.to_bytes_le();
+                packet_writer.write_async(&guid_bytes).await?;
+            }
+            None => packet_writer.write_byte_async(NULL_LENGTH).await?,
+        };
         Ok(())
     }
 }
@@ -1535,5 +1559,69 @@ mod bit_tests {
         assert_eq!(test_cursor.get_u8(), TdsDataType::IntN as u8); // Valdate tds type
         assert_eq!(test_cursor.get_u8(), FixedLengthTypes::Bit.get_len() as u8); // size of the data
         assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // size for Some Data
+    }
+}
+
+#[cfg(test)]
+mod uuid_tests {
+    use crate::{
+        datatypes::{
+            sqldatatypes::TdsDataType,
+            sqltypes::{SqlType, NULL_LENGTH},
+        },
+        message::messages::PacketType,
+        read_write::{packet_reader::tests::MockNetworkReaderWriter, packet_writer::PacketWriter},
+    };
+    use bytes::Buf;
+    use std::io::Cursor;
+
+    #[tokio::test]
+    async fn test_write_uuid() {
+        let generated_uuid = uuid::Uuid::new_v4();
+        let uuid = SqlType::Uuid(Some(generated_uuid));
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+        uuid.serialize_uuid(&mut packet_writer, &Some(generated_uuid))
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::Guid as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), 16); // size of the type
+        assert_eq!(test_cursor.get_u8(), 16); // size for data.
+        let mut written_bytes = vec![0u8; 16];
+        test_cursor.copy_to_slice(&mut written_bytes);
+        assert_eq!(written_bytes, generated_uuid.to_bytes_le()); // Validate the written UUID bytes
+        assert!(!test_cursor.has_remaining()); // Ensure that the cursor has no remaining data
+    }
+
+    #[tokio::test]
+    async fn test_write_null_uuid() {
+        let uuid = SqlType::Uuid(None);
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+        uuid.serialize_uuid(&mut packet_writer, &None)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::Guid as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), 16); // size of the type
+        assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // size for Some Data
+        assert!(!test_cursor.has_remaining()); // Ensure that the cursor has no remaining data
     }
 }
