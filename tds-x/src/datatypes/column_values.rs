@@ -34,23 +34,10 @@ pub enum ColumnValues {
     String(SqlString),
     DateTime((i32, u32)),
     Date(u32),
-    // TODO: Will be migrated to the time struct in future
-    Time(u64),
-    // TODO: Will be migrated to a Datetime2 struct
-    DateTime2 {
-        days: u32,
-        time_nanos: u64,
-    },
-    // TODO: Will be migrated to a DateTimeOffset struct
-    DateTimeOffset {
-        days: u32,
-        time_nanos: u64,
-        offset: i16,
-    },
-    SmallDateTime {
-        day: u16,
-        time: u16,
-    },
+    Time(Time),
+    DateTime2(DateTime2),
+    DateTimeOffset(DateTimeOffset),
+    SmallDateTime { day: u16, time: u16 },
     SmallMoney(MoneyParts),
     Money(MoneyParts),
     MoneyN(MoneyParts),
@@ -59,4 +46,30 @@ pub enum ColumnValues {
     Null,
     Uuid(Uuid),
     Json(SqlJson),
+}
+
+pub const DEFAULT_VARTIME_SCALE: u8 = 7;
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Time {
+    pub time_nanoseconds: u64,
+    pub scale: u8,
+}
+
+impl Time {
+    pub(crate) fn get_scale(&self) -> u8 {
+        self.scale
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct DateTime2 {
+    pub days: u32,
+    pub time: Time,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct DateTimeOffset {
+    pub datetime2: DateTime2,
+    pub offset: i16,
 }

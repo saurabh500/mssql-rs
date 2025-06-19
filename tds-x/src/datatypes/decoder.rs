@@ -6,7 +6,7 @@ use super::{
     sql_string::{get_encoding_type, SqlString},
     sqldatatypes::{TdsDataType, TypeInfoVariant},
 };
-use crate::datatypes::column_values::{ColumnValues, SqlXml};
+use crate::datatypes::column_values::{ColumnValues, DateTime2, DateTimeOffset, SqlXml, Time};
 use crate::datatypes::sqldatatypes::TypeInfo;
 use crate::{
     core::TdsResult,
@@ -127,15 +127,19 @@ impl GenericDecoder {
         tds_type: TdsDataType,
         data_length: u32,
     ) -> TdsResult<ColumnValues> {
-        let _scale = reader.read_byte().await?;
+        let scale = reader.read_byte().await?;
         Ok(match tds_type {
             TdsDataType::TimeN => {
-                let time_nanos = self.read_time(reader, data_length as u8).await?;
+                let time_nanos = self.read_time(reader, data_length as u8, scale).await?;
                 ColumnValues::Time(time_nanos)
             }
-            TdsDataType::DateTime2N => self.read_datetime2(reader, data_length as u8).await?,
+            TdsDataType::DateTime2N => {
+                self.read_datetime2(reader, data_length as u8, scale)
+                    .await?
+            }
             TdsDataType::DateTimeOffsetN => {
-                self.read_datetime_offset(reader, data_length as u8).await?
+                self.read_datetime_offset(reader, data_length as u8, scale)
+                    .await?
             }
             _ => {
                 unreachable!("For 1 byte property, only TimeN, DateTime2N and DateTimeOffsetN are expected, but got: {:?}", tds_type);
@@ -204,40 +208,53 @@ impl GenericDecoder {
         Ok(days)
     }
 
-    async fn read_time(&self, reader: &mut PacketReader<'_>, byte_len: u8) -> TdsResult<u64> {
+    async fn read_time(
+        &self,
+        reader: &mut PacketReader<'_>,
+        byte_len: u8,
+        scale: u8,
+    ) -> TdsResult<Time> {
         let nanoseconds = match byte_len {
             3 => reader.read_uint24().await? as u64,
             4 => reader.read_uint32().await? as u64,
             _ => reader.read_uint40().await?,
         };
-        Ok(nanoseconds)
+        Ok(Time {
+            time_nanoseconds: nanoseconds,
+            scale, // Default scale for TimeN
+        })
     }
 
     async fn read_datetime2(
         &self,
         reader: &mut PacketReader<'_>,
         byte_len: u8,
+        scale: u8,
     ) -> TdsResult<ColumnValues> {
         let days = Self::read_date(reader).await?;
-        let time_nanos = self.read_time(reader, byte_len - 3).await?;
-
-        Ok(ColumnValues::DateTime2 { days, time_nanos })
+        let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
+        let datetime2 = DateTime2 {
+            days,
+            time: time_nanos,
+        };
+        Ok(ColumnValues::DateTime2(datetime2))
     }
 
     async fn read_datetime_offset(
         &self,
         reader: &mut PacketReader<'_>,
         byte_len: u8,
+        scale: u8,
     ) -> TdsResult<ColumnValues> {
         let days = Self::read_date(reader).await?;
-        let time_nanos = self.read_time(reader, byte_len - 3).await?;
+        let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
         let offset = reader.read_int16().await?;
-
-        Ok(ColumnValues::DateTimeOffset {
+        let datetime2 = DateTime2 {
             days,
-            time_nanos,
-            offset,
-        })
+            time: time_nanos,
+        };
+        let datetime_offset = DateTimeOffset { datetime2, offset };
+        Ok(ColumnValues::DateTimeOffset(datetime_offset))
     }
 
     async fn read_intn(
@@ -508,21 +525,31 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                 let length = reader.read_byte().await?;
                 match length {
                     0 => return Ok(ColumnValues::Null),
-                    _ => return Ok(ColumnValues::Time(self.read_time(reader, length).await?)),
+                    _ => {
+                        return Ok(ColumnValues::Time(
+                            self.read_time(reader, length, metadata.get_scale()).await?,
+                        ))
+                    }
                 }
             }
             TdsDataType::DateTime2N => {
                 let length = reader.read_byte().await?;
                 match length {
                     0 => Ok(ColumnValues::Null),
-                    _ => self.read_datetime2(reader, length).await,
+                    _ => {
+                        self.read_datetime2(reader, length, metadata.get_scale())
+                            .await
+                    }
                 }
             }?,
             TdsDataType::DateTimeOffsetN => {
                 let length = reader.read_byte().await?;
                 match length {
                     0 => Ok(ColumnValues::Null),
-                    _ => self.read_datetime_offset(reader, length).await,
+                    _ => {
+                        self.read_datetime_offset(reader, length, metadata.get_scale())
+                            .await
+                    }
                 }
             }?,
             TdsDataType::Image => {

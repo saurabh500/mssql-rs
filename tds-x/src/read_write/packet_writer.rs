@@ -164,6 +164,17 @@ impl<'a> PacketWriter<'a> {
         self.handle_overflow_if_needed().await
     }
 
+    pub(crate) async fn write_partial_u64_async(
+        &mut self,
+        value: u64,
+        length: u8,
+    ) -> TdsResult<()> {
+        // Write the value as a little-endian value, but only the first `length` bytes.
+        let bytes = value.to_le_bytes();
+        let _ = self.payload_cursor.write_all(&bytes[..length as usize]);
+        self.handle_overflow_if_needed().await
+    }
+
     pub(crate) async fn write_string_ascii_async(&mut self, _value: &str) -> TdsResult<()> {
         todo!()
     }

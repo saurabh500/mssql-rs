@@ -37,6 +37,13 @@ impl ColumnMetadata {
             TypeInfoVariant::PartialLen(_, _, _, _, _)
         )
     }
+    pub fn get_scale(&self) -> u8 {
+        match self.type_info.type_info_variant {
+            TypeInfoVariant::VarLenScale(_, scale) => scale,
+            TypeInfoVariant::VarLenPrecisionScale(_, _, _, scale) => scale,
+            _ => unreachable!("get_scale called on a type that does not have scale"),
+        }
+    }
 }
 
 impl fmt::Display for ColumnMetadata {

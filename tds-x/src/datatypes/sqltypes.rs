@@ -1,7 +1,9 @@
 use byteorder::{ByteOrder, LittleEndian};
 use uuid::Uuid;
 
-use crate::datatypes::column_values::SqlXml;
+use crate::datatypes::column_values::{
+    DateTime2, DateTimeOffset, SqlXml, Time, DEFAULT_VARTIME_SCALE,
+};
 use crate::{
     core::TdsResult,
     datatypes::{
@@ -28,17 +30,9 @@ pub enum SqlType {
     Money(Option<MoneyParts>),
     SmallMoney(Option<MoneyParts>),
 
-    // TODO: Will be migrated to the time struct in future
-    Time(u64),
-    DateTime2 {
-        days: u32,
-        time_nanos: u64,
-    },
-    DateTimeOffset {
-        days: u32,
-        time_nanos: u64,
-        offset: i16,
-    },
+    Time(Option<Time>),
+    DateTime2(Option<DateTime2>),
+    DateTimeOffset(Option<DateTimeOffset>),
     SmallDateTime {
         day: u16,
         time: u16,
@@ -112,16 +106,9 @@ impl SqlType {
             SqlType::Json(_) => todo!(),
             SqlType::Money(_) => todo!(),
             SqlType::SmallMoney(_) => todo!(),
-            SqlType::Time(_) => todo!(),
-            SqlType::DateTime2 {
-                days: _,
-                time_nanos: _,
-            } => todo!(),
-            SqlType::DateTimeOffset {
-                days: _,
-                time_nanos: _,
-                offset: _,
-            } => todo!(),
+            SqlType::Time(_) => TdsDataType::TimeN,
+            SqlType::DateTime2(_) => TdsDataType::DateTime2N,
+            SqlType::DateTimeOffset(_) => TdsDataType::DateTimeOffsetN,
             SqlType::SmallDateTime { day: _, time: _ } => todo!(),
             SqlType::NVarcharMax(_) => TdsDataType::NVarChar,
             SqlType::Varchar(_, _) => TdsDataType::BigVarChar,
@@ -171,16 +158,14 @@ impl SqlType {
             SqlType::Json(_) => todo!(),
             SqlType::Money(_) => todo!(),
             SqlType::SmallMoney(_) => todo!(),
-            SqlType::Time(_) => todo!(),
-            SqlType::DateTime2 {
-                days: _,
-                time_nanos: _,
-            } => todo!(),
-            SqlType::DateTimeOffset {
-                days: _,
-                time_nanos: _,
-                offset: _,
-            } => todo!(),
+            SqlType::Time(time) => self.serialize_time(packet_writer, time).await?,
+            SqlType::DateTime2(datetime2) => {
+                self.serialize_datetime2(packet_writer, datetime2).await?
+            }
+            SqlType::DateTimeOffset(datetimeoffset) => {
+                self.serialize_datetimeoffset(packet_writer, datetimeoffset)
+                    .await?
+            }
             SqlType::SmallDateTime { day: _, time: _ } => todo!(),
             SqlType::NVarchar(sql_string, _) => {
                 self.serialize_nvarchar(packet_writer, db_collation, sql_string)
@@ -552,6 +537,183 @@ impl SqlType {
         };
         Ok(())
     }
+
+    async fn serialize_datetime2(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        datetime2: &Option<DateTime2>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+
+        match datetime2 {
+            Some(datetime2val) => {
+                let t = &datetime2val.time;
+
+                let scale = t.get_scale();
+
+                let byte_count_for_date = 3; // Datetime2 has 3 bytes for the date.
+
+                let byte_count_for_time = get_scale_based_length(t)?;
+
+                let length = byte_count_for_time + byte_count_for_date;
+
+                let scale_adjusted_time = get_scale_adjusted_time(t)?;
+
+                packet_writer.write_byte_async(scale).await?;
+
+                packet_writer.write_byte_async(length).await?;
+
+                // Write the time in nanoseconds.
+                packet_writer
+                    .write_partial_u64_async(scale_adjusted_time, byte_count_for_time)
+                    .await?;
+
+                // Write the day count.
+                packet_writer
+                    .write_partial_u64_async(datetime2val.days as u64, byte_count_for_date)
+                    .await?;
+            }
+            None => {
+                write_default_scale_and_null(packet_writer).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn serialize_datetimeoffset(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        datetimeoffset: &Option<DateTimeOffset>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+
+        match datetimeoffset {
+            Some(datetimeoffset) => {
+                let t = &datetimeoffset.datetime2.time;
+                let scale = t.get_scale();
+
+                let byte_count_for_offset = 2; // Datetimeoffset has 2 bytes for the offset.
+
+                let byte_count_for_date = 3; // Datetime2 has 3 bytes for the date.
+
+                let byte_count_for_time = get_scale_based_length(t)?;
+
+                let length = byte_count_for_time + byte_count_for_date + byte_count_for_offset;
+
+                let scale_adjusted_time = get_scale_adjusted_time(t)?;
+
+                packet_writer.write_byte_async(scale).await?;
+
+                packet_writer.write_byte_async(length).await?;
+
+                // Write the time in nanoseconds.
+                packet_writer
+                    .write_partial_u64_async(scale_adjusted_time, byte_count_for_time)
+                    .await?;
+                // Write the day count.
+                packet_writer
+                    .write_partial_u64_async(
+                        datetimeoffset.datetime2.days as u64,
+                        byte_count_for_date,
+                    )
+                    .await?;
+
+                // Write the offset:  2-byte signed
+                // integer that represents the time zone offset as the number of minutes from UTC. The time zone offset
+                // MUST be between -840 and 840.
+                packet_writer.write_i16_async(datetimeoffset.offset).await?;
+            }
+            None => {
+                write_default_scale_and_null(packet_writer).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn serialize_time(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        time: &Option<Time>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+
+        match time {
+            Some(t) => {
+                let scale = t.get_scale();
+
+                let scale_based_byte_length = get_scale_based_length(t)?;
+
+                let scale_adjusted_time = get_scale_adjusted_time(t)?;
+
+                packet_writer.write_byte_async(scale).await?;
+
+                packet_writer
+                    .write_byte_async(scale_based_byte_length)
+                    .await?;
+
+                // Write the time in nanoseconds.
+                packet_writer
+                    .write_partial_u64_async(scale_adjusted_time, scale_based_byte_length)
+                    .await?;
+            }
+            None => {
+                write_default_scale_and_null(packet_writer).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
+// We are taking the map from the protocol documentation that defines the scale.
+// However the scale essentially defines the precision of the time and
+// the length of bytes can be computed from the scale. But since
+// this is documented, we will use this map.
+fn get_scale_based_length(time: &Time) -> TdsResult<u8> {
+    let scale_based_byte_length: u8 = match time.scale {
+        1 | 2 => 0x03,
+        3 | 4 => 0x04,
+        5..=7 => 0x05,
+        _ => {
+            return Err(Error::UsageError(
+                format!("Invalid scale for Time type. {}", time.scale).to_string(),
+            ))
+        }
+    };
+    Ok(scale_based_byte_length)
+}
+
+async fn write_default_scale_and_null(packet_writer: &mut PacketWriter<'_>) -> TdsResult<()> {
+    // Since we dont have a scale, we will send out the default scale.
+    // This doesn't matter, if the following data is NULL.
+    packet_writer
+        .write_byte_async(DEFAULT_VARTIME_SCALE)
+        .await?;
+    // Write 0 length to signify that the data is NULL.
+    packet_writer.write_byte_async(NULL_LENGTH).await?;
+    Ok(())
+}
+
+fn get_scale_adjusted_time(t: &Time) -> TdsResult<u64> {
+    let scale = t.get_scale();
+    let divider = match scale {
+        1 => 1_000_001,
+        2 => 100_000,
+        3 => 10_000,
+        4 => 1_000,
+        5 => 100,
+        6 => 10,
+        7 => 1,
+        _ => {
+            return Err(Error::UsageError(
+                "Invalid scale for Time type.".to_string(),
+            ))
+        }
+    };
+    let scale_adjusted_time = t.time_nanoseconds / divider;
+    Ok(scale_adjusted_time)
 }
 
 impl TryFrom<&SqlType> for FixedLengthTypes {
@@ -570,6 +732,329 @@ impl TryFrom<&SqlType> for FixedLengthTypes {
                 "SqlType is not a fixed length type.".to_string(),
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod datetime_tests {
+    use std::io::Cursor;
+
+    use bytes::Buf;
+
+    use crate::{
+        datatypes::{
+            column_values::{DateTime2, DateTimeOffset, Time, DEFAULT_VARTIME_SCALE},
+            sqldatatypes::TdsDataType,
+            sqltypes::{get_scale_adjusted_time, get_scale_based_length, SqlType, NULL_LENGTH},
+        },
+        read_write::{packet_reader::tests::MockNetworkReaderWriter, packet_writer::PacketWriter},
+    };
+
+    #[tokio::test]
+    async fn test_write_datetime2() {
+        let nanoseconds = 4_300_001;
+        let time = Time {
+            time_nanoseconds: nanoseconds,
+            scale: 5,
+        };
+        let datetime2 = DateTime2 {
+            time: time.clone(),
+            days: 1_000,
+        };
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            crate::message::messages::PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let datetime2_val = Some(datetime2.clone());
+        let sqltype_datetime2 = SqlType::DateTime2(datetime2_val.clone());
+
+        // Test
+        sqltype_datetime2
+            .serialize_datetime2(&mut packet_writer, &datetime2_val)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+        let byte_len = get_scale_based_length(&time).unwrap() + 3;
+        let mut written_bytes = vec![0u8; byte_len as usize];
+        let test_time_bytes =
+            get_partial_bytes(get_scale_adjusted_time(&time).unwrap(), byte_len - 3);
+        let test_days_bytes = get_partial_bytes(datetime2.days as u64, 3);
+        let payload = mock_reader_writer.get_written_data();
+
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::DateTime2N as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), time.scale); // Validate scale
+        assert_eq!(test_cursor.get_u8(), byte_len); // Validate byte length
+        test_cursor.copy_to_slice(&mut written_bytes);
+        // Validate time portions
+        assert_eq!(written_bytes[0..((byte_len - 3) as usize)], test_time_bytes);
+        // Validate time portions
+        assert_eq!(written_bytes[((byte_len - 3) as usize)..], test_days_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_write_null_datetime2() {
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            crate::message::messages::PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let sqltype_datetime2 = SqlType::DateTime2(None);
+
+        // Test
+        sqltype_datetime2
+            .serialize_datetime2(&mut packet_writer, &None)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::DateTime2N as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), DEFAULT_VARTIME_SCALE); // Validate scale
+        assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // Validate byte length
+    }
+
+    #[tokio::test]
+    async fn test_write_datetimeoffset() {
+        let nanoseconds = 4_300_001;
+        let time = Time {
+            time_nanoseconds: nanoseconds,
+            scale: 5,
+        };
+        let datetime2 = DateTime2 {
+            time: time.clone(),
+            days: 1_000,
+        };
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            crate::message::messages::PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+        let datetimeoffset = DateTimeOffset {
+            datetime2: datetime2.clone(),
+            offset: 120, // Example offset in minutes
+        };
+        let datetimeoffset_val = Some(datetimeoffset.clone());
+        let sqltype_datetimeoffset = SqlType::DateTimeOffset(datetimeoffset_val.clone());
+
+        // Test
+        sqltype_datetimeoffset
+            .serialize_datetimeoffset(&mut packet_writer, &datetimeoffset_val)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+        let byte_len = get_scale_based_length(&time).unwrap() + 3 + 2;
+        let mut written_bytes = vec![0u8; (byte_len - 2) as usize];
+        let test_time_bytes =
+            get_partial_bytes(get_scale_adjusted_time(&time).unwrap(), byte_len - 5);
+        let test_days_bytes = get_partial_bytes(datetime2.days as u64, 3);
+        let payload = mock_reader_writer.get_written_data();
+
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::DateTimeOffsetN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), time.scale); // Validate scale
+        assert_eq!(test_cursor.get_u8(), byte_len); // Validate byte length
+        test_cursor.copy_to_slice(&mut written_bytes);
+        // Validate time portions
+        assert_eq!(written_bytes[0..((byte_len - 5) as usize)], test_time_bytes);
+        // Validate time portions
+        assert_eq!(written_bytes[((byte_len - 5) as usize)..], test_days_bytes);
+        // Validate offset
+        assert_eq!(test_cursor.get_i16_le(), datetimeoffset.offset); // Validate offset
+    }
+
+    #[tokio::test]
+    async fn test_write_null_datetimeoffset() {
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            crate::message::messages::PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let sqltype_datetimeoffset = SqlType::DateTimeOffset(None);
+
+        // Test
+        sqltype_datetimeoffset
+            .serialize_datetimeoffset(&mut packet_writer, &None)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::DateTimeOffsetN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), DEFAULT_VARTIME_SCALE); // Validate scale
+        assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // Validate byte length
+    }
+
+    #[tokio::test]
+    async fn test_write_time() {
+        let nanoseconds = 1_000_001;
+        let time = Time {
+            time_nanoseconds: nanoseconds,
+            scale: 1,
+        };
+        let mut mock_reader_writer =
+            crate::read_write::packet_reader::tests::MockNetworkReaderWriter::default();
+        let mut packet_writer = crate::read_write::packet_writer::PacketWriter::new(
+            crate::message::messages::PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+        let time_val = Some(time.clone());
+        let sqltype_time = SqlType::Time(time_val.clone());
+
+        // Test
+        sqltype_time
+            .serialize_time(&mut packet_writer, &time_val)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+        let byte_len = get_scale_based_length(&time).unwrap();
+        let mut written_bytes = vec![0u8; byte_len as usize];
+        let test_bytes = get_partial_bytes(get_scale_adjusted_time(&time).unwrap(), byte_len);
+
+        let payload = mock_reader_writer.get_written_data();
+
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::TimeN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), time.scale); // Validate scale
+        assert_eq!(test_cursor.get_u8(), byte_len); // Validate byte length
+        test_cursor.copy_to_slice(&mut written_bytes);
+        assert_eq!(written_bytes, test_bytes); // size for Some Data
+    }
+
+    #[tokio::test]
+    async fn test_write_null_time() {
+        let mut mock_reader_writer =
+            crate::read_write::packet_reader::tests::MockNetworkReaderWriter::default();
+        let mut packet_writer = crate::read_write::packet_writer::PacketWriter::new(
+            crate::message::messages::PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let sqltype_time = SqlType::Time(None);
+
+        // Test
+        sqltype_time
+            .serialize_time(&mut packet_writer, &None)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::TimeN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), DEFAULT_VARTIME_SCALE); // Validate scale
+        assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // Validate byte length
+    }
+
+    fn get_partial_bytes(value: u64, length: u8) -> Vec<u8> {
+        let bytes = value.to_le_bytes();
+        bytes[..length as usize].to_vec()
+    }
+
+    #[test]
+    fn test_scale_based_length() {
+        for scale in 1..=7 {
+            let time = Time {
+                time_nanoseconds: 0,
+                scale,
+            };
+            let length = get_scale_based_length(&time).unwrap();
+            match scale {
+                1 | 2 => assert_eq!(length, 0x03),
+                3 | 4 => assert_eq!(length, 0x04),
+                5..=7 => assert_eq!(length, 0x05),
+                _ => panic!("Invalid scale: {}", scale),
+            }
+        }
+
+        // Test an invalid scale
+        let time = Time {
+            time_nanoseconds: 0,
+            scale: 8, // Invalid scale
+        };
+        let result = get_scale_based_length(&time);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_scale_adjusted_time() {
+        let time = Time {
+            time_nanoseconds: 1_000_001, // 100 nanoseconds
+            scale: 1,
+        };
+        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
+        assert_eq!(adjusted_time, 1);
+
+        let time = Time {
+            time_nanoseconds: 1_000_001,
+            scale: 2,
+        };
+        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
+        assert_eq!(adjusted_time, 10);
+        let time = Time {
+            time_nanoseconds: 1_000_001,
+            scale: 3,
+        };
+        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
+        assert_eq!(adjusted_time, 1_00);
+        let time = Time {
+            time_nanoseconds: 1_000_001,
+            scale: 4,
+        };
+        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
+        assert_eq!(adjusted_time, 1_000); // 100 microseconds
+        let time = Time {
+            time_nanoseconds: 1_000_001, // 1 millisecond
+            scale: 5,
+        };
+        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
+        assert_eq!(adjusted_time, 10_000); // 1 millisecond
+        let time = Time {
+            time_nanoseconds: 1_000_001, // 10 milliseconds
+            scale: 6,
+        };
+        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
+        assert_eq!(adjusted_time, 100_000);
+
+        let time = Time {
+            time_nanoseconds: 1_000_001,
+            scale: 7,
+        };
+        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
+        assert_eq!(adjusted_time, 1_000_001); // 100 milliseconds
     }
 }
 

@@ -90,7 +90,20 @@ impl TdsDataType {
             TdsDataType::TimeN => "time",
             TdsDataType::DateTime2N => "datetime2",
             TdsDataType::DateTimeOffsetN => "datetimeoffset",
-            _ => unreachable!("Unsupported TDS data type: {:?} for meta type name", self),
+            TdsDataType::VarChar => "varchar",
+            TdsDataType::VarBinary => "varbinary",
+            TdsDataType::Void => todo!(),
+            TdsDataType::IntN => todo!(),
+            TdsDataType::Binary => todo!(),
+            TdsDataType::Char => todo!(),
+            TdsDataType::Decimal => todo!(),
+            TdsDataType::Numeric => todo!(),
+            TdsDataType::BitN => todo!(),
+            TdsDataType::NumericN => todo!(),
+            TdsDataType::FltN => todo!(),
+            TdsDataType::MoneyN => todo!(),
+            TdsDataType::DateTimeN => todo!(),
+            TdsDataType::None => todo!(),
         }
     }
 }

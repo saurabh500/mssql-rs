@@ -1,5 +1,6 @@
 use bitflags::bitflags;
 
+use crate::datatypes::column_values::DEFAULT_VARTIME_SCALE;
 use crate::datatypes::encoder::SqlValueEncoder;
 use crate::datatypes::sqltypes::SqlType;
 use crate::{
@@ -47,7 +48,9 @@ impl<'b> RpcParameter<'b> {
         let type_name = tds_type.get_meta_type_name();
 
         let len_in_metadata = match value {
-            SqlType::NVarcharMax(_) | SqlType::VarBinaryMax(_) => "MAX".to_string(),
+            SqlType::NVarcharMax(_) | SqlType::VarBinaryMax(_) | SqlType::VarcharMax(_) => {
+                "MAX".to_string()
+            }
             SqlType::Varchar(_, len) | SqlType::VarBinary(_, len) | SqlType::NVarchar(_, len) => {
                 // The user may have specified an incorrect length.
                 // But we will send it across without tampering and let the server handle it.
@@ -55,6 +58,29 @@ impl<'b> RpcParameter<'b> {
                 // that the intention of the user is translated. The same params will also be used by server
                 // for prepared statements. Hence we shouldn't try to be intelligent here.
                 len.to_string()
+            }
+            SqlType::Time(time) => {
+                // For time, we need to send the scale as the length.
+                match time {
+                    // If the time is not specified, we assume the default scale.
+                    // This is a common case for time types.
+                    Some(time) => time.get_scale().to_string(),
+                    _ => DEFAULT_VARTIME_SCALE.to_string(), // Default scale for Time
+                }
+            }
+            SqlType::DateTime2(datetime2) => {
+                // For DateTime2, we need to send the scale as the length.
+                match datetime2 {
+                    Some(val) => val.time.get_scale().to_string(),
+                    None => DEFAULT_VARTIME_SCALE.to_string(), // Default scale for DateTime2
+                }
+            }
+            SqlType::DateTimeOffset(datetimeoffset) => {
+                // For DateTimeoffset, we need to send the scale as the length.
+                match datetimeoffset {
+                    Some(val) => val.datetime2.time.get_scale().to_string(),
+                    None => DEFAULT_VARTIME_SCALE.to_string(), // Default scale for DateTimeOffset
+                }
             }
             _ => "".to_string(),
         };
@@ -159,23 +185,69 @@ impl From<&SqlType> for TdsDataType {
             SqlType::Json(_) => TdsDataType::Json,
             SqlType::Money(_) => todo!(),
             SqlType::SmallMoney(_) => todo!(),
-            SqlType::Time(_) => todo!(),
-            SqlType::DateTime2 {
-                days: _,
-                time_nanos: _,
-            } => todo!(),
-            SqlType::DateTimeOffset {
-                days: _,
-                time_nanos: _,
-                offset: _,
-            } => todo!(),
+            SqlType::Time(_) => TdsDataType::TimeN,
+            SqlType::DateTime2(_) => TdsDataType::DateTime2N,
+            SqlType::DateTimeOffset(_) => TdsDataType::DateTimeOffsetN,
             SqlType::SmallDateTime { day: _, time: _ } => todo!(),
-            SqlType::NVarcharMax(_) => todo!(),
-            SqlType::Varchar(_, _) => todo!(),
-            SqlType::VarcharMax(_) => todo!(),
-            SqlType::VarBinaryMax(_) => todo!(),
+            SqlType::NVarcharMax(_) => TdsDataType::NVarChar,
+            SqlType::Varchar(_, _) => TdsDataType::VarChar,
+            SqlType::VarcharMax(_) => TdsDataType::VarChar,
+            SqlType::VarBinaryMax(_) => TdsDataType::VarBinary,
             SqlType::Xml(_) => todo!(),
             SqlType::Uuid(_) => todo!(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::datatypes::sqltypes::SqlType;
+    use crate::message::parameters::rpc_parameters::RpcParameter;
+
+    #[test]
+    fn test_get_sql_names() {
+        let sql_type = SqlType::NVarchar(None, 50);
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "nvarchar(50)".to_string());
+
+        let sql_type = SqlType::VarBinary(None, 100);
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "varbinary(100)".to_string());
+
+        let sql_type = SqlType::Time(None);
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "time(7)".to_string());
+
+        let sql_type = SqlType::DateTimeOffset(None);
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "datetimeoffset(7)".to_string());
+
+        let sql_type = SqlType::DateTime2(None);
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "datetime2(7)".to_string());
+
+        let sql_type = SqlType::NVarcharMax(None);
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "nvarchar(MAX)".to_string());
+
+        let sql_type = SqlType::VarcharMax(None);
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "varchar(MAX)".to_string());
+
+        let sql_type = SqlType::NVarchar(None, 4000);
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "nvarchar(4000)".to_string());
+
+        let sql_type = SqlType::Varchar(None, 4000);
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "varchar(4000)".to_string());
+
+        let sql_type = SqlType::VarBinary(None, 4000);
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "varbinary(4000)".to_string());
+
+        let sql_type = SqlType::VarBinaryMax(None);
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "varbinary(MAX)".to_string());
     }
 }
