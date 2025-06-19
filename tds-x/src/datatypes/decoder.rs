@@ -6,7 +6,9 @@ use super::{
     sql_string::{get_encoding_type, SqlString},
     sqldatatypes::{TdsDataType, TypeInfoVariant},
 };
-use crate::datatypes::column_values::{ColumnValues, DateTime2, DateTimeOffset, SqlXml, Time};
+use crate::datatypes::column_values::{
+    ColumnValues, DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlSmallDateTime, SqlXml, Time,
+};
 use crate::datatypes::sqldatatypes::TypeInfo;
 use crate::{
     core::TdsResult,
@@ -190,22 +192,28 @@ impl GenericDecoder {
         }))
     }
 
-    async fn read_datetime(&self, reader: &mut PacketReader<'_>) -> TdsResult<(i32, u32)> {
+    async fn read_datetime(&self, reader: &mut PacketReader<'_>) -> TdsResult<SqlDateTime> {
         let days = reader.read_int32().await?;
         let ticks = reader.read_uint32().await?;
 
-        Ok((days, ticks))
+        Ok(SqlDateTime { days, time: ticks })
     }
 
-    async fn read_small_datetime(&self, reader: &mut PacketReader<'_>) -> TdsResult<(u16, u16)> {
+    async fn read_small_datetime(
+        &self,
+        reader: &mut PacketReader<'_>,
+    ) -> TdsResult<SqlSmallDateTime> {
         let days = reader.read_uint16().await?;
         let minutes = reader.read_uint16().await?;
-        Ok((days, minutes))
+        Ok(SqlSmallDateTime {
+            days,
+            time: minutes,
+        })
     }
 
-    async fn read_date(reader: &mut PacketReader<'_>) -> TdsResult<u32> {
+    async fn read_date(reader: &mut PacketReader<'_>) -> TdsResult<SqlDate> {
         let days = reader.read_uint24().await?;
-        Ok(days)
+        Ok(SqlDate::unchecked_create(days))
     }
 
     async fn read_time(
@@ -231,10 +239,10 @@ impl GenericDecoder {
         byte_len: u8,
         scale: u8,
     ) -> TdsResult<ColumnValues> {
-        let days = Self::read_date(reader).await?;
+        let sql_date = Self::read_date(reader).await?;
         let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
         let datetime2 = DateTime2 {
-            days,
+            days: sql_date.get_days(),
             time: time_nanos,
         };
         Ok(ColumnValues::DateTime2(datetime2))
@@ -246,11 +254,11 @@ impl GenericDecoder {
         byte_len: u8,
         scale: u8,
     ) -> TdsResult<ColumnValues> {
-        let days = Self::read_date(reader).await?;
+        let sql_date = Self::read_date(reader).await?;
         let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
         let offset = reader.read_int16().await?;
         let datetime2 = DateTime2 {
-            days,
+            days: sql_date.get_days(),
             time: time_nanos,
         };
         let datetime_offset = DateTimeOffset { datetime2, offset };
@@ -510,8 +518,8 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
                     return Ok(ColumnValues::Null);
                 } else if length == 4 {
                     // SmallDateTime
-                    let (days, minutes) = self.read_small_datetime(reader).await?;
-                    return Ok(ColumnValues::DateTime((days as i32, minutes as u32)));
+                    let smalldatetime = self.read_small_datetime(reader).await?;
+                    return Ok(ColumnValues::SmallDateTime(smalldatetime));
                 } else {
                     // DateTime
                     return Ok(ColumnValues::DateTime(self.read_datetime(reader).await?));
@@ -584,10 +592,10 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
             TdsDataType::DateTim4 => {
                 let daypart = reader.read_uint16().await?;
                 let timepart = reader.read_uint16().await?;
-                ColumnValues::SmallDateTime {
-                    day: daypart,
+                ColumnValues::SmallDateTime(SqlSmallDateTime {
+                    days: daypart,
                     time: timepart,
-                }
+                })
             }
             _ => unimplemented!("Data type not implemented: {:?}", metadata.data_type),
         };

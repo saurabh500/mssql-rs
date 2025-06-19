@@ -2,7 +2,8 @@ use byteorder::{ByteOrder, LittleEndian};
 use uuid::Uuid;
 
 use crate::datatypes::column_values::{
-    DateTime2, DateTimeOffset, SqlXml, Time, DEFAULT_VARTIME_SCALE,
+    DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlSmallDateTime, SqlXml, Time,
+    DEFAULT_VARTIME_SCALE,
 };
 use crate::{
     core::TdsResult,
@@ -33,10 +34,9 @@ pub enum SqlType {
     Time(Option<Time>),
     DateTime2(Option<DateTime2>),
     DateTimeOffset(Option<DateTimeOffset>),
-    SmallDateTime {
-        day: u16,
-        time: u16,
-    },
+    SmallDateTime(Option<SqlSmallDateTime>),
+    DateTime(Option<SqlDateTime>),
+    Date(Option<SqlDate>),
 
     /// Represents a Varchar with a specifiied length.
     NVarchar(Option<SqlString>, u32),
@@ -109,7 +109,9 @@ impl SqlType {
             SqlType::Time(_) => TdsDataType::TimeN,
             SqlType::DateTime2(_) => TdsDataType::DateTime2N,
             SqlType::DateTimeOffset(_) => TdsDataType::DateTimeOffsetN,
-            SqlType::SmallDateTime { day: _, time: _ } => todo!(),
+            SqlType::DateTime(_) => TdsDataType::DateTimeN,
+            SqlType::Date(_) => TdsDataType::DateN,
+            SqlType::SmallDateTime(_) => TdsDataType::DateTimeN,
             SqlType::NVarcharMax(_) => TdsDataType::NVarChar,
             SqlType::Varchar(_, _) => TdsDataType::BigVarChar,
             SqlType::VarcharMax(_) => TdsDataType::BigVarChar,
@@ -166,7 +168,12 @@ impl SqlType {
                 self.serialize_datetimeoffset(packet_writer, datetimeoffset)
                     .await?
             }
-            SqlType::SmallDateTime { day: _, time: _ } => todo!(),
+            SqlType::SmallDateTime(smalldatetime) => {
+                self.serialize_smalldatetime(packet_writer, smalldatetime)
+                    .await?
+            }
+            SqlType::DateTime(datetime) => self.serialize_datetime(packet_writer, datetime).await?,
+            SqlType::Date(sqldate) => self.serialize_date(packet_writer, sqldate).await?,
             SqlType::NVarchar(sql_string, _) => {
                 self.serialize_nvarchar(packet_writer, db_collation, sql_string)
                     .await?
@@ -665,6 +672,84 @@ impl SqlType {
         }
         Ok(())
     }
+
+    async fn serialize_datetime(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        date: &Option<SqlDateTime>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+        let byte_len = 8; // DateTime is 8 bytes for non-null datetime.
+                          // Write the length of datatype
+        packet_writer.write_byte_async(byte_len).await?;
+        match date {
+            Some(datetime) => {
+                // Write the length of the data.
+                packet_writer.write_byte_async(byte_len).await?;
+                packet_writer.write_i32_async(datetime.days).await?;
+                packet_writer.write_u32_async(datetime.time).await?;
+            }
+            None => {
+                // Write 0 length to signify that the data is NULL.
+                packet_writer.write_byte_async(NULL_LENGTH).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn serialize_date(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        date: &Option<SqlDate>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+        let byte_len = 3; // Date is always 3 byes for non-null dates.
+                          // Write the length of the dateN byte len.
+        packet_writer.write_byte_async(byte_len).await?;
+        match date {
+            Some(d) => {
+                packet_writer.write_byte_async(byte_len).await?;
+                // Write the date.
+                packet_writer
+                    .write_partial_u64_async(d.get_days() as u64, 3)
+                    .await?;
+            }
+            None => {
+                // Write 0 length to signify that the data is NULL.
+                packet_writer.write_byte_async(NULL_LENGTH).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn serialize_smalldatetime(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        smalldatetime: &Option<SqlSmallDateTime>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+        let len = size_of::<u32>() as u8;
+        // Write the length of the date.
+        packet_writer.write_byte_async(len).await?;
+
+        match smalldatetime {
+            Some(d) => {
+                // Write the length of the data.
+                packet_writer.write_byte_async(len).await?;
+                // Write the date.
+                packet_writer.write_u16_async(d.days).await?;
+                packet_writer.write_u16_async(d.time).await?;
+            }
+            None => {
+                // Write 0 length to signify that the data is NULL.
+                packet_writer.write_byte_async(NULL_LENGTH).await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 // We are taking the map from the protocol documentation that defines the scale.
@@ -743,12 +828,217 @@ mod datetime_tests {
 
     use crate::{
         datatypes::{
-            column_values::{DateTime2, DateTimeOffset, Time, DEFAULT_VARTIME_SCALE},
+            column_values::{
+                DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlSmallDateTime, Time,
+                DEFAULT_VARTIME_SCALE,
+            },
             sqldatatypes::TdsDataType,
             sqltypes::{get_scale_adjusted_time, get_scale_based_length, SqlType, NULL_LENGTH},
         },
+        message::messages::PacketType,
         read_write::{packet_reader::tests::MockNetworkReaderWriter, packet_writer::PacketWriter},
     };
+
+    #[tokio::test]
+    async fn test_write_date() {
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let days = 5u32;
+        let sqldate = SqlDate::unchecked_create(days);
+        let dateval = Some(sqldate.clone());
+        let sqldate = SqlType::Date(dateval.clone());
+
+        // Test
+        sqldate
+            .serialize_date(&mut packet_writer, &dateval)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+
+        let byte_len = 3;
+
+        let payload = mock_reader_writer.get_written_data();
+        let test_bytes = get_partial_bytes(days as u64, 3);
+        let mut written_bytes = vec![0u8; byte_len as usize];
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::DateN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), byte_len); // Validate type length
+        assert_eq!(test_cursor.get_u8(), byte_len); // Validate data length
+        test_cursor.copy_to_slice(&mut written_bytes);
+        assert_eq!(written_bytes, test_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_write_null_date() {
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let sqldate = SqlType::Date(None);
+
+        // Test
+        sqldate
+            .serialize_date(&mut packet_writer, &None)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::DateN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), 3); // Validate type length
+        assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // Validate byte length
+    }
+
+    #[tokio::test]
+    async fn test_write_datetime() {
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let days = 5i32;
+        let time = 1_234_567u32;
+        let sqldatetime = SqlDateTime {
+            days,
+            time, // Example time in nanoseconds
+        };
+        let datetimeval = Some(sqldatetime.clone());
+        let sqldatetime = SqlType::DateTime(datetimeval.clone());
+
+        // Test
+        sqldatetime
+            .serialize_datetime(&mut packet_writer, &datetimeval)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+
+        let byte_len = 8;
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::DateTimeN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), byte_len); // Validate byte length
+        assert_eq!(test_cursor.get_u8(), byte_len); // Validate data length
+        assert_eq!(test_cursor.get_i32_le(), days);
+        assert_eq!(test_cursor.get_u32_le(), time);
+    }
+
+    #[tokio::test]
+    async fn test_write_null_datetime() {
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let sqldatetime = SqlType::DateTime(None);
+
+        // Test
+        sqldatetime
+            .serialize_datetime(&mut packet_writer, &None)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::DateTimeN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), 8); // Validate type length
+        assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // Validate byte length
+    }
+
+    #[tokio::test]
+    async fn test_write_smalldatetime() {
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let days = 5u16;
+        let time = 34_567u16;
+        let smallsqldatetime = SqlSmallDateTime {
+            days,
+            time, // Example time in nanoseconds
+        };
+        let smalldatetimeval = Some(smallsqldatetime.clone());
+        let sqldatetime = SqlType::SmallDateTime(smalldatetimeval.clone());
+
+        // Test
+        sqldatetime
+            .serialize_smalldatetime(&mut packet_writer, &smalldatetimeval)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+
+        let byte_len = 4;
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::DateTimeN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), byte_len); // Validate byte length
+        assert_eq!(test_cursor.get_u8(), byte_len); // Validate data length
+
+        assert_eq!(test_cursor.get_u16_le(), days);
+        assert_eq!(test_cursor.get_u16_le(), time);
+    }
+
+    #[tokio::test]
+    async fn test_write_null_smalldatetime() {
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let sqldatetime = SqlType::SmallDateTime(None);
+
+        // Test
+        sqldatetime
+            .serialize_smalldatetime(&mut packet_writer, &None)
+            .await
+            .unwrap();
+
+        packet_writer.finalize().await.unwrap();
+
+        let byte_len = 4;
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::DateTimeN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), byte_len); // Validate type length
+
+        assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // Validate byte length
+    }
 
     #[tokio::test]
     async fn test_write_datetime2() {

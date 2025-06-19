@@ -188,13 +188,15 @@ impl From<&SqlType> for TdsDataType {
             SqlType::Time(_) => TdsDataType::TimeN,
             SqlType::DateTime2(_) => TdsDataType::DateTime2N,
             SqlType::DateTimeOffset(_) => TdsDataType::DateTimeOffsetN,
-            SqlType::SmallDateTime { day: _, time: _ } => todo!(),
+            SqlType::SmallDateTime(_) => TdsDataType::DateTim4,
             SqlType::NVarcharMax(_) => TdsDataType::NVarChar,
             SqlType::Varchar(_, _) => TdsDataType::VarChar,
             SqlType::VarcharMax(_) => TdsDataType::VarChar,
             SqlType::VarBinaryMax(_) => TdsDataType::VarBinary,
             SqlType::Xml(_) => todo!(),
             SqlType::Uuid(_) => todo!(),
+            SqlType::DateTime(_) => TdsDataType::DateTime,
+            SqlType::Date(_) => TdsDataType::DateN,
         }
     }
 }

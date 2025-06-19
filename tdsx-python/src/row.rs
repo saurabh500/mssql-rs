@@ -97,7 +97,7 @@ impl PyRow {
                         Err(e) => return Err(PyRuntimeError::new_err(e.to_string())),
                     }
                 }
-                ColumnValues::DateTime(dt) => handle_py_result!((dt).into_pyobject(py)),
+                ColumnValues::DateTime(_) => todo!(),
                 ColumnValues::Bytes(items) => handle_py_result!(items.into_pyobject(py)),
                 ColumnValues::Xml(_) => {
                     todo!()
@@ -105,7 +105,7 @@ impl PyRow {
                 ColumnValues::Null => py.None(),
                 ColumnValues::Uuid(uuid) => handle_py_result!(uuid.to_string().into_pyobject(py)),
                 ColumnValues::Json(json) => handle_py_result!(json.as_string().into_pyobject(py)),
-                ColumnValues::SmallDateTime { day: _, time: _ } => todo!(),
+                ColumnValues::SmallDateTime(_) => todo!(),
             };
             results.push(py_value);
         }
