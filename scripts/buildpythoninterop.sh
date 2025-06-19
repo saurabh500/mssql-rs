@@ -5,7 +5,7 @@ export PYTHON_HOME=$(python -c "import sys; print(sys.prefix)")
 if ! command -v maturin &> /dev/null
 then
     echo "maturin not found, installing..."
-    cargo install maturin
+    cargo install maturin --locked --version 1.8.7
 fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "Home directory: $HOME"
