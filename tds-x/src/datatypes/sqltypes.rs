@@ -85,6 +85,12 @@ pub(crate) const MAX_SHORT_DATA_LENGTH: u16 = 0xFFFF;
 
 pub(crate) const PLP_TERMINATOR_CHUNK_LEN: u32 = 0x00000000;
 
+pub(crate) const PLP_UNKNOWN_LENGTH: u64 = 0xFFFF_FFFF_FFFF_FFFE;
+
+pub(crate) const PLP_NULL: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+
+pub(crate) const NO_XML_SCHEMA: u8 = 0x00;
+
 impl SqlType {
     fn get_nullable_type(&self) -> NullableTdsType {
         match self {
@@ -115,7 +121,7 @@ impl SqlType {
             SqlType::Varchar(_, _) => TdsDataType::BigVarChar,
             SqlType::VarcharMax(_) => TdsDataType::BigVarChar,
             SqlType::VarBinaryMax(_) => todo!(),
-            SqlType::Xml(_) => todo!(),
+            SqlType::Xml(_) => TdsDataType::Xml,
             SqlType::Uuid(_) => TdsDataType::Guid,
             SqlType::Money(_) => TdsDataType::MoneyN,
             SqlType::SmallMoney(_) => TdsDataType::MoneyN,
@@ -199,7 +205,7 @@ impl SqlType {
             SqlType::VarBinaryMax(binary_data) => {
                 self.serialize_binary(packet_writer, binary_data).await?
             }
-            SqlType::Xml(_sql_xml) => todo!(),
+            SqlType::Xml(sql_xml) => self.serialize_xml(packet_writer, sql_xml).await?,
             SqlType::Uuid(uuid) => self.serialize_uuid(packet_writer, uuid).await?,
         }
         Ok(())
@@ -519,6 +525,52 @@ impl SqlType {
                 packet_writer.write_i16_async(2).await?;
                 // Write 0 data length to signify that the data is NULL.
                 packet_writer.write_u16_async(VAR_NULL_LENGTH).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn serialize_xml(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        xml: &Option<SqlXml>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+        let optional_sqlxml = match xml {
+            Some(binary) => Some(binary),
+            None => None,
+        };
+        // No Schema.
+        packet_writer.write_byte_async(0x00).await?;
+
+        match optional_sqlxml {
+            Some(sqlxml) => {
+                let data = &sqlxml.bytes;
+
+                // Write unknown length for PLP.
+                packet_writer.write_u64_async(PLP_UNKNOWN_LENGTH).await?;
+
+                let data_len = match sqlxml.has_bom() {
+                    true => data.len(), // BOM is 2 bytes.
+                    false => data.len() + 2,
+                };
+                // Write the data chunk length, which is the same as PLP length.
+                packet_writer.write_u32_async(data_len as u32).await?;
+
+                if !sqlxml.has_bom() {
+                    // Write BOM if not present.
+                    packet_writer.write_byte_async(0xFF).await?;
+                    packet_writer.write_byte_async(0xFE).await?;
+                }
+
+                packet_writer.write_async(data).await?;
+
+                // Write a zero-length PLP chunk terminator to signal the end of the PLP stream.
+                packet_writer.write_u32_async(0).await?;
+            }
+            None => {
+                packet_writer.write_u64_async(PLP_NULL).await?;
             }
         }
         Ok(())
@@ -2389,6 +2441,137 @@ mod bit_tests {
         assert_eq!(test_cursor.get_u8(), TdsDataType::IntN as u8); // Valdate tds type
         assert_eq!(test_cursor.get_u8(), FixedLengthTypes::Bit.get_len() as u8); // size of the data
         assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // size for Some Data
+    }
+}
+
+#[cfg(test)]
+mod xml_tests {
+    use std::io::Cursor;
+
+    use bytes::Buf;
+
+    use crate::{
+        datatypes::{
+            column_values::SqlXml,
+            sqldatatypes::TdsDataType,
+            sqltypes::{SqlType, NO_XML_SCHEMA, PLP_NULL, PLP_UNKNOWN_LENGTH},
+        },
+        message::messages::PacketType,
+        read_write::{packet_reader::tests::MockNetworkReaderWriter, packet_writer::PacketWriter},
+    };
+
+    #[tokio::test]
+    async fn test_write_nobom_xml() {
+        let xml = "<root><child>Test</child></root>";
+        let sqlxml: SqlXml = xml.to_string().into();
+
+        let mut copied_bytes = Vec::new();
+        copied_bytes.push(0xFF);
+        copied_bytes.push(0xFE);
+        copied_bytes.extend_from_slice(sqlxml.bytes.as_slice());
+
+        let byte_len_with_bom = sqlxml.bytes.len() + 2;
+
+        let val = Some(sqlxml);
+        let sqltypexml = SqlType::Xml(val.clone());
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        sqltypexml
+            .serialize_xml(&mut packet_writer, &val)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::Xml as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), NO_XML_SCHEMA);
+        assert_eq!(test_cursor.get_u64_le(), PLP_UNKNOWN_LENGTH);
+        assert_eq!(test_cursor.get_u32_le(), byte_len_with_bom as u32); // Chunk len
+        let mut written_bytes = vec![0u8; byte_len_with_bom];
+        test_cursor.copy_to_slice(&mut written_bytes);
+        assert_eq!(written_bytes, copied_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_write_withbom_xml() {
+        let xml = "<root><child>Test</child></root>";
+        let sqlxml: SqlXml = xml.to_string().into();
+
+        let mut copied_bytes = Vec::new();
+        copied_bytes.push(0xFF);
+        copied_bytes.push(0xFE);
+        copied_bytes.extend_from_slice(sqlxml.bytes.as_slice());
+
+        let sqlxml = SqlXml {
+            bytes: copied_bytes.clone(),
+        };
+        let byte_len_with_bom = sqlxml.bytes.len();
+
+        let val = Some(sqlxml);
+        let sqltypexml = SqlType::Xml(val.clone());
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        sqltypexml
+            .serialize_xml(&mut packet_writer, &val)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::Xml as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), NO_XML_SCHEMA);
+        assert_eq!(test_cursor.get_u64_le(), PLP_UNKNOWN_LENGTH);
+        assert_eq!(test_cursor.get_u32_le(), byte_len_with_bom as u32); // Chunk len
+        let mut written_bytes = vec![0u8; byte_len_with_bom];
+        test_cursor.copy_to_slice(&mut written_bytes);
+        assert_eq!(written_bytes, copied_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_write_null_xml() {
+        let sqltypexml = SqlType::Xml(None);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        sqltypexml
+            .serialize_xml(&mut packet_writer, &None)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::Xml as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), NO_XML_SCHEMA);
+        assert_eq!(test_cursor.get_u64_le(), PLP_NULL);
     }
 }
 

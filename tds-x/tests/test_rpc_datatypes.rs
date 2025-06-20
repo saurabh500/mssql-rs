@@ -24,6 +24,7 @@ mod rpc_datatypes {
         let varbinary_value = vec![1, 2, 3, 4];
         let float_value = 10.14;
         let real_value = 3.144567;
+        let xml_value = "<root>Test</root>".to_string();
         let columns = vec![
             ("int", SqlType::Int(Some(int_value))),
             ("tinyint", SqlType::TinyInt(Some(tinyint_value))),
@@ -33,6 +34,7 @@ mod rpc_datatypes {
             ("varbinary", SqlType::VarBinary(Some(varbinary_value), 100)),
             ("float", SqlType::Float(Some(float_value))),
             ("real", SqlType::Real(Some(real_value))),
+            ("xml", SqlType::Xml(Some(xml_value.clone().into()))),
         ];
 
         let query = generate_select_statement(&columns);
@@ -80,6 +82,9 @@ mod rpc_datatypes {
                 }
                 ColumnValues::Real(value) => {
                     assert_eq!(*value, real_value);
+                }
+                ColumnValues::Xml(value) => {
+                    assert_eq!(*value, xml_value.clone().into());
                 }
                 _ => {}
             }

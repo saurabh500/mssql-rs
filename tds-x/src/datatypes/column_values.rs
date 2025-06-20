@@ -7,7 +7,7 @@ use core::fmt;
 use std::fmt::Debug;
 use uuid::Uuid;
 
-#[derive(Debug, PartialOrd, PartialEq)]
+#[derive(Debug, PartialOrd, PartialEq, Clone)]
 pub struct SqlXml {
     pub bytes: Vec<u8>,
 }
@@ -21,6 +21,20 @@ impl SqlXml {
             .for_each(|item| u16_buffer.push(item));
 
         String::from_utf16(&u16_buffer).unwrap()
+    }
+
+    pub fn has_bom(&self) -> bool {
+        self.bytes.len() >= 2 && (self.bytes[0] == 0xFF && self.bytes[1] == 0xFE)
+    }
+}
+
+impl From<String> for SqlXml {
+    fn from(input: String) -> SqlXml {
+        let mut bytes = Vec::with_capacity(input.len() * 2);
+        input
+            .encode_utf16()
+            .for_each(|item| bytes.extend_from_slice(&item.to_le_bytes()));
+        SqlXml { bytes }
     }
 }
 
