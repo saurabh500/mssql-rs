@@ -81,7 +81,7 @@ impl PyRow {
                 ColumnValues::Real(re) => handle_py_result!(re.into_pyobject(py)),
                 ColumnValues::Decimal(_decimal_parts) => todo!(),
                 ColumnValues::Numeric(_decimal_parts) => todo!(),
-                ColumnValues::SmallMoney(_) | ColumnValues::Money(_) | ColumnValues::MoneyN(_) => {
+                ColumnValues::SmallMoney(_) | ColumnValues::Money(_) => {
                     todo!()
                 }
                 ColumnValues::Date(_)

@@ -2,13 +2,13 @@ use byteorder::{ByteOrder, LittleEndian};
 use uuid::Uuid;
 
 use crate::datatypes::column_values::{
-    DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlSmallDateTime, SqlXml, Time,
-    DEFAULT_VARTIME_SCALE,
+    DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlMoney, SqlSmallDateTime, SqlSmallMoney,
+    SqlXml, Time, DEFAULT_VARTIME_SCALE,
 };
 use crate::{
     core::TdsResult,
     datatypes::{
-        decoder::{DecimalParts, MoneyParts},
+        decoder::DecimalParts,
         sql_string::SqlString,
         sqldatatypes::{FixedLengthTypes, TdsDataType},
     },
@@ -28,8 +28,8 @@ pub enum SqlType {
     Float(Option<f64>),
     Decimal(Option<DecimalParts>),
     Numeric(Option<DecimalParts>),
-    Money(Option<MoneyParts>),
-    SmallMoney(Option<MoneyParts>),
+    Money(Option<SqlMoney>),
+    SmallMoney(Option<SqlSmallMoney>),
 
     Time(Option<Time>),
     DateTime2(Option<DateTime2>),
@@ -104,8 +104,7 @@ impl SqlType {
             SqlType::Text(_sql_string) => todo!(),
             SqlType::NText(_sql_string) => todo!(),
             SqlType::Json(_) => todo!(),
-            SqlType::Money(_) => todo!(),
-            SqlType::SmallMoney(_) => todo!(),
+
             SqlType::Time(_) => TdsDataType::TimeN,
             SqlType::DateTime2(_) => TdsDataType::DateTime2N,
             SqlType::DateTimeOffset(_) => TdsDataType::DateTimeOffsetN,
@@ -118,6 +117,8 @@ impl SqlType {
             SqlType::VarBinaryMax(_) => todo!(),
             SqlType::Xml(_) => todo!(),
             SqlType::Uuid(_) => TdsDataType::Guid,
+            SqlType::Money(_) => TdsDataType::MoneyN,
+            SqlType::SmallMoney(_) => TdsDataType::MoneyN,
         }
     }
 
@@ -158,8 +159,10 @@ impl SqlType {
             SqlType::Text(_sql_string) => todo!(),
             SqlType::NText(_sql_string) => todo!(),
             SqlType::Json(_) => todo!(),
-            SqlType::Money(_) => todo!(),
-            SqlType::SmallMoney(_) => todo!(),
+            SqlType::Money(money) => self.serialize_money(packet_writer, money).await?,
+            SqlType::SmallMoney(smallmoney) => {
+                self.serialize_smallmoney(packet_writer, smallmoney).await?
+            }
             SqlType::Time(time) => self.serialize_time(packet_writer, time).await?,
             SqlType::DateTime2(datetime2) => {
                 self.serialize_datetime2(packet_writer, datetime2).await?
@@ -745,6 +748,58 @@ impl SqlType {
             }
             None => {
                 // Write 0 length to signify that the data is NULL.
+                packet_writer.write_byte_async(NULL_LENGTH).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn serialize_smallmoney(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        smallmoney: &Option<SqlSmallMoney>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+        let length_in_bytes = 4u8;
+        // Write the type size to indicate the kind of int being sent.
+        packet_writer.write_byte_async(length_in_bytes).await?;
+
+        match smallmoney {
+            Some(smallmoney) => {
+                // The length of the datatype.
+                packet_writer.write_byte_async(length_in_bytes).await?;
+
+                packet_writer.write_i32_async(smallmoney.int_val).await?;
+            }
+            None => {
+                packet_writer.write_byte_async(NULL_LENGTH).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn serialize_money(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        time: &Option<SqlMoney>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+
+        let length_in_bytes = 8u8;
+        // Write the type size to indicate the kind of int being sent.
+        packet_writer.write_byte_async(length_in_bytes).await?;
+
+        match time {
+            Some(moneyparts) => {
+                // The length of the datatype.
+                packet_writer.write_byte_async(length_in_bytes).await?;
+
+                packet_writer.write_i32_async(moneyparts.msb_part).await?;
+                packet_writer.write_i32_async(moneyparts.lsb_part).await?;
+            }
+            None => {
                 packet_writer.write_byte_async(NULL_LENGTH).await?;
             }
         }
@@ -2396,6 +2451,141 @@ mod uuid_tests {
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
         assert_eq!(test_cursor.get_u8(), TdsDataType::Guid as u8); // Valdate tds type
         assert_eq!(test_cursor.get_u8(), 16); // size of the type
+        assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // size for Some Data
+        assert!(!test_cursor.has_remaining()); // Ensure that the cursor has no remaining data
+    }
+}
+
+#[cfg(test)]
+mod money_tests {
+    use std::io::Cursor;
+
+    use bytes::Buf;
+
+    use crate::{
+        datatypes::{
+            sqldatatypes::TdsDataType,
+            sqltypes::{SqlType, NULL_LENGTH},
+        },
+        message::messages::PacketType,
+        read_write::{packet_reader::tests::MockNetworkReaderWriter, packet_writer::PacketWriter},
+    };
+
+    #[tokio::test]
+    async fn test_write_money() {
+        let (moneyvallsb, moneyvalmsb) = (12345i32, 123i32);
+        let moneyparts = Some((moneyvallsb, moneyvalmsb).into());
+        let money = SqlType::Money(moneyparts.clone());
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        money
+            .serialize_money(&mut packet_writer, &moneyparts)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::MoneyN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), 8); // size of the type
+        assert_eq!(test_cursor.get_u8(), 8); // size for Some Data
+        assert_eq!(test_cursor.get_i32_le(), moneyvalmsb);
+        assert_eq!(test_cursor.get_i32_le(), moneyvallsb);
+        assert!(!test_cursor.has_remaining()); // Ensure that the cursor has no remaining data
+    }
+
+    #[tokio::test]
+    async fn test_write_null_money() {
+        let money = SqlType::Money(None);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        money
+            .serialize_money(&mut packet_writer, &None)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::MoneyN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), 8); // size of the data
+        assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // size for Some Data
+        assert!(!test_cursor.has_remaining()); // Ensure that the cursor has no remaining data
+    }
+
+    #[tokio::test]
+    async fn test_write_smallmoney() {
+        let moneyval = 12345i32;
+        let smallmoney = Some(moneyval.into());
+        let money = SqlType::SmallMoney(smallmoney.clone());
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        money
+            .serialize_smallmoney(&mut packet_writer, &smallmoney)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::MoneyN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), 4); // size of the type
+        assert_eq!(test_cursor.get_u8(), 4); // size for Some Data
+        assert_eq!(test_cursor.get_i32_le(), moneyval);
+        assert!(!test_cursor.has_remaining()); // Ensure that the cursor has no remaining data
+    }
+
+    #[tokio::test]
+    async fn test_write_null_smallmoney() {
+        let money = SqlType::SmallMoney(None);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        money
+            .serialize_smallmoney(&mut packet_writer, &None)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::MoneyN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), 4); // size of the data
         assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // size for Some Data
         assert!(!test_cursor.has_remaining()); // Ensure that the cursor has no remaining data
     }

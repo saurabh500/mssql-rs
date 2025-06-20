@@ -7,7 +7,8 @@ use super::{
     sqldatatypes::{TdsDataType, TypeInfoVariant},
 };
 use crate::datatypes::column_values::{
-    ColumnValues, DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlSmallDateTime, SqlXml, Time,
+    ColumnValues, DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlMoney, SqlSmallDateTime,
+    SqlSmallMoney, SqlXml, Time,
 };
 use crate::datatypes::sqldatatypes::TypeInfo;
 use crate::{
@@ -286,36 +287,17 @@ impl GenericDecoder {
         Ok(value)
     }
 
-    async fn read_money4(&self, reader: &mut PacketReader<'_>) -> TdsResult<MoneyParts> {
+    async fn read_money4(&self, reader: &mut PacketReader<'_>) -> TdsResult<SqlSmallMoney> {
         let small_money_val = reader.read_int32().await?;
         Ok(small_money_val.into())
     }
 
     // Reads the TDS 8-byte money value. It is represented in TDS as two 4-byte integers (mixed endian).
     // See comments in MoneyParts definition for more details.
-    async fn read_money8(&self, reader: &mut PacketReader<'_>) -> TdsResult<MoneyParts> {
+    async fn read_money8(&self, reader: &mut PacketReader<'_>) -> TdsResult<SqlMoney> {
         let msb = reader.read_int32().await?;
         let lsb = reader.read_int32().await?;
         Ok((lsb, msb).into())
-    }
-
-    async fn read_moneyn(
-        &self,
-        reader: &mut PacketReader<'_>,
-        byte_len: u8,
-    ) -> TdsResult<Option<MoneyParts>> {
-        let value: Option<MoneyParts> = match byte_len {
-            4 => Some(self.read_money4(reader).await?),
-            8 => Some(self.read_money8(reader).await?),
-            0 => None,
-            _ => {
-                return Err(crate::error::Error::from(Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Invalid MoneyN length - {}", byte_len),
-                )));
-            }
-        };
-        Ok(value)
     }
 
     async fn read_daten(reader: &mut PacketReader<'_>, length: u8) -> TdsResult<ColumnValues> {
@@ -442,10 +424,16 @@ impl<'a> SqlTypeDecode<'a> for GenericDecoder {
             }
             TdsDataType::MoneyN => {
                 let byte_len = reader.read_byte().await?;
-                let moneyn_value = self.read_moneyn(reader, byte_len).await?;
-                match moneyn_value {
-                    Some(money_parts) => ColumnValues::MoneyN(money_parts),
-                    None => ColumnValues::Null,
+                match byte_len {
+                    4 => ColumnValues::SmallMoney(self.read_money4(reader).await?),
+                    8 => ColumnValues::Money(self.read_money8(reader).await?),
+                    0 => ColumnValues::Null,
+                    _ => {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "Invalid MoneyN length - {}",
+                            byte_len
+                        )));
+                    }
                 }
             }
             TdsDataType::BigBinary => {
@@ -719,160 +707,6 @@ impl Debug for DecimalParts {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use crate::datatypes::decoder::DecimalParts;
-
-    #[test]
-    fn test_f64_conversion() {
-        let expected: f64 = 123456.322;
-
-        // Represents 123456.322 as observed over TDS wire.
-        let int_parts = vec![-539269688, 2];
-        let parts = DecimalParts {
-            is_positive: true,
-            scale: 5,
-            precision: 18,
-            int_parts,
-        };
-
-        assert_eq!(expected, parts.to_f64());
-    }
-}
-
-const PRECISION_SMALL_MONEY: u8 = 10;
-const PRECISION_MONEY: u8 = 19;
-
-// This struct represents the TDS money & smallmoney data types. In TDS wire-format, smallmoney is represented
-// as a 4-byte signed integer, & money is represented as 8 byte (two 4-byte) signed integers
-// Quoting from TDS spec:
-//   - "smallmoney is represented as a 4-byte signed integer. The TDS value is the smallmoney value
-//      multiplied by 10^4."
-//   - "money is represented as an 8-byte signed integer. The TDS value is the money value multiplied by
-//      10^4. The 8-byte signed integer itself is represented in the following sequence:
-//      1. One 4-byte integer that represents the more significant half (MSB)
-//      2. One 4-byte integer that represents the less significant half (LSB)"
-#[derive(PartialEq)]
-pub struct MoneyParts {
-    pub int_part_1: i32, // LSB
-    pub int_part_2: i32, // MSB - Only populated for Money, 0 for SmallMoney
-    scale: u8,
-    precision: u8,
-}
-
-impl MoneyParts {
-    pub fn is_smallmoney(&self) -> bool {
-        self.precision == 10
-    }
-    pub fn is_money(&self) -> bool {
-        self.precision == 19
-    }
-    pub fn get_scale(&self) -> u8 {
-        self.scale
-    }
-    pub fn get_precision(&self) -> u8 {
-        self.precision
-    }
-}
-
-impl Debug for MoneyParts {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.is_smallmoney() {
-            write!(
-                f,
-                "SmallMoney value: {:?}, int_part_1: {:?}, int_part_2: {:?}",
-                TdsResult::<f32>::from(self).unwrap(),
-                self.int_part_1,
-                self.int_part_2
-            )
-        } else {
-            write!(
-                f,
-                "Money value: {:?}, int_part_1: {:?}, int_part_2: {:?}",
-                TdsResult::<f64>::from(self).unwrap(),
-                self.int_part_1,
-                self.int_part_2
-            )
-        }
-    }
-}
-
-impl From<(i32, i32)> for MoneyParts {
-    fn from(value: (i32, i32)) -> Self {
-        MoneyParts {
-            int_part_1: value.0,
-            int_part_2: value.1,
-            scale: 4,
-            precision: PRECISION_MONEY,
-        }
-    }
-}
-
-impl From<i32> for MoneyParts {
-    fn from(value: i32) -> Self {
-        MoneyParts {
-            int_part_1: value,
-            int_part_2: 0,
-            scale: 4,
-            precision: PRECISION_SMALL_MONEY,
-        }
-    }
-}
-
-// This function reassembles the two 4-byte integers (in mixed endian format) into a single 8-byte signed integer.
-// The resulting value is the TDS money value, which can be divided by 10^4 to get the actual money value.
-// (See comments in MoneyParts definition for more details)
-impl From<&MoneyParts> for TdsResult<f64> {
-    fn from(value: &MoneyParts) -> Self {
-        if !value.is_money() {
-            return Err(crate::error::Error::UsageError(
-                "get_money_as_f64 called on non-money type".to_string(),
-            ));
-        }
-        let lsb = value.int_part_1;
-        let msb = value.int_part_2;
-        // -----Example:------
-        // While this logic works on both little and big endian machines, this example assumes
-        // a little endian machine. Coz big endian case is trivial.
-        // 1) Hex representation of an 8-byte int value (MSB to LSB):
-        //       - 11 22 33 44 55 66 77 88
-        // 2) 8-byte int value stored in LE machine (Low Mem address First (LMF)):
-        //       - 88 77 66 55 44 33 22 11
-        // 3) This int value stored in TDS wire-format as two 4-byte integers (mixed endian, LMF):
-        //       - 44 33 22 11, 88 77 66 55 (MSB = 44 33 22 11, LSB = 88 77 66 55)
-
-        // *** We have (3) in variables msb and lsb. We need to reassemble it into (2) ***
-        // - lsb as i64 =
-        //       - +ve LSB: 88 77 66 55 00 00 00 00 (LMF)
-        //       - -ve LSB: 88 77 66 55 ff ff ff ff (LMF)
-        // - (lsb as i64) & 0x00000000FFFFFFFF = lsb_in_i64 = 88 77 66 55 00 00 00 00 (LMF)
-        //       - This step is to handle -ve LSB case. We need to convert the ff ff ff ff MSB bytes
-        //         to 00 00 00 00. This is done by masking the LSB with 0x00000000FFFFFFFF.
-        // - (msb as i64) << 32 = 00 00 00 00 44 33 22 11 (LMF)
-        // - (lsb_in_i64) | ((msb as i64) << 32) = 88 77 66 55 44 33 22 11 (LMF)
-        let lsb_in_i64 = (lsb as i64) & 0x00000000FFFFFFFF;
-        let money_val = lsb_in_i64 | ((msb as i64) << 32);
-        // TDS value of money is the value multiplied by 10^4, hence we need to divide while decoding.
-        // TODO: (value as f64) can cause precision loss
-        Ok((money_val as f64) / 10000.0000)
-    }
-}
-
-impl From<&MoneyParts> for TdsResult<f32> {
-    fn from(value: &MoneyParts) -> Self {
-        if !value.is_smallmoney() {
-            return Err(crate::error::Error::UsageError(
-                "get_smallmoney_as_f32 called on non-smallmoney type".to_string(),
-            ));
-        }
-        // TDS value of money is the value multiplied by 10^4, hence we need to divide while decoding.
-        let scaled_value = (value.int_part_1 as f64) / 10000.0000; // f64 so that we don't lose precision
-        Ok(scaled_value as f32) // Post division, money value  must fit in f32
-                                // TODO: For max (& min) value of smallmoney (214748.3647), the f32 value is 214748.36, which is not accurate. Debug & fix this.
-                                //       See test test_money_no_panic. Trying to query these max values from SSMS or ODBC gives correct value.
-    }
-}
-
 async fn decode_two_propbyte_variant(
     reader: &mut PacketReader<'_>,
     variant_base_type: u8,
@@ -939,4 +773,25 @@ async fn decode_seven_propbyte_variant(
     };
     let sql_string = SqlString::new(buffer, encoding);
     Ok(ColumnValues::String(sql_string))
+}
+
+#[cfg(test)]
+mod test {
+    use crate::datatypes::decoder::DecimalParts;
+
+    #[test]
+    fn test_f64_conversion() {
+        let expected: f64 = 123456.322;
+
+        // Represents 123456.322 as observed over TDS wire.
+        let int_parts = vec![-539269688, 2];
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 5,
+            precision: 18,
+            int_parts,
+        };
+
+        assert_eq!(expected, parts.to_f64());
+    }
 }
