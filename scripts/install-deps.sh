@@ -58,7 +58,7 @@ fi
 for i in {1..5}; do
     sudo apt update && break
     echo "apt update failed, retrying in 5 seconds... (attempt $i/5)"
-    sleep 5
+    sleep $((30 * i))
 done
 
 # Needed for msrustup download and essentials for building rust binaries.
@@ -66,7 +66,7 @@ done
 for i in {1..5}; do
     sudo apt install $DEPS -y && break
     echo "apt install failed, retrying in 5 seconds... (attempt $i/5)"
-    sleep 5
+    sleep $((30 * i))
 done
 
 pip --version && pip install pipenv
