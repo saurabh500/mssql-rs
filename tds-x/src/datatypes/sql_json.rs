@@ -3,6 +3,7 @@ use std::fmt::Debug;
 
 #[derive(PartialEq, Clone)]
 pub struct SqlJson {
+    // Utf-8 encoded bytes representing a JSON string
     pub bytes: Vec<u8>,
 }
 
@@ -19,5 +20,11 @@ impl SqlJson {
 impl Debug for SqlJson {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Json: {}", self.as_string())
+    }
+}
+
+impl From<String> for SqlJson {
+    fn from(value: String) -> Self {
+        Self::new(value.into_bytes())
     }
 }

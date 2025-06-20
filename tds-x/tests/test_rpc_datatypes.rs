@@ -91,6 +91,44 @@ mod rpc_datatypes {
         }
     }
 
+    // This test exists so that it can exclusively be skipped or run for SQL servers which support the
+    // new capability.
+    #[allow(clippy::single_match)]
+    #[tokio::test]
+    async fn test_sp_execute_new_data_types() {
+        let json_value = "[\"abc\",\"ghi\",\"def\"]".to_string();
+        let columns = vec![("json", SqlType::Json(Some(json_value.clone().into())))];
+
+        let query = generate_select_statement(&columns);
+        println!("{}", query);
+        let mut named_parameters = Vec::new();
+        for column in columns.iter() {
+            let param =
+                RpcParameter::new(Some(format!("@{}", column.0)), StatusFlags::NONE, &column.1);
+            named_parameters.push(param);
+        }
+
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+
+        let batch_result = connection
+            .execute_sp_executesql(query.to_string(), named_parameters, None, None)
+            .await
+            .unwrap();
+
+        let first_row_columns = get_first_row(batch_result).await.unwrap();
+
+        assert_eq!(first_row_columns.len(), columns.len());
+        for column in first_row_columns.iter() {
+            match &column {
+                ColumnValues::Json(value) => {
+                    assert_eq!(*value, json_value.clone().into());
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub fn generate_select_statement(columns: &Vec<(&str, SqlType)>) -> String {
         let mut select_statement = String::from("SELECT\n");
 

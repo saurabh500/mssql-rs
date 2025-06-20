@@ -36,7 +36,7 @@ stages:
         parameters:
           osType: Windows
           buildType: ${{ parameters.buildType }}
-          testFilter: -E "not (test(connectivity) | test(connection::query_processing_driver_test::query_processing_driver::test_json_support))"
+          testFilter: -E "not (test(connectivity) | test(connection::query_processing_driver_test::query_processing_driver::test_json_support)  | test(rpc_datatypes::test_sp_execute_new_data_types))"
 
   # - job: Build_Windows_Arm
   #   displayName: Build Windows ARM

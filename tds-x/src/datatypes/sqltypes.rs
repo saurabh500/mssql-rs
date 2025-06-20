@@ -5,6 +5,7 @@ use crate::datatypes::column_values::{
     DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlMoney, SqlSmallDateTime, SqlSmallMoney,
     SqlXml, Time, DEFAULT_VARTIME_SCALE,
 };
+use crate::datatypes::sql_json::SqlJson;
 use crate::{
     core::TdsResult,
     datatypes::{
@@ -57,7 +58,7 @@ pub enum SqlType {
     Text(Option<SqlString>),
     NText(Option<SqlString>),
 
-    Json(Option<String>),
+    Json(Option<SqlJson>),
 
     Xml(Option<SqlXml>),
     Uuid(Option<Uuid>),
@@ -109,7 +110,7 @@ impl SqlType {
             SqlType::NChar(_, _) => TdsDataType::NChar,
             SqlType::Text(_sql_string) => todo!(),
             SqlType::NText(_sql_string) => todo!(),
-            SqlType::Json(_) => todo!(),
+            SqlType::Json(_) => TdsDataType::Json,
 
             SqlType::Time(_) => TdsDataType::TimeN,
             SqlType::DateTime2(_) => TdsDataType::DateTime2N,
@@ -164,7 +165,7 @@ impl SqlType {
             SqlType::NChar(_sql_string, _) => todo!(),
             SqlType::Text(_sql_string) => todo!(),
             SqlType::NText(_sql_string) => todo!(),
-            SqlType::Json(_) => todo!(),
+            SqlType::Json(json) => self.serialize_json(packet_writer, json).await?,
             SqlType::Money(money) => self.serialize_money(packet_writer, money).await?,
             SqlType::SmallMoney(smallmoney) => {
                 self.serialize_smallmoney(packet_writer, smallmoney).await?
@@ -563,6 +564,42 @@ impl SqlType {
                     packet_writer.write_byte_async(0xFF).await?;
                     packet_writer.write_byte_async(0xFE).await?;
                 }
+
+                packet_writer.write_async(data).await?;
+
+                // Write a zero-length PLP chunk terminator to signal the end of the PLP stream.
+                packet_writer.write_u32_async(0).await?;
+            }
+            None => {
+                packet_writer.write_u64_async(PLP_NULL).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn serialize_json(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        json: &Option<SqlJson>,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+        let optional_sqljson = match json {
+            Some(binary) => Some(binary),
+            None => None,
+        };
+
+        match optional_sqljson {
+            Some(sqljson) => {
+                let data = &sqljson.bytes;
+
+                // Write unknown length for PLP.
+                packet_writer.write_u64_async(PLP_UNKNOWN_LENGTH).await?;
+
+                let data_len = data.len();
+
+                // Write the data chunk length, which is the same as PLP length.
+                packet_writer.write_u32_async(data_len as u32).await?;
 
                 packet_writer.write_async(data).await?;
 
@@ -2771,5 +2808,88 @@ mod money_tests {
         assert_eq!(test_cursor.get_u8(), 4); // size of the data
         assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // size for Some Data
         assert!(!test_cursor.has_remaining()); // Ensure that the cursor has no remaining data
+    }
+}
+
+#[cfg(test)]
+mod json_tests {
+    use std::io::Cursor;
+
+    use bytes::Buf;
+
+    use crate::{
+        datatypes::{
+            sql_json::SqlJson,
+            sqldatatypes::TdsDataType,
+            sqltypes::{SqlType, PLP_NULL, PLP_UNKNOWN_LENGTH},
+        },
+        message::messages::PacketType,
+        read_write::{packet_reader::tests::MockNetworkReaderWriter, packet_writer::PacketWriter},
+    };
+
+    #[tokio::test]
+    async fn test_write_json() {
+        let json_str = "[\"abc\",\"ghi\",\"def\"]";
+        let sqljson: SqlJson = json_str.to_string().into();
+
+        let mut copied_bytes = Vec::new();
+
+        copied_bytes.extend_from_slice(sqljson.bytes.as_slice());
+
+        let byte_len = sqljson.bytes.len();
+
+        let val = Some(sqljson);
+        let sqltypejson = SqlType::Json(val.clone());
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        sqltypejson
+            .serialize_json(&mut packet_writer, &val)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::Json as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u64_le(), PLP_UNKNOWN_LENGTH);
+        assert_eq!(test_cursor.get_u32_le(), byte_len as u32); // Chunk len
+        let mut written_bytes = vec![0u8; byte_len];
+        test_cursor.copy_to_slice(&mut written_bytes);
+        assert_eq!(written_bytes, copied_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_write_null_json() {
+        let sqltypejson = SqlType::Json(None);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        sqltypejson
+            .serialize_json(&mut packet_writer, &None)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::Json as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u64_le(), PLP_NULL);
     }
 }
