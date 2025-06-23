@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tds-x = {path = "../"}
+tds-x = { path = "../tds-x" }
 cxx = "1.0.153"
 futures = "0.3.31"
 tokio = { version = "1.43.0", features = ["full"] }
@@ -13,7 +13,7 @@ tracing-subscriber = "0.3.19"
 
 
 [build-dependencies]
-tds-x = {path = "../"}
+tds-x = { path = "../tds-x" }
 cxx = "1.0.153"
 cxx-build = "1.0.153"
 
