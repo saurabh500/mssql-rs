@@ -7,9 +7,9 @@ void display_results_sync(
     rust::Box<::cxx_ffi::QueryResultTypeStream> &results) {
   while (results->next()) {
     auto current_result = results->current_result();
-    if (current_result->get_type() == cxx_ffi::ResultType::Update) {
-      auto update_result = current_result->take_update_result();
-      std::cout << "Update Result: " << update_result << std::endl;
+    if (current_result->get_type() == cxx_ffi::ResultType::DmlResult) {
+      auto dml_result = current_result->take_dml_result();
+      std::cout << "Update Result: " << dml_result << std::endl;
     } else {
       auto result_set = current_result->take_result_set();
       while (result_set->next()) {
@@ -47,9 +47,9 @@ void display_results_async(
   auto results = result_future->await_query_result_type();
   while (results->next_async()->await_bool()) {
     auto current_result = results->current_result();
-    if (current_result->get_type() == cxx_ffi::ResultType::Update) {
-      auto update_result = current_result->take_update_result();
-      std::cout << "Update Result: " << update_result << std::endl;
+    if (current_result->get_type() == cxx_ffi::ResultType::DmlResult) {
+      auto dml_result = current_result->take_dml_result();
+      std::cout << "DML Result: " << dml_result << std::endl;
     } else {
       auto result_set = current_result->take_result_set();
       while (result_set->next_async()->await_bool()) {

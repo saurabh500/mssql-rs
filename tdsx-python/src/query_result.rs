@@ -25,9 +25,9 @@ impl PyQueryResultStream {
                             inner: Some(QueryResultType::ResultSet(result_set)),
                         });
                     }
-                    QueryResultType::Update(rows_affected) => {
+                    QueryResultType::DmlResult(rows_affected) => {
                         return Ok(PyResultSet {
-                            inner: Some(QueryResultType::Update(rows_affected)),
+                            inner: Some(QueryResultType::DmlResult(rows_affected)),
                         });
                     }
                 }
@@ -52,9 +52,9 @@ impl PyQueryResultStream {
                             inner: Some(QueryResultType::ResultSet(result_set)),
                         }));
                     }
-                    QueryResultType::Update(rows_affected) => {
+                    QueryResultType::DmlResult(rows_affected) => {
                         return Ok(Some(PyResultSet {
-                            inner: Some(QueryResultType::Update(rows_affected)),
+                            inner: Some(QueryResultType::DmlResult(rows_affected)),
                         }));
                     }
                 }

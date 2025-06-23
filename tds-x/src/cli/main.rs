@@ -102,7 +102,7 @@ impl Session<'_> {
         while let Some(result) = result_stream.next().await {
             let result_type = result.unwrap();
             match result_type {
-                crate::query::result::QueryResultType::Update(update) => {
+                crate::query::result::QueryResultType::DmlResult(update) => {
                     println!("Rows updated {}", update);
                 }
                 crate::query::result::QueryResultType::ResultSet(result_set) => {

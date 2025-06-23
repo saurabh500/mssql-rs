@@ -23,11 +23,18 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, trace};
 
 pub enum QueryResultType<'result> {
-    Update(i64),
+    DmlResult(i64),
     ResultSet(ResultSet<'result>),
 }
 
 impl QueryResultType<'_> {
+    pub fn row_count(&self) -> Option<usize> {
+        match &self {
+            QueryResultType::DmlResult(count) => Some(*count as usize),
+            QueryResultType::ResultSet(_) => None,
+        }
+    }
+
     async fn next_result(
         parent_batch: Arc<Mutex<BatchResult<'_>>>,
         processing_signal: DeferredSignal,
@@ -44,7 +51,7 @@ impl QueryResultType<'_> {
                         }
                         parent_batch_ref.parser_context = ParserContext::None(());
                     }
-                    break Ok(QueryResultType::Update(t1.row_count as i64));
+                    break Ok(QueryResultType::DmlResult(t1.row_count as i64));
                 }
                 Tokens::DoneInProc(t1) => {
                     println!("Received DoneInProc token: {:?}", t1);
@@ -54,7 +61,7 @@ impl QueryResultType<'_> {
                         }
                         parent_batch_ref.parser_context = ParserContext::None(());
                     }
-                    break Ok(QueryResultType::Update(t1.row_count as i64));
+                    break Ok(QueryResultType::DmlResult(t1.row_count as i64));
                 }
                 Tokens::DoneProc(t1) => {
                     println!("Received DoneProc token: {:?}", t1);
@@ -64,7 +71,7 @@ impl QueryResultType<'_> {
                         }
                         parent_batch_ref.parser_context = ParserContext::None(());
                     }
-                    break Ok(QueryResultType::Update(t1.row_count as i64));
+                    break Ok(QueryResultType::DmlResult(t1.row_count as i64));
                 }
                 Tokens::EnvChange(t1) => {
                     println!("Received EnvChange token: {:?}", t1);

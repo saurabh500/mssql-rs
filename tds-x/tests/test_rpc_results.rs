@@ -244,7 +244,7 @@ mod rpc_results {
         while let Some(query_result_type) = query_result_stream.next().await {
             let qrt = query_result_type.unwrap();
             match qrt {
-                QueryResultType::Update(_) => {
+                QueryResultType::DmlResult(_) => {
                     // Do Nothing. Skip;
                 }
                 QueryResultType::ResultSet(mut rs) => {

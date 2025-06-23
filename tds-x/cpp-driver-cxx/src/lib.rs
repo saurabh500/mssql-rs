@@ -29,7 +29,7 @@ mod ffi {
     #[derive(Debug, Copy, Clone)]
     #[repr(u8)]
     pub enum ResultType {
-        Update,
+        DmlResult,
         ResultSet,
     }
 
@@ -75,7 +75,7 @@ mod ffi {
         unsafe fn take_result_set<'result>(
             self: &'result mut QueryResultType<'result>,
         ) -> Result<Box<RowStream<'result>>>;
-        unsafe fn take_update_result<'result>(
+        unsafe fn take_dml_result<'result>(
             self: &'result mut QueryResultType<'result>,
         ) -> Result<i64>;
 
@@ -248,17 +248,17 @@ impl<'result> QueryResultTypeStream<'result> {
         if let Some(result) = self.current_result.take() {
             let result_type = ffi::ResultType::from(&result);
             match result {
-                tds_x::query::result::QueryResultType::Update(update_result) => {
+                tds_x::query::result::QueryResultType::DmlResult(dml_result) => {
                     Ok(Box::new(QueryResultType {
                         result_set: None,
-                        update_result: Some(update_result),
+                        dml_result: Some(dml_result),
                         result_type,
                     }))
                 }
                 tds_x::query::result::QueryResultType::ResultSet(result_set) => {
                     Ok(Box::new(QueryResultType {
                         result_set: Some(result_set),
-                        update_result: None,
+                        dml_result: None,
                         result_type,
                     }))
                 }
@@ -289,9 +289,9 @@ impl<'result> QueryResultType<'result> {
         }
     }
 
-    pub fn take_update_result(&mut self) -> TdsResult<i64> {
-        if self.result_type == ffi::ResultType::Update {
-            let update_result = self.update_result.take().unwrap();
+    pub fn take_dml_result(&mut self) -> TdsResult<i64> {
+        if self.result_type == ffi::ResultType::DmlResult {
+            let update_result = self.dml_result.take().unwrap();
             Ok(update_result)
         } else {
             Err(Error::ProtocolError(

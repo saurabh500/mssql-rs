@@ -153,7 +153,7 @@ mod query_result_reads {
             let expected_row_counts = [0, 0, 1, 1, 1, 2, 1];
             while let Some(result_type) = result_stream.next().await {
                 match result_type.unwrap() {
-                    QueryResultType::Update(_) => {}
+                    QueryResultType::DmlResult(_) => {}
                     QueryResultType::ResultSet(result_set) => {
                         let mut row_number = 0;
                         println!(

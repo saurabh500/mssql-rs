@@ -28,14 +28,14 @@ pub struct QueryResultTypeStream<'result> {
 
 pub struct QueryResultType<'result> {
     pub(crate) result_set: Option<tds_x::query::result::ResultSet<'result>>,
-    pub(crate) update_result: Option<i64>,
+    pub(crate) dml_result: Option<i64>,
     pub(crate) result_type: ffi::ResultType,
 }
 
 impl From<&tds_x::query::result::QueryResultType<'_>> for ffi::ResultType {
     fn from(result_type: &tds_x::query::result::QueryResultType) -> Self {
         match result_type {
-            tds_x::query::result::QueryResultType::Update(_) => ffi::ResultType::Update,
+            tds_x::query::result::QueryResultType::DmlResult(_) => ffi::ResultType::DmlResult,
             tds_x::query::result::QueryResultType::ResultSet(_) => ffi::ResultType::ResultSet,
         }
     }

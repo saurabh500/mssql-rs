@@ -34,7 +34,7 @@ impl PyResultSet {
             None => Ok(false),
             Some(inner) => match inner {
                 QueryResultType::ResultSet(_) => Ok(true),
-                QueryResultType::Update(_) => Ok(false),
+                QueryResultType::DmlResult(_) => Ok(false),
             },
         }
     }
@@ -57,7 +57,7 @@ impl PyResultSet {
                     ))),
                 }
             }
-            QueryResultType::Update(_) => {
+            QueryResultType::DmlResult(_) => {
                 unreachable!(" Get Row Stream called without a query result type of rowstream")
             }
         }

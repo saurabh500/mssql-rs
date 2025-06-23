@@ -54,7 +54,7 @@ pub async fn assert_matches_expected(qrt: QueryResultType<'_>, expected: &Expect
         (QueryResultType::ResultSet(_), ExpectedQueryResultType::Update(_)) => {
             assert!(false)
         }
-        (QueryResultType::Update(_), ExpectedQueryResultType::Result(_)) => {
+        (QueryResultType::DmlResult(_), ExpectedQueryResultType::Result(_)) => {
             assert!(false)
         }
         (
@@ -76,7 +76,7 @@ pub async fn assert_matches_expected(qrt: QueryResultType<'_>, expected: &Expect
             assert_eq!(actual_rows, *expected_row_count);
         }
         (
-            QueryResultType::Update(rows_affected),
+            QueryResultType::DmlResult(rows_affected),
             ExpectedQueryResultType::Update(expected_row_count),
         ) => {
             assert_eq!(rows_affected, *expected_row_count as i64);
@@ -167,7 +167,7 @@ where
     while let Some(query_result_type) = query_result_stream.next().await {
         let qrt = query_result_type.unwrap();
         match qrt {
-            QueryResultType::Update(_) => {
+            QueryResultType::DmlResult(_) => {
                 // Do Nothing. Skip;
             }
             QueryResultType::ResultSet(rs) => {
@@ -206,7 +206,7 @@ where
     while let Some(query_result_type) = query_result_stream.next().await {
         let qrt = query_result_type.unwrap();
         match qrt {
-            QueryResultType::Update(_) => {
+            QueryResultType::DmlResult(_) => {
                 // Do Nothing. Skip;
             }
             QueryResultType::ResultSet(rs) => {
