@@ -1,6 +1,7 @@
 use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::column_values::ColumnValues;
+use crate::error::Error::SqlServerError;
 use crate::query::metadata::ColumnMetadata;
 use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::token_stream::{
@@ -73,14 +74,18 @@ impl QueryResultType<'_> {
                     continue;
                 }
                 Tokens::Error(t1) => {
-                    println!("Received Error token: {:?}", t1);
-
-                    // TODO: Do not panic. Get the error out to the user, and then drain any more data
-                    // out and be done. Error tokens can also be raised because the Stored Proc has a
-                    // exception being raised. in those cases, the query execution failure means
-                    // user
-                    error!(?t1);
-                    todo!("Received error token: {:?}", t1)
+                    info!("Received Error token: {:?}", t1);
+                    // Clean-up the state of the query.
+                    parent_batch_ref.drain_stream(true);
+                    break Err(SqlServerError {
+                        message: t1.message,
+                        state: t1.state,
+                        class: t1.severity as i32,
+                        number: t1.number,
+                        server_name: Some(t1.server_name),
+                        proc_name: Some(t1.proc_name),
+                        line_number: Some(t1.line_number as i32),
+                    });
                 }
                 Tokens::FeatureExtAck(t1) => {
                     println!("Received FeatureExtAck token: {:?}", t1);
@@ -195,55 +200,59 @@ where
         drain_until_first_done: bool,
     ) -> TdsResult<Option<Vec<ReturnValue>>> {
         let mut return_values: Vec<ReturnValue> = Vec::new();
-        loop {
-            let token = self.next_token().await?;
-            match token {
-                Tokens::Done(t1) => {
-                    info!(?t1);
-                    self.parser_context = ParserContext::None(());
-                    if !t1.status.contains(DoneStatus::MORE) {
-                        self.received_last = true;
+        if !self.received_last {
+            loop {
+                let token = self.next_token().await?;
+                match token {
+                    Tokens::Done(t1) => {
+                        info!(?t1);
+                        self.parser_context = ParserContext::None(());
+                        if !t1.status.contains(DoneStatus::MORE) {
+                            self.received_last = true;
+                        }
+                        if drain_until_first_done || !t1.status.contains(DoneStatus::MORE) {
+                            break;
+                        }
                     }
-                    if drain_until_first_done || !t1.status.contains(DoneStatus::MORE) {
-                        break;
+                    Tokens::DoneInProc(t1) => {
+                        info!(?t1);
+                        self.parser_context = ParserContext::None(());
+                        if !t1.status.contains(DoneStatus::MORE) {
+                            self.received_last = true;
+                        }
+                        if drain_until_first_done || !t1.status.contains(DoneStatus::MORE) {
+                            break;
+                        }
                     }
-                }
-                Tokens::DoneInProc(t1) => {
-                    info!(?t1);
-                    self.parser_context = ParserContext::None(());
-                    if !t1.status.contains(DoneStatus::MORE) {
-                        self.received_last = true;
+                    Tokens::DoneProc(t1) => {
+                        info!(?t1);
+                        self.parser_context = ParserContext::None(());
+                        if !t1.status.contains(DoneStatus::MORE) {
+                            self.received_last = true;
+                        }
+                        if drain_until_first_done || !t1.status.contains(DoneStatus::MORE) {
+                            break;
+                        }
                     }
-                    if drain_until_first_done || !t1.status.contains(DoneStatus::MORE) {
-                        break;
+                    Tokens::EnvChange(t1) => {
+                        self.execution_context.capture_change_property(&t1).unwrap();
                     }
-                }
-                Tokens::DoneProc(t1) => {
-                    info!(?t1);
-                    self.parser_context = ParserContext::None(());
-                    if !t1.status.contains(DoneStatus::MORE) {
-                        self.received_last = true;
+                    Tokens::ColMetadata(column_metadata) => {
+                        info!(?column_metadata);
+                        self.parser_context =
+                            ParserContext::ColumnMetadata(column_metadata.clone());
                     }
-                    if drain_until_first_done || !t1.status.contains(DoneStatus::MORE) {
-                        break;
+                    Tokens::ReturnValue(return_value_token) => {
+                        let return_value = return_value_token.into();
+                        return_values.push(return_value);
                     }
-                }
-                Tokens::EnvChange(t1) => {
-                    self.execution_context.capture_change_property(&t1).unwrap();
-                }
-                Tokens::ColMetadata(column_metadata) => {
-                    info!(?column_metadata);
-                    self.parser_context = ParserContext::ColumnMetadata(column_metadata.clone());
-                }
-                Tokens::ReturnValue(return_value_token) => {
-                    let return_value = return_value_token.into();
-                    return_values.push(return_value);
-                }
-                _ => {
-                    info!(?token);
+                    _ => {
+                        info!(?token);
+                    }
                 }
             }
-        }
+        };
+
         if return_values.is_empty() {
             Ok(None)
         } else {
@@ -433,11 +442,18 @@ impl<'result> ResultSet<'result> {
                     .capture_change_property(t1)?;
             }
             Tokens::Error(t1) => {
-                error!(?t1);
-                todo!(
-                    "Received error token, change this to not error/panic. : {:?}",
-                    t1
-                );
+                info!("Received Error token: {:?}", t1);
+                // Clean-up the state of the query.
+                parent_batch_mut.drain_stream(true);
+                return Err(SqlServerError {
+                    message: t1.message.clone(),
+                    state: t1.state,
+                    class: t1.severity as i32,
+                    number: t1.number,
+                    server_name: Some(t1.server_name.clone()),
+                    proc_name: Some(t1.proc_name.clone()),
+                    line_number: Some(t1.line_number as i32),
+                });
             }
             Tokens::Row(_row) => {}
             _ => {
@@ -496,14 +512,16 @@ impl<'result> RowStream<'result> {
                     self.executing_future = Some(future);
                     Poll::Pending
                 }
-                Poll::Ready(result) => {
-                    let row_data_ref = result.as_ref().unwrap();
-                    if row_data_ref.is_terminal {
-                        Poll::Ready(None)
-                    } else {
-                        Poll::Ready(Some(result))
+                Poll::Ready(result) => match result.as_ref() {
+                    Ok(row_data_ref) => {
+                        if row_data_ref.is_terminal {
+                            Poll::Ready(None)
+                        } else {
+                            Poll::Ready(Some(result))
+                        }
                     }
-                }
+                    Err(_) => Poll::Ready(Some(result)),
+                },
             }
         } else {
             panic!("Executing future not available.");

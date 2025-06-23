@@ -7,6 +7,7 @@ mod query_result_reads {
         ExpectedQueryResultType,
     };
     use futures::StreamExt;
+    use tds_x::error::Error::SqlServerError;
     use tds_x::query::result::QueryResultType;
 
     use crate::common::init_tracing;
@@ -251,5 +252,95 @@ mod query_result_reads {
             &expected,
         )
         .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_error_within_result_set() {
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+        {
+            let results = connection
+                .execute(
+                    "
+                CREATE TABLE #dummy (
+                    StrColumn VARCHAR(100)
+                );
+                INSERT INTO #dummy VALUES('10'),('abcd');
+                SELECT CAST(StrColumn AS Int) FROM #dummy;"
+                        .to_string(),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            let mut result_stream = results.stream_results();
+
+            // Skip the first two results.
+            result_stream.next().await.unwrap().unwrap();
+            result_stream.next().await.unwrap().unwrap();
+
+            // Next result should be a result set with an error on the second row.
+            let query_result_type = result_stream.next().await.unwrap().unwrap();
+            match query_result_type {
+                QueryResultType::ResultSet(result_set) => {
+                    let mut row_stream = result_set.into_row_stream().unwrap();
+
+                    // First row should be OK.
+                    row_stream.next().await.unwrap().unwrap();
+
+                    // Second row should be a SqlServerError
+                    let row_result = row_stream.next().await.unwrap();
+                    match row_result {
+                        Err(SqlServerError { .. }) => {}
+                        _ => panic!("Expected a SqlServerError"),
+                    };
+                    row_stream.close().await.unwrap();
+                }
+                _ => panic!("unexpected query result type"),
+            }
+            result_stream.close().await.unwrap();
+        }
+
+        // Make sure the connection is still usable.
+        let expected = [ExpectedQueryResultType::Result(1)];
+        run_query_and_check_results(&mut connection, "SELECT 1".to_string(), &expected).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_error_within_batch() {
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+        {
+            let results = connection
+                .execute(
+                    "
+                CREATE TABLE #dummy (
+                    IntColumn VARCHAR(100)
+                );
+                INSERT INTO #dummy VALUES(1/0),(10);
+                SELECT CAST(StrColumn AS Int) FROM #dummy;"
+                        .to_string(),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            let mut result_stream = results.stream_results();
+
+            // Skip the first result.
+            result_stream.next().await.unwrap().unwrap();
+
+            // Next result should be an error.
+            let error_result_type = result_stream.next().await.unwrap();
+            match error_result_type {
+                Err(SqlServerError { .. }) => {}
+                _ => panic!("Expected a SqlServerError"),
+            }
+            result_stream.close().await.unwrap();
+        }
+
+        // Make sure the connection is still usable.
+        let expected = [ExpectedQueryResultType::Result(1)];
+        run_query_and_check_results(&mut connection, "SELECT 1".to_string(), &expected).await;
     }
 }
