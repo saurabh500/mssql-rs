@@ -66,8 +66,80 @@ mod rpc_results {
             )
             .await
             .unwrap();
-        let return_values = result.close().await.unwrap();
+        result.close().await.unwrap();
 
+        let return_values = result.retrieve_output_params().unwrap();
+        assert!(return_values.is_some());
+        let returned_parameters = return_values.unwrap();
+        assert_eq!(returned_parameters.len(), 1);
+        let returned_parameter = returned_parameters.first().unwrap();
+        assert_eq!(returned_parameter.param_name, "@OutputInt".to_string());
+        assert_eq!(returned_parameter.value, ColumnValues::Int(45612));
+        assert_eq!(returned_parameter.status, ReturnValueStatus::OutputParam);
+    }
+
+    #[tokio::test]
+    async fn test_stored_proc_stream_results() {
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+
+        // Create a query to setup the stored procedure. This will be a Sql Batch execution.
+        let stored_procedure_setup_query = "CREATE PROCEDURE #TempScrollProc
+                @InputInt INT,
+                @OutputInt INT OUTPUT
+            AS
+            BEGIN
+                SET @OutputInt = @InputInt;
+            END;";
+
+        // This should setup the temp stored procedure on this connection.
+        execute_non_query(&mut connection, stored_procedure_setup_query.to_string())
+            .await
+            .unwrap();
+
+        // Do the actual test of the stored procedure.
+        let param_value = SqlType::Int(Some(45612));
+        let param1 = RpcParameter::new(
+            Some("@InputInt".to_string()),
+            StatusFlags::NONE,
+            &param_value,
+        );
+
+        let param2 = RpcParameter::new(
+            Some("@OutputInt".to_string()),
+            StatusFlags::BY_REF_VALUE, // Output parameter
+            &SqlType::Int(None),       // This is an output parameter. Set to null.
+        );
+
+        let named_parameters = vec![param1, param2];
+
+        let stored_procedure_query = "#TempScrollProc";
+
+        let result = connection
+            .execute_stored_procedure(
+                stored_procedure_query.to_string(),
+                None,
+                Some(&named_parameters),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let mut query_result_stream = result.stream_results();
+        while let Some(query_result_type) = query_result_stream.next().await {
+            let qrt = query_result_type.unwrap();
+            match qrt {
+                QueryResultType::DmlResult(_) => {
+                    // Do Nothing. Skip;
+                }
+                QueryResultType::ResultSet(mut rs) => {
+                    // Iterate till the end
+                    rs.close().await.unwrap();
+                }
+            }
+        }
+
+        let return_values = query_result_stream.clone_output_params().await.unwrap();
         assert!(return_values.is_some());
         let returned_parameters = return_values.unwrap();
         assert_eq!(returned_parameters.len(), 1);
@@ -199,7 +271,8 @@ mod rpc_results {
         // TODD: WE need to check for data being returned as well, but right now the BatchResult ownership is transferred to
         // the iterators when retrieving data. Hence we cannot use the close() APis and iterators in tandem right now.
         // Once Batch result is enhanced we need to enhance this test as well.
-        let out_params = batch_result.close().await.unwrap();
+        batch_result.close().await.unwrap();
+        let out_params = batch_result.retrieve_output_params().unwrap();
         assert!(out_params.is_some());
         let out_params = out_params.unwrap();
         assert_eq!(out_params.len(), 1);

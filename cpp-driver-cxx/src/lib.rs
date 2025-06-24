@@ -77,7 +77,7 @@ mod ffi {
         ) -> Result<Box<RowStream<'result>>>;
         unsafe fn take_dml_result<'result>(
             self: &'result mut QueryResultType<'result>,
-        ) -> Result<i64>;
+        ) -> Result<u64>;
 
         // RowStream methods
         unsafe fn next<'result>(self: &'result mut RowStream<'result>) -> Result<bool>;
@@ -289,7 +289,7 @@ impl<'result> QueryResultType<'result> {
         }
     }
 
-    pub fn take_dml_result(&mut self) -> TdsResult<i64> {
+    pub fn take_dml_result(&mut self) -> TdsResult<u64> {
         if self.result_type == ffi::ResultType::DmlResult {
             let update_result = self.dml_result.take().unwrap();
             Ok(update_result)

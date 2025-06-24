@@ -28,7 +28,7 @@ pub struct QueryResultTypeStream<'result> {
 
 pub struct QueryResultType<'result> {
     pub(crate) result_set: Option<tds_x::query::result::ResultSet<'result>>,
-    pub(crate) dml_result: Option<i64>,
+    pub(crate) dml_result: Option<u64>,
     pub(crate) result_type: ffi::ResultType,
 }
 

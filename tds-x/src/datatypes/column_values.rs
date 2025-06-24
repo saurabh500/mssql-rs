@@ -38,7 +38,7 @@ impl From<String> for SqlXml {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ColumnValues {
     TinyInt(u8),
     SmallInt(i16),

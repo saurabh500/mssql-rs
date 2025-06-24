@@ -190,7 +190,8 @@ impl<'connection, 'result> TdsConnection<'connection> {
             timeout_sec.map(|t| Duration::from_secs(t as u64) - start.elapsed());
         let mut batch_result = BatchResult::new(self, remaining_timeout, cancel_handle);
 
-        let return_values = batch_result.close().await?;
+        batch_result.close().await?;
+        let return_values = batch_result.retrieve_output_params()?;
 
         // We need to get the return value, and then extract the handle from it.
         match return_values {

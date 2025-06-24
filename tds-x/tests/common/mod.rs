@@ -79,7 +79,7 @@ pub async fn assert_matches_expected(qrt: QueryResultType<'_>, expected: &Expect
             QueryResultType::DmlResult(rows_affected),
             ExpectedQueryResultType::Update(expected_row_count),
         ) => {
-            assert_eq!(rows_affected, *expected_row_count as i64);
+            assert_eq!(rows_affected, *expected_row_count);
         }
     }
 }

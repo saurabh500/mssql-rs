@@ -660,7 +660,7 @@ impl<'a> SqlTypeDecode<'a> for StringDecoder {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 pub struct DecimalParts {
     pub is_positive: bool,
     pub scale: u8,

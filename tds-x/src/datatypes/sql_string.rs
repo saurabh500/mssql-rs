@@ -4,14 +4,14 @@ use std::{fmt::Debug, fmt::Display};
 
 use super::sqldatatypes::{is_unicode_type, TypeInfoVariant};
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 pub enum EncodingType {
     Utf8,
     Utf16,
     LcidBased(SqlCollation),
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 pub struct SqlString {
     pub bytes: Vec<u8>,
     encoding_type: EncodingType,

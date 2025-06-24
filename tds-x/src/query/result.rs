@@ -1,7 +1,7 @@
 use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::column_values::ColumnValues;
-use crate::error::Error::SqlServerError;
+use crate::error::Error::{SqlServerError, UsageError};
 use crate::query::metadata::ColumnMetadata;
 use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::token_stream::{
@@ -23,15 +23,15 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, trace};
 
 pub enum QueryResultType<'result> {
-    DmlResult(i64),
+    DmlResult(u64),
     ResultSet(ResultSet<'result>),
 }
 
 impl QueryResultType<'_> {
-    pub fn row_count(&self) -> Option<usize> {
+    pub fn row_count(&self) -> Option<u64> {
         match &self {
-            QueryResultType::DmlResult(count) => Some(*count as usize),
-            QueryResultType::ResultSet(_) => None,
+            QueryResultType::DmlResult(count) => Some(*count),
+            QueryResultType::ResultSet(result_set) => result_set.row_count,
         }
     }
 
@@ -51,7 +51,7 @@ impl QueryResultType<'_> {
                         }
                         parent_batch_ref.parser_context = ParserContext::None(());
                     }
-                    break Ok(QueryResultType::DmlResult(t1.row_count as i64));
+                    break Ok(QueryResultType::DmlResult(t1.row_count));
                 }
                 Tokens::DoneInProc(t1) => {
                     println!("Received DoneInProc token: {:?}", t1);
@@ -61,7 +61,7 @@ impl QueryResultType<'_> {
                         }
                         parent_batch_ref.parser_context = ParserContext::None(());
                     }
-                    break Ok(QueryResultType::DmlResult(t1.row_count as i64));
+                    break Ok(QueryResultType::DmlResult(t1.row_count));
                 }
                 Tokens::DoneProc(t1) => {
                     println!("Received DoneProc token: {:?}", t1);
@@ -71,7 +71,7 @@ impl QueryResultType<'_> {
                         }
                         parent_batch_ref.parser_context = ParserContext::None(());
                     }
-                    break Ok(QueryResultType::DmlResult(t1.row_count as i64));
+                    break Ok(QueryResultType::DmlResult(t1.row_count));
                 }
                 Tokens::EnvChange(t1) => {
                     println!("Received EnvChange token: {:?}", t1);
@@ -117,6 +117,15 @@ impl QueryResultType<'_> {
                     panic!("Received row token: {:?}", row);
                     //panic!("Received unexpected token: {:?}", token)
                 }
+                Tokens::ReturnValue(return_value_token) => {
+                    let return_value = return_value_token.into();
+                    parent_batch_ref.return_values.push(return_value);
+                    continue;
+                }
+                Tokens::ReturnStatus(return_status) => {
+                    info!("Received return_status token: {:?}", return_status);
+                    continue;
+                }
                 _ => {
                     //println!("Received token: {:?}", token);
                     panic!("Received unexpected token: {:?}", token)
@@ -132,6 +141,7 @@ pub struct BatchResult<'result> {
     parser_context: ParserContext,
     received_last: bool,
     execution_context: &'result mut ExecutionContext,
+    return_values: Vec<ReturnValue>,
     remaining_request_timeout: Option<Duration>,
     cancel_handle: Option<CancelHandle>,
 }
@@ -164,6 +174,7 @@ where
             received_last: false,
             execution_context: &mut tds_connection.execution_context,
             remaining_request_timeout,
+            return_values: Vec::new(),
             cancel_handle: cancel_handle.map(|handle| handle.child_handle()),
         }
     }
@@ -174,6 +185,28 @@ where
 
     pub fn get_all_results(self) -> Vec<QueryResultType<'result>> {
         todo!()
+    }
+
+    /// Retrieves a snapshot of the output parameters (including return values)
+    /// that have been retrieved from the result stream. This method may only
+    /// be called if the stream has been consumed (close() has been called on
+    /// the BatchResult or the QueryResultTypeStream has been fully consumed).
+    ///
+    /// An error occurs if this is called before the end of the result stream.
+    pub fn retrieve_output_params(&self) -> TdsResult<Option<&Vec<ReturnValue>>> {
+        if !self.received_last {
+            return Err(UsageError(
+                "Output parameters can only be retrieved after the stream is fully consumed.\
+            Please call BatchResult.close() or consume the entire QueryResultTypeStream."
+                    .to_string(),
+            ));
+        };
+
+        if self.return_values.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(&self.return_values))
+        }
     }
 
     async fn next_token(&mut self) -> TdsResult<Tokens> {
@@ -197,16 +230,12 @@ where
         result
     }
 
-    pub async fn close(&mut self) -> TdsResult<Option<Vec<ReturnValue>>> {
+    pub async fn close(&mut self) -> TdsResult<()> {
         // Drain the stream until the first done token.
         self.close_internal(false).await
     }
 
-    async fn close_internal(
-        &mut self,
-        drain_until_first_done: bool,
-    ) -> TdsResult<Option<Vec<ReturnValue>>> {
-        let mut return_values: Vec<ReturnValue> = Vec::new();
+    async fn close_internal(&mut self, drain_until_first_done: bool) -> TdsResult<()> {
         if !self.received_last {
             loop {
                 let token = self.next_token().await?;
@@ -242,7 +271,7 @@ where
                         }
                     }
                     Tokens::EnvChange(t1) => {
-                        self.execution_context.capture_change_property(&t1).unwrap();
+                        self.execution_context.capture_change_property(&t1)?;
                     }
                     Tokens::ColMetadata(column_metadata) => {
                         info!(?column_metadata);
@@ -251,20 +280,15 @@ where
                     }
                     Tokens::ReturnValue(return_value_token) => {
                         let return_value = return_value_token.into();
-                        return_values.push(return_value);
+                        self.return_values.push(return_value);
                     }
                     _ => {
                         info!(?token);
                     }
                 }
             }
-        };
-
-        if return_values.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(return_values))
         }
+        Ok(())
     }
 
     #[instrument(skip(self))]
@@ -293,6 +317,18 @@ impl<'result> QueryResultTypeStream<'result> {
             processing_flag: Arc::new(AtomicBool::new(false)),
             executing_future: None,
         }
+    }
+
+    /// Retrieves a snapshot of the output parameters (including return values)
+    /// that have been retrieved from the result stream. This method may only
+    /// be called if the stream has been consumed (close() has been called on
+    /// the BatchResult or the QueryResultTypeStream has been fully consumed).
+    ///
+    /// An error occurs if this is called before the end of the result stream.
+    pub async fn clone_output_params(&mut self) -> TdsResult<Option<Vec<ReturnValue>>> {
+        let batch_result_ref = self.batch_result.lock().await;
+        let result = batch_result_ref.retrieve_output_params();
+        result.map(|option| option.cloned())
     }
 
     fn evaluate_executing_future(
@@ -412,63 +448,86 @@ impl<'result> ResultSet<'result> {
     // Retrieves the next token and updates internal state about this result set and its parent batch.
     async fn next_row_token(&mut self) -> TdsResult<Tokens> {
         let mut parent_batch_mut = self.parent_batch.lock().await;
-        let token = parent_batch_mut.next_token().await?;
-        match &token {
-            Tokens::Done(t1) => {
-                debug!(?t1);
-                self.received_last_row = true;
-                self.row_count = Some(t1.row_count);
+        loop {
+            let token = parent_batch_mut.next_token().await?;
+            match &token {
+                Tokens::Done(t1) => {
+                    debug!(?t1);
+                    self.received_last_row = true;
+                    self.row_count = Some(t1.row_count);
 
-                if !t1.status.contains(DoneStatus::MORE) {
-                    parent_batch_mut.received_last = true;
+                    if !t1.status.contains(DoneStatus::MORE) {
+                        parent_batch_mut.received_last = true;
+                    }
+                    parent_batch_mut.parser_context = ParserContext::None(());
+                    return Ok(token);
                 }
-                parent_batch_mut.parser_context = ParserContext::None(());
-            }
-            Tokens::DoneInProc(t1) => {
-                debug!(?t1);
-                self.received_last_row = true;
-                self.row_count = Some(t1.row_count);
+                Tokens::DoneInProc(t1) => {
+                    debug!(?t1);
+                    self.received_last_row = true;
+                    self.row_count = Some(t1.row_count);
 
-                if !t1.status.contains(DoneStatus::MORE) {
-                    parent_batch_mut.received_last = true;
+                    if !t1.status.contains(DoneStatus::MORE) {
+                        parent_batch_mut.received_last = true;
+                    }
+                    parent_batch_mut.parser_context = ParserContext::None(());
+                    return Ok(token);
                 }
-                parent_batch_mut.parser_context = ParserContext::None(());
-            }
-            Tokens::DoneProc(t1) => {
-                self.received_last_row = true;
-                self.row_count = Some(t1.row_count);
+                Tokens::DoneProc(t1) => {
+                    self.received_last_row = true;
+                    self.row_count = Some(t1.row_count);
 
-                if !t1.status.contains(DoneStatus::MORE) {
-                    parent_batch_mut.received_last = true;
+                    if !t1.status.contains(DoneStatus::MORE) {
+                        parent_batch_mut.received_last = true;
+                    }
+                    parent_batch_mut.parser_context = ParserContext::None(());
+                    return Ok(token);
                 }
-                parent_batch_mut.parser_context = ParserContext::None(());
-            }
-            Tokens::EnvChange(t1) => {
-                parent_batch_mut
-                    .execution_context
-                    .capture_change_property(t1)?;
-            }
-            Tokens::Error(t1) => {
-                info!("Received Error token: {:?}", t1);
-                // Clean-up the state of the query.
-                parent_batch_mut.drain_stream(true);
-                return Err(SqlServerError {
-                    message: t1.message.clone(),
-                    state: t1.state,
-                    class: t1.severity as i32,
-                    number: t1.number,
-                    server_name: Some(t1.server_name.clone()),
-                    proc_name: Some(t1.proc_name.clone()),
-                    line_number: Some(t1.line_number as i32),
-                });
-            }
-            Tokens::Row(_row) => {}
-            _ => {
-                unreachable!("Received unexpected token: {:?}", &token)
-            }
-        };
-
-        Ok(token)
+                Tokens::EnvChange(t1) => {
+                    parent_batch_mut
+                        .execution_context
+                        .capture_change_property(t1)?;
+                    return Ok(token);
+                }
+                Tokens::Error(t1) => {
+                    info!("Received Error token: {:?}", t1);
+                    // Clean-up the state of the query.
+                    parent_batch_mut.drain_stream(true);
+                    return Err(SqlServerError {
+                        message: t1.message.clone(),
+                        state: t1.state,
+                        class: t1.severity as i32,
+                        number: t1.number,
+                        server_name: Some(t1.server_name.clone()),
+                        proc_name: Some(t1.proc_name.clone()),
+                        line_number: Some(t1.line_number as i32),
+                    });
+                }
+                Tokens::Row(_row) => {
+                    return Ok(token);
+                }
+                Tokens::ReturnValue(_) => {
+                    match token {
+                        Tokens::ReturnValue(return_value_token) => {
+                            parent_batch_mut
+                                .return_values
+                                .push(return_value_token.into());
+                        }
+                        _ => {
+                            unreachable!("Received unexpected token: {:?}", &token)
+                        }
+                    }
+                    continue;
+                }
+                Tokens::ReturnStatus(return_status) => {
+                    info!("Received return_status token: {:?}", return_status);
+                    continue;
+                }
+                _ => {
+                    unreachable!("Received unexpected token: {:?}", &token)
+                }
+            };
+        }
     }
 
     // Closes the result set by reading up to the first done token which marks the end of the batch.
@@ -645,6 +704,7 @@ impl Drop for DeferredSignal {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ReturnValue {
     pub param_ordinal: u16,
     pub param_name: String,
