@@ -44,8 +44,8 @@ mod tests {
         let mut network_writer = transport;
 
         // Fill data_to_send with random values
-        let mut rng = rand::thread_rng();
-        let data_vector: Vec<u8> = (0..MAX_BUFFER_SIZE).map(|_| rng.gen()).collect();
+        let mut rng = rand::rng();
+        let data_vector: Vec<u8> = (0..MAX_BUFFER_SIZE).map(|_| rng.random()).collect();
 
         // Setup the reader to read the data.
         let mut framed_reader = FramedRead::new(server_side, BytesCodec::new());
@@ -73,8 +73,8 @@ mod tests {
             create_client_server_network_transport(&context);
 
         // Fill data_to_send with random values
-        let mut rng = rand::thread_rng();
-        let data_vector: Vec<u8> = (0..MAX_BUFFER_SIZE).map(|_| rng.gen()).collect();
+        let mut rng = rand::rng();
+        let data_vector: Vec<u8> = (0..MAX_BUFFER_SIZE).map(|_| rng.random()).collect();
 
         // Send the data.
         let result = server_transport.send(&data_vector[..]).await;

@@ -5,17 +5,17 @@ edition = "2021"
 
 [dependencies]
 tds-x = { path = "../tds-x" }
-cxx = "1.0.153"
+cxx = "1.0.158"
 futures = "0.3.31"
-tokio = { version = "1.43.0", features = ["full"] }
+tokio = { version = "1.45.1", features = ["full"] }
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = "0.3.19"
 
 
 [build-dependencies]
 tds-x = { path = "../tds-x" }
-cxx = "1.0.153"
-cxx-build = "1.0.153"
+cxx = "1.0.158"
+cxx-build = "1.0.158"
 
 [lib]
 crate-type = ["staticlib"]

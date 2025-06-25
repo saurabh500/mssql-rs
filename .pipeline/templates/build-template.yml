@@ -61,7 +61,7 @@ steps:
     env:
       CARGO_REGISTRIES_ONELAKECLIENT_TOKEN: $(OneLakeClientSecret)
 
-- script: cargo install cargo-llvm-cov --version 0.6.16 --locked && cargo install cargo-nextest --version 0.9.96 --locked
+- script: cargo install cargo-llvm-cov --version 0.6.16 --locked && cargo install cargo-nextest --version 0.9.99 --locked
   displayName: Install llvm-cov and nextest 
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
@@ -72,7 +72,7 @@ steps:
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - script: |
       echo "##vso[task.setvariable variable=ARCHIVE_NAME;isOutput=false]tdslib-nextest.tar.zst"   
-      cargo install cargo-nextest  --version 0.9.96 --locked
+      cargo install cargo-nextest  --version 0.9.99 --locked
       cd tds-x && cargo nextest archive --archive-file tdslib-nextest.tar.zst && cp tdslib-nextest.tar.zst $(Build.ArtifactStagingDirectory) && mv tdslib-nextest.tar.zst ../ 
     displayName: Archive nextest results
     condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))

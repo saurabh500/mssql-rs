@@ -2,4 +2,4 @@
 # Additional targets to install for all builds (in both CI and local builds). The toolchain will
 # always come with support for the host platform.
 targets = ["i686-pc-windows-msvc", "aarch64-pc-windows-msvc"]
-channel = "1.84.0"
+channel = "1.85.0"

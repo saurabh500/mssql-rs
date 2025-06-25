@@ -645,7 +645,7 @@ pub(crate) mod tests {
     }
 
     fn generate_random_bytes(length: usize) -> Vec<u8> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut bytes = vec![0u8; length];
         rng.fill(&mut bytes[..]);
         bytes
@@ -654,8 +654,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_read_byte() {
         let mut binding = TestPacketBuilder::new(PacketType::PreLogin);
-        let mut rng = rand::thread_rng();
-        let byte_value = rng.gen::<u8>();
+        let mut rng = rand::rng();
+        let byte_value = rng.random::<u8>();
         let builder = binding.append_byte(byte_value);
 
         let mut mock_reader = MockNetworkReaderWriter::new(builder.build(), 0);
@@ -670,8 +670,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_read_int16() {
         let mut binding = TestPacketBuilder::new(PacketType::PreLogin);
-        let mut rng = rand::thread_rng();
-        let int16_value = rng.gen::<i16>();
+        let mut rng = rand::rng();
+        let int16_value = rng.random::<i16>();
         let builder = binding.append_i16(int16_value);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
@@ -685,8 +685,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_read_uint16() {
         let mut binding = TestPacketBuilder::new(PacketType::PreLogin);
-        let mut rng = rand::thread_rng();
-        let uint16_value = rng.gen::<u16>();
+        let mut rng = rand::rng();
+        let uint16_value = rng.random::<u16>();
         let builder = binding.append_u16(uint16_value);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
@@ -700,8 +700,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_read_int32() {
         let mut binding = TestPacketBuilder::new(PacketType::PreLogin);
-        let mut rng = rand::thread_rng();
-        let int32_value = rng.gen::<i32>();
+        let mut rng = rand::rng();
+        let int32_value = rng.random::<i32>();
         let builder = binding.append_i32(int32_value);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
@@ -715,8 +715,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_read_uint32() {
         let mut binding = TestPacketBuilder::new(PacketType::PreLogin);
-        let mut rng = rand::thread_rng();
-        let uint32_value = rng.gen::<u32>();
+        let mut rng = rand::rng();
+        let uint32_value = rng.random::<u32>();
         let builder = binding.append_u32(uint32_value);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
@@ -730,8 +730,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_read_int64() {
         let mut binding = TestPacketBuilder::new(PacketType::PreLogin);
-        let mut rng = rand::thread_rng();
-        let int64_value = rng.gen::<i64>();
+        let mut rng = rand::rng();
+        let int64_value = rng.random::<i64>();
         let builder = binding.append_i64(int64_value);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
@@ -745,8 +745,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_read_uint64() {
         let mut binding = TestPacketBuilder::new(PacketType::PreLogin);
-        let mut rng = rand::thread_rng();
-        let uint64_value = rng.gen::<u64>();
+        let mut rng = rand::rng();
+        let uint64_value = rng.random::<u64>();
         let builder = binding.append_u64(uint64_value);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
@@ -760,8 +760,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_read_float32() {
         let mut binding = TestPacketBuilder::new(PacketType::PreLogin);
-        let mut rng = rand::thread_rng();
-        let float32_value = rng.gen::<f32>();
+        let mut rng = rand::rng();
+        let float32_value = rng.random::<f32>();
         let builder = binding.append_f32(float32_value);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
@@ -775,8 +775,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_read_float64() {
         let mut binding = TestPacketBuilder::new(PacketType::PreLogin);
-        let mut rng = rand::thread_rng();
-        let float64_value = rng.gen::<f64>();
+        let mut rng = rand::rng();
+        let float64_value = rng.random::<f64>();
         let builder = binding.append_f64(float64_value);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);

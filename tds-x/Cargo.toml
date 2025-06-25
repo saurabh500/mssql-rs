@@ -5,21 +5,21 @@ edition = "2021"
 
 
 [dependencies]
-async-trait = "0.1.86"
-tokio = { version = "1.43.0", features = ["full"] }
+async-trait = "0.1.88"
+tokio = { version = "1.45.1", features = ["full"] }
 tokio-native-tls = "0.3.1"
 native-tls = "0.2.14"
 futures = "0.3.31"
 byteorder = "1.5.0"
-tokio-util = { version = "0.7.13", features = ["full"] }
-bytes = "1.9.0"
+tokio-util = { version = "0.7.15", features = ["full"] }
+bytes = "1.10.1"
 tracing = { version = "0.1.41", features = ["log"] }
-bitflags = "2.7.0"
+bitflags = "2.9.1"
 thiserror = "2.0.12"
 # For pretty printing of the packets in the traces.
-pretty-hex = "0.3"
+pretty-hex = "0.4"
 # Added for setting the keep alives on the socket.
-socket2 = { version = "0.4", features = ["all"] }
+socket2 = { version = "0.5", features = ["all"] }
 hostname = "0.4.1"
 
 [features]
@@ -32,16 +32,16 @@ version = "0.3.19"
 optional = true
 
 [dependencies.rustyline]
-version = "15.0.0"
+version = "16.0.0"
 optional = true
 
 [dependencies.clap]
-version = "4.5.28"
+version = "4.5.40"
 features = ["derive"]
 optional = true
 
 [dependencies.uuid]
-version = "1.12.0"
+version = "1.17.0"
 features = [
     "v4",                # Lets you generate random UUIDs
     "fast-rng",          # Use a faster (but still sufficiently random) RNG
@@ -49,9 +49,9 @@ features = [
 ]
 
 [dev-dependencies]
-rand = "0.8.5"
+rand = "0.9.1"
 dotenv = "0.15"
-azure_identity = "0.22.0"
-azure_core = "0.22.0"
+azure_identity = "0.25.0"
+azure_core = "0.25.0"
 tracing-subscriber = "0.3.19"
-ctor = "0.1"
+ctor = "0.4"

@@ -463,8 +463,8 @@ pub(crate) mod tests {
         let (mut transport, server_side) = create_readable_network_transport(&context);
 
         // Fill data_to_send with random values
-        let mut rng = rand::thread_rng();
-        let data_vector: Vec<u8> = (0..MAX_BUFFER_SIZE).map(|_| rng.gen()).collect();
+        let mut rng = rand::rng();
+        let data_vector: Vec<u8> = (0..MAX_BUFFER_SIZE).map(|_| rng.random()).collect();
 
         // Setup the reader to read the data.
         let mut framed_reader = FramedRead::new(server_side, BytesCodec::new());
@@ -525,9 +525,9 @@ pub(crate) mod tests {
             context: &context,
         };
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let data_size = 128;
-        let data_written: Vec<u8> = (0..data_size).map(|_| rng.gen()).collect();
+        let data_written: Vec<u8> = (0..data_size).map(|_| rng.random()).collect();
         let mut framed_writer = FramedWrite::new(server_side, BytesCodec::new());
         framed_writer
             .send(Bytes::copy_from_slice(&data_written[..]))

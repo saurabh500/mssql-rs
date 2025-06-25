@@ -9,7 +9,8 @@ mod connectivity {
 
     use crate::common::{create_context, get_scalar_value, init_tracing};
     use azure_identity::{
-        DefaultAzureCredential, TokenCredentialOptions, VirtualMachineManagedIdentityCredential,
+        DefaultAzureCredential, ManagedIdentityCredential, ManagedIdentityCredentialOptions,
+        TokenCredentialOptions,
     };
     use dotenv::dotenv;
     use futures::StreamExt;
@@ -37,7 +38,7 @@ mod connectivity {
 
         let credential = DefaultAzureCredential::new();
 
-        let token_response = credential.unwrap().get_token(&[SCOPE]).await;
+        let token_response = credential.unwrap().get_token(&[SCOPE], None).await;
 
         let secret = token_response.as_ref().unwrap().token.secret();
         print!("{}", secret);
@@ -61,16 +62,16 @@ mod connectivity {
             TdsAuthenticationMethod::ActiveDirectoryDeviceCodeFlow => todo!(),
             TdsAuthenticationMethod::ActiveDirectoryServicePrincipal => todo!(),
             TdsAuthenticationMethod::ActiveDirectoryManagedIdentity => {
-                let vm_credential = VirtualMachineManagedIdentityCredential::new(
-                    azure_identity::ImdsId::SystemAssigned,
+                let options = ManagedIdentityCredentialOptions {
                     credential_options,
-                )
-                .unwrap();
-                vm_credential.get_token(scopes).await
+                    user_assigned_id: None,
+                };
+                let vm_credential = ManagedIdentityCredential::new(Some(options)).unwrap();
+                vm_credential.get_token(scopes, None).await
             }
             TdsAuthenticationMethod::ActiveDirectoryDefault => {
                 let credential = DefaultAzureCredential::new();
-                credential.unwrap().get_token(scopes).await
+                credential.unwrap().get_token(scopes, None).await
             }
             TdsAuthenticationMethod::ActiveDirectoryMSI => todo!(),
             TdsAuthenticationMethod::ActiveDirectoryWorkloadIdentity => todo!(),

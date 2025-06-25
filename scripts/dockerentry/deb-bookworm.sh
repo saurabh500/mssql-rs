@@ -15,7 +15,7 @@ curl https://sh.rustup.rs -sSf | sh -s -- -y
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
-cargo install cargo-nextest --version 0.9.96 --locked
+cargo install cargo-nextest --version 0.9.99 --locked
 
 cd /workspace
 
