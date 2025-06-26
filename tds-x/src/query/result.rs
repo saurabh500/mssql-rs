@@ -9,7 +9,6 @@ use crate::read_write::token_stream::{
 };
 use crate::token::tokenitems::ReturnValueStatus;
 use crate::token::tokens::{ColMetadataToken, DoneStatus, ReturnValueToken, Tokens};
-use futures::executor::block_on;
 use futures::task::AtomicWaker;
 use futures::Stream;
 use std::future::Future;
@@ -40,6 +39,11 @@ impl QueryResultType<'_> {
         processing_signal: DeferredSignal,
     ) -> TdsResult<QueryResultType<'_>> {
         let mut parent_batch_ref = parent_batch.lock().await;
+        if parent_batch_ref.execution_context.has_open_result_set {
+            return Err(UsageError("The previous ResultSet on this batch must be closed or fully consumed before requesting\
+            another result.".to_string()));
+        };
+
         loop {
             let token = parent_batch_ref.next_token().await?;
             match token {
@@ -83,7 +87,7 @@ impl QueryResultType<'_> {
                 Tokens::Error(t1) => {
                     info!("Received Error token: {:?}", t1);
                     // Clean-up the state of the query.
-                    parent_batch_ref.drain_stream(true);
+                    parent_batch_ref.drain_stream(true).await;
                     break Err(SqlServerError {
                         message: t1.message,
                         state: t1.state,
@@ -105,6 +109,7 @@ impl QueryResultType<'_> {
                     info!(?column_metadata);
                     parent_batch_ref.parser_context =
                         ParserContext::ColumnMetadata(column_metadata.clone());
+                    parent_batch_ref.execution_context.has_open_result_set = true;
                     break Ok(QueryResultType::ResultSet(ResultSet::new(
                         parent_batch.clone(),
                         processing_signal,
@@ -161,6 +166,7 @@ where
             packet_reader,
             Box::new(GenericTokenParserRegistry::default()),
         );
+        tds_connection.execution_context.has_open_batch = true;
         BatchResult {
             // TODO: Holding a mutable borrow of negotiated_settings prevents BatchResult from implementing
             // Send or Sync, which makes it illegal to use in an Arc<Mutex<>>. However the negotiated_settings
@@ -227,12 +233,20 @@ where
                 t.abs_diff(elapsed)
             }
         });
+
+        if result.is_err() {
+            self.execution_context.has_open_result_set = false;
+            self.execution_context.has_open_batch = false;
+        }
         result
     }
 
     pub async fn close(&mut self) -> TdsResult<()> {
         // Drain the stream until the first done token.
-        self.close_internal(false).await
+        let result = self.close_internal(false).await;
+        self.execution_context.has_open_batch = false;
+        self.execution_context.has_open_result_set = false;
+        result
     }
 
     async fn close_internal(&mut self, drain_until_first_done: bool) -> TdsResult<()> {
@@ -292,8 +306,8 @@ where
     }
 
     #[instrument(skip(self))]
-    fn drain_stream(&mut self, drain_until_first_done: bool) {
-        if let Err(e) = block_on(self.close_internal(drain_until_first_done)) {
+    async fn drain_stream(&mut self, drain_until_first_done: bool) {
+        if let Err(e) = self.close_internal(drain_until_first_done).await {
             error!("Error while closing: {:?}", e);
         }
     }
@@ -363,6 +377,8 @@ impl<'result> QueryResultTypeStream<'result> {
             batch_result.close_internal(false).await?;
             batch_result.received_last = true;
         }
+        batch_result.execution_context.has_open_batch = false;
+        batch_result.execution_context.has_open_result_set = false;
         Ok(())
     }
 }
@@ -400,12 +416,6 @@ impl<'result> Stream for QueryResultTypeStream<'result> {
         } else {
             Poll::Pending
         }
-    }
-}
-
-impl Drop for QueryResultTypeStream<'_> {
-    fn drop(&mut self) {
-        block_on(self.close()).unwrap();
     }
 }
 
@@ -454,10 +464,12 @@ impl<'result> ResultSet<'result> {
                 Tokens::Done(t1) => {
                     debug!(?t1);
                     self.received_last_row = true;
+                    parent_batch_mut.execution_context.has_open_result_set = false;
                     self.row_count = Some(t1.row_count);
 
                     if !t1.status.contains(DoneStatus::MORE) {
                         parent_batch_mut.received_last = true;
+                        parent_batch_mut.execution_context.has_open_batch = false;
                     }
                     parent_batch_mut.parser_context = ParserContext::None(());
                     return Ok(token);
@@ -465,20 +477,24 @@ impl<'result> ResultSet<'result> {
                 Tokens::DoneInProc(t1) => {
                     debug!(?t1);
                     self.received_last_row = true;
+                    parent_batch_mut.execution_context.has_open_result_set = false;
                     self.row_count = Some(t1.row_count);
 
                     if !t1.status.contains(DoneStatus::MORE) {
                         parent_batch_mut.received_last = true;
+                        parent_batch_mut.execution_context.has_open_batch = false;
                     }
                     parent_batch_mut.parser_context = ParserContext::None(());
                     return Ok(token);
                 }
                 Tokens::DoneProc(t1) => {
                     self.received_last_row = true;
+                    parent_batch_mut.execution_context.has_open_result_set = false;
                     self.row_count = Some(t1.row_count);
 
                     if !t1.status.contains(DoneStatus::MORE) {
                         parent_batch_mut.received_last = true;
+                        parent_batch_mut.execution_context.has_open_batch = false;
                     }
                     parent_batch_mut.parser_context = ParserContext::None(());
                     return Ok(token);
@@ -492,7 +508,7 @@ impl<'result> ResultSet<'result> {
                 Tokens::Error(t1) => {
                     info!("Received Error token: {:?}", t1);
                     // Clean-up the state of the query.
-                    parent_batch_mut.drain_stream(true);
+                    parent_batch_mut.drain_stream(true).await;
                     return Err(SqlServerError {
                         message: t1.message.clone(),
                         state: t1.state,
@@ -537,15 +553,9 @@ impl<'result> ResultSet<'result> {
         if !self.received_last_row {
             parent_batch.close_internal(true).await?;
             self.received_last_row = true;
+            parent_batch.execution_context.has_open_result_set = false;
         }
         Ok(())
-    }
-}
-
-impl Drop for ResultSet<'_> {
-    fn drop(&mut self) {
-        trace!("ResultSet::drop");
-        block_on(self.close()).unwrap();
     }
 }
 

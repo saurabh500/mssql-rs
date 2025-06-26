@@ -73,6 +73,7 @@ pub async fn assert_matches_expected(qrt: QueryResultType<'_>, expected: &Expect
                 println!();
                 actual_rows += 1;
             }
+            row_stream.close().await.unwrap();
             assert_eq!(actual_rows, *expected_row_count);
         }
         (
@@ -130,6 +131,7 @@ pub async fn validate_results(
         assert_matches_expected(qrt, &expected_results[expected_index]).await;
         expected_index += 1;
     }
+    query_result_stream.close().await.unwrap();
 }
 
 pub async fn run_query_and_check_results<'a, 'n>(

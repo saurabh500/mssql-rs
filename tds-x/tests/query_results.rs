@@ -7,7 +7,7 @@ mod query_result_reads {
         ExpectedQueryResultType,
     };
     use futures::StreamExt;
-    use tds_x::error::Error::SqlServerError;
+    use tds_x::error::Error::{SqlServerError, UsageError};
     use tds_x::query::result::QueryResultType;
 
     use crate::common::init_tracing;
@@ -174,12 +174,14 @@ mod query_result_reads {
                                 break;
                             }
                         }
+                        row_stream.close().await.unwrap();
 
                         assert_eq!(row_number, expected_row_counts[result_number]);
                     }
                 }
                 result_number += 1;
             }
+            result_stream.close().await.unwrap();
         }
 
         // Try to reuse the connection. Note that the last result set was only partially consumed.
@@ -231,6 +233,7 @@ mod query_result_reads {
                     break;
                 }
             }
+            result_stream.close().await.unwrap();
         }
 
         // Try to reuse the connection.
@@ -252,6 +255,85 @@ mod query_result_reads {
             &expected,
         )
         .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_error_missed_close_result_iteration() {
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+
+        {
+            let batch_result = connection
+                .execute(
+                    "
+                CREATE TABLE #dummy (
+                    IntColumn INT
+                );
+                INSERT INTO #dummy VALUES(10),(20);
+                SELECT * FROM #dummy;"
+                        .to_string(),
+                    None,
+                    None,
+                )
+                .await;
+
+            // Just get one result.
+            let result_number = 0;
+            let mut result_stream = batch_result.unwrap().stream_results();
+            while result_stream.next().await.is_some() {
+                if result_number == 0 {
+                    break;
+                }
+            }
+        }
+
+        // Try to reuse the connection.
+        let expected_error = connection.execute("SELECT 1".to_string(), None, None).await;
+        match expected_error {
+            Ok(_) => panic!("Expected error but got success."),
+            Err(UsageError(_)) => {
+                // Success case.
+            }
+            Err(err) => panic!("Expected error but got different error: {}", err),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_error_missed_close_result_set() {
+        let context = create_context();
+        let mut connection = begin_connection(&context).await;
+
+        {
+            let batch_result = connection
+                .execute(
+                    "
+                SELECT 1 UNION ALL SELECT 2;
+                SELECT 2;"
+                        .to_string(),
+                    None,
+                    None,
+                )
+                .await;
+
+            let mut result_stream = batch_result.unwrap().stream_results();
+            let first_result = result_stream.next().await.unwrap().unwrap();
+            match first_result {
+                QueryResultType::DmlResult(_) => panic!("Unexpected DML result."),
+                QueryResultType::ResultSet(result_set) => {
+                    // Get the first row and explicitly don't close the result set.
+                    let _ = result_set.into_row_stream().unwrap().next().await.unwrap();
+                }
+            }
+            let second_result_should_fail = result_stream.next().await.unwrap();
+            match second_result_should_fail {
+                Ok(_) => panic!("Expected error but got success."),
+                Err(UsageError(_)) => {
+                    // Success case.
+                }
+                Err(err) => panic!("Expected error but got different error: {}", err),
+            }
+            result_stream.close().await.unwrap();
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

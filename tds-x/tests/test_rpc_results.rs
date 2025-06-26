@@ -326,6 +326,7 @@ mod rpc_results {
                 }
             }
         }
+        query_result_stream.close().await?;
 
         Ok(())
     }

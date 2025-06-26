@@ -4,6 +4,7 @@ use crate::datatypes::column_values::ColumnValues;
 use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqltypes::SqlType;
 use crate::error::Error;
+use crate::error::Error::UsageError;
 use crate::handler::handler_factory::NegotiatedSettings;
 use crate::message::attention::AttentionRequest;
 use crate::message::batch::SqlBatch;
@@ -32,6 +33,9 @@ pub struct TdsConnection<'a> {
     pub(crate) execution_context: ExecutionContext,
 }
 
+const ALREADY_EXECUTING_ERROR: &str = "There is an open BatchResult on the current TdsConnection. It must be closed or fully consumed\
+            as a QueryResultTypeStream before executing another operation on this TdsConnection.";
+
 impl<'connection, 'result> TdsConnection<'connection> {
     pub async fn execute(
         &'result mut self,
@@ -42,6 +46,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
     where
         'connection: 'result,
     {
+        if self.execution_context.has_open_batch {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
         let batch = SqlBatch::new(sql_command, &self.execution_context);
         let start = Instant::now();
         batch
@@ -63,6 +71,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'result>> {
+        if self.execution_context.has_open_batch {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
         let database_collation = self.negotiated_settings.database_collation;
 
         let rpc = SqlRpc::new(
@@ -90,6 +102,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'result>> {
+        if self.execution_context.has_open_batch {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
         let database_collation = self.negotiated_settings.database_collation;
 
         let sql_statement_value = SqlType::NVarcharMax(Some(SqlString::from_utf8_string(sql)));
@@ -138,6 +154,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<i32> {
+        if self.execution_context.has_open_batch {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
         let database_collation = self.negotiated_settings.database_collation;
 
         let sql_statement_value = SqlType::NVarcharMax(Some(SqlString::from_utf8_string(sql)));
@@ -223,6 +243,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<()> {
+        if self.execution_context.has_open_batch {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
         let database_collation = self.negotiated_settings.database_collation;
 
         let handle_value = SqlType::Int(Some(handle));
@@ -268,6 +292,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'result>> {
+        if self.execution_context.has_open_batch {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
         let database_collation = self.negotiated_settings.database_collation;
 
         let sql_statement_value = SqlType::NVarcharMax(Some(SqlString::from_utf8_string(sql)));
@@ -321,6 +349,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'result>> {
+        if self.execution_context.has_open_batch {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
         let database_collation = self.negotiated_settings.database_collation;
 
         let handle_value = SqlType::Int(Some(handle));
@@ -373,6 +405,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'result>> {
+        if self.execution_context.has_open_batch {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
         let transaction =
             TransactionManagementRequest::new(transaction_params, &self.execution_context);
 
@@ -396,6 +432,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
             .await?;
 
         self.drain_until_done_status(DoneStatus::ATTN).await;
+        self.execution_context.has_open_batch = false;
         Ok(())
     }
 
@@ -424,12 +461,16 @@ impl<'connection, 'result> TdsConnection<'connection> {
                 }
             }
         }
+        self.execution_context.has_open_batch = false;
+        self.execution_context.has_open_result_set = false;
     }
 }
 
 pub(crate) struct ExecutionContext {
     pub transaction_descriptor: u64,
     pub outstanding_requests: u32,
+    pub has_open_batch: bool,
+    pub has_open_result_set: bool,
 }
 
 impl ExecutionContext {
@@ -437,6 +478,8 @@ impl ExecutionContext {
         Self {
             transaction_descriptor: 0,
             outstanding_requests: 1,
+            has_open_batch: false,
+            has_open_result_set: false,
         }
     }
 
