@@ -6,6 +6,7 @@ mod connectivity {
     use std::{collections::HashMap, env};
 
     use azure_core::credentials::TokenCredential;
+    use tds_x::connection::client_context::CloneableEntraIdTokenFactory;
 
     use crate::common::{create_context, get_scalar_value, init_tracing};
     use azure_identity::{
@@ -113,14 +114,17 @@ mod connectivity {
         init_tracing();
         let mut auth_method_map = HashMap::new();
 
-        auth_method_map.insert(
-            TdsAuthenticationMethod::ActiveDirectoryDefault,
-            Box::new(DefaultEntraIdTokenFactory {}) as Box<dyn EntraIdTokenFactory>,
-        );
+        let factory: Box<dyn CloneableEntraIdTokenFactory> =
+            Box::new(DefaultEntraIdTokenFactory {});
+
+        auth_method_map.insert(TdsAuthenticationMethod::ActiveDirectoryDefault, factory);
+
+        let factory: Box<dyn CloneableEntraIdTokenFactory> =
+            Box::new(DefaultEntraIdTokenFactory {});
 
         auth_method_map.insert(
             TdsAuthenticationMethod::ActiveDirectoryManagedIdentity,
-            Box::new(DefaultEntraIdTokenFactory {}) as Box<dyn EntraIdTokenFactory>,
+            factory.clone_box(),
         );
 
         ClientContext {
@@ -199,6 +203,7 @@ mod connectivity {
         }
     }
 
+    #[derive(Clone)]
     struct DefaultEntraIdTokenFactory {}
 
     #[async_trait::async_trait]

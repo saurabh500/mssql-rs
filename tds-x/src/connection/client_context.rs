@@ -11,11 +11,6 @@ pub enum IPAddressPreference {
     UsePlatformDefault = 2,
 }
 
-pub enum NetworkTracerOutput {
-    File = 0,
-    Console = 1,
-}
-
 /// Provides a trait for creating Entra ID tokens.
 #[async_trait]
 pub trait EntraIdTokenFactory: Send + Sync {
@@ -25,6 +20,18 @@ pub trait EntraIdTokenFactory: Send + Sync {
         sts_url: String,
         auth_method: TdsAuthenticationMethod,
     ) -> TdsResult<Vec<u8>>;
+}
+pub trait CloneableEntraIdTokenFactory: EntraIdTokenFactory {
+    fn clone_box(&self) -> Box<dyn CloneableEntraIdTokenFactory>;
+}
+
+impl<T> CloneableEntraIdTokenFactory for T
+where
+    T: EntraIdTokenFactory + Clone + 'static,
+{
+    fn clone_box(&self) -> Box<dyn CloneableEntraIdTokenFactory> {
+        Box::new(self.clone())
+    }
 }
 
 #[derive(Clone, Hash, Eq, PartialEq)]
@@ -60,10 +67,8 @@ pub struct ClientContext {
     pub ipaddress_preference: IPAddressPreference,
     pub language: String,
     pub library_name: String,
-    pub auth_method_map: HashMap<TdsAuthenticationMethod, Box<dyn EntraIdTokenFactory>>,
+    pub auth_method_map: HashMap<TdsAuthenticationMethod, Box<dyn CloneableEntraIdTokenFactory>>,
     pub mars_enabled: bool,
-    pub network_tracer_enabled: bool,
-    pub network_tracer_output: NetworkTracerOutput,
     pub new_password: String,
     pub packet_size: i16,
     pub password: String,
@@ -96,8 +101,6 @@ impl ClientContext {
             library_name: "TdsX".to_string(),
             auth_method_map: HashMap::new(),
             mars_enabled: false,
-            network_tracer_enabled: false,
-            network_tracer_output: NetworkTracerOutput::Console,
             new_password: "".to_string(),
             packet_size: 8000,
             password: "".to_string(),
@@ -129,6 +132,15 @@ impl ClientContext {
             TdsVersion::V7_4
         }
     }
+
+    fn clone_auth_method_map(
+        &self,
+    ) -> HashMap<TdsAuthenticationMethod, Box<dyn CloneableEntraIdTokenFactory>> {
+        self.auth_method_map
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone_box()))
+            .collect()
+    }
 }
 
 impl Default for ClientContext {
@@ -154,6 +166,40 @@ impl ClientContext {
             hostname[..128].to_string()
         } else {
             hostname
+        }
+    }
+}
+
+impl Clone for ClientContext {
+    fn clone(&self) -> Self {
+        ClientContext {
+            application_intent: self.application_intent,
+            application_name: self.application_name.clone(),
+            attach_db_file: self.attach_db_file.clone(),
+            change_password: self.change_password.clone(),
+            connect_retry_count: self.connect_retry_count,
+            connect_timeout: self.connect_timeout,
+            database: self.database.clone(),
+            database_instance: self.database_instance.clone(),
+            enlist: self.enlist,
+            encryption_options: self.encryption_options.clone(),
+            failover_partner: self.failover_partner.clone(),
+            ipaddress_preference: self.ipaddress_preference,
+            language: self.language.clone(),
+            library_name: self.library_name.clone(),
+            auth_method_map: self.clone_auth_method_map(),
+            mars_enabled: self.mars_enabled,
+            new_password: self.new_password.clone(),
+            packet_size: self.packet_size,
+            password: self.password.clone(),
+            pooling: self.pooling,
+            replication: self.replication,
+            tds_authentication_method: self.tds_authentication_method.clone(),
+            user_instance: self.user_instance,
+            user_name: self.user_name.clone(),
+            workstation_id: self.workstation_id.clone(),
+            access_token: self.access_token.clone(),
+            transport_context: self.transport_context.clone(),
         }
     }
 }
