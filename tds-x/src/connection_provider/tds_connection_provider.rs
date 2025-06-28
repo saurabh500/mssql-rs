@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::connection::client_context::{ClientContext, TransportContext};
-use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
+use crate::connection::tds_connection::TdsConnection;
 use crate::connection::transport::network_transport;
 use crate::core::{CancelHandle, TdsResult};
 use crate::error::Error::{OperationCancelledError, TimeoutError};
@@ -112,32 +112,26 @@ impl TdsConnectionProvider {
         transport_context: &TransportContext,
     ) -> TdsResult<TdsConnection<'a>> {
         // Create transport
-        let transport_result =
-            network_transport::create_transport(context, transport_context).await;
+        let mut transport = network_transport::create_transport(
+            context.ipaddress_preference,
+            context.tds_version(),
+            transport_context,
+            context.encryption_options.clone(),
+        )
+        .await?;
 
-        match transport_result {
-            Ok(mut transport) => {
-                // Create the handler factory and execute the session
-                let factory = HandlerFactory { context };
-                let session_result = factory
-                    .session_handler(transport_context)
-                    .execute(transport.as_mut())
-                    .await;
+        let factory = HandlerFactory { context };
+        let session_result = factory
+            .session_handler(transport_context)
+            .execute(transport.as_mut())
+            .await;
 
-                match session_result {
-                    Ok(negotiated_settings) => Ok(TdsConnection {
-                        transport,
-                        negotiated_settings,
-                        execution_context: ExecutionContext::new(),
-                    }),
-                    Err(err) => {
-                        transport.close_transport().await?;
-                        Err(err)
-                    }
-                }
+        match session_result {
+            Ok(negotiated_settings) => Ok(TdsConnection::new(transport, negotiated_settings)),
+            Err(err) => {
+                transport.close_transport().await?;
+                Err(err)
             }
-
-            Err(err) => Err(err),
         }
     }
 }

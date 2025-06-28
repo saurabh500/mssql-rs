@@ -37,6 +37,17 @@ const ALREADY_EXECUTING_ERROR: &str = "There is an open BatchResult on the curre
             as a QueryResultTypeStream before executing another operation on this TdsConnection.";
 
 impl<'connection, 'result> TdsConnection<'connection> {
+    pub(crate) fn new(
+        transport: Box<NetworkTransport<'connection>>,
+        negotiated_settings: NegotiatedSettings,
+    ) -> Self {
+        TdsConnection {
+            transport,
+            negotiated_settings,
+            execution_context: ExecutionContext::new(),
+        }
+    }
+
     pub async fn execute(
         &'result mut self,
         sql_command: String,
@@ -466,6 +477,10 @@ impl<'connection, 'result> TdsConnection<'connection> {
     }
 }
 
+/// Represents the execution context of a TDS connection.
+/// It holds information about the current transaction,
+/// outstanding requests, and whether there are open batches or result sets.
+/// This context is used to manage the state of the query execution on the connection.
 pub(crate) struct ExecutionContext {
     pub transaction_descriptor: u64,
     pub outstanding_requests: u32,

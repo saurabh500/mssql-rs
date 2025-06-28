@@ -1,6 +1,6 @@
-use crate::connection::client_context::{ClientContext, IPAddressPreference, TransportContext};
+use crate::connection::client_context::{IPAddressPreference, TransportContext};
 use crate::connection::transport::ssl_handler::{SslHandler, Tds7StreamRecoverer};
-use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
+use crate::core::{EncryptionOptions, EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::handler::handler_factory::SessionSettings;
 use crate::message::login_options::TdsVersion;
 use crate::read_write::packet_reader::PacketReader;
@@ -19,9 +19,12 @@ use tracing::{info, trace};
 pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
 
 pub(crate) async fn create_transport<'a>(
-    context: &'a ClientContext,
+    ipaddress_preference: IPAddressPreference,
+    tds_version: TdsVersion,
     transport_context: &TransportContext,
+    encryption_options: EncryptionOptions,
 ) -> TdsResult<Box<NetworkTransport<'a>>> {
+    let encryption_mode = encryption_options.mode;
     let stream = match &transport_context {
         TransportContext::Tcp { host, port } => {
             info!("Connecting to TCP transport: {}:{}", host, port);
@@ -33,7 +36,7 @@ pub(crate) async fn create_transport<'a>(
             let mut tcp_stream = None;
 
             // Sort the address list based on the IP address preference
-            match context.ipaddress_preference {
+            match ipaddress_preference {
                 IPAddressPreference::UsePlatformDefault => {
                     // Do nothing. Use whatever the OS returns.
                     trace!("Using platform default IP address preference");
@@ -105,7 +108,7 @@ pub(crate) async fn create_transport<'a>(
     // Define a cloning callback since this is the only time we know we're working with
     // TcpStreams.
 
-    match context.tds_version() {
+    match tds_version {
         TdsVersion::V7_4 => {
             let stream_recoverer = Tds7StreamRecoverer::new(TcpStreamRecoverer {
                 stream: Box::new(std_stream),
@@ -116,15 +119,15 @@ pub(crate) async fn create_transport<'a>(
             let base_stream = stream_recoverer.recover_base_stream();
 
             Ok(Box::new(NetworkTransport {
-                context,
                 encryption: None,
                 stream: Arc::new(Mutex::new(base_stream)),
                 ssl_handler: SslHandler {
                     server_host_name: transport_context.get_server_name().to_string(),
-                    encryption_options: context.encryption_options.clone(),
+                    encryption_options,
                 },
                 stream_recoverer: Box::new(stream_recoverer),
                 packet_size: PRE_NEGOTIATED_PACKET_SIZE,
+                encryption_setting: encryption_mode,
             }))
         }
         TdsVersion::V8_0 => {
@@ -135,19 +138,19 @@ pub(crate) async fn create_transport<'a>(
             // Enable TLS over TCP immediately in TDS 8.0
             let ssl_handler = SslHandler {
                 server_host_name: transport_context.get_server_name().to_string(),
-                encryption_options: context.encryption_options.clone(),
+                encryption_options,
             };
             let encrypted_stream = ssl_handler
                 .enable_ssl_async(stream_recoverer.recover_base_stream())
                 .await?;
 
             Ok(Box::new(NetworkTransport {
-                context,
                 encryption: None,
                 stream: Arc::new(Mutex::new(encrypted_stream)),
                 ssl_handler,
                 stream_recoverer: Box::new(stream_recoverer),
                 packet_size: PRE_NEGOTIATED_PACKET_SIZE,
+                encryption_setting: encryption_mode,
             }))
         }
     }
@@ -192,12 +195,12 @@ impl StreamRecoverer for TcpStreamRecoverer {
 }
 
 pub(crate) struct NetworkTransport<'a> {
-    context: &'a ClientContext,
     encryption: Option<NegotiatedEncryptionSetting>,
     packet_size: u32,
     stream: Arc<Mutex<dyn Stream>>,
     ssl_handler: SslHandler,
     stream_recoverer: Box<dyn StreamRecoverer + 'a>,
+    encryption_setting: EncryptionSetting,
 }
 
 impl NetworkReaderWriter for NetworkTransport<'_> {
@@ -331,7 +334,7 @@ impl TransportSslHandler for NetworkTransport<'_> {
     }
 
     async fn disable_ssl(&mut self) -> TdsResult<()> {
-        let encryption_type_check = match self.context.encryption_options.mode {
+        let encryption_type_check = match self.encryption_setting {
             EncryptionSetting::Strict => {
                 // TODO: Evaluate this error.
                 Err(crate::error::Error::from(Error::new(
@@ -405,12 +408,12 @@ pub(crate) mod tests {
 
         (
             NetworkTransport {
-                context,
                 encryption: None,
                 stream: Arc::new(Mutex::new(client_side)),
                 ssl_handler,
                 stream_recoverer,
                 packet_size: context.packet_size as u32,
+                encryption_setting: context.encryption_options.mode,
             },
             server_side,
         )
@@ -429,15 +432,14 @@ pub(crate) mod tests {
 
         (
             NetworkTransport {
-                context,
                 encryption: None,
                 stream: Arc::new(Mutex::new(client_side)),
                 ssl_handler,
                 stream_recoverer,
                 packet_size: context.packet_size as u32,
+                encryption_setting: context.encryption_options.mode,
             },
             NetworkTransport {
-                context,
                 encryption: None,
                 stream: Arc::new(Mutex::new(server_side)),
                 ssl_handler: SslHandler {
@@ -446,6 +448,7 @@ pub(crate) mod tests {
                 },
                 stream_recoverer: Box::new(MockStreamRecoverer {}),
                 packet_size: context.packet_size as u32,
+                encryption_setting: context.encryption_options.mode,
             },
         )
     }
@@ -522,7 +525,7 @@ pub(crate) mod tests {
             ssl_handler,
             stream_recoverer,
             packet_size: context.packet_size as u32,
-            context: &context,
+            encryption_setting: context.encryption_options.mode,
         };
 
         let mut rng = rand::rng();
