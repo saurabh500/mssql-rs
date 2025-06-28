@@ -1,3 +1,5 @@
+use crate::connection::client_context::ClientContext;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TdsVersion {
     V7_4 = 0x74000004,
@@ -47,6 +49,7 @@ pub struct TypeFlags {
     pub(crate) ole_db: OptionOleDb,
     pub(crate) access_intent: ApplicationIntent,
 }
+
 impl TypeFlags {
     const OPTION_SQL_TYPE_BIT_INDEX: u8 = 0x08;
     const OPTION_OLE_DB_BIT_INDEX: u8 = 0x10;
@@ -84,6 +87,16 @@ impl OptionsValue for TypeFlags {
         self.set_oledb_bit(&mut computed_value);
         self.set_accessintent_bit(&mut computed_value);
         computed_value
+    }
+}
+
+impl From<&ClientContext> for TypeFlags {
+    fn from(context: &ClientContext) -> Self {
+        TypeFlags {
+            sql_type: OptionSqlType::Default,
+            ole_db: OptionOleDb::Off,
+            access_intent: context.application_intent,
+        }
     }
 }
 
@@ -267,10 +280,29 @@ pub enum OptionUser {
     ReplicationLogin,
 }
 
+impl From<&ClientContext> for OptionUser {
+    fn from(context: &ClientContext) -> Self {
+        match context.replication {
+            true => OptionUser::ReplicationLogin,
+            false => OptionUser::Normal,
+        }
+    }
+}
+
 #[derive(PartialEq)]
 pub enum OptionIntegratedSecurity {
     Off,
     On,
+}
+
+impl From<&ClientContext> for OptionIntegratedSecurity {
+    fn from(context: &ClientContext) -> Self {
+        if context.integrated_security() {
+            OptionIntegratedSecurity::On
+        } else {
+            OptionIntegratedSecurity::Off
+        }
+    }
 }
 
 pub struct OptionFlags2 {
@@ -278,6 +310,17 @@ pub struct OptionFlags2 {
     pub(crate) odbc: OptionOdbc,
     pub(crate) user: OptionUser,
     pub(crate) integrated_security: OptionIntegratedSecurity,
+}
+
+impl From<&ClientContext> for OptionFlags2 {
+    fn from(context: &ClientContext) -> Self {
+        OptionFlags2 {
+            init_lang: OptionInitLang::Fatal, // change to language needs to succeed for successful login
+            odbc: OptionOdbc::On,
+            user: context.into(),
+            integrated_security: context.into(),
+        }
+    }
 }
 
 impl OptionFlags2 {
@@ -351,12 +394,33 @@ pub enum OptionChangePassword {
     Yes,
 }
 
+impl From<&ClientContext> for OptionChangePassword {
+    fn from(context: &ClientContext) -> Self {
+        match context.change_password.is_empty() {
+            true => OptionChangePassword::No,
+            false => OptionChangePassword::Yes,
+        }
+    }
+}
+
 pub struct OptionFlags3 {
     pub(crate) change_password: OptionChangePassword,
     pub(crate) binary_xml: bool,
     pub(crate) spawn_user_instance: bool,
     pub(crate) extension_used: bool,
     pub(crate) unknown_collation_handling: bool,
+}
+
+impl From<&ClientContext> for OptionFlags3 {
+    fn from(context: &ClientContext) -> Self {
+        OptionFlags3 {
+            change_password: context.into(),
+            binary_xml: false,
+            spawn_user_instance: context.user_instance,
+            unknown_collation_handling: false,
+            extension_used: true,
+        }
+    }
 }
 
 impl OptionFlags3 {

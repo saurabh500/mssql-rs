@@ -120,7 +120,9 @@ impl TdsConnectionProvider {
         )
         .await?;
 
-        let factory = HandlerFactory { context };
+        let factory = HandlerFactory {
+            context: context.clone(),
+        };
         let session_result = factory
             .session_handler(transport_context)
             .execute(transport.as_mut())

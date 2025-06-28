@@ -16,10 +16,6 @@ use std::collections::HashMap;
 
 use super::features::fedauth::FedAuthFeature;
 use super::features::utf8::Utf8Feature;
-use super::login_options::{
-    OptionChangePassword, OptionInitLang, OptionIntegratedSecurity, OptionOdbc, OptionOleDb,
-    OptionSqlType, OptionUser,
-};
 use crate::core::TdsResult;
 use crate::read_write::token_stream::{
     GenericTokenParserRegistry, ParserContext, TokenStreamReader,
@@ -192,6 +188,17 @@ impl FeaturesRequest {
     }
 }
 
+impl From<(&ClientContext, bool)> for FeaturesRequest {
+    fn from(context_and_prelogin_fedauth_flag: (&ClientContext, bool)) -> Self {
+        let context = context_and_prelogin_fedauth_flag.0;
+        FeaturesRequest::build(
+            context.tds_authentication_method.clone(),
+            context.access_token.clone(),
+            context_and_prelogin_fedauth_flag.1,
+        )
+    }
+}
+
 #[derive(Default)]
 pub struct PhysicalAddress {
     address_bytes: [u8; 6],
@@ -225,53 +232,13 @@ impl LoginRequestModel<'_> {
     where
         'a: 'b,
     {
-        let replication_option = match context.replication {
-            true => OptionUser::ReplicationLogin,
-            false => OptionUser::Normal,
-        };
-
-        let integrated_security = match context.integrated_security() {
-            true => OptionIntegratedSecurity::On,
-            false => OptionIntegratedSecurity::Off,
-        };
-
-        let option_flags2 = OptionFlags2 {
-            init_lang: OptionInitLang::Fatal,
-            odbc: OptionOdbc::On,
-            user: replication_option,
-            integrated_security,
-        };
-
-        let change_password_option = match context.change_password.is_empty() {
-            true => OptionChangePassword::No,
-            false => OptionChangePassword::Yes,
-        };
-        let option_flags3 = OptionFlags3 {
-            change_password: change_password_option,
-            binary_xml: false,
-            spawn_user_instance: context.user_instance,
-            unknown_collation_handling: false,
-            extension_used: true,
-        };
-        let type_flags = TypeFlags {
-            sql_type: OptionSqlType::Default,
-            ole_db: OptionOleDb::Off,
-            access_intent: context.application_intent,
-        };
-
-        let features_request = FeaturesRequest::build(
-            context.tds_authentication_method.clone(),
-            context.access_token.clone(),
-            pre_login_fedauth_response,
-        );
-
         LoginRequestModel {
             option_flags1: OptionFlags1::default(),
-            option_flags2,
-            option_flags3,
-            type_flags,
+            option_flags2: context.into(),
+            option_flags3: context.into(),
+            type_flags: context.into(),
             tds_version: context.tds_version(),
-            features_request,
+            features_request: (context, pre_login_fedauth_response).into(),
             user_input: context,
             transport_context,
             client_prog_ver: 0,

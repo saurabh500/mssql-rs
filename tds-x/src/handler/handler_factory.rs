@@ -13,16 +13,16 @@ use crate::read_write::reader_writer::NetworkReaderWriter;
 use crate::token::tokens::SqlCollation;
 use uuid::Uuid;
 
-pub(crate) struct HandlerFactory<'a> {
-    pub(crate) context: &'a ClientContext,
+pub(crate) struct HandlerFactory {
+    pub(crate) context: ClientContext,
 }
 
-impl HandlerFactory<'_> {
-    pub(crate) fn prelogin_handler(&self) -> PreloginHandler<'_, '_> {
+impl HandlerFactory {
+    pub(crate) fn prelogin_handler(&self) -> PreloginHandler<'_> {
         PreloginHandler { factory: self }
     }
 
-    pub(crate) fn login_handler(&self, prelogin_fedauth_supported: bool) -> LoginHandler<'_, '_> {
+    pub(crate) fn login_handler(&self, prelogin_fedauth_supported: bool) -> LoginHandler<'_> {
         LoginHandler {
             factory: self,
             prelogin_fedauth_supported,
@@ -32,7 +32,7 @@ impl HandlerFactory<'_> {
     pub(crate) fn session_handler<'a>(
         &'a self,
         transport_context: &'a TransportContext,
-    ) -> SessionHandler<'a, 'a, 'a> {
+    ) -> SessionHandler<'a, 'a> {
         SessionHandler {
             factory: self,
             transport_context,
@@ -59,7 +59,11 @@ impl HandlerFactory<'_> {
     where
         'b: 'a,
     {
-        LoginRequestModel::from_context(self.context, prelogin_fedauth_supported, transport_context)
+        LoginRequestModel::from_context(
+            &self.context,
+            prelogin_fedauth_supported,
+            transport_context,
+        )
     }
 
     fn create_login_response(&self) -> LoginResponse {
@@ -119,7 +123,7 @@ pub(crate) struct SessionSettings {
     supported_features: Vec<Box<dyn Feature>>,
     mars_enabled: bool,
     pub pre_login_has_fedauth_supported: bool,
-    pub encryption: NegotiatedEncryptionSetting,
+    pub negotiated_encryption_settings: NegotiatedEncryptionSetting,
 }
 
 impl SessionSettings {
@@ -128,7 +132,7 @@ impl SessionSettings {
         context: &ClientContext,
         pre_login_has_fedauth_supported: bool,
         packet_size: u32,
-        encryption: NegotiatedEncryptionSetting,
+        negotiated_encryption_settings: NegotiatedEncryptionSetting,
         features: &mut Vec<Box<dyn Feature>>,
     ) -> Self {
         let mut result = SessionSettings {
@@ -137,20 +141,20 @@ impl SessionSettings {
             supported_features: vec![],
             mars_enabled: context.mars_enabled,
             pre_login_has_fedauth_supported,
-            encryption,
+            negotiated_encryption_settings,
         };
         result.supported_features.append(features);
         result
     }
 }
 
-pub(crate) struct SessionHandler<'a, 'b, 'n> {
-    pub(crate) factory: &'a HandlerFactory<'n>,
+pub(crate) struct SessionHandler<'a, 'b> {
+    pub(crate) factory: &'a HandlerFactory,
     pub(crate) transport_context: &'b TransportContext,
 }
 
-impl<'a, 'b, 'n> SessionHandler<'a, 'b, 'n> {
-    fn new(factory: &'a HandlerFactory<'n>, transport_context: &'b TransportContext) -> Self {
+impl<'a, 'b> SessionHandler<'a, 'b> {
+    fn new(factory: &'a HandlerFactory, transport_context: &'b TransportContext) -> Self {
         SessionHandler {
             factory,
             transport_context,
@@ -208,7 +212,7 @@ impl<'a, 'b, 'n> SessionHandler<'a, 'b, 'n> {
         let change_props = &login_result.change_properties;
         let packet_size = change_props.packet_size as u32;
         let session_settings = SessionSettings::new(
-            self.factory.context,
+            &self.factory.context,
             prelogin_result.is_fed_auth_supported,
             packet_size,
             prelogin_result.encryption_setting,
@@ -253,11 +257,11 @@ struct PreloginResult {
 
 impl PreloginResult {}
 
-pub(crate) struct PreloginHandler<'a, 'n> {
-    factory: &'a HandlerFactory<'n>,
+pub(crate) struct PreloginHandler<'a> {
+    factory: &'a HandlerFactory,
 }
 
-impl PreloginHandler<'_, '_> {
+impl PreloginHandler<'_> {
     async fn execute(
         &self,
         reader_writer: &mut impl NetworkReaderWriter,
@@ -342,12 +346,12 @@ struct LoginResult {
     status: LoginResponseStatus,
 }
 
-pub struct LoginHandler<'a, 'n> {
-    factory: &'a HandlerFactory<'n>,
+pub struct LoginHandler<'a> {
+    factory: &'a HandlerFactory,
     prelogin_fedauth_supported: bool,
 }
 
-impl LoginHandler<'_, '_> {
+impl LoginHandler<'_> {
     async fn execute(
         &self,
         reader_writer: &mut impl NetworkReaderWriter,
@@ -378,17 +382,17 @@ impl LoginHandler<'_, '_> {
                     unreachable!("Federated authentication info should be present, if the status is WaitingForFedAuth.");
                 }
             };
-            let context = self.factory.context;
+            let context = &self.factory.context;
             let entra_id_token_factory = context
                 .auth_method_map
-                .get(&self.factory.context.tds_authentication_method)
+                .get(&context.tds_authentication_method)
                 .expect("There was no callback registered for the authentication method");
 
             let token = entra_id_token_factory
                 .create_token(
                     fed_auth_info.spn.clone(),
                     fed_auth_info.sts_url.clone(),
-                    self.factory.context.tds_authentication_method.clone(),
+                    context.tds_authentication_method.clone(),
                 )
                 .await?;
             let fed_auth_request = FedAuthTokenRequest {
