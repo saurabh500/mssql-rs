@@ -47,7 +47,7 @@ mod rpc_datatypes {
         }
 
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         let batch_result = connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
@@ -109,7 +109,7 @@ mod rpc_datatypes {
         }
 
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         let batch_result = connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)

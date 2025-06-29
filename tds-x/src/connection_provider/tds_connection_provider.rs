@@ -14,11 +14,11 @@ use crate::handler::handler_factory::HandlerFactory;
 pub struct TdsConnectionProvider {}
 
 impl TdsConnectionProvider {
-    pub async fn create_connection<'a>(
+    pub async fn create_connection(
         &self,
-        context: &'a ClientContext,
+        context: ClientContext,
         cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<TdsConnection<'a>> {
+    ) -> TdsResult<TdsConnection> {
         CancelHandle::run_until_cancelled(cancel_handle, async move {
             let timeout_duration = match context.connect_timeout {
                 1.. => Some(Duration::from_secs(context.connect_timeout.into())),
@@ -31,7 +31,7 @@ impl TdsConnectionProvider {
                 Some(timeout_duration) => {
                     match timeout(
                         *timeout_duration,
-                        self.create_connection_internal(context, cancellation_token),
+                        self.create_connection_internal(&context, cancellation_token),
                     )
                     .await
                     {
@@ -40,7 +40,7 @@ impl TdsConnectionProvider {
                     }
                 }
                 None => {
-                    self.create_connection_internal(context, cancellation_token)
+                    self.create_connection_internal(&context, cancellation_token)
                         .await
                 }
             }
@@ -48,11 +48,11 @@ impl TdsConnectionProvider {
         .await
     }
 
-    async fn create_connection_internal<'a>(
+    async fn create_connection_internal(
         &self,
-        context: &'a ClientContext,
+        context: &ClientContext,
         cancellation_token: Option<CancellationToken>,
-    ) -> TdsResult<TdsConnection<'a>> {
+    ) -> TdsResult<TdsConnection> {
         let mut redirect_count = 0;
         let max_redirects = 10;
         let mut connection_result = self
@@ -106,11 +106,11 @@ impl TdsConnectionProvider {
     /// If the session handler returns a redirection token, this method will return an error.
     /// If the session handler returns a successful connection, this method will return the connection.
     /// If the session handler returns an error, this method will return the error.
-    async fn connect_with_transport_context<'a>(
+    async fn connect_with_transport_context(
         &self,
-        context: &'a ClientContext,
+        context: &ClientContext,
         transport_context: &TransportContext,
-    ) -> TdsResult<TdsConnection<'a>> {
+    ) -> TdsResult<TdsConnection> {
         // Create transport
         let mut transport = network_transport::create_transport(
             context.ipaddress_preference,

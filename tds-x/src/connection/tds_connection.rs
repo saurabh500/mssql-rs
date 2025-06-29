@@ -27,8 +27,8 @@ use crate::token::tokens::{
 use std::time::{Duration, Instant};
 use tracing::{event, info, Level};
 
-pub struct TdsConnection<'a> {
-    pub(crate) transport: Box<NetworkTransport<'a>>,
+pub struct TdsConnection {
+    pub(crate) transport: Box<NetworkTransport>,
     pub(crate) negotiated_settings: NegotiatedSettings,
     pub(crate) execution_context: ExecutionContext,
 }
@@ -36,9 +36,9 @@ pub struct TdsConnection<'a> {
 const ALREADY_EXECUTING_ERROR: &str = "There is an open BatchResult on the current TdsConnection. It must be closed or fully consumed\
             as a QueryResultTypeStream before executing another operation on this TdsConnection.";
 
-impl<'connection, 'result> TdsConnection<'connection> {
+impl<'result> TdsConnection {
     pub(crate) fn new(
-        transport: Box<NetworkTransport<'connection>>,
+        transport: Box<NetworkTransport>,
         negotiated_settings: NegotiatedSettings,
     ) -> Self {
         TdsConnection {
@@ -53,10 +53,7 @@ impl<'connection, 'result> TdsConnection<'connection> {
         sql_command: String,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<BatchResult<'result>>
-    where
-        'connection: 'result,
-    {
+    ) -> TdsResult<BatchResult<'result>> {
         if self.execution_context.has_open_batch {
             return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
         };

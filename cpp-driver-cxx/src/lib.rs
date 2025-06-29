@@ -172,12 +172,16 @@ async fn create_connection_async_internal(
     use tracing::Level;
     use tracing_subscriber::FmtSubscriber;
     let provider = TdsConnectionProvider {};
-    match provider.create_connection(&context.context, None).await {
+    match provider
+        .create_connection(context.context.clone(), None)
+        .await
+    {
         Ok(connection) => {
             println!("Successfully connected");
             Ok(Box::new(TdsConnection {
                 connection,
                 unused: PhantomData,
+                unused2: PhantomData,
             }))
         }
         Err(e) => {

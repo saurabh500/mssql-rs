@@ -18,12 +18,12 @@ use tracing::{info, trace};
 
 pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
 
-pub(crate) async fn create_transport<'a>(
+pub(crate) async fn create_transport(
     ipaddress_preference: IPAddressPreference,
     tds_version: TdsVersion,
     transport_context: &TransportContext,
     encryption_options: EncryptionOptions,
-) -> TdsResult<Box<NetworkTransport<'a>>> {
+) -> TdsResult<Box<NetworkTransport>> {
     let encryption_mode = encryption_options.mode;
     let stream = match &transport_context {
         TransportContext::Tcp { host, port } => {
@@ -194,16 +194,16 @@ impl StreamRecoverer for TcpStreamRecoverer {
     fn tls_handshake_completed(&mut self) {}
 }
 
-pub(crate) struct NetworkTransport<'a> {
+pub(crate) struct NetworkTransport {
     encryption: Option<NegotiatedEncryptionSetting>,
     packet_size: u32,
     stream: Arc<Mutex<dyn Stream>>,
     ssl_handler: SslHandler,
-    stream_recoverer: Box<dyn StreamRecoverer + 'a>,
+    stream_recoverer: Box<dyn StreamRecoverer>,
     encryption_setting: EncryptionSetting,
 }
 
-impl NetworkReaderWriter for NetworkTransport<'_> {
+impl NetworkReaderWriter for NetworkTransport {
     fn notify_encryption_setting_change(&mut self, setting: NegotiatedEncryptionSetting) {
         self.notify_encryption_negotiation(setting);
     }
@@ -218,7 +218,7 @@ impl NetworkReaderWriter for NetworkTransport<'_> {
 }
 
 #[async_trait]
-impl NetworkReader for NetworkTransport<'_> {
+impl NetworkReader for NetworkTransport {
     async fn receive(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
         Ok(self.receive(buffer).await?)
     }
@@ -233,7 +233,7 @@ impl NetworkReader for NetworkTransport<'_> {
 }
 
 #[async_trait]
-impl NetworkWriter for NetworkTransport<'_> {
+impl NetworkWriter for NetworkTransport {
     async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
         self.stream.lock().await.write_all(data).await?;
         Ok(())
@@ -249,7 +249,7 @@ impl NetworkWriter for NetworkTransport<'_> {
     }
 }
 
-impl NetworkTransport<'_> {
+impl NetworkTransport {
     pub(crate) async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
         self.stream.lock().await.write_all(data).await?;
         Ok(())
@@ -283,7 +283,7 @@ impl NetworkTransport<'_> {
     /// # use tokio::io::{AsyncReadExt, split};
     /// # use tokio_util::codec::BytesCodec;
     /// #
-    /// # async fn demo(mut transport: NetworkTransport<'_>) -> TdsResult<()> {
+    /// # async fn demo(mut transport: NetworkTransport) -> TdsResult<()> {
     ///     let mut buf = [0u8; 1024];
     ///     let bytes_read = transport.receive(&mut buf).await?;
     ///     println!("Read {} bytes", bytes_read);
@@ -328,7 +328,7 @@ impl NetworkTransport<'_> {
 }
 
 #[async_trait]
-impl TransportSslHandler for NetworkTransport<'_> {
+impl TransportSslHandler for NetworkTransport {
     async fn enable_ssl(&mut self) -> TdsResult<()> {
         self.enable_ssl_internal().await
     }

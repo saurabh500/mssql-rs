@@ -13,8 +13,9 @@ pub struct TdsConnection<'a, 'result>
 where
     'a: 'result,
 {
-    pub(crate) connection: tds_x::connection::tds_connection::TdsConnection<'a>,
+    pub(crate) connection: tds_x::connection::tds_connection::TdsConnection,
     pub(crate) unused: marker::PhantomData<&'result ()>,
+    pub(crate) unused2: marker::PhantomData<&'a ()>,
 }
 
 pub struct ClientContext {

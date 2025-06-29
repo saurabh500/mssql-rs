@@ -19,7 +19,7 @@ pub struct PyTdsConnection {
     context: Arc<ClientContext>,
 
     /// Stores the TDS connection inside a Mutex for interior mutability.
-    connection: Option<Arc<Mutex<TdsConnection<'static>>>>,
+    connection: Option<Arc<Mutex<TdsConnection>>>,
 }
 
 #[pymethods]
@@ -86,19 +86,14 @@ pub fn create_connection_sync(py_ctx: PyClientContext) -> PyResult<PyTdsConnecti
 
     let provider = TdsConnectionProvider {};
 
-    let conn_result = RUNTIME.block_on(async { provider.create_connection(&context, None).await });
+    let conn_result =
+        RUNTIME.block_on(async { provider.create_connection((*context).clone(), None).await });
 
     match conn_result {
-        Ok(tds_conn) => {
-            use std::mem;
-            let tds_conn_static: TdsConnection<'static> =
-                unsafe { mem::transmute::<TdsConnection<'_>, TdsConnection<'static>>(tds_conn) };
-
-            Ok(PyTdsConnection {
-                context: Arc::clone(&context),
-                connection: Some(Arc::new(Mutex::new(tds_conn_static))),
-            })
-        }
+        Ok(tds_conn) => Ok(PyTdsConnection {
+            context: Arc::clone(&context),
+            connection: Some(Arc::new(Mutex::new(tds_conn))),
+        }),
         Err(e) => Err(PyRuntimeError::new_err(format!(
             "Connection error: {:?}",
             e

@@ -93,9 +93,9 @@ pub(crate) trait Request {
     where
         'b: 'a;
 
-    async fn serialize_and_handle_timeout<'conn>(
+    async fn serialize_and_handle_timeout(
         &self,
-        connection: &mut TdsConnection<'conn>,
+        connection: &mut TdsConnection,
         timeout: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<()> {

@@ -22,7 +22,7 @@ mod rpc_results {
     #[tokio::test]
     async fn test_stored_proc() {
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         // Create a query to setup the stored procedure. This will be a Sql Batch execution.
         let stored_procedure_setup_query = "CREATE PROCEDURE #TempScrollProc
@@ -81,7 +81,7 @@ mod rpc_results {
     #[tokio::test]
     async fn test_stored_proc_stream_results() {
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         // Create a query to setup the stored procedure. This will be a Sql Batch execution.
         let stored_procedure_setup_query = "CREATE PROCEDURE #TempScrollProc
@@ -165,7 +165,7 @@ mod rpc_results {
         );
 
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         let named_parameters = vec![database_id_param, compat_level_param];
 
@@ -193,7 +193,7 @@ mod rpc_results {
         );
 
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         let named_parameters = vec![database_id_param];
 
@@ -227,7 +227,7 @@ mod rpc_results {
         );
 
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         let named_parameters = vec![database_id_param, compat_level_param];
 
@@ -259,7 +259,7 @@ mod rpc_results {
         );
 
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         let named_parameters = vec![database_id_param, compat_level_param];
 
@@ -304,13 +304,7 @@ mod rpc_results {
     }
 
     // Executes the query and reads till the end of the result.
-    async fn execute_non_query<'a, 'n>(
-        connection: &'a mut TdsConnection<'n>,
-        query: String,
-    ) -> TdsResult<()>
-    where
-        'n: 'a,
-    {
+    async fn execute_non_query(connection: &mut TdsConnection, query: String) -> TdsResult<()> {
         let batch_result = connection.execute(query, None, None).await?;
         let mut query_result_stream = batch_result.stream_results();
 

@@ -48,7 +48,7 @@ impl QueryResultType<'_> {
             let token = parent_batch_ref.next_token().await?;
             match token {
                 Tokens::Done(t1) => {
-                    println!("Received Done token: {:?}", t1);
+                    trace!("Received Done token: {:?}", t1);
                     {
                         if !t1.status.contains(DoneStatus::MORE) {
                             parent_batch_ref.received_last = true;
@@ -58,7 +58,7 @@ impl QueryResultType<'_> {
                     break Ok(QueryResultType::DmlResult(t1.row_count));
                 }
                 Tokens::DoneInProc(t1) => {
-                    println!("Received DoneInProc token: {:?}", t1);
+                    trace!("Received DoneInProc token: {:?}", t1);
                     {
                         if !t1.status.contains(DoneStatus::MORE) {
                             parent_batch_ref.received_last = true;
@@ -68,7 +68,7 @@ impl QueryResultType<'_> {
                     break Ok(QueryResultType::DmlResult(t1.row_count));
                 }
                 Tokens::DoneProc(t1) => {
-                    println!("Received DoneProc token: {:?}", t1);
+                    trace!("Received DoneProc token: {:?}", t1);
                     {
                         if !t1.status.contains(DoneStatus::MORE) {
                             parent_batch_ref.received_last = true;
@@ -78,14 +78,14 @@ impl QueryResultType<'_> {
                     break Ok(QueryResultType::DmlResult(t1.row_count));
                 }
                 Tokens::EnvChange(t1) => {
-                    println!("Received EnvChange token: {:?}", t1);
+                    trace!("Received EnvChange token: {:?}", t1);
                     parent_batch_ref
                         .execution_context
                         .capture_change_property(&t1)?;
                     continue;
                 }
                 Tokens::Error(t1) => {
-                    info!("Received Error token: {:?}", t1);
+                    trace!("Received Error token: {:?}", t1);
                     // Clean-up the state of the query.
                     parent_batch_ref.drain_stream(true).await;
                     break Err(SqlServerError {
@@ -97,10 +97,6 @@ impl QueryResultType<'_> {
                         proc_name: Some(t1.proc_name),
                         line_number: Some(t1.line_number as i32),
                     });
-                }
-                Tokens::FeatureExtAck(t1) => {
-                    println!("Received FeatureExtAck token: {:?}", t1);
-                    todo!()
                 }
                 Tokens::ColMetadata(column_metadata) => {
                     // Start a QueryResultType::ResultSet here.
@@ -117,10 +113,7 @@ impl QueryResultType<'_> {
                     )));
                 }
                 Tokens::Row(row) => {
-                    // Just print the first row, to avoid cluttering the output
-                    // println!("Received Row Index: {:?}", row_count);
                     panic!("Received row token: {:?}", row);
-                    //panic!("Received unexpected token: {:?}", token)
                 }
                 Tokens::ReturnValue(return_value_token) => {
                     let return_value = return_value_token.into();
@@ -143,20 +136,35 @@ impl QueryResultType<'_> {
 pub struct BatchResult<'result> {
     //  negotiated_settings: &'result mut NegotiatedSettings,
     token_stream_reader: TokenStreamReader<'result>,
+
+    /// The context for the parser, which is used to keep track of the current state of parsing.
+    /// It holds the current column metadata, if any, and other parsing context.
     parser_context: ParserContext,
+
+    /// Indicates whether the last token received was a Done token.
+    /// Last Done token indicates the end of the result stream.
     received_last: bool,
+
+    /// The execution context which is needed to update the state of transactions on
+    /// the connection. This may be needed when we send a transaction either via API
+    /// or via a SQL statement.
     execution_context: &'result mut ExecutionContext,
+
+    /// A vector of return values that have been received from the server.
+    /// This is applicable when RPC calls are made with OUTPUT paramters set in them.
     return_values: Vec<ReturnValue>,
+
+    /// The remaining request timeout for this batch. This is used to determine how long
+    /// to wait for the next token before timing out.
     remaining_request_timeout: Option<Duration>,
+
+    /// The cancel handle for this batch. This is used to cancel the batch if needed.
     cancel_handle: Option<CancelHandle>,
 }
 
-impl<'connection, 'result> BatchResult<'result>
-where
-    'connection: 'result,
-{
+impl<'result> BatchResult<'result> {
     pub(crate) fn new(
-        tds_connection: &'result mut TdsConnection<'connection>,
+        tds_connection: &'result mut TdsConnection,
         remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
     ) -> BatchResult<'result> {

@@ -75,7 +75,7 @@ pub(crate) mod query_processing_driver {
             ..Default::default()
         };
 
-        let mut connection = create_connection(&context).await.unwrap();
+        let mut connection = create_connection(context).await.unwrap();
 
         // Create a query to setup the stored procedure. This will be a Sql Batch execution.
         let stored_procedure_setup_query = "CREATE PROCEDURE #TempScrollProc
@@ -158,7 +158,7 @@ pub(crate) mod query_processing_driver {
             ..Default::default()
         };
 
-        let mut connection = create_connection(&context).await.unwrap();
+        let mut connection = create_connection(context).await.unwrap();
         let query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
@@ -219,7 +219,7 @@ pub(crate) mod query_processing_driver {
     }
 
     async fn submit_stored_procedure(
-        connection: &mut Box<TdsConnection<'_>>,
+        connection: &mut Box<TdsConnection>,
         stored_proc_name: String,
         named_parameters: Vec<RpcParameter<'_>>,
     ) -> TdsResult<()> {
@@ -240,7 +240,7 @@ pub(crate) mod query_processing_driver {
         Ok(())
     }
 
-    async fn iterate_over_rpc_tokens(connection: &mut Box<TdsConnection<'_>>) {
+    async fn iterate_over_rpc_tokens(connection: &mut Box<TdsConnection>) {
         // Now read the results.
         let packet_reader = connection.transport.get_packet_reader();
         let mut token_stream_reader = TokenStreamReader::new(
@@ -803,7 +803,7 @@ pub(crate) mod query_processing_driver {
             }
         }
 
-        let mut connection = create_connection(&context).await.unwrap();
+        let mut connection = create_connection(context).await.unwrap();
         let slow_request = SlowRequest::default();
         match slow_request
             .serialize_and_handle_timeout(&mut connection, Some(2), None)
@@ -843,7 +843,7 @@ pub(crate) mod query_processing_driver {
             // database: "drivers".to_string(),
             ..Default::default()
         };
-        let mut connection = create_connection(&context).await.unwrap();
+        let mut connection = create_connection(context).await.unwrap();
 
         submit_sql_batch(&mut connection, query.to_string(), true).await
     }
@@ -870,7 +870,7 @@ pub(crate) mod query_processing_driver {
             // database: "drivers".to_string(),
             ..Default::default()
         };
-        let mut connection = create_connection(&context).await.unwrap();
+        let mut connection = create_connection(context).await.unwrap();
         for q in query {
             println!("Executing query: {}", q);
             submit_sql_batch(&mut connection, q.to_string(), panic_on_error).await?;
@@ -879,14 +879,14 @@ pub(crate) mod query_processing_driver {
         // submit_sql_batch(connection, query.to_string()).await
     }
 
-    pub async fn create_connection(context: &ClientContext) -> TdsResult<Box<TdsConnection>> {
+    pub async fn create_connection(context: ClientContext) -> TdsResult<Box<TdsConnection>> {
         let provider = TdsConnectionProvider {};
         let connection_result = provider.create_connection(context, None).await?;
         Ok(Box::new(connection_result))
     }
 
     pub async fn submit_sql_batch(
-        tds_connection: &mut Box<TdsConnection<'_>>,
+        tds_connection: &mut Box<TdsConnection>,
         sql_command: String,
         panic_on_error: bool,
     ) -> TdsResult<()> {

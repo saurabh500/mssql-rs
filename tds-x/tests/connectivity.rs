@@ -150,7 +150,7 @@ mod connectivity {
         let access_token = generate_access_token().await;
         let context = create_context_with_accesstoken(access_token);
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(&context, None).await;
+        let connection_result = provider.create_connection(context, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
         let result = connection.execute(command, None, None).await.unwrap();
@@ -179,7 +179,7 @@ mod connectivity {
         let context =
             create_context_with_auth_method(TdsAuthenticationMethod::ActiveDirectoryDefault);
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(&context, None).await;
+        let connection_result = provider.create_connection(context, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
         let result = connection.execute(command, None, None).await.unwrap();
@@ -237,7 +237,7 @@ mod connectivity {
         let mut context = create_context_with_accesstoken(access_token);
         context.encryption_options.trust_server_certificate = true;
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(&context, None).await;
+        let connection_result = provider.create_connection(context, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
         let result = connection.execute(command, None, None).await.unwrap();
@@ -264,8 +264,9 @@ mod connectivity {
     #[tokio::test]
     pub async fn validate_host_name() {
         let context = create_context();
+        let workstation_id = context.workstation_id.clone();
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(&context, None).await;
+        let connection_result = provider.create_connection(context, None).await;
         let mut connection = connection_result.unwrap();
         let command =
             "select host_name from sys.dm_exec_sessions where client_interface_name = 'TdsX'"
@@ -275,7 +276,7 @@ mod connectivity {
         if let Some(column_value) = col_hostname {
             match column_value {
                 ColumnValues::String(value) => {
-                    assert_eq!(value.to_utf8_string(), context.workstation_id);
+                    assert_eq!(value.to_utf8_string(), workstation_id);
                 }
                 _ => unreachable!("Expected a string value"),
             }
@@ -289,7 +290,7 @@ mod connectivity {
         let mut context = create_context();
         context.application_intent = ApplicationIntent::ReadOnly;
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(&context, None).await;
+        let connection_result = provider.create_connection(context, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
         let result = connection.execute(command, None, None).await.unwrap();

@@ -14,7 +14,7 @@ mod transactions {
     async fn test_sql_rollback_transaction() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         run_query_and_check_results(
             connection.as_mut(),
             "SET IMPLICIT_TRANSACTIONS ON".to_string(),
@@ -51,7 +51,7 @@ mod transactions {
     async fn test_sql_commit_transaction() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         run_query_and_check_results(
             connection.as_mut(),
             "SET IMPLICIT_TRANSACTIONS ON".to_string(),
@@ -88,7 +88,7 @@ mod transactions {
     async fn test_sql_switch_back_to_autocommit() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         run_query_and_check_results(
             connection.as_mut(),
             "SET IMPLICIT_TRANSACTIONS ON".to_string(),
@@ -125,7 +125,7 @@ mod transactions {
     async fn test_req_getdtc() {
         let expected = [ExpectedQueryResultType::Result(1)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let begin_result = connection
             .send_transaction(TransactionManagementType::GetDtcAddress, None, None)
             .await;
@@ -137,7 +137,7 @@ mod transactions {
     async fn test_req_begin_named_rollback() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let begin_result = connection
             .send_transaction(
                 TransactionManagementType::Begin(CreateTxnParams {
@@ -169,7 +169,7 @@ mod transactions {
     async fn test_req_begin_unnamed_rollback() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let begin_result = connection
             .send_transaction(
                 TransactionManagementType::Begin(CreateTxnParams {
@@ -201,7 +201,7 @@ mod transactions {
     async fn test_req_begin_named_no_rollback() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let begin_result = connection
             .send_transaction(
                 TransactionManagementType::Begin(CreateTxnParams {
@@ -220,7 +220,7 @@ mod transactions {
     async fn test_req_begin_unnamed_no_rollback() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let begin_result = connection
             .send_transaction(
                 TransactionManagementType::Begin(CreateTxnParams {
@@ -239,7 +239,7 @@ mod transactions {
     async fn test_req_commit_no_new_transaction() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let begin_result = connection
             .send_transaction(
                 TransactionManagementType::Begin(CreateTxnParams {
@@ -286,7 +286,7 @@ mod transactions {
     async fn test_req_commit_new_transaction_named() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let begin_result = connection
             .send_transaction(
                 TransactionManagementType::Begin(CreateTxnParams {
@@ -350,7 +350,7 @@ mod transactions {
     async fn test_req_commit_new_unnamed() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         let begin_result = connection
             .send_transaction(
@@ -415,7 +415,7 @@ mod transactions {
     async fn test_req_commit_new_unnamed_loop_10x() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         let mut counter = 0;
         loop {
@@ -494,7 +494,7 @@ mod transactions {
     async fn test_req_rollback_no_new_transaction() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let begin_result = connection
             .send_transaction(
                 TransactionManagementType::Begin(CreateTxnParams {
@@ -566,7 +566,7 @@ mod transactions {
     async fn test_req_rollback_new_transaction_named() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let begin_result = connection
             .send_transaction(
                 TransactionManagementType::Begin(CreateTxnParams {
@@ -655,7 +655,7 @@ mod transactions {
     async fn test_req_rollback_new_unnamed() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let begin_result = connection
             .send_transaction(
                 TransactionManagementType::Begin(CreateTxnParams {
@@ -744,7 +744,7 @@ mod transactions {
     async fn test_req_savepoint() {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let begin_result = connection
             .send_transaction(
                 TransactionManagementType::Begin(CreateTxnParams {

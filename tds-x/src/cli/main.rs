@@ -71,26 +71,26 @@ impl Validator for MyHelper {
     }
 }
 
-struct Session<'clisession> {
-    connection: Option<Box<TdsConnection<'clisession>>>,
+struct Session {
+    connection: Option<Box<TdsConnection>>,
 }
 
 #[allow(clippy::derivable_impls)]
-impl Default for Session<'_> {
+impl Default for Session {
     fn default() -> Self {
         Self { connection: None }
     }
 }
 
-impl<'session> From<Box<TdsConnection<'session>>> for Session<'session> {
-    fn from(connection: Box<TdsConnection<'session>>) -> Self {
+impl From<Box<TdsConnection>> for Session {
+    fn from(connection: Box<TdsConnection>) -> Self {
         Self {
             connection: Some(connection),
         }
     }
 }
 
-impl Session<'_> {
+impl Session {
     pub async fn submit_sql_batch(&mut self, sql_command: String) -> TdsResult<()> {
         let connection = self.connection.as_mut().ok_or(Error::new(
             std::io::ErrorKind::NotConnected,
@@ -163,7 +163,7 @@ pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
     let provider = TdsConnectionProvider {};
-    let connection_result = provider.create_connection(&context, None).await;
+    let connection_result = provider.create_connection(context, None).await;
     let mut session = match connection_result {
         Ok(_connection) => {
             println!("Successfully connected");

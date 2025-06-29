@@ -81,7 +81,7 @@ mod query_result_reads {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_tds_connection_reuse() {
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         let expected = [
             ExpectedQueryResultType::Update(0),
             ExpectedQueryResultType::Update(2),
@@ -123,7 +123,7 @@ mod query_result_reads {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_incomplete_result_set_iteration() {
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         {
             let batch_result = connection
@@ -208,7 +208,7 @@ mod query_result_reads {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_incomplete_result_iteration() {
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         {
             let batch_result = connection
@@ -260,7 +260,7 @@ mod query_result_reads {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_error_missed_close_result_iteration() {
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         {
             let batch_result = connection
@@ -301,7 +301,7 @@ mod query_result_reads {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_error_missed_close_result_set() {
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         {
             let batch_result = connection
@@ -339,7 +339,7 @@ mod query_result_reads {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_error_within_result_set() {
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         {
             let results = connection
                 .execute(
@@ -391,7 +391,7 @@ mod query_result_reads {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_error_within_batch() {
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
         {
             let results = connection
                 .execute(

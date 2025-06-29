@@ -107,11 +107,11 @@ pub fn create_context() -> ClientContext {
     }
 }
 
-pub async fn begin_connection(client_context: &ClientContext) -> Box<TdsConnection> {
+pub async fn begin_connection(client_context: ClientContext) -> Box<TdsConnection> {
     create_connection(client_context).await.unwrap()
 }
 
-pub async fn create_connection(context: &ClientContext) -> TdsResult<Box<TdsConnection>> {
+pub async fn create_connection(context: ClientContext) -> TdsResult<Box<TdsConnection>> {
     let provider = TdsConnectionProvider {};
     let connection_result = provider.create_connection(context, None).await?;
     Ok(Box::new(connection_result))
@@ -134,13 +134,11 @@ pub async fn validate_results(
     query_result_stream.close().await.unwrap();
 }
 
-pub async fn run_query_and_check_results<'a, 'n>(
-    connection: &'a mut TdsConnection<'n>,
+pub async fn run_query_and_check_results(
+    connection: &mut TdsConnection,
     query: String,
     expected_results: &[ExpectedQueryResultType],
-) where
-    'n: 'a,
-{
+) {
     let results = connection.execute(query, None, None).await;
     validate_results(results.unwrap(), expected_results).await;
 }
@@ -151,7 +149,7 @@ pub async fn connect_query_and_validate(
     expected_results: &[ExpectedQueryResultType],
 ) {
     let context: ClientContext = create_context();
-    let mut connection = begin_connection(&context).await;
+    let mut connection = begin_connection(context).await;
     run_query_and_check_results(&mut connection, query, expected_results).await;
 }
 

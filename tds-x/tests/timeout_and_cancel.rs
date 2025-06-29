@@ -23,7 +23,7 @@ mod timeout_and_cancel_tests {
     #[tokio::test]
     pub async fn query_timeout_e2e() {
         let context = create_context();
-        let mut connection = begin_connection(&context).await;
+        let mut connection = begin_connection(context).await;
 
         let start_time = Instant::now();
         let batch_result = connection
@@ -76,7 +76,7 @@ mod timeout_and_cancel_tests {
             // Start a timer.
             let start_time = Instant::now();
             let result = provider
-                .create_connection(&client_context, Some(&child_handle))
+                .create_connection(client_context, Some(&child_handle))
                 .await;
             verify_duration(result, start_time, 1000, 2500);
         });
@@ -98,7 +98,7 @@ mod timeout_and_cancel_tests {
 
         let join_handle = tokio::spawn(async move {
             let context = create_context();
-            let mut connection = begin_connection(&context).await;
+            let mut connection = begin_connection(context).await;
             tx.send(true).unwrap();
 
             let start_time = Instant::now();
@@ -186,7 +186,7 @@ mod timeout_and_cancel_tests {
 
         // Start a timer.
         let start_time = Instant::now();
-        let connection_result = provider.create_connection(&client_context, None).await;
+        let connection_result = provider.create_connection(client_context, None).await;
         verify_duration(
             connection_result,
             start_time,
