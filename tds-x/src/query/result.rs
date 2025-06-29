@@ -34,6 +34,12 @@ impl QueryResultType<'_> {
         }
     }
 
+    /// Returns a future which iterates over the tokens to find the
+    /// ColMetadata token or a Done token.
+    /// When a result set is returned by the server, the colmetadata token marks the beginning
+    /// of the rows. As a result, result sets can be iterated over to get the rows.
+    /// If a Done token is encountered before finding a ColMetadata token, then it is a result
+    /// of a DML operation, and the row count is returned.
     async fn next_result(
         parent_batch: Arc<Mutex<BatchResult<'_>>>,
         processing_signal: DeferredSignal,
@@ -112,8 +118,8 @@ impl QueryResultType<'_> {
                         column_metadata,
                     )));
                 }
-                Tokens::Row(row) => {
-                    panic!("Received row token: {:?}", row);
+                Tokens::Row(_) => {
+                    unreachable!("Received row token. This is not expected");
                 }
                 Tokens::ReturnValue(return_value_token) => {
                     let return_value = return_value_token.into();
@@ -126,7 +132,7 @@ impl QueryResultType<'_> {
                 }
                 _ => {
                     //println!("Received token: {:?}", token);
-                    panic!("Received unexpected token: {:?}", token)
+                    unreachable!("Received unexpected token: {:?}", token)
                 }
             }
         }
@@ -374,7 +380,7 @@ impl<'result> QueryResultTypeStream<'result> {
                 }
             }
         } else {
-            panic!("Executing future not available.");
+            unreachable!("Unexpected: Executing future not available.");
         }
     }
 
