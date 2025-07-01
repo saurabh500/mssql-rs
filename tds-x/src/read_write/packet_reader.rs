@@ -21,7 +21,6 @@ pub(crate) trait TdsPacketReader {
     async fn read_int64_big_endian(&mut self) -> TdsResult<i64>;
     async fn read_uint40(&mut self) -> TdsResult<u64>;
 
-    // Macro-generated read methods
     async fn read_float32(&mut self) -> TdsResult<f32>;
     async fn read_float64(&mut self) -> TdsResult<f64>;
     async fn read_int16(&mut self) -> TdsResult<i16>;
@@ -41,6 +40,7 @@ pub(crate) trait TdsPacketReader {
     async fn read_varchar_byte_len(&mut self) -> TdsResult<String>;
     async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String>;
     async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String>;
+    async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()>;
 }
 
 pub struct PacketReader<'a> {
@@ -173,25 +173,19 @@ impl<'a> PacketReader<'a> {
         }
     }
 
-    pub async fn skip_forward(&mut self, length: usize) -> TdsResult<()> {
-        if !self.do_we_have_enough_data(length) {
-            self.read_tds_packet().await?;
-        }
-
-        self.consume_bytes(length);
-        Ok(())
-    }
-
     /// Skips a specified number of bytes in the packet stream.
     pub async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()> {
         let mut length_to_read = skip_count;
         while length_to_read > 0 {
-            if !self.do_we_have_enough_data(min(self.max_packet_size, length_to_read)) {
+            // If we don't have enough data, read a new TDS packet.
+            if !self.do_we_have_enough_data(min(self.max_packet_size - 8, length_to_read)) {
                 self.read_tds_packet().await?;
             }
             let available = self.buffer_length - self.buffer_position;
 
+            // We still may not have enough data, and we can, at a time, only skip a max of packet payload.
             // We can read the minimum of what is available, or the actual length needed or the packet size.
+            // If we have a need to skip a large amount of data, then we will skip in chunks.
             let to_read = min(available, min(length_to_read, self.max_packet_size - 8));
 
             if to_read > 0 {
@@ -431,6 +425,26 @@ impl TdsPacketReader for PacketReader<'_> {
         let string =
             String::from_utf16(&u16_buffer).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
         Ok(string)
+    }
+
+    /// Skips a specified number of bytes in the packet stream.
+    async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()> {
+        let mut length_to_read = skip_count;
+        while length_to_read > 0 {
+            if !self.do_we_have_enough_data(min(self.max_packet_size - 8, length_to_read)) {
+                self.read_tds_packet().await?;
+            }
+            let available = self.buffer_length - self.buffer_position;
+
+            // We can read the minimum of what is available, or the actual length needed or the packet size.
+            let to_read = min(available, min(length_to_read, self.max_packet_size - 8));
+
+            if to_read > 0 {
+                length_to_read -= to_read;
+                self.consume_bytes(to_read);
+            }
+        }
+        Ok(())
     }
 }
 

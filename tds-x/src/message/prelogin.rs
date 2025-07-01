@@ -228,7 +228,7 @@ impl PreloginResponse {
                 }
                 _ => {
                     // Todo: Logging that this is being skipped.
-                    packet_reader.skip_forward(context.length).await.unwrap();
+                    packet_reader.skip_bytes(context.length).await.unwrap();
                 }
             };
         }
