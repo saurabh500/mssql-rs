@@ -12,7 +12,7 @@ use super::{
         ReturnStatusToken, ReturnValueToken, RowToken, Tokens,
     },
 };
-use crate::core::TdsResult;
+use crate::{core::TdsResult, read_write::packet_reader::TdsPacketReader};
 use crate::{
     core::Version,
     datatypes::{
@@ -863,7 +863,7 @@ pub(crate) mod tests {
         read_write::{
             packet_reader::{
                 tests::{MockNetworkReaderWriter, TestPacketBuilder},
-                PacketReader,
+                PacketReader, TdsPacketReader,
             },
             token_stream::ParserContext,
         },

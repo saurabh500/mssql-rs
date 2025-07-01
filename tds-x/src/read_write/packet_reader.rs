@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use tracing::event;
 
@@ -12,25 +13,42 @@ use std::{
     io::{Error, ErrorKind},
 };
 
+#[async_trait]
+pub(crate) trait TdsPacketReader {
+    async fn read_byte(&mut self) -> TdsResult<u8>;
+    async fn read_int16_big_endian(&mut self) -> TdsResult<i16>;
+    async fn read_int32_big_endian(&mut self) -> TdsResult<i32>;
+    async fn read_int64_big_endian(&mut self) -> TdsResult<i64>;
+    async fn read_uint40(&mut self) -> TdsResult<u64>;
+
+    // Macro-generated read methods
+    async fn read_float32(&mut self) -> TdsResult<f32>;
+    async fn read_float64(&mut self) -> TdsResult<f64>;
+    async fn read_int16(&mut self) -> TdsResult<i16>;
+    async fn read_uint16(&mut self) -> TdsResult<u16>;
+    async fn read_int24(&mut self) -> TdsResult<i32>;
+    async fn read_uint24(&mut self) -> TdsResult<u32>;
+    async fn read_int32(&mut self) -> TdsResult<i32>;
+    async fn read_uint32(&mut self) -> TdsResult<u32>;
+    async fn read_int64(&mut self) -> TdsResult<i64>;
+    async fn read_uint64(&mut self) -> TdsResult<u64>;
+
+    async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize>;
+    async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>>;
+    async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>>;
+    async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>>;
+    async fn read_varchar_u8_length(&mut self) -> TdsResult<String>;
+    async fn read_varchar_byte_len(&mut self) -> TdsResult<String>;
+    async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String>;
+    async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String>;
+}
+
 pub struct PacketReader<'a> {
     network_reader_writer: &'a mut dyn NetworkReaderWriter,
     buffer_position: usize,
     buffer_length: usize,
     max_packet_size: usize,
     working_buffer: Vec<u8>,
-}
-
-macro_rules! generate_read_fn {
-    ($name:ident, $type:ty, $size:expr, $read_fn:ident) => {
-        pub async fn $name(&mut self) -> TdsResult<$type> {
-            if !self.do_we_have_enough_data($size) {
-                self.read_tds_packet().await?;
-            }
-            let result = LittleEndian::$read_fn(&self.working_buffer[self.buffer_position..]);
-            self.consume_bytes($size);
-            Ok(result)
-        }
-    };
 }
 
 impl<'a> PacketReader<'a> {
@@ -164,7 +182,30 @@ impl<'a> PacketReader<'a> {
         Ok(())
     }
 
-    pub async fn read_byte(&mut self) -> TdsResult<u8> {
+    /// Skips a specified number of bytes in the packet stream.
+    pub async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()> {
+        let mut length_to_read = skip_count;
+        while length_to_read > 0 {
+            if !self.do_we_have_enough_data(min(self.max_packet_size, length_to_read)) {
+                self.read_tds_packet().await?;
+            }
+            let available = self.buffer_length - self.buffer_position;
+
+            // We can read the minimum of what is available, or the actual length needed or the packet size.
+            let to_read = min(available, min(length_to_read, self.max_packet_size - 8));
+
+            if to_read > 0 {
+                length_to_read -= to_read;
+                self.consume_bytes(to_read);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl TdsPacketReader for PacketReader<'_> {
+    async fn read_byte(&mut self) -> TdsResult<u8> {
         if !self.do_we_have_enough_data(1) {
             self.read_tds_packet().await?;
         }
@@ -173,7 +214,7 @@ impl<'a> PacketReader<'a> {
         Ok(result)
     }
 
-    pub async fn read_int16_big_endian(&mut self) -> TdsResult<i16> {
+    async fn read_int16_big_endian(&mut self) -> TdsResult<i16> {
         if !self.do_we_have_enough_data(2) {
             self.read_tds_packet().await?;
         }
@@ -182,7 +223,7 @@ impl<'a> PacketReader<'a> {
         Ok(result)
     }
 
-    pub async fn read_int32_big_endian(&mut self) -> TdsResult<i32> {
+    async fn read_int32_big_endian(&mut self) -> TdsResult<i32> {
         if !self.do_we_have_enough_data(4) {
             self.read_tds_packet().await?;
         }
@@ -191,7 +232,7 @@ impl<'a> PacketReader<'a> {
         Ok(result)
     }
 
-    pub async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
+    async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
         if !self.do_we_have_enough_data(8) {
             self.read_tds_packet().await?;
         }
@@ -200,7 +241,7 @@ impl<'a> PacketReader<'a> {
         Ok(result)
     }
 
-    pub async fn read_uint40(&mut self) -> TdsResult<u64> {
+    async fn read_uint40(&mut self) -> TdsResult<u64> {
         if !self.do_we_have_enough_data(5) {
             self.read_tds_packet().await?;
         }
@@ -210,42 +251,97 @@ impl<'a> PacketReader<'a> {
         Ok(result)
     }
 
-    generate_read_fn!(read_float32, f32, 4, read_f32);
-    generate_read_fn!(read_float64, f64, 8, read_f64);
-    generate_read_fn!(read_int16, i16, 2, read_i16);
-    generate_read_fn!(read_uint16, u16, 2, read_u16);
-    generate_read_fn!(read_int24, i32, 3, read_i24);
-    generate_read_fn!(read_uint24, u32, 3, read_u24);
-    generate_read_fn!(read_int32, i32, 4, read_i32);
-    generate_read_fn!(read_uint32, u32, 4, read_u32);
-    generate_read_fn!(read_int64, i64, 8, read_i64);
-    generate_read_fn!(read_uint64, u64, 8, read_u64);
+    async fn read_float32(&mut self) -> TdsResult<f32> {
+        if !self.do_we_have_enough_data(4) {
+            self.read_tds_packet().await?;
+        }
+        let result = LittleEndian::read_f32(&self.working_buffer[self.buffer_position..]);
+        self.consume_bytes(4);
+        Ok(result)
+    }
 
-    /// Reads a specified number of bytes from the packet stream into the provided buffer.
-    ///
-    /// This method reads bytes from the packet stream and copies them into the provided buffer.
-    /// It continues reading until the buffer is filled.
-    ///
-    /// # Arguments
-    ///
-    /// * `buffer` - A mutable slice where the read bytes will be stored.
-    ///
-    /// # Returns
-    ///
-    /// * `TdsResult<usize>` - The number of bytes read on success, or an error if the read operation fails.
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if there is an issue reading from the network stream.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let mut buffer = vec![0; 1024];
-    /// let bytes_read = packet_reader.read_bytes(&mut buffer).await?;
-    /// println!("Read {} bytes", bytes_read);
-    /// ```
-    pub async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
+    async fn read_float64(&mut self) -> TdsResult<f64> {
+        if !self.do_we_have_enough_data(8) {
+            self.read_tds_packet().await?;
+        }
+        let result = LittleEndian::read_f64(&self.working_buffer[self.buffer_position..]);
+        self.consume_bytes(8);
+        Ok(result)
+    }
+
+    async fn read_int16(&mut self) -> TdsResult<i16> {
+        if !self.do_we_have_enough_data(2) {
+            self.read_tds_packet().await?;
+        }
+        let result = LittleEndian::read_i16(&self.working_buffer[self.buffer_position..]);
+        self.consume_bytes(2);
+        Ok(result)
+    }
+
+    async fn read_uint16(&mut self) -> TdsResult<u16> {
+        if !self.do_we_have_enough_data(2) {
+            self.read_tds_packet().await?;
+        }
+        let result = LittleEndian::read_u16(&self.working_buffer[self.buffer_position..]);
+        self.consume_bytes(2);
+        Ok(result)
+    }
+
+    async fn read_int24(&mut self) -> TdsResult<i32> {
+        if !self.do_we_have_enough_data(3) {
+            self.read_tds_packet().await?;
+        }
+        let result = LittleEndian::read_i24(&self.working_buffer[self.buffer_position..]);
+        self.consume_bytes(3);
+        Ok(result)
+    }
+
+    async fn read_uint24(&mut self) -> TdsResult<u32> {
+        if !self.do_we_have_enough_data(3) {
+            self.read_tds_packet().await?;
+        }
+        let result = LittleEndian::read_u24(&self.working_buffer[self.buffer_position..]);
+        self.consume_bytes(3);
+        Ok(result)
+    }
+
+    async fn read_int32(&mut self) -> TdsResult<i32> {
+        if !self.do_we_have_enough_data(4) {
+            self.read_tds_packet().await?;
+        }
+        let result = LittleEndian::read_i32(&self.working_buffer[self.buffer_position..]);
+        self.consume_bytes(4);
+        Ok(result)
+    }
+
+    async fn read_uint32(&mut self) -> TdsResult<u32> {
+        if !self.do_we_have_enough_data(4) {
+            self.read_tds_packet().await?;
+        }
+        let result = LittleEndian::read_u32(&self.working_buffer[self.buffer_position..]);
+        self.consume_bytes(4);
+        Ok(result)
+    }
+
+    async fn read_int64(&mut self) -> TdsResult<i64> {
+        if !self.do_we_have_enough_data(8) {
+            self.read_tds_packet().await?;
+        }
+        let result = LittleEndian::read_i64(&self.working_buffer[self.buffer_position..]);
+        self.consume_bytes(8);
+        Ok(result)
+    }
+
+    async fn read_uint64(&mut self) -> TdsResult<u64> {
+        if !self.do_we_have_enough_data(8) {
+            self.read_tds_packet().await?;
+        }
+        let result = LittleEndian::read_u64(&self.working_buffer[self.buffer_position..]);
+        self.consume_bytes(8);
+        Ok(result)
+    }
+
+    async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
         let mut total_read = 0;
         let mut length_to_read = buffer.len();
         let mut offset = 0;
@@ -273,74 +369,21 @@ impl<'a> PacketReader<'a> {
         Ok(total_read)
     }
 
-    /// Skips a specified number of bytes in the packet stream.
-    pub async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()> {
-        let mut length_to_read = skip_count;
-        while length_to_read > 0 {
-            if !self.do_we_have_enough_data(min(self.max_packet_size, length_to_read)) {
-                self.read_tds_packet().await?;
-            }
-            let available = self.buffer_length - self.buffer_position;
-
-            // We can read the minimum of what is available, or the actual length needed or the packet size.
-            let to_read = min(available, min(length_to_read, self.max_packet_size - 8));
-
-            if to_read > 0 {
-                length_to_read -= to_read;
-                self.consume_bytes(to_read);
-            }
-        }
-        Ok(())
-    }
-
-    /// Reads an array of bytes where the array length is specified by the
-    /// byte value before the array of bytes.
-    ///
-    pub async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
+    async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
         let length: u8 = self.read_byte().await?;
         let mut result: Vec<u8> = vec![0; length as usize];
         self.read_bytes(&mut result[0..]).await?;
         Ok(result)
     }
 
-    /// Reads an array of bytes where the array length is specified by the
-    /// unsigned int16 value before the array of bytes.
-    ///
-    pub async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
+    async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
         let length: u16 = self.read_uint16().await?;
         let mut result: Vec<u8> = vec![0; length as usize];
         self.read_bytes(&mut result[0..]).await?;
         Ok(result)
     }
 
-    /// Reads a Unicode string which is prefixed by its length of an unsigned 16-bit integer.
-    ///
-    /// This method reads a Unicode string from the packet stream. The length of the string
-    /// is specified by an unsigned 16-bit integer value preceding the string. If the length
-    /// is equal to `LENGTHNULL`, the method returns `None`.
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing an `Option<String>` if successful. If the length is
-    /// `LENGTHNULL`, it returns `Ok(None)`. Otherwise, it returns `Ok(Some(String))` with
-    /// the read Unicode string. If an error occurs during reading, it returns an `Error`.
-    ///
-    /// # Errors
-    ///
-    /// This method returns an `Error` if there is an issue reading from the packet stream
-    /// or if the data cannot be converted to a valid Unicode string.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let mut packet_reader = PacketReader::new(&mut network_reader);
-    /// if let Some(unicode_string) = packet_reader.read_varchar_u16_length().await? {
-    ///     println!("Read Unicode string: {}", unicode_string);
-    /// } else {
-    ///     println!("No Unicode string found (length was LENGTHNULL)");
-    /// }
-    /// ```
-    pub async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>> {
+    async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>> {
         let length: u16 = self.read_uint16().await?;
         if length == Self::LENGTHNULL {
             return Ok(None);
@@ -352,30 +395,7 @@ impl<'a> PacketReader<'a> {
         Ok(Some(string))
     }
 
-    /// Reads a Unicode string where the length is specified by an unsigned 8-bit integer.
-    ///
-    /// This method reads a Unicode string from the packet stream. The length of the string
-    /// is specified by an unsigned 8-bit integer value preceding the string. The method
-    /// reads twice that number of bytes from the stream (since each Unicode character is 2 bytes).
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing the read `String` if successful, or an `Error` if
-    /// something goes wrong.
-    ///
-    /// # Errors
-    ///
-    /// This method returns an `Error` if there is an issue reading from the packet stream
-    /// or if the data cannot be converted to a valid Unicode string.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let mut packet_reader = PacketReader::new(&mut network_reader);
-    /// let unicode_string = packet_reader.read_varchar_u8_length().await?;
-    /// println!("Read Unicode string: {}", unicode_string);
-    /// ```
-    pub async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
+    async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
         let length: u8 = self.read_byte().await?;
         let string = self
             .read_unicode_with_byte_length((length << 1) as usize)
@@ -383,67 +403,20 @@ impl<'a> PacketReader<'a> {
         Ok(string)
     }
 
-    /// Reads a Unicode string where the length in bytes is specified by a 16-bit integer.
-    pub async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
+    async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
         let length: u16 = self.read_uint16().await?;
         let string = self.read_unicode_with_byte_length(length as usize).await?;
         Ok(string)
     }
 
-    /// Reads a Unicode string of the specified length from the packet stream.
-    ///
-    /// This method reads a Unicode string from the packet stream. The length of the string
-    /// is specified in characters, and the method reads twice that number of bytes from
-    /// the stream (since each Unicode character is 2 bytes).
-    ///
-    /// # Arguments
-    ///
-    /// * `string_length` - The length of the Unicode string to read, in characters.
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing the read `String` if successful, or an `Error` if
-    /// something goes wrong.
-    ///
-    /// # Errors
-    ///
-    /// This method returns an `Error` if there is an issue reading from the packet stream
-    /// or if the data cannot be converted to a valid Unicode string.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let mut packet_reader = PacketReader::new(&mut network_reader);
-    /// let unicode_string = packet_reader.read_unicode(5).await?;
-    /// println!("Read Unicode string: {}", unicode_string);
-    /// ```
-    pub async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String> {
+    async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String> {
         let result = self
             .read_unicode_with_byte_length(string_length * 2)
             .await?;
         Ok(result)
     }
 
-    /// Reads a Unicode string of the specified length from the packet stream.
-    ///
-    /// This method reads a Unicode string from the packet stream. The length of the string
-    /// is specified in bytes.
-    ///
-    /// # Arguments
-    ///
-    /// * `byte_length` - The length of the Unicode string to read, in bytes.
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing the read `String` if successful, or an `Error` if
-    /// something goes wrong.
-    ///
-    /// # Errors
-    ///
-    /// This method returns an `Error` if there is an issue reading from the packet stream
-    /// or if the data cannot be converted to a valid Unicode string.
-    ///
-    pub async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String> {
+    async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String> {
         let mut byte_buffer: Vec<u8> = vec![0; byte_length];
         let _ = self.read_bytes(&mut byte_buffer[0..]).await?;
 

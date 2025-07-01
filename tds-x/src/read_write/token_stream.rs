@@ -3,6 +3,7 @@ use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::decoder::GenericDecoder;
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::TimeoutErrorType;
+use crate::read_write::packet_reader::TdsPacketReader;
 use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
     EnvChangeTokenParser, ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser,

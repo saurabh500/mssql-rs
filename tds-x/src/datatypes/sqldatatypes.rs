@@ -1,5 +1,6 @@
 use crate::core::TdsResult;
 use crate::error::Error;
+use crate::read_write::packet_reader::TdsPacketReader;
 use crate::{read_write::packet_reader::PacketReader, token::tokens::SqlCollation};
 use std::fmt::format;
 

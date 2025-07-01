@@ -6,14 +6,17 @@ use super::{
     sql_string::{get_encoding_type, SqlString},
     sqldatatypes::{TdsDataType, TypeInfoVariant},
 };
-use crate::datatypes::column_values::{
-    ColumnValues, DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlMoney, SqlSmallDateTime,
-    SqlSmallMoney, SqlXml, Time,
-};
 use crate::datatypes::sqldatatypes::TypeInfo;
 use crate::{
     core::TdsResult,
     datatypes::{sql_json::SqlJson, sql_string::EncodingType, sqldatatypes::FixedLengthTypes},
+};
+use crate::{
+    datatypes::column_values::{
+        ColumnValues, DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlMoney, SqlSmallDateTime,
+        SqlSmallMoney, SqlXml, Time,
+    },
+    read_write::packet_reader::TdsPacketReader,
 };
 use crate::{
     query::metadata::ColumnMetadata, read_write::packet_reader::PacketReader,

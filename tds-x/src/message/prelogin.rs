@@ -1,6 +1,6 @@
 use crate::core::{EncryptionSetting, TdsResult};
 use crate::message::messages::{PacketType, Request};
-use crate::read_write::packet_reader::PacketReader;
+use crate::read_write::packet_reader::{PacketReader, TdsPacketReader};
 use crate::read_write::reader_writer::NetworkReaderWriter;
 use crate::{
     core::{SQLServerVersion, Version},
