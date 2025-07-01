@@ -1,5 +1,9 @@
 [workspace]
 resolver = "2"
 members = [ 
-    "tds-x", "tdsx-python", "cpp-driver-cxx",
+    "tds-x", "tdsx-python", "cpp-driver-cxx", "tdsx-nodejs"
 ]
+
+[profile.release]
+lto = true
+strip = "symbols"
