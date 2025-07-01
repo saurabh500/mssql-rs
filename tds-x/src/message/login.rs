@@ -4,7 +4,7 @@ use crate::message::login_options::{
     OptionFlags1, OptionFlags2, OptionFlags3, OptionsValue, TdsVersion, TypeFlags,
 };
 use crate::message::messages::{PacketType, Request, TdsError};
-use crate::read_write::packet_writer::PacketWriter;
+use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
 use crate::read_write::reader_writer::NetworkReader;
 use crate::token::fed_auth_info::FedAuthInfoToken;
 use crate::token::login_ack::LoginAckToken;

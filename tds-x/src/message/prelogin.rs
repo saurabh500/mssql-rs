@@ -4,7 +4,7 @@ use crate::read_write::packet_reader::{PacketReader, TdsPacketReader};
 use crate::read_write::reader_writer::NetworkReaderWriter;
 use crate::{
     core::{SQLServerVersion, Version},
-    read_write::packet_writer::PacketWriter,
+    read_write::packet_writer::{PacketWriter, TdsPacketWriter},
 };
 use async_trait::async_trait;
 use std::collections::VecDeque;
@@ -409,7 +409,7 @@ pub(crate) mod tests {
     };
     use crate::read_write::packet_reader::tests::MockNetworkReaderWriter;
     use crate::read_write::packet_writer::tests::MockNetworkWriter;
-    use crate::read_write::packet_writer::PacketWriter;
+    use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
     use byteorder::{BigEndian, ReadBytesExt};
     use futures::executor::block_on;
     use uuid::Uuid;

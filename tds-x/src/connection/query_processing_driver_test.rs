@@ -7,7 +7,7 @@ pub(crate) mod query_processing_driver {
     use crate::error::Error::ProtocolError;
     use crate::message::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
     use crate::message::messages::PacketType;
-    use crate::read_write::packet_writer::PacketWriter;
+    use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
     use crate::{
         connection::{
             client_context::{ClientContext, TransportContext},

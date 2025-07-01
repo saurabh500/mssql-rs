@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 
 use crate::core::TdsResult;
-use crate::{
-    message::login::{Feature, FeatureExtension},
-    read_write::packet_writer::PacketWriter,
-};
+use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
+
+use crate::message::login::{Feature, FeatureExtension};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct JsonFeature {

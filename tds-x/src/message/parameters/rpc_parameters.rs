@@ -4,8 +4,11 @@ use crate::datatypes::column_values::DEFAULT_VARTIME_SCALE;
 use crate::datatypes::encoder::SqlValueEncoder;
 use crate::datatypes::sqltypes::SqlType;
 use crate::{
-    core::TdsResult, datatypes::sqldatatypes::TdsDataType, error::Error,
-    read_write::packet_writer::PacketWriter, token::tokens::SqlCollation,
+    core::TdsResult,
+    datatypes::sqldatatypes::TdsDataType,
+    error::Error,
+    read_write::packet_writer::{PacketWriter, TdsPacketWriter},
+    token::tokens::SqlCollation,
 };
 
 bitflags! {

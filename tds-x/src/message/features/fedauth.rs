@@ -2,10 +2,9 @@ use async_trait::async_trait;
 
 use crate::connection::client_context::TdsAuthenticationMethod;
 use crate::core::TdsResult;
-use crate::{
-    message::login::{Feature, FeatureExtension},
-    read_write::packet_writer::PacketWriter,
-};
+use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
+
+use crate::message::login::{Feature, FeatureExtension};
 
 /// Represents the FedAuth feature in the TDS protocol.
 ///

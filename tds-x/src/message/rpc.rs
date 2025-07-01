@@ -2,9 +2,12 @@ use async_trait::async_trait;
 use tracing::debug;
 
 use crate::{
-    connection::tds_connection::ExecutionContext, core::TdsResult,
-    datatypes::encoder::GenericEncoder, message::messages::PacketType,
-    read_write::packet_writer::PacketWriter, token::tokens::SqlCollation,
+    connection::tds_connection::ExecutionContext,
+    core::TdsResult,
+    datatypes::encoder::GenericEncoder,
+    message::messages::PacketType,
+    read_write::packet_writer::{PacketWriter, TdsPacketWriter},
+    token::tokens::SqlCollation,
 };
 
 use super::{

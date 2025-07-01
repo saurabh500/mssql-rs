@@ -2,7 +2,7 @@ use super::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
 use super::messages::{PacketType, Request};
 use crate::connection::tds_connection::ExecutionContext;
 use crate::core::TdsResult;
-use crate::read_write::packet_writer::PacketWriter;
+use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
 use async_trait::async_trait;
 
 pub(crate) struct SqlBatch {
