@@ -14,6 +14,18 @@ Prototype projects are developed in Rust language; therefore, the dev environmen
 
 [Rust in Microsoft] article is the great overview of guidelines and learning resources for any Rust developer. It is highly recommended as reading material.
 
+### Git Hooks Setup
+
+To maintain code quality and consistency, this project includes git hooks. To set them up:
+
+```bash
+./dev/setup-hooks.sh
+```
+
+This will install a pre-commit hook that automatically runs `cargo fmt` and `clippy` before commits. See `dev/hooks/README.md` for more details.
+
+These checks are run in the pipelines as well, however it is often frustrating to see the pipelines fail due to these checks. Hence the pre-commit hook would catch the issue lot earlier in the development stage.
+
 ### Tools and Prerequisites
 These tools made the Rust development easier:
 - Visual Studio Code 
@@ -151,7 +163,6 @@ Get pat for local dev
 azureauth ado pat --organization devdiv --display-name pathazauth --scope vso.packaging  --prompt-hint Hint1
 
 ```
-
 ```
 azureauth ado token
 ```

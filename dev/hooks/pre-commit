@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Run cargo fmt and check if any files were modified
+cargo fmt
+
+# Check if there are any unstaged changes after formatting
+if ! git diff --quiet; then
+    echo "Code formatting changes detected. Please review and add the formatted files:"
+    echo ""
+    git diff --name-only
+    echo ""
+    echo "Run 'git add .' to stage the formatted files and commit again."
+    exit 1
+fi
+
+echo "✅ Code formatting check passed"
+exit 0
