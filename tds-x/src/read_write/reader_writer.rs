@@ -1,4 +1,3 @@
-use super::packet_reader::PacketReader;
 use crate::connection::transport::network_transport::TransportSslHandler;
 use crate::core::{NegotiatedEncryptionSetting, TdsResult};
 use crate::handler::handler_factory::SessionSettings;
@@ -15,7 +14,6 @@ pub(crate) trait NetworkWriter: Send + Sync + TransportSslHandler {
 pub(crate) trait NetworkReader: Send {
     async fn receive(&mut self, buffer: &mut [u8]) -> TdsResult<usize>;
     fn packet_size(&self) -> u32;
-    fn get_packet_reader(&mut self) -> PacketReader<'_>;
 }
 
 #[async_trait]

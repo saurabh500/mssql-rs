@@ -16,12 +16,13 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tracing::event;
 
-pub(crate) struct TokenStreamReader<T>
+pub(crate) struct TokenStreamReader<T, R>
 where
     T: TdsPacketReader + Send + Sync,
+    R: TokenParserRegistry + Send + Sync,
 {
     pub(crate) packet_reader: T,
-    pub(crate) parser_registry: Box<dyn TokenParserRegistry>,
+    pub(crate) parser_registry: Box<R>,
 }
 
 /// `ParserContext` is used to add additional context, which can be leveraged by the token parsers.
@@ -41,17 +42,12 @@ impl Default for ParserContext {
     }
 }
 
-impl<T> TokenStreamReader<T>
+impl<T, R> TokenStreamReader<T, R>
 where
     T: TdsPacketReader + Send + Sync,
+    R: TokenParserRegistry + Send + Sync,
 {
-    pub(crate) fn new(
-        packet_reader: T,
-        parser_registry: Box<dyn TokenParserRegistry>,
-    ) -> TokenStreamReader<T>
-    where
-        T: TdsPacketReader + Send + Sync,
-    {
+    pub(crate) fn new(packet_reader: T, parser_registry: Box<R>) -> TokenStreamReader<T, R> {
         TokenStreamReader {
             packet_reader,
             parser_registry,

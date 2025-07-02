@@ -4,8 +4,9 @@ use crate::message::login_options::{
     OptionFlags1, OptionFlags2, OptionFlags3, OptionsValue, TdsVersion, TypeFlags,
 };
 use crate::message::messages::{PacketType, Request, TdsError};
+use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
-use crate::read_write::reader_writer::NetworkReader;
+use crate::read_write::reader_writer::NetworkReaderWriter;
 use crate::token::fed_auth_info::FedAuthInfoToken;
 use crate::token::login_ack::LoginAckToken;
 use crate::token::tokens::{
@@ -428,10 +429,10 @@ impl LoginResponse {
 
     pub(crate) async fn deserialize(
         &self,
-        reader: &mut dyn NetworkReader,
+        reader: &mut dyn NetworkReaderWriter,
         requested_features: FeaturesRequest,
     ) -> TdsResult<LoginResponseModel> {
-        let packet_reader = reader.get_packet_reader();
+        let packet_reader = PacketReader::new(reader);
         let login_token_registry = GenericTokenParserRegistry::default();
         let mut token_stream_reader = TokenStreamReader {
             packet_reader,

@@ -7,6 +7,7 @@ pub(crate) mod query_processing_driver {
     use crate::error::Error::ProtocolError;
     use crate::message::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
     use crate::message::messages::PacketType;
+    use crate::read_write::packet_reader::PacketReader;
     use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
     use crate::{
         connection::{
@@ -22,10 +23,7 @@ pub(crate) mod query_processing_driver {
             parameters::rpc_parameters::{build_parameter_list_string, RpcParameter, StatusFlags},
             rpc::{RpcProcs, RpcType, SqlRpc},
         },
-        read_write::{
-            reader_writer::NetworkReader,
-            token_stream::{GenericTokenParserRegistry, ParserContext, TokenStreamReader},
-        },
+        read_write::token_stream::{GenericTokenParserRegistry, ParserContext, TokenStreamReader},
         token::tokens::{DoneStatus, Tokens},
     };
     use async_trait::async_trait;
@@ -242,7 +240,7 @@ pub(crate) mod query_processing_driver {
 
     async fn iterate_over_rpc_tokens(connection: &mut Box<TdsConnection>) {
         // Now read the results.
-        let packet_reader = connection.transport.get_packet_reader();
+        let packet_reader = PacketReader::new(&mut *connection.transport);
         let mut token_stream_reader = TokenStreamReader::new(
             packet_reader,
             Box::new(GenericTokenParserRegistry::default()),
@@ -895,7 +893,7 @@ pub(crate) mod query_processing_driver {
             .serialize_and_handle_timeout(tds_connection.as_mut(), None, None)
             .await?;
 
-        let packet_reader = tds_connection.transport.get_packet_reader();
+        let packet_reader = PacketReader::new(&mut *tds_connection.transport);
         let mut token_stream_reader = TokenStreamReader::new(
             packet_reader,
             Box::new(GenericTokenParserRegistry::default()),

@@ -141,7 +141,7 @@ impl QueryResultType<'_> {
 
 pub struct BatchResult<'result> {
     //  negotiated_settings: &'result mut NegotiatedSettings,
-    token_stream_reader: TokenStreamReader<PacketReader<'result>>,
+    token_stream_reader: TokenStreamReader<PacketReader<'result>, GenericTokenParserRegistry>,
 
     /// The context for the parser, which is used to keep track of the current state of parsing.
     /// It holds the current column metadata, if any, and other parsing context.

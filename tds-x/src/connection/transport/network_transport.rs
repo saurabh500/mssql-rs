@@ -3,7 +3,6 @@ use crate::connection::transport::ssl_handler::{SslHandler, Tds7StreamRecoverer}
 use crate::core::{EncryptionOptions, EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::handler::handler_factory::SessionSettings;
 use crate::message::login_options::TdsVersion;
-use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
 use async_trait::async_trait;
 use futures::lock::Mutex;
@@ -225,10 +224,6 @@ impl NetworkReader for NetworkTransport {
 
     fn packet_size(&self) -> u32 {
         self.packet_size
-    }
-
-    fn get_packet_reader(&mut self) -> PacketReader<'_> {
-        PacketReader::new(self)
     }
 }
 

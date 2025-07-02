@@ -626,10 +626,6 @@ pub(crate) mod tests {
         fn packet_size(&self) -> u32 {
             4096
         }
-
-        fn get_packet_reader(&mut self) -> PacketReader<'_> {
-            unimplemented!()
-        }
     }
 
     fn generate_random_bytes(length: usize) -> Vec<u8> {
