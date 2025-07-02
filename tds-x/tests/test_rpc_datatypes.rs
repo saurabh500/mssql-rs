@@ -3,6 +3,7 @@ mod common;
 
 mod rpc_datatypes {
     use crate::common::{begin_connection, create_context, get_first_row, init_tracing};
+    use tds_x::datatypes::column_values::{SqlDate, SqlDateTime};
     use tds_x::datatypes::sql_string::SqlString;
     use tds_x::{
         datatypes::{column_values::ColumnValues, sqltypes::SqlType},
@@ -25,16 +26,36 @@ mod rpc_datatypes {
         let float_value = 10.14;
         let real_value = 3.144567;
         let xml_value = "<root>Test</root>".to_string();
+        let days = 200;
+
+        let dayssincebeginning = 300;
+        let timesincebeginning = 1000;
+
         let columns = vec![
             ("int", SqlType::Int(Some(int_value))),
             ("tinyint", SqlType::TinyInt(Some(tinyint_value))),
-            ("nvarchar", SqlType::NVarchar(Some(nvarchar_value), 100)),
+            (
+                "nvarchar",
+                SqlType::NVarchar(Some(nvarchar_value.clone()), 100),
+            ),
             ("bigint", SqlType::BigInt(Some(bigint_value))),
             ("bit", SqlType::Bit(Some(bit_value))),
             ("varbinary", SqlType::VarBinary(Some(varbinary_value), 100)),
             ("float", SqlType::Float(Some(float_value))),
             ("real", SqlType::Real(Some(real_value))),
             ("xml", SqlType::Xml(Some(xml_value.clone().into()))),
+            (
+                "varchar",
+                SqlType::NVarchar(Some(nvarchar_value.clone()), 200),
+            ),
+            ("date", SqlType::Date(Some(SqlDate::create(200).unwrap()))),
+            (
+                "datetime",
+                SqlType::DateTime(Some(SqlDateTime {
+                    days: dayssincebeginning,
+                    time: timesincebeginning,
+                })),
+            ),
         ];
 
         let query = generate_select_statement(&columns);
@@ -54,7 +75,11 @@ mod rpc_datatypes {
             .await
             .unwrap();
 
-        let first_row_columns = get_first_row(batch_result).await.unwrap();
+        let (metadata, first_row_columns) = get_first_row(batch_result).await.unwrap();
+
+        for (i, column) in metadata.iter().enumerate() {
+            println!("Column {}: {:?}", i, column);
+        }
 
         assert_eq!(first_row_columns.len(), columns.len());
         for column in first_row_columns.iter() {
@@ -86,6 +111,13 @@ mod rpc_datatypes {
                 ColumnValues::Xml(value) => {
                     assert_eq!(*value, xml_value.clone().into());
                 }
+                ColumnValues::Date(value) => {
+                    assert_eq!(value.get_days(), days);
+                }
+                ColumnValues::DateTime(value) => {
+                    assert_eq!(value.days, dayssincebeginning);
+                    assert_eq!(value.time, timesincebeginning);
+                }
                 _ => {}
             }
         }
@@ -116,7 +148,7 @@ mod rpc_datatypes {
             .await
             .unwrap();
 
-        let first_row_columns = get_first_row(batch_result).await.unwrap();
+        let (_, first_row_columns) = get_first_row(batch_result).await.unwrap();
 
         assert_eq!(first_row_columns.len(), columns.len());
         for column in first_row_columns.iter() {

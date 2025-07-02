@@ -8,6 +8,7 @@ use futures::StreamExt;
 use tds_x::connection::client_context::TransportContext;
 use tds_x::core::{EncryptionOptions, TdsResult};
 use tds_x::datatypes::column_values::ColumnValues;
+use tds_x::query::metadata::ColumnMetadata;
 use tds_x::{
     connection::{client_context::ClientContext, tds_connection::TdsConnection},
     connection_provider::tds_connection_provider::TdsConnectionProvider,
@@ -196,11 +197,14 @@ where
 
 // Returns the first row of the result set, and drains the resultset.
 #[allow(dead_code)]
-pub async fn get_first_row<'a, 'n>(batch_result: BatchResult<'n>) -> TdsResult<Vec<ColumnValues>>
+pub async fn get_first_row<'a, 'n>(
+    batch_result: BatchResult<'n>,
+) -> TdsResult<(Vec<ColumnMetadata>, Vec<ColumnValues>)>
 where
     'n: 'a,
 {
     let mut result: Vec<ColumnValues> = Vec::new();
+    let mut metadata: Vec<ColumnMetadata> = Vec::new();
     let mut query_result_stream = batch_result.stream_results();
 
     while let Some(query_result_type) = query_result_stream.next().await {
@@ -210,6 +214,7 @@ where
                 // Do Nothing. Skip;
             }
             QueryResultType::ResultSet(rs) => {
+                metadata.append(&mut rs.get_metadata().clone());
                 let mut rowstream = rs.into_row_stream().unwrap();
                 while let Some(row) = rowstream.next().await {
                     let mut unwrapped_row = row.unwrap();
@@ -226,7 +231,7 @@ where
         }
     }
 
-    Ok(result)
+    Ok((metadata, result))
 }
 
 pub fn trust_server_certificate() -> bool {

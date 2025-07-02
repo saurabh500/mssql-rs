@@ -797,11 +797,10 @@ impl SqlType {
     ) -> TdsResult<()> {
         let nullable_type: NullableTdsType = self.get_nullable_type();
         packet_writer.write_byte_async(nullable_type as u8).await?;
-        let byte_len = 3; // Date is always 3 byes for non-null dates.
-                          // Write the length of the dateN byte len.
-        packet_writer.write_byte_async(byte_len).await?;
         match date {
             Some(d) => {
+                // Write the length of the dateN byte len.
+                let byte_len = 3; // Date is always 3 byes for non-null dates.
                 packet_writer.write_byte_async(byte_len).await?;
                 // Write the date.
                 packet_writer
@@ -1017,7 +1016,6 @@ mod datetime_tests {
         let mut test_cursor = Cursor::new(payload);
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
         assert_eq!(test_cursor.get_u8(), TdsDataType::DateN as u8); // Valdate tds type
-        assert_eq!(test_cursor.get_u8(), byte_len); // Validate type length
         assert_eq!(test_cursor.get_u8(), byte_len); // Validate data length
         test_cursor.copy_to_slice(&mut written_bytes);
         assert_eq!(written_bytes, test_bytes);
@@ -1048,7 +1046,6 @@ mod datetime_tests {
         let mut test_cursor = Cursor::new(payload);
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
         assert_eq!(test_cursor.get_u8(), TdsDataType::DateN as u8); // Valdate tds type
-        assert_eq!(test_cursor.get_u8(), 3); // Validate type length
         assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // Validate byte length
     }
 
