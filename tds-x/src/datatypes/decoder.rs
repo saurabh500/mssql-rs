@@ -18,18 +18,13 @@ use crate::{
     },
     read_write::packet_reader::TdsPacketReader,
 };
-use crate::{
-    query::metadata::ColumnMetadata, read_write::packet_reader::PacketReader,
-    token::tokens::SqlCollation,
-};
+use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 
 #[async_trait]
-pub(crate) trait SqlTypeDecode<'a> {
-    async fn decode(
-        &self,
-        reader: &'a mut PacketReader,
-        metadata: &ColumnMetadata,
-    ) -> TdsResult<ColumnValues>;
+pub(crate) trait SqlTypeDecode {
+    async fn decode<T>(&self, reader: &mut T, metadata: &ColumnMetadata) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync;
 }
 
 impl From<u8> for ColumnValues {
@@ -55,7 +50,10 @@ impl GenericDecoder {
     const SQL_PLP_UNKNOWNLEN: usize = 0xfffffffffffffffe;
 
     // Reads a SQL_VARIANT type from the TDS stream.
-    async fn read_sql_variant(&self, reader: &mut PacketReader<'_>) -> TdsResult<ColumnValues> {
+    async fn read_sql_variant<T>(&self, reader: &mut T) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let length = reader.read_uint32().await?;
         let variant_base_type = reader.read_byte().await?;
         let tds_type = TdsDataType::try_from(variant_base_type)?;
@@ -88,12 +86,15 @@ impl GenericDecoder {
         Ok(col_value)
     }
 
-    async fn decode_zero_propbyte_variant(
+    async fn decode_zero_propbyte_variant<T>(
         &self,
-        reader: &mut PacketReader<'_>,
+        reader: &mut T,
         tds_type: TdsDataType,
         data_length: u32,
-    ) -> Result<ColumnValues, crate::error::Error> {
+    ) -> Result<ColumnValues, crate::error::Error>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let fixed_length_type_result = FixedLengthTypes::try_from(tds_type);
 
         // The type may be a fixed length type, or it may be a variable length type like Guid/DateN
@@ -127,12 +128,15 @@ impl GenericDecoder {
         }
     }
 
-    async fn decode_one_byte_variant(
+    async fn decode_one_byte_variant<T>(
         &self,
-        reader: &mut PacketReader<'_>,
+        reader: &mut T,
         tds_type: TdsDataType,
         data_length: u32,
-    ) -> TdsResult<ColumnValues> {
+    ) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let scale = reader.read_byte().await?;
         Ok(match tds_type {
             TdsDataType::TimeN => {
@@ -153,11 +157,14 @@ impl GenericDecoder {
         })
     }
 
-    async fn read_decimal(
+    async fn read_decimal<T>(
         &self,
-        reader: &mut PacketReader<'_>,
+        reader: &mut T,
         metadata: &ColumnMetadata,
-    ) -> TdsResult<Option<DecimalParts>> {
+    ) -> TdsResult<Option<DecimalParts>>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         // Decimal/numeric data type has 1 byte length.
         let length = reader.read_byte().await?;
         if let TypeInfoVariant::VarLenPrecisionScale(_, _, precision, scale) =
@@ -169,12 +176,15 @@ impl GenericDecoder {
         }
     }
 
-    async fn read_decimal_data(
-        reader: &mut PacketReader<'_>,
+    async fn read_decimal_data<T>(
+        reader: &mut T,
         length: u8,
         precision: u8,
         scale: u8,
-    ) -> TdsResult<Option<DecimalParts>> {
+    ) -> TdsResult<Option<DecimalParts>>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         // If length is 0, then it is NULL.
         if length == 0 {
             return Ok(None);
@@ -196,17 +206,20 @@ impl GenericDecoder {
         }))
     }
 
-    async fn read_datetime(&self, reader: &mut PacketReader<'_>) -> TdsResult<SqlDateTime> {
+    async fn read_datetime<T>(&self, reader: &mut T) -> TdsResult<SqlDateTime>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let days = reader.read_int32().await?;
         let ticks = reader.read_uint32().await?;
 
         Ok(SqlDateTime { days, time: ticks })
     }
 
-    async fn read_small_datetime(
-        &self,
-        reader: &mut PacketReader<'_>,
-    ) -> TdsResult<SqlSmallDateTime> {
+    async fn read_small_datetime<T>(&self, reader: &mut T) -> TdsResult<SqlSmallDateTime>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let days = reader.read_uint16().await?;
         let minutes = reader.read_uint16().await?;
         Ok(SqlSmallDateTime {
@@ -215,17 +228,18 @@ impl GenericDecoder {
         })
     }
 
-    async fn read_date(reader: &mut PacketReader<'_>) -> TdsResult<SqlDate> {
+    async fn read_date<T>(reader: &mut T) -> TdsResult<SqlDate>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let days = reader.read_uint24().await?;
         Ok(SqlDate::unchecked_create(days))
     }
 
-    async fn read_time(
-        &self,
-        reader: &mut PacketReader<'_>,
-        byte_len: u8,
-        scale: u8,
-    ) -> TdsResult<Time> {
+    async fn read_time<T>(&self, reader: &mut T, byte_len: u8, scale: u8) -> TdsResult<Time>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let nanoseconds = match byte_len {
             3 => reader.read_uint24().await? as u64,
             4 => reader.read_uint32().await? as u64,
@@ -237,12 +251,15 @@ impl GenericDecoder {
         })
     }
 
-    async fn read_datetime2(
+    async fn read_datetime2<T>(
         &self,
-        reader: &mut PacketReader<'_>,
+        reader: &mut T,
         byte_len: u8,
         scale: u8,
-    ) -> TdsResult<ColumnValues> {
+    ) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let sql_date = Self::read_date(reader).await?;
         let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
         let datetime2 = DateTime2 {
@@ -252,12 +269,15 @@ impl GenericDecoder {
         Ok(ColumnValues::DateTime2(datetime2))
     }
 
-    async fn read_datetime_offset(
+    async fn read_datetime_offset<T>(
         &self,
-        reader: &mut PacketReader<'_>,
+        reader: &mut T,
         byte_len: u8,
         scale: u8,
-    ) -> TdsResult<ColumnValues> {
+    ) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let sql_date = Self::read_date(reader).await?;
         let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
         let offset = reader.read_int16().await?;
@@ -269,11 +289,10 @@ impl GenericDecoder {
         Ok(ColumnValues::DateTimeOffset(datetime_offset))
     }
 
-    async fn read_intn(
-        &self,
-        reader: &mut PacketReader<'_>,
-        byte_len: u8,
-    ) -> TdsResult<ColumnValues> {
+    async fn read_intn<T>(&self, reader: &mut T, byte_len: u8) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let value: ColumnValues = match byte_len {
             1 => ColumnValues::TinyInt(reader.read_byte().await?), // Some(reader.read_byte().await? as i64),
             2 => ColumnValues::SmallInt(reader.read_int16().await?), // Some(reader.read_int16().await? as i64),
@@ -290,20 +309,29 @@ impl GenericDecoder {
         Ok(value)
     }
 
-    async fn read_money4(&self, reader: &mut PacketReader<'_>) -> TdsResult<SqlSmallMoney> {
+    async fn read_money4<T>(&self, reader: &mut T) -> TdsResult<SqlSmallMoney>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let small_money_val = reader.read_int32().await?;
         Ok(small_money_val.into())
     }
 
     // Reads the TDS 8-byte money value. It is represented in TDS as two 4-byte integers (mixed endian).
     // See comments in MoneyParts definition for more details.
-    async fn read_money8(&self, reader: &mut PacketReader<'_>) -> TdsResult<SqlMoney> {
+    async fn read_money8<T>(&self, reader: &mut T) -> TdsResult<SqlMoney>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let msb = reader.read_int32().await?;
         let lsb = reader.read_int32().await?;
         Ok((lsb, msb).into())
     }
 
-    async fn read_daten(reader: &mut PacketReader<'_>, length: u8) -> TdsResult<ColumnValues> {
+    async fn read_daten<T>(reader: &mut T, length: u8) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         if length == 0 {
             Ok(ColumnValues::Null)
         } else {
@@ -312,7 +340,10 @@ impl GenericDecoder {
         }
     }
 
-    async fn read_guid(reader: &mut PacketReader<'_>, length: u8) -> TdsResult<ColumnValues> {
+    async fn read_guid<T>(reader: &mut T, length: u8) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         if length > 0 {
             let mut bytes = vec![0u8; length as usize];
             reader.read_bytes(&mut bytes).await?;
@@ -323,7 +354,10 @@ impl GenericDecoder {
         }
     }
 
-    async fn read_plp_bytes(reader: &mut PacketReader<'_>) -> TdsResult<Option<Vec<u8>>> {
+    async fn read_plp_bytes<T>(reader: &mut T) -> TdsResult<Option<Vec<u8>>>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let long_len = reader.read_int64().await? as u64;
 
         // If the length is SQL_PLP_NULL, it means the value is NULL.
@@ -358,12 +392,11 @@ impl GenericDecoder {
 }
 
 #[async_trait]
-impl<'a> SqlTypeDecode<'a> for GenericDecoder {
-    async fn decode(
-        &self,
-        reader: &'a mut PacketReader,
-        metadata: &ColumnMetadata,
-    ) -> TdsResult<ColumnValues> {
+impl SqlTypeDecode for GenericDecoder {
+    async fn decode<T>(&self, reader: &mut T, metadata: &ColumnMetadata) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let result = match metadata.data_type {
             TdsDataType::Int1 => {
                 let value = reader.read_byte().await?;
@@ -611,12 +644,11 @@ impl StringDecoder {
 }
 
 #[async_trait]
-impl<'a> SqlTypeDecode<'a> for StringDecoder {
-    async fn decode(
-        &self,
-        reader: &'a mut PacketReader,
-        metadata: &ColumnMetadata,
-    ) -> TdsResult<ColumnValues> {
+impl SqlTypeDecode for StringDecoder {
+    async fn decode<T>(&self, reader: &mut T, metadata: &ColumnMetadata) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         let encoding_type = get_encoding_type(metadata);
 
         // If Plp Column. (BIGVARCHARTYPE, BIGVARBINARYTYPE, NVARCHARTYPE with md.length == ushort.max)
@@ -710,12 +742,15 @@ impl Debug for DecimalParts {
     }
 }
 
-async fn decode_two_propbyte_variant(
-    reader: &mut PacketReader<'_>,
+async fn decode_two_propbyte_variant<T>(
+    reader: &mut T,
     variant_base_type: u8,
     tds_type: TdsDataType,
     data_length: u32,
-) -> TdsResult<ColumnValues> {
+) -> TdsResult<ColumnValues>
+where
+    T: TdsPacketReader + Send + Sync,
+{
     Ok(match tds_type {
         // BIGVARBINARYTYPE, BIGBINARYTYPE
         TdsDataType::BigVarBinary | TdsDataType::BigBinary => {
@@ -752,11 +787,14 @@ async fn decode_two_propbyte_variant(
     })
 }
 
-async fn decode_seven_propbyte_variant(
-    reader: &mut PacketReader<'_>,
+async fn decode_seven_propbyte_variant<T>(
+    reader: &mut T,
     tds_type: TdsDataType,
     data_length: u32,
-) -> TdsResult<ColumnValues> {
+) -> TdsResult<ColumnValues>
+where
+    T: TdsPacketReader + Send + Sync,
+{
     assert!(matches!(
         tds_type,
         TdsDataType::BigVarChar | TdsDataType::BigChar | TdsDataType::NVarChar | TdsDataType::NChar

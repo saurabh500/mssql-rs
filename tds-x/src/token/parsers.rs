@@ -25,7 +25,7 @@ use crate::{
         login_options::TdsVersion,
     },
     query::metadata::{ColumnMetadata, MultiPartName},
-    read_write::{packet_reader::PacketReader, token_stream::ParserContext},
+    read_write::token_stream::ParserContext,
     token::{
         fed_auth_info::FedAuthInfoId,
         login_ack::{LoginAckToken, SqlInterfaceType},
@@ -37,12 +37,11 @@ use crate::{
 };
 
 #[async_trait]
-pub(crate) trait TokenParser<'a> {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        context: &ParserContext,
-    ) -> TdsResult<Tokens>;
+pub(crate) trait TokenParser<T>
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, context: &ParserContext) -> TdsResult<Tokens>;
 }
 
 #[derive(Debug, Default)]
@@ -51,12 +50,11 @@ pub(crate) struct EnvChangeTokenParser {
 }
 
 #[async_trait]
-impl<'a> TokenParser<'a> for EnvChangeTokenParser {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for EnvChangeTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         let _token_length = reader.read_uint16().await?;
         let sub_type = reader.read_byte().await?;
         let token_sub_type = EnvChangeTokenSubType::from(sub_type);
@@ -234,12 +232,11 @@ pub(crate) struct LoginAckTokenParser {
 }
 
 #[async_trait]
-impl<'a> TokenParser<'a> for LoginAckTokenParser {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for LoginAckTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         event!(
             tracing::Level::DEBUG,
             "Parsing LoginAck token with type: 0x{:02X}",
@@ -275,12 +272,11 @@ pub(crate) struct DoneTokenParser {
 }
 
 #[async_trait]
-impl<'a> TokenParser<'a> for DoneTokenParser {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for DoneTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -301,12 +297,11 @@ pub(crate) struct DoneInProcTokenParser {
 }
 
 #[async_trait]
-impl<'a> TokenParser<'a> for DoneInProcTokenParser {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for DoneInProcTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -327,12 +322,11 @@ pub(crate) struct DoneProcTokenParser {
 }
 
 #[async_trait]
-impl<'a> TokenParser<'a> for DoneProcTokenParser {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for DoneProcTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
@@ -353,12 +347,11 @@ pub(crate) struct InfoTokenParser {
 }
 
 #[async_trait]
-impl<'a> TokenParser<'a> for InfoTokenParser {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for InfoTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         let _length = reader.read_uint16().await?;
         let number = reader.read_uint32().await?;
         let state = reader.read_byte().await?;
@@ -388,12 +381,11 @@ pub(crate) struct ErrorTokenParser {
 }
 
 #[async_trait]
-impl<'a> TokenParser<'a> for ErrorTokenParser {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for ErrorTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         error!(
             "Parsing Error token with type: 0x{:02X}",
             TokenType::Error as u8
@@ -431,12 +423,11 @@ impl FedAuthInfoTokenParser {
 }
 
 #[async_trait]
-impl<'a> TokenParser<'a> for FedAuthInfoTokenParser {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for FedAuthInfoTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         let length = reader.read_int32().await?;
 
         let options_count = reader.read_uint32().await?;
@@ -501,12 +492,11 @@ pub(crate) struct FeatureExtAckTokenParser {
 }
 
 #[async_trait]
-impl<'a> TokenParser<'a> for FeatureExtAckTokenParser {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for FeatureExtAckTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         let mut features: Vec<(FeatureExtension, Vec<u8>)> = Vec::new();
         loop {
             let feature_identifier = FeatureExtension::from(reader.read_byte().await?);
@@ -546,16 +536,13 @@ impl ColMetadataTokenParser {
 }
 
 #[async_trait]
-impl<'a> TokenParser<'a> for ColMetadataTokenParser {
-    async fn parse(
-        &self,
-        packet_reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for ColMetadataTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         // Allocate a heap pointer so that we can reference the reader
         // by passing it around into other methods.
-        let mut reader = Box::new(packet_reader);
-
         let col_count = reader.read_uint16().await?;
 
         if self.is_column_encryption_supported {
@@ -582,7 +569,7 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
                 )));
             }
             let data_type = some_data_type?;
-            let type_info = read_type_info(&mut reader, data_type).await?;
+            let type_info = read_type_info(reader, data_type).await?;
 
             // Parse Table name
             // TDS Doc snippet
@@ -640,15 +627,12 @@ impl<'a> TokenParser<'a> for ColMetadataTokenParser {
 }
 
 #[derive(Debug)]
-pub(crate) struct RowTokenParser<T>
-where
-    T: for<'a> SqlTypeDecode<'a>,
-{
+pub(crate) struct RowTokenParser<T: SqlTypeDecode> {
     // fields omitted
     decoder: T,
 }
 
-impl<T: for<'a> SqlTypeDecode<'a> + Default> Default for RowTokenParser<T> {
+impl<T: SqlTypeDecode + Default> Default for RowTokenParser<T> {
     fn default() -> Self {
         Self {
             decoder: T::default(),
@@ -657,12 +641,10 @@ impl<T: for<'a> SqlTypeDecode<'a> + Default> Default for RowTokenParser<T> {
 }
 
 #[async_trait]
-impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for RowTokenParser<T> {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<D: SqlTypeDecode + Default + Send + Sync, P: TdsPacketReader + Send + Sync> TokenParser<P>
+    for RowTokenParser<D>
+{
+    async fn parse(&self, reader: &mut P, context: &ParserContext) -> TdsResult<Tokens> {
         let column_metadata_token = match context {
             ParserContext::ColumnMetadata(metadata) => {
                 trace!("Metadata during Row Parsing: {:?}", metadata);
@@ -694,12 +676,11 @@ impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for RowTokenParser
 pub(crate) struct OrderTokenParser {}
 
 #[async_trait]
-impl<'a> TokenParser<'a> for OrderTokenParser {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for OrderTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         let length = reader.read_uint16().await?;
 
         let col_count = length / 2;
@@ -717,12 +698,11 @@ impl<'a> TokenParser<'a> for OrderTokenParser {
 pub(crate) struct ReturnStatusTokenParser {}
 
 #[async_trait]
-impl<'a> TokenParser<'a> for ReturnStatusTokenParser {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T> TokenParser<T> for ReturnStatusTokenParser
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         let value = reader.read_int32().await?;
 
         Ok(Tokens::from(ReturnStatusToken { value }))
@@ -732,13 +712,13 @@ impl<'a> TokenParser<'a> for ReturnStatusTokenParser {
 #[derive(Debug)]
 pub(crate) struct NbcRowTokenParser<T>
 where
-    T: for<'a> SqlTypeDecode<'a>,
+    T: SqlTypeDecode,
 {
     // fields omitted
     decoder: T,
 }
 
-impl<T: for<'a> SqlTypeDecode<'a> + Default> Default for NbcRowTokenParser<T> {
+impl<T: SqlTypeDecode + Default> Default for NbcRowTokenParser<T> {
     fn default() -> Self {
         Self {
             decoder: T::default(),
@@ -755,12 +735,12 @@ fn is_null_value_in_column(null_bitmap: &[u8], index: usize) -> bool {
 #[derive(Debug)]
 pub(crate) struct ReturnValueTokenParser<T>
 where
-    T: for<'a> SqlTypeDecode<'a>,
+    T: SqlTypeDecode,
 {
     decoder: T,
 }
 
-impl<T: for<'a> SqlTypeDecode<'a> + Default> Default for ReturnValueTokenParser<T> {
+impl<T: SqlTypeDecode + Default> Default for ReturnValueTokenParser<T> {
     fn default() -> Self {
         Self {
             decoder: T::default(),
@@ -769,12 +749,10 @@ impl<T: for<'a> SqlTypeDecode<'a> + Default> Default for ReturnValueTokenParser<
 }
 
 #[async_trait]
-impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for ReturnValueTokenParser<T> {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        _context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T: SqlTypeDecode + Sync, P: TdsPacketReader + Send + Sync> TokenParser<P>
+    for ReturnValueTokenParser<T>
+{
+    async fn parse(&self, reader: &mut P, _context: &ParserContext) -> TdsResult<Tokens> {
         let param_ordinal = reader.read_uint16().await?;
         let param_name_length = reader.read_byte().await?;
         let param_name = reader
@@ -786,8 +764,8 @@ impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for ReturnValueTok
         let flags = reader.read_uint16().await?;
         let tds_type = reader.read_byte().await?;
         let type_info = read_type_info(reader, TdsDataType::try_from(tds_type)?).await?;
-        // TODO: Crypto metadata
 
+        // TODO: Crypto metadata
         let column_metadata = ColumnMetadata {
             user_type,
             flags,
@@ -796,7 +774,6 @@ impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for ReturnValueTok
             column_name: param_name.clone(),
             multi_part_name: None,
         };
-
         let value = self.decoder.decode(reader, &column_metadata).await?;
 
         Ok(Tokens::from(ReturnValueToken {
@@ -810,12 +787,10 @@ impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for ReturnValueTok
 }
 
 #[async_trait]
-impl<'a, T: for<'b> SqlTypeDecode<'b> + Sync> TokenParser<'a> for NbcRowTokenParser<T> {
-    async fn parse(
-        &self,
-        reader: &'a mut PacketReader,
-        context: &ParserContext,
-    ) -> TdsResult<Tokens> {
+impl<T: SqlTypeDecode + Sync, P: TdsPacketReader + Send + Sync> TokenParser<P>
+    for NbcRowTokenParser<T>
+{
+    async fn parse(&self, reader: &mut P, context: &ParserContext) -> TdsResult<Tokens> {
         let column_metadata_token = match context {
             ParserContext::ColumnMetadata(metadata) => {
                 trace!("Metadata during Row Parsing: {:?}", metadata);

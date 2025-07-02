@@ -41,6 +41,7 @@ pub(crate) trait TdsPacketReader {
     async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String>;
     async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String>;
     async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()>;
+    async fn cancel_read_stream(&mut self) -> TdsResult<()>;
 }
 
 pub struct PacketReader<'a> {
@@ -66,14 +67,6 @@ impl<'a> PacketReader<'a> {
             working_buffer: buffer,
             max_packet_size: packet_size,
         }
-    }
-
-    pub(crate) async fn cancel_read_stream(&mut self) -> TdsResult<()> {
-        let attention = AttentionRequest::new();
-        let mut packet_writer =
-            attention.create_packet_writer(self.network_reader_writer.as_writer(), None, None);
-        attention.serialize(&mut packet_writer).await?;
-        Ok(())
     }
 
     fn do_we_have_enough_data(&self, byte_count: usize) -> bool {
@@ -199,6 +192,14 @@ impl<'a> PacketReader<'a> {
 
 #[async_trait]
 impl TdsPacketReader for PacketReader<'_> {
+    async fn cancel_read_stream(&mut self) -> TdsResult<()> {
+        let attention = AttentionRequest::new();
+        let mut packet_writer =
+            attention.create_packet_writer(self.network_reader_writer.as_writer(), None, None);
+        attention.serialize(&mut packet_writer).await?;
+        Ok(())
+    }
+
     async fn read_byte(&mut self) -> TdsResult<u8> {
         if !self.do_we_have_enough_data(1) {
             self.read_tds_packet().await?;

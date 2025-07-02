@@ -1,4 +1,3 @@
-use super::packet_reader::PacketReader;
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::decoder::GenericDecoder;
 use crate::error::Error::{OperationCancelledError, TimeoutError};
@@ -17,8 +16,11 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tracing::event;
 
-pub(crate) struct TokenStreamReader<'a> {
-    pub(crate) packet_reader: PacketReader<'a>,
+pub(crate) struct TokenStreamReader<T>
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    pub(crate) packet_reader: T,
     pub(crate) parser_registry: Box<dyn TokenParserRegistry>,
 }
 
@@ -39,11 +41,17 @@ impl Default for ParserContext {
     }
 }
 
-impl TokenStreamReader<'_> {
+impl<T> TokenStreamReader<T>
+where
+    T: TdsPacketReader + Send + Sync,
+{
     pub(crate) fn new(
-        packet_reader: PacketReader,
+        packet_reader: T,
         parser_registry: Box<dyn TokenParserRegistry>,
-    ) -> TokenStreamReader {
+    ) -> TokenStreamReader<T>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
         TokenStreamReader {
             packet_reader,
             parser_registry,

@@ -1,7 +1,7 @@
 use crate::core::TdsResult;
 use crate::error::Error;
 use crate::read_write::packet_reader::TdsPacketReader;
-use crate::{read_write::packet_reader::PacketReader, token::tokens::SqlCollation};
+use crate::token::tokens::SqlCollation;
 use std::fmt::format;
 
 // TdsDataType is a list of all the datatypes in TDS protocol.
@@ -406,10 +406,10 @@ pub enum UdtInfo {
     InRpc(UdtInfoInRpc),
 }
 
-pub async fn read_type_info(
-    reader: &mut PacketReader<'_>,
-    data_type: TdsDataType,
-) -> TdsResult<TypeInfo> {
+pub(crate) async fn read_type_info<T>(reader: &mut T, data_type: TdsDataType) -> TdsResult<TypeInfo>
+where
+    T: TdsPacketReader + Send + Sync,
+{
     let fixed_length_type = FixedLengthTypes::try_from(data_type);
     if let Ok(fdt) = fixed_length_type {
         return Ok(TypeInfo {
@@ -676,10 +676,13 @@ pub fn is_unicode_type(data_type: TdsDataType) -> bool {
 }
 
 // Reads the variable length data type from the reader and returns the length of the data.
-pub async fn get_variable_length(
-    reader: &mut PacketReader<'_>,
+pub(crate) async fn get_variable_length<T>(
+    reader: &mut T,
     data_type: &VariableLengthTypes,
-) -> TdsResult<usize> {
+) -> TdsResult<usize>
+where
+    T: TdsPacketReader + Send + Sync,
+{
     let len_byte_count = data_type.get_len_byte_count();
     let length = match len_byte_count {
         1 => reader.read_byte().await? as usize,
