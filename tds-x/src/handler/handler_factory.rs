@@ -9,6 +9,7 @@ use crate::message::messages::Request;
 use crate::message::prelogin::{
     EncryptionType, PreloginRequest, PreloginRequestModel, PreloginResponse,
 };
+use crate::read_write::packet_reader::TdsPacketReader;
 use crate::read_write::reader_writer::NetworkReaderWriter;
 use crate::token::tokens::SqlCollation;
 use uuid::Uuid;
@@ -161,9 +162,9 @@ impl<'a, 'b> SessionHandler<'a, 'b> {
         }
     }
 
-    pub(crate) async fn execute(
+    pub(crate) async fn execute<T: NetworkReaderWriter + TdsPacketReader>(
         &mut self,
-        reader_writer: &mut impl NetworkReaderWriter,
+        reader_writer: &mut T,
     ) -> TdsResult<NegotiatedSettings> {
         let pre_login_result = self.get_pre_login_result(reader_writer).await?;
         self.validate_prelogin_result(&pre_login_result)?;
@@ -183,9 +184,9 @@ impl<'a, 'b> SessionHandler<'a, 'b> {
         Ok(negotiated_settings)
     }
 
-    async fn get_pre_login_result(
+    async fn get_pre_login_result<T: NetworkReaderWriter + TdsPacketReader>(
         &self,
-        reader_writer: &mut impl NetworkReaderWriter,
+        reader_writer: &mut T,
     ) -> TdsResult<PreloginResult> {
         let result = self
             .factory
@@ -263,9 +264,9 @@ pub(crate) struct PreloginHandler<'a> {
 }
 
 impl PreloginHandler<'_> {
-    async fn execute(
+    async fn execute<T: NetworkReaderWriter + TdsPacketReader>(
         &self,
-        reader_writer: &mut impl NetworkReaderWriter,
+        reader_writer: &mut T,
     ) -> TdsResult<PreloginResult> {
         // Create the request.
         let request_model = PreloginRequestModel::new(

@@ -1,7 +1,6 @@
 use crate::core::{EncryptionSetting, TdsResult};
 use crate::message::messages::{PacketType, Request};
-use crate::read_write::packet_reader::{PacketReader, TdsPacketReader};
-use crate::read_write::reader_writer::NetworkReaderWriter;
+use crate::read_write::packet_reader::TdsPacketReader;
 use crate::{
     core::{SQLServerVersion, Version},
     read_write::packet_writer::{PacketWriter, TdsPacketWriter},
@@ -162,17 +161,16 @@ impl Request for PreloginRequest<'_> {
 pub struct PreloginResponse {}
 
 impl PreloginResponse {
-    pub(crate) async fn deserialize(
+    pub(crate) async fn deserialize<T: TdsPacketReader>(
         &self,
-        reader_writer: &mut dyn NetworkReaderWriter,
+        packet_reader: &mut T,
     ) -> PreloginResponseModel {
-        let mut packet_reader = PacketReader::new(reader_writer);
         struct OptionContext {
             option: OptionType,
             length: usize,
         }
         let mut contexts = VecDeque::new();
-
+        packet_reader.reset_reader();
         loop {
             let token = packet_reader.read_byte().await.unwrap();
             if token == 0xFF {
@@ -402,17 +400,58 @@ impl<'a, 'n> Serializer<'a, 'n> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::vec;
+
     use crate::core::{EncryptionSetting, SQLServerVersion, Version};
     use crate::message::messages::PacketType;
     use crate::message::prelogin::{
         OptionType, PreloginRequestModel, PreloginResponse, Serializer,
     };
-    use crate::read_write::packet_reader::tests::MockNetworkReaderWriter;
+
+    use crate::read_write::packet_reader::TdsPacketReader;
     use crate::read_write::packet_writer::tests::MockNetworkWriter;
-    use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
+    use crate::read_write::packet_writer::PacketWriter;
+    use async_trait::async_trait;
     use byteorder::{BigEndian, ReadBytesExt};
     use futures::executor::block_on;
+
+    use crate::core::TdsResult;
     use uuid::Uuid;
+
+    mockall::mock! {
+        pub TestPacketReader {}
+        #[async_trait]
+        impl TdsPacketReader for TestPacketReader {
+            async fn read_byte(&mut self) -> TdsResult<u8>;
+            async fn read_int16_big_endian(&mut self) -> TdsResult<i16>;
+            async fn read_int32_big_endian(&mut self) -> TdsResult<i32>;
+            async fn read_int64_big_endian(&mut self) -> TdsResult<i64>;
+            async fn read_uint40(&mut self) -> TdsResult<u64>;
+
+            async fn read_float32(&mut self) -> TdsResult<f32>;
+            async fn read_float64(&mut self) -> TdsResult<f64>;
+            async fn read_int16(&mut self) -> TdsResult<i16>;
+            async fn read_uint16(&mut self) -> TdsResult<u16>;
+            async fn read_int24(&mut self) -> TdsResult<i32>;
+            async fn read_uint24(&mut self) -> TdsResult<u32>;
+            async fn read_int32(&mut self) -> TdsResult<i32>;
+            async fn read_uint32(&mut self) -> TdsResult<u32>;
+            async fn read_int64(&mut self) -> TdsResult<i64>;
+            async fn read_uint64(&mut self) -> TdsResult<u64>;
+
+            async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize>;
+            async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>>;
+            async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>>;
+            async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>>;
+            async fn read_varchar_u8_length(&mut self) -> TdsResult<String>;
+            async fn read_varchar_byte_len(&mut self) -> TdsResult<String>;
+            async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String>;
+            async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String>;
+            async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()>;
+            async fn cancel_read_stream(&mut self) -> TdsResult<()>;
+            fn reset_reader(&mut self);
+        }
+    }
 
     #[test]
     fn test_default_model() {
@@ -444,37 +483,43 @@ pub(crate) mod tests {
 
     #[test]
     fn test_deserialize_model() {
-        let mut mock = MockNetworkWriter::new(1024);
-        let mut packet_writer = PacketWriter::new(PacketType::PreLogin, &mut mock, None, None);
-        // Write headers.
-        block_on(packet_writer.write_byte_async(OptionType::Version as u8)).unwrap();
-        block_on(packet_writer.write_i16_be_async(0)).unwrap(); // offset - unused
-        block_on(packet_writer.write_i16_be_async(6)).unwrap(); // length.
-
-        block_on(packet_writer.write_byte_async(OptionType::Mars as u8)).unwrap();
-        block_on(packet_writer.write_i16_be_async(0)).unwrap(); // offset - unused
-        block_on(packet_writer.write_i16_be_async(6)).unwrap(); // length.
-
-        // Write terminator.
-        block_on(packet_writer.write_byte_async(0xFF)).unwrap();
-
-        // Write values
-        // Version 15.2.3.4
-        block_on(packet_writer.write_byte_async(15)).unwrap();
-        block_on(packet_writer.write_byte_async(2)).unwrap();
-        block_on(packet_writer.write_i16_be_async(3)).unwrap();
-        block_on(packet_writer.write_i16_be_async(4)).unwrap();
-
-        // Mars - enabled.
-        block_on(packet_writer.write_byte_async(1)).unwrap();
-
-        let cursor = packet_writer.get_payload();
-
-        // Move the contents written to a reader.
-        let mut mock_reader = MockNetworkReaderWriter::new(cursor.into_inner(), 0);
-
         let response = PreloginResponse {};
-        let response_model = block_on(response.deserialize(&mut mock_reader));
+        let mut mocked_packet_reader = MockTestPacketReader::new();
+        let byte_data = vec![
+            OptionType::Version as u8, // OptionType::Version
+            OptionType::Mars as u8,
+            0xFF, // terminator
+            15,
+            2, // Version
+            1, // Mars enabled
+        ];
+
+        let i16_data: Vec<i16> = vec![0, 6, 0, 6, 3, 4]; // Two i16 values for offsets and lengths.
+
+        // let mut seq = Sequence::new();
+
+        // First expect reset_reader to be called
+        mocked_packet_reader
+            .expect_reset_reader()
+            .once()
+            // .in_sequence(&mut seq)
+            .returning(|| {});
+
+        for &b in &byte_data {
+            mocked_packet_reader
+                .expect_read_byte()
+                .once()
+                .returning(move || Ok(b));
+        }
+
+        for &b in &i16_data {
+            mocked_packet_reader
+                .expect_read_int16_big_endian()
+                .once()
+                .returning(move || Ok(b));
+        }
+
+        let response_model = block_on(response.deserialize(&mut mocked_packet_reader));
 
         // Compare the guid, which is auto-generated.
         assert_eq!(response_model.mars_enabled, Option::from(true));

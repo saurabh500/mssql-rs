@@ -1,20 +1,28 @@
 use crate::connection::client_context::{IPAddressPreference, TransportContext};
 use crate::connection::transport::ssl_handler::{SslHandler, Tds7StreamRecoverer};
-use crate::core::{EncryptionOptions, EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
+use crate::core::{
+    CancelHandle, EncryptionOptions, EncryptionSetting, NegotiatedEncryptionSetting, TdsResult,
+};
 use crate::handler::handler_factory::SessionSettings;
+use crate::message::attention::AttentionRequest;
 use crate::message::login_options::TdsVersion;
-use crate::read_write::packet_reader::TdsPacketReader;
+use crate::message::messages::{PacketType, Request};
+use crate::read_write::packet_reader::{PacketReader, TdsPacketReader};
+use crate::read_write::packet_writer::PacketWriter;
 use crate::read_write::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
 use async_trait::async_trait;
+use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use futures::lock::Mutex;
-use std::io::Error;
-use std::io::ErrorKind::UnexpectedEof;
+use std::cmp::min;
+use std::io::ErrorKind::{self, UnexpectedEof};
+use std::io::{Cursor, Error};
 use std::net::ToSocketAddrs;
+use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{self, TcpStream};
-use tracing::{info, trace};
+use tracing::{event, info, trace};
 
 pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
 
@@ -199,6 +207,8 @@ pub(crate) struct NetworkTransport {
     ssl_handler: SslHandler,
     stream_recoverer: Box<dyn StreamRecoverer>,
     encryption_setting: EncryptionSetting,
+    tds_read_buffer: TdsReadBuffer,
+    tds_write_buffer: TdsWriteBuffer,
 }
 
 impl NetworkReaderWriter for NetworkTransport {
@@ -207,6 +217,11 @@ impl NetworkReaderWriter for NetworkTransport {
     }
 
     fn notify_session_setting_change(&mut self, setting: &SessionSettings) {
+        // Adjust the buffers as well.
+        self.tds_read_buffer.change_packet_size(setting.packet_size);
+        self.tds_write_buffer
+            .change_packet_size(setting.packet_size);
+        self.tds_read_buffer.reset_to_length(0);
         self.packet_size = setting.packet_size;
     }
 
@@ -258,6 +273,8 @@ impl NetworkTransport {
             stream_recoverer,
             packet_size,
             encryption_setting,
+            tds_read_buffer: TdsReadBuffer::new(packet_size as usize),
+            tds_write_buffer: TdsWriteBuffer::new(packet_size as usize),
         }
     }
 
@@ -336,6 +353,77 @@ impl NetworkTransport {
         self.stream.lock().await.shutdown().await?;
         Ok(())
     }
+
+    async fn read_tds_packet(&mut self) -> TdsResult<()> {
+        // let remaining_bytes = self.buffer_length - self.buffer_position;
+        let remaining_bytes = self.tds_read_buffer.get_remaining_byte_count();
+        if remaining_bytes > 0 {
+            // Move the remaining bytes to the beginning of the buffer.
+            self.tds_read_buffer.shift_data_to_front();
+            let new_packet_size = self.get_new_tds_packet().await?;
+            self.tds_read_buffer
+                .remove_header_from_packet(new_packet_size);
+        } else {
+            self.tds_read_buffer.reset_to_length(0);
+            let new_packet_size = self.get_new_tds_packet().await?;
+            self.tds_read_buffer
+                .remove_header_from_packet(new_packet_size);
+        }
+        Ok(())
+    }
+
+    async fn get_new_tds_packet(&mut self) -> TdsResult<usize> {
+        let base_offset = self.tds_read_buffer.buffer_length;
+        let max_packet_size = self.tds_read_buffer.max_packet_size;
+
+        let mut stream = self.stream.lock().await;
+        let mut bytes_read_from_transport = stream
+            .read(&mut self.tds_read_buffer.working_buffer[base_offset..])
+            .await?;
+
+        // We need the 8 byte header. Re-read, in case the new_packet_byte_length has less bytes than 8 bytes to complete
+        // the header.
+        while bytes_read_from_transport < PacketWriter::PACKET_HEADER_SIZE {
+            bytes_read_from_transport += stream
+                .read(
+                    &mut self.tds_read_buffer.working_buffer
+                        [base_offset + bytes_read_from_transport..base_offset + max_packet_size],
+                )
+                .await?;
+        }
+
+        let length_from_packet_header = BigEndian::read_u16(
+            &self.tds_read_buffer.working_buffer[base_offset + 2..base_offset + 4],
+        );
+
+        let packet_size_from_header: usize = length_from_packet_header as usize;
+
+        // Keep reading until we have the complete packet in memory.
+        while bytes_read_from_transport < packet_size_from_header {
+            bytes_read_from_transport += stream
+                .read(
+                    &mut self.tds_read_buffer.working_buffer
+                        [base_offset + bytes_read_from_transport..base_offset + max_packet_size],
+                )
+                .await?;
+        }
+        event!(
+            tracing::Level::DEBUG,
+            "Received packet of size: {:?}",
+            bytes_read_from_transport
+        );
+
+        use pretty_hex::PrettyHex;
+
+        event!(
+            tracing::Level::DEBUG,
+            "Packet content: {:?}",
+            &mut self.tds_read_buffer.working_buffer
+                [base_offset..base_offset + bytes_read_from_transport]
+                .hex_dump()
+        );
+        Ok(bytes_read_from_transport)
+    }
 }
 
 #[async_trait]
@@ -367,82 +455,410 @@ impl TransportSslHandler for NetworkTransport {
 
 #[async_trait]
 impl TdsPacketReader for NetworkTransport {
+    fn reset_reader(&mut self) {
+        // Make sure that we have read all the data from the buffer.
+        assert!(self.tds_read_buffer.buffer_length == self.tds_read_buffer.buffer_position);
+        self.tds_read_buffer.reset_to_length(0);
+    }
+
     async fn read_byte(&mut self) -> TdsResult<u8> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(1) {
+            self.read_tds_packet().await?;
+        }
+        let result: u8 = self.tds_read_buffer.working_buffer[self.tds_read_buffer.buffer_position];
+        self.tds_read_buffer.consume_bytes(1);
+        Ok(result)
     }
     async fn read_int16_big_endian(&mut self) -> TdsResult<i16> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(2) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_i16(self.tds_read_buffer.get_slice());
+        self.tds_read_buffer.consume_bytes(2);
+        Ok(result)
     }
     async fn read_int32_big_endian(&mut self) -> TdsResult<i32> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(4) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_i32(self.tds_read_buffer.get_slice());
+        self.tds_read_buffer.consume_bytes(4);
+        Ok(result)
     }
     async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(8) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_i64(self.tds_read_buffer.get_slice());
+        self.tds_read_buffer.consume_bytes(8);
+        Ok(result)
     }
     async fn read_uint40(&mut self) -> TdsResult<u64> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(5) {
+            self.read_tds_packet().await?;
+        }
+
+        let result = LittleEndian::read_uint(self.tds_read_buffer.get_slice(), 5);
+        self.tds_read_buffer.consume_bytes(5);
+        Ok(result)
     }
 
     async fn read_float32(&mut self) -> TdsResult<f32> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(4) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_f32(self.tds_read_buffer.get_slice());
+        self.tds_read_buffer.consume_bytes(4);
+        Ok(result)
     }
     async fn read_float64(&mut self) -> TdsResult<f64> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(8) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_f64(self.tds_read_buffer.get_slice());
+        self.tds_read_buffer.consume_bytes(8);
+        Ok(result)
     }
     async fn read_int16(&mut self) -> TdsResult<i16> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(2) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_i16(self.tds_read_buffer.get_slice());
+        self.tds_read_buffer.consume_bytes(2);
+        Ok(result)
     }
     async fn read_uint16(&mut self) -> TdsResult<u16> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(2) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_u16(self.tds_read_buffer.get_slice());
+        self.tds_read_buffer.consume_bytes(2);
+        Ok(result)
     }
     async fn read_int24(&mut self) -> TdsResult<i32> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(3) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_i32(&self.tds_read_buffer.get_slice()[..3]);
+        self.tds_read_buffer.consume_bytes(3);
+        Ok(result)
     }
     async fn read_uint24(&mut self) -> TdsResult<u32> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(3) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_u32(&self.tds_read_buffer.get_slice()[..3]);
+        self.tds_read_buffer.consume_bytes(3);
+        Ok(result)
     }
     async fn read_int32(&mut self) -> TdsResult<i32> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(4) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_i32(self.tds_read_buffer.get_slice());
+        self.tds_read_buffer.consume_bytes(4);
+        Ok(result)
     }
     async fn read_uint32(&mut self) -> TdsResult<u32> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(4) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_u32(self.tds_read_buffer.get_slice());
+        self.tds_read_buffer.consume_bytes(4);
+        Ok(result)
     }
     async fn read_int64(&mut self) -> TdsResult<i64> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(8) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_i64(self.tds_read_buffer.get_slice());
+        self.tds_read_buffer.consume_bytes(8);
+        Ok(result)
     }
     async fn read_uint64(&mut self) -> TdsResult<u64> {
-        todo!();
+        if !self.tds_read_buffer.do_we_have_enough_data(8) {
+            self.read_tds_packet().await?;
+        }
+        let result = BigEndian::read_u64(self.tds_read_buffer.get_slice());
+        self.tds_read_buffer.consume_bytes(8);
+        Ok(result)
     }
 
-    async fn read_bytes(&mut self, _buffer: &mut [u8]) -> TdsResult<usize> {
-        todo!();
+    async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
+        let mut total_read = 0;
+        let mut length_to_read = buffer.len();
+        let mut offset = 0;
+        while length_to_read > 0 {
+            if !self
+                .tds_read_buffer
+                .do_we_have_enough_data(min(self.tds_read_buffer.max_packet_size, length_to_read))
+            {
+                self.read_tds_packet().await?;
+            }
+            let available = self.tds_read_buffer.get_remaining_byte_count();
+
+            // We can read the minimum of what is available, or the actual length needed or the packet size.
+            let to_read = min(
+                available,
+                min(length_to_read, self.tds_read_buffer.max_packet_size - 8),
+            );
+
+            if to_read > 0 {
+                // Copy from self.working_buffer to buffer from self.buffer_position to offset.
+                buffer[offset..offset + to_read].copy_from_slice(
+                    &self.tds_read_buffer.working_buffer[self.tds_read_buffer.buffer_position
+                        ..self.tds_read_buffer.buffer_position + to_read],
+                );
+                offset += to_read;
+                length_to_read -= to_read;
+                total_read += to_read;
+
+                self.tds_read_buffer.consume_bytes(to_read);
+            }
+        }
+        Ok(total_read)
     }
+
     async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
-        todo!();
+        let length: u8 = self.read_byte().await?;
+        let mut result: Vec<u8> = vec![0; length as usize];
+        self.read_bytes(&mut result[0..]).await?;
+        Ok(result)
     }
+
     async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
-        todo!();
+        let length: u16 = self.read_uint16().await?;
+        let mut result: Vec<u8> = vec![0; length as usize];
+        self.read_bytes(&mut result[0..]).await?;
+        Ok(result)
     }
+
     async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>> {
-        todo!();
+        let length: u16 = self.read_uint16().await?;
+        if length == PacketReader::LENGTHNULL {
+            return Ok(None);
+        }
+
+        let string = self
+            .read_unicode_with_byte_length((length << 1) as usize)
+            .await?;
+        Ok(Some(string))
     }
+
     async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
-        todo!();
+        let length: u8 = self.read_byte().await?;
+        let string = self
+            .read_unicode_with_byte_length((length << 1) as usize)
+            .await?;
+        Ok(string)
     }
     async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
-        todo!();
+        let length: u16 = self.read_uint16().await?;
+        let string = self.read_unicode_with_byte_length(length as usize).await?;
+        Ok(string)
     }
-    async fn read_unicode(&mut self, _string_length: usize) -> TdsResult<String> {
-        todo!();
+    async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String> {
+        let result = self
+            .read_unicode_with_byte_length(string_length * 2)
+            .await?;
+        Ok(result)
     }
-    async fn read_unicode_with_byte_length(&mut self, _byte_length: usize) -> TdsResult<String> {
-        todo!();
+    async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String> {
+        let mut byte_buffer: Vec<u8> = vec![0; byte_length];
+        let _ = self.read_bytes(&mut byte_buffer[0..]).await?;
+
+        // TODO: This smells like a performance problem. We are copy from a u8 vector to u16.
+        // We will revisit this and fix it. Needs some rust research.
+        let mut u16_buffer = Vec::with_capacity(byte_buffer.len() / 2);
+        for chunk in byte_buffer.chunks(2) {
+            let value = u16::from_le_bytes([chunk[0], chunk[1]]);
+            u16_buffer.push(value);
+        }
+        // Convert byte_buffer to a unicode string
+        let string =
+            String::from_utf16(&u16_buffer).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+        Ok(string)
     }
-    async fn skip_bytes(&mut self, _skip_count: usize) -> TdsResult<()> {
-        todo!();
+
+    async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()> {
+        let mut length_to_read = skip_count;
+        while length_to_read > 0 {
+            if !self.tds_read_buffer.do_we_have_enough_data(min(
+                self.tds_read_buffer.max_packet_size - 8,
+                length_to_read,
+            )) {
+                self.read_tds_packet().await?;
+            }
+            let available = self.tds_read_buffer.get_remaining_byte_count();
+
+            // We can read the minimum of what is available, or the actual length needed or the packet size.
+            let to_read = min(
+                available,
+                min(length_to_read, self.tds_read_buffer.max_packet_size - 8),
+            );
+
+            if to_read > 0 {
+                length_to_read -= to_read;
+                self.tds_read_buffer.consume_bytes(to_read);
+            }
+        }
+        Ok(())
     }
+
     async fn cancel_read_stream(&mut self) -> TdsResult<()> {
-        todo!();
+        let attention = AttentionRequest::new();
+        let mut packet_writer = attention.create_packet_writer(self.as_writer(), None, None);
+        attention.serialize(&mut packet_writer).await?;
+        Ok(())
+    }
+}
+
+struct TdsReadBuffer {
+    buffer_position: usize,
+    buffer_length: usize,
+    max_packet_size: usize,
+    working_buffer: Vec<u8>,
+}
+
+impl TdsReadBuffer {
+    fn new(packet_size: usize) -> Self {
+        let packet_storage = packet_size * 2;
+        Self {
+            buffer_position: 0,
+            buffer_length: 0,
+            max_packet_size: packet_size,
+            working_buffer: vec![0; packet_storage],
+        }
+    }
+
+    fn change_packet_size(&mut self, packet_size: u32) {
+        self.max_packet_size = packet_size as usize;
+        self.working_buffer.resize(packet_size as usize * 2, 0);
+        self.buffer_position = 0;
+        self.buffer_length = 0;
+    }
+
+    fn do_we_have_enough_data(&self, byte_count: usize) -> bool {
+        let remaining_bytes = self.buffer_length - self.buffer_position;
+        remaining_bytes >= byte_count
+    }
+
+    pub(crate) fn get_remaining_byte_count(&self) -> usize {
+        self.buffer_length - self.buffer_position
+    }
+
+    fn consume_bytes(&mut self, byte_count: usize) {
+        if byte_count > (self.buffer_length - self.buffer_position) {
+            panic!("Not enough data to consume");
+        }
+
+        self.buffer_position += byte_count;
+        if self.buffer_length == self.buffer_position {
+            self.buffer_length = 0;
+            self.buffer_position = 0;
+        }
+    }
+
+    fn reset_to_length(&mut self, length: usize) {
+        self.buffer_position = 0;
+        self.buffer_length = length;
+    }
+
+    fn shift_data_to_front(&mut self) {
+        let remaining = self.get_remaining_byte_count();
+        self.working_buffer
+            .copy_within(self.buffer_position..self.buffer_length, 0);
+        self.buffer_position = 0;
+        self.buffer_length = remaining;
+    }
+
+    fn remove_header_from_packet(&mut self, new_packet_size: usize) {
+        self.working_buffer.copy_within(
+            self.buffer_length + 8..self.buffer_length + new_packet_size,
+            self.buffer_length,
+        );
+        self.buffer_length += new_packet_size - 8;
+    }
+
+    fn get_slice(&self) -> &[u8] {
+        &self.working_buffer[self.buffer_position..]
+    }
+}
+
+impl Index<usize> for TdsReadBuffer {
+    type Output = u8;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.working_buffer[index]
+    }
+}
+
+impl IndexMut<usize> for TdsReadBuffer {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.working_buffer[index]
+    }
+}
+
+impl Deref for TdsReadBuffer {
+    type Target = Vec<u8>;
+    fn deref(&self) -> &Vec<u8> {
+        &self.working_buffer
+    }
+}
+
+impl DerefMut for TdsReadBuffer {
+    fn deref_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.working_buffer
+    }
+}
+
+struct TdsWriteBuffer {
+    packet_type: PacketType,
+    max_payload_size: usize,
+    packet_id: u8,
+    payload_cursor: Cursor<Vec<u8>>,
+    packet_size: usize,
+    is_first_packet: bool, // Note: Cannot just use packet_id because its value can rollover.
+    start_time: Instant,
+    max_timeout_sec: Option<u32>,
+    cancel_handle: Option<CancelHandle>,
+}
+
+impl TdsWriteBuffer {
+    fn new(packet_size: usize) -> Self {
+        // Add additional space for the numeric types.
+        let buffer: Vec<u8> = Vec::with_capacity(packet_size + size_of::<u64>());
+        let mut buffer_cursor = Cursor::new(buffer);
+
+        // Position the cursor at the end of the header. The header will be populated later.
+        buffer_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+
+        Self {
+            packet_type: PacketType::PreLogin,
+            max_payload_size: 0,
+            packet_id: 1,
+            payload_cursor: buffer_cursor,
+            packet_size: PRE_NEGOTIATED_PACKET_SIZE as usize,
+            is_first_packet: true,
+            start_time: Instant::now(),
+            max_timeout_sec: None,
+            cancel_handle: None,
+        }
+    }
+
+    pub(crate) fn change_packet_size(&mut self, packet_size: u32) {
+        self.packet_size = packet_size as usize;
+        self.payload_cursor
+            .get_mut()
+            .resize(packet_size as usize, 0);
+        self.payload_cursor
+            .set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        self.is_first_packet = true;
+        self.start_time = Instant::now();
+    }
+
+    pub(crate) fn set_packet_type(&mut self, packet_type: PacketType) {
+        self.packet_type = packet_type;
     }
 }
 
@@ -522,14 +938,13 @@ pub(crate) mod tests {
         let stream_recoverer = Box::new(MockStreamRecoverer {});
 
         (
-            NetworkTransport {
-                encryption: None,
-                stream: Arc::new(Mutex::new(client_side)),
+            NetworkTransport::new(
+                Arc::new(Mutex::new(client_side)),
                 ssl_handler,
                 stream_recoverer,
-                packet_size: context.packet_size as u32,
-                encryption_setting: context.encryption_options.mode,
-            },
+                context.packet_size as u32,
+                context.encryption_options.mode,
+            ),
             NetworkTransport::new(
                 Arc::new(Mutex::new(server_side)),
                 SslHandler {

@@ -36,7 +36,7 @@ pub struct TdsConnection {
 const ALREADY_EXECUTING_ERROR: &str = "There is an open BatchResult on the current TdsConnection. It must be closed or fully consumed\
             as a QueryResultTypeStream before executing another operation on this TdsConnection.";
 
-impl<'result> TdsConnection {
+impl TdsConnection {
     pub(crate) fn new(
         transport: Box<NetworkTransport>,
         negotiated_settings: NegotiatedSettings,
@@ -48,7 +48,7 @@ impl<'result> TdsConnection {
         }
     }
 
-    pub async fn execute(
+    pub async fn execute<'result>(
         &'result mut self,
         sql_command: String,
         timeout_sec: Option<u32>,
@@ -72,13 +72,13 @@ impl<'result> TdsConnection {
     // Executes a stored procedure with the given name and parameters.
     // The parameters can be either positional or named.
     pub async fn execute_stored_procedure<'rpc_result>(
-        &'result mut self,
+        &'rpc_result mut self,
         stored_procedure_name: String,
         positional_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
         named_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<BatchResult<'result>> {
+    ) -> TdsResult<BatchResult<'rpc_result>> {
         if self.execution_context.has_open_batch {
             return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
         };
@@ -104,12 +104,12 @@ impl<'result> TdsConnection {
     // Executes a stored procedure with the given proc_id and parameters.
     // The parameters can be either positional or named.
     pub async fn execute_sp_executesql<'rpc_result>(
-        &'result mut self,
+        &'rpc_result mut self,
         sql: String,
         named_params: Vec<RpcParameter<'rpc_result>>,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<BatchResult<'result>> {
+    ) -> TdsResult<BatchResult<'rpc_result>> {
         if self.execution_context.has_open_batch {
             return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
         };
@@ -156,7 +156,7 @@ impl<'result> TdsConnection {
 
     // Prepare a SQL Statement for execution and returns the prepared handle.
     pub async fn execute_sp_prepare<'rpc_result>(
-        &'result mut self,
+        &'rpc_result mut self,
         sql: String,
         named_params: Vec<RpcParameter<'rpc_result>>,
         timeout_sec: Option<u32>,
@@ -246,7 +246,7 @@ impl<'result> TdsConnection {
     }
 
     pub async fn execute_sp_unprepare(
-        &'result mut self,
+        &mut self,
         handle: i32,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
@@ -294,12 +294,12 @@ impl<'result> TdsConnection {
     // Executes sp_prepexec which will prepare the statement for execution, return a result set
     // as well as a prepared handle.
     pub async fn execute_sp_prepexec<'rpc_result>(
-        &'result mut self,
+        &'rpc_result mut self,
         sql: String,
         named_params: &Vec<RpcParameter<'rpc_result>>,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<BatchResult<'result>> {
+    ) -> TdsResult<BatchResult<'rpc_result>> {
         if self.execution_context.has_open_batch {
             return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
         };
@@ -350,13 +350,13 @@ impl<'result> TdsConnection {
     }
 
     pub async fn execute_sp_execute<'rpc_result>(
-        &'result mut self,
+        &'rpc_result mut self,
         handle: i32,
         positional_parameters: Option<Vec<RpcParameter<'rpc_result>>>,
         named_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<BatchResult<'result>> {
+    ) -> TdsResult<BatchResult<'rpc_result>> {
         if self.execution_context.has_open_batch {
             return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
         };
@@ -407,12 +407,12 @@ impl<'result> TdsConnection {
         Ok(result)
     }
 
-    pub async fn send_transaction(
-        &'result mut self,
+    pub async fn send_transaction<'rpc_result>(
+        &'rpc_result mut self,
         transaction_params: TransactionManagementType,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<BatchResult<'result>> {
+    ) -> TdsResult<BatchResult<'rpc_result>> {
         if self.execution_context.has_open_batch {
             return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
         };
@@ -430,10 +430,7 @@ impl<'result> TdsConnection {
         Ok(BatchResult::new(self, remaining_timeout, cancel_handle))
     }
 
-    pub(crate) async fn send_attention(
-        &'result mut self,
-        timeout_sec: Option<u32>,
-    ) -> TdsResult<()> {
+    pub(crate) async fn send_attention(&mut self, timeout_sec: Option<u32>) -> TdsResult<()> {
         let attention = AttentionRequest::new();
         attention
             .serialize_and_handle_timeout(self, timeout_sec, None)
@@ -444,7 +441,7 @@ impl<'result> TdsConnection {
         Ok(())
     }
 
-    pub(crate) async fn drain_until_done_status(&'result mut self, search_status: DoneStatus) {
+    pub(crate) async fn drain_until_done_status(&mut self, search_status: DoneStatus) {
         let packet_reader = PacketReader::new(self.transport.as_mut());
         let mut token_stream_reader = TokenStreamReader::new(
             packet_reader,

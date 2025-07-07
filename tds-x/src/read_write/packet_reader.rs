@@ -42,6 +42,7 @@ pub(crate) trait TdsPacketReader {
     async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String>;
     async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()>;
     async fn cancel_read_stream(&mut self) -> TdsResult<()>;
+    fn reset_reader(&mut self);
 }
 
 pub struct PacketReader<'a> {
@@ -105,18 +106,18 @@ impl<'a> PacketReader<'a> {
         let packet_buffer: &mut Vec<u8> = &mut self.working_buffer;
         let base_offset_to_write = self.buffer_length;
 
-        let mut new_packet_byte_length = self
+        let mut bytes_read_from_transport = self
             .network_reader_writer
             .receive(&mut packet_buffer[base_offset_to_write..])
             .await?;
 
         // We need the 8 byte header. Re-read, in case the new_packet_byte_length has less bytes than 8 bytes to complete
         // the header.
-        while new_packet_byte_length < PacketWriter::PACKET_HEADER_SIZE {
-            new_packet_byte_length += self
+        while bytes_read_from_transport < PacketWriter::PACKET_HEADER_SIZE {
+            bytes_read_from_transport += self
                 .network_reader_writer
                 .receive(
-                    &mut packet_buffer[base_offset_to_write + new_packet_byte_length
+                    &mut packet_buffer[base_offset_to_write + bytes_read_from_transport
                         ..base_offset_to_write + self.max_packet_size],
                 )
                 .await?;
@@ -128,11 +129,11 @@ impl<'a> PacketReader<'a> {
         let packet_size_from_header: usize = length_from_packet_header as usize;
 
         // Keep reading until we have the complete packet in memory.
-        while new_packet_byte_length < packet_size_from_header {
-            new_packet_byte_length += self
+        while bytes_read_from_transport < packet_size_from_header {
+            bytes_read_from_transport += self
                 .network_reader_writer
                 .receive(
-                    &mut packet_buffer[base_offset_to_write + new_packet_byte_length
+                    &mut packet_buffer[base_offset_to_write + bytes_read_from_transport
                         ..base_offset_to_write + self.max_packet_size],
                 )
                 .await?;
@@ -140,7 +141,7 @@ impl<'a> PacketReader<'a> {
         event!(
             tracing::Level::DEBUG,
             "Received packet of size: {:?}",
-            new_packet_byte_length
+            bytes_read_from_transport
         );
 
         use pretty_hex::PrettyHex;
@@ -148,10 +149,10 @@ impl<'a> PacketReader<'a> {
         event!(
             tracing::Level::DEBUG,
             "Packet content: {:?}",
-            &packet_buffer[base_offset_to_write..base_offset_to_write + new_packet_byte_length]
+            &packet_buffer[base_offset_to_write..base_offset_to_write + bytes_read_from_transport]
                 .hex_dump()
         );
-        Ok(new_packet_byte_length)
+        Ok(bytes_read_from_transport)
     }
 
     fn consume_bytes(&mut self, byte_count: usize) {
@@ -192,6 +193,12 @@ impl<'a> PacketReader<'a> {
 
 #[async_trait]
 impl TdsPacketReader for PacketReader<'_> {
+    fn reset_reader(&mut self) {
+        // Make sure that we have read all the data from the buffer.
+        assert!(self.buffer_length == self.buffer_position);
+        // No Op after this.
+    }
+
     async fn cancel_read_stream(&mut self) -> TdsResult<()> {
         let attention = AttentionRequest::new();
         let mut packet_writer =
@@ -564,6 +571,113 @@ pub(crate) mod tests {
         }
     }
 
+    #[async_trait]
+    impl TdsPacketReader for MockNetworkReaderWriter {
+        fn reset_reader(&mut self) {}
+
+        async fn read_byte(&mut self) -> TdsResult<u8> {
+            todo!()
+        }
+
+        async fn read_int16_big_endian(&mut self) -> TdsResult<i16> {
+            todo!()
+        }
+
+        async fn read_int32_big_endian(&mut self) -> TdsResult<i32> {
+            todo!()
+        }
+
+        async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
+            todo!()
+        }
+
+        async fn read_uint40(&mut self) -> TdsResult<u64> {
+            todo!()
+        }
+
+        async fn read_float32(&mut self) -> TdsResult<f32> {
+            todo!()
+        }
+
+        async fn read_float64(&mut self) -> TdsResult<f64> {
+            todo!()
+        }
+
+        async fn read_int16(&mut self) -> TdsResult<i16> {
+            todo!()
+        }
+
+        async fn read_uint16(&mut self) -> TdsResult<u16> {
+            todo!()
+        }
+
+        async fn read_int24(&mut self) -> TdsResult<i32> {
+            todo!()
+        }
+
+        async fn read_uint24(&mut self) -> TdsResult<u32> {
+            todo!()
+        }
+
+        async fn read_int32(&mut self) -> TdsResult<i32> {
+            todo!()
+        }
+
+        async fn read_uint32(&mut self) -> TdsResult<u32> {
+            todo!()
+        }
+
+        async fn read_int64(&mut self) -> TdsResult<i64> {
+            todo!()
+        }
+
+        async fn read_uint64(&mut self) -> TdsResult<u64> {
+            todo!()
+        }
+
+        async fn read_bytes(&mut self, _buffer: &mut [u8]) -> TdsResult<usize> {
+            todo!()
+        }
+
+        async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
+            todo!()
+        }
+
+        async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
+            todo!()
+        }
+
+        async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>> {
+            todo!()
+        }
+
+        async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
+            todo!()
+        }
+
+        async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
+            todo!()
+        }
+
+        async fn read_unicode(&mut self, _string_length: usize) -> TdsResult<String> {
+            todo!()
+        }
+
+        async fn read_unicode_with_byte_length(
+            &mut self,
+            _byte_length: usize,
+        ) -> TdsResult<String> {
+            todo!()
+        }
+
+        async fn skip_bytes(&mut self, _skip_count: usize) -> TdsResult<()> {
+            todo!()
+        }
+
+        async fn cancel_read_stream(&mut self) -> TdsResult<()> {
+            todo!()
+        }
+    }
     impl Default for MockNetworkReaderWriter {
         fn default() -> Self {
             MockNetworkReaderWriter::new(Vec::new(), 0)
