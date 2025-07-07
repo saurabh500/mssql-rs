@@ -116,7 +116,7 @@ pub(crate) trait Request {
                                 // No-op. For completed requests, handle during batch iteration.
                                 MessageSendState::Partial => {
                                     packet_writer.cancel_current_message().await?;
-                                    // Note - more cleanup needed after relinquishing the connection.
+                                    // Note - Is more cleanup needed after relinquishing the connection?
                                 }
                             };
                         }

@@ -17,14 +17,13 @@ use crate::message::transaction_management::{
     TransactionManagementRequest, TransactionManagementType,
 };
 use crate::query::result::BatchResult;
-use crate::read_write::packet_reader::{PacketReader, TdsPacketReader};
+use crate::read_write::packet_reader::PacketReader;
 use crate::read_write::token_stream::{
     GenericTokenParserRegistry, ParserContext, TokenStreamReader,
 };
 use crate::token::tokens::{
     DoneStatus, EnvChangeContainer, EnvChangeToken, EnvChangeTokenSubType, Tokens,
 };
-use async_trait::async_trait;
 use std::time::{Duration, Instant};
 use tracing::{event, info, Level};
 
@@ -472,87 +471,6 @@ impl<'result> TdsConnection {
         }
         self.execution_context.has_open_batch = false;
         self.execution_context.has_open_result_set = false;
-    }
-}
-
-#[async_trait]
-impl TdsPacketReader for TdsConnection {
-    async fn read_byte(&mut self) -> TdsResult<u8> {
-        todo!();
-    }
-    async fn read_int16_big_endian(&mut self) -> TdsResult<i16> {
-        todo!();
-    }
-    async fn read_int32_big_endian(&mut self) -> TdsResult<i32> {
-        todo!();
-    }
-    async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-        todo!();
-    }
-    async fn read_uint40(&mut self) -> TdsResult<u64> {
-        todo!();
-    }
-
-    async fn read_float32(&mut self) -> TdsResult<f32> {
-        todo!();
-    }
-    async fn read_float64(&mut self) -> TdsResult<f64> {
-        todo!();
-    }
-    async fn read_int16(&mut self) -> TdsResult<i16> {
-        todo!();
-    }
-    async fn read_uint16(&mut self) -> TdsResult<u16> {
-        todo!();
-    }
-    async fn read_int24(&mut self) -> TdsResult<i32> {
-        todo!();
-    }
-    async fn read_uint24(&mut self) -> TdsResult<u32> {
-        todo!();
-    }
-    async fn read_int32(&mut self) -> TdsResult<i32> {
-        todo!();
-    }
-    async fn read_uint32(&mut self) -> TdsResult<u32> {
-        todo!();
-    }
-    async fn read_int64(&mut self) -> TdsResult<i64> {
-        todo!();
-    }
-    async fn read_uint64(&mut self) -> TdsResult<u64> {
-        todo!();
-    }
-
-    async fn read_bytes(&mut self, _buffer: &mut [u8]) -> TdsResult<usize> {
-        todo!();
-    }
-    async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
-        todo!();
-    }
-    async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
-        todo!();
-    }
-    async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>> {
-        todo!();
-    }
-    async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
-        todo!();
-    }
-    async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
-        todo!();
-    }
-    async fn read_unicode(&mut self, _string_length: usize) -> TdsResult<String> {
-        todo!();
-    }
-    async fn read_unicode_with_byte_length(&mut self, _byte_length: usize) -> TdsResult<String> {
-        todo!();
-    }
-    async fn skip_bytes(&mut self, _skip_count: usize) -> TdsResult<()> {
-        todo!();
-    }
-    async fn cancel_read_stream(&mut self) -> TdsResult<()> {
-        todo!();
     }
 }
 

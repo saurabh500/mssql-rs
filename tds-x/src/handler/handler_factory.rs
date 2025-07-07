@@ -177,7 +177,8 @@ impl<'a, 'b> SessionHandler<'a, 'b> {
             .await?;
         self.validate_login_result(&login_result)?;
 
-        let negotiated_settings = self.negotiate_settings(&pre_login_result, &mut login_result);
+        let negotiated_settings =
+            self.infer_negotiated_settings(&pre_login_result, &mut login_result);
         reader_writer.notify_session_setting_change(&negotiated_settings.session_settings);
         Ok(negotiated_settings)
     }
@@ -204,7 +205,7 @@ impl<'a, 'b> SessionHandler<'a, 'b> {
         Ok(())
     }
 
-    fn negotiate_settings(
+    fn infer_negotiated_settings(
         &self,
         prelogin_result: &PreloginResult,
         login_result: &mut LoginResult,
