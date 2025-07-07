@@ -23,11 +23,11 @@ impl Default for SqlBatch {
 
 impl SqlBatch {
     pub fn new(sql_command: String, execution_context: &ExecutionContext) -> Self {
-        let transaction_descriptor_header = match execution_context.transaction_descriptor {
+        let transaction_descriptor_header = match execution_context.get_transaction_descriptor() {
             0 => TransactionDescriptorHeader::create_non_transaction_header(),
             transaction_descriptor => TransactionDescriptorHeader::new(
                 transaction_descriptor,
-                execution_context.outstanding_requests,
+                execution_context.get_outstanding_requests(),
             ),
         };
         Self {

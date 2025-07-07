@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use async_trait::async_trait;
 
 use crate::{
+    connection::tds_connection::ExecutionContext,
     core::TdsResult,
     read_write::packet_writer::{PacketWriter, TdsPacketWriter},
 };
@@ -61,6 +62,18 @@ impl TransactionDescriptorHeader {
     pub fn create_non_transaction_header() -> Self {
         let count = NON_TRANSACTION_REQUEST_COUNT.fetch_add(1, Ordering::SeqCst);
         Self::new(0, count + 1)
+    }
+}
+
+impl From<&ExecutionContext> for TransactionDescriptorHeader {
+    fn from(execution_context: &ExecutionContext) -> Self {
+        match execution_context.get_transaction_descriptor() {
+            0 => Self::create_non_transaction_header(),
+            transaction_descriptor => Self::new(
+                transaction_descriptor,
+                execution_context.get_outstanding_requests(),
+            ),
+        }
     }
 }
 

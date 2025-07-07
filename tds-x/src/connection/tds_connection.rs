@@ -561,10 +561,10 @@ impl TdsPacketReader for TdsConnection {
 /// outstanding requests, and whether there are open batches or result sets.
 /// This context is used to manage the state of the query execution on the connection.
 pub(crate) struct ExecutionContext {
-    pub transaction_descriptor: u64,
-    pub outstanding_requests: u32,
-    pub has_open_batch: bool,
-    pub has_open_result_set: bool,
+    transaction_descriptor: u64,
+    outstanding_requests: u32,
+    has_open_batch: bool,
+    has_open_result_set: bool,
 }
 
 impl ExecutionContext {
@@ -575,6 +575,30 @@ impl ExecutionContext {
             has_open_batch: false,
             has_open_result_set: false,
         }
+    }
+
+    pub(crate) fn get_transaction_descriptor(&self) -> u64 {
+        self.transaction_descriptor
+    }
+
+    pub(crate) fn get_outstanding_requests(&self) -> u32 {
+        self.outstanding_requests
+    }
+
+    pub fn has_open_batch(&self) -> bool {
+        self.has_open_batch
+    }
+
+    pub fn has_open_result_set(&self) -> bool {
+        self.has_open_result_set
+    }
+
+    pub(crate) fn set_has_open_batch(&mut self, has_open_batch: bool) {
+        self.has_open_batch = has_open_batch;
+    }
+
+    pub(crate) fn set_has_open_result_set(&mut self, has_open_result_set: bool) {
+        self.has_open_result_set = has_open_result_set;
     }
 
     pub(crate) fn capture_change_property(

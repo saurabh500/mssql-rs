@@ -68,8 +68,8 @@ impl TransactionManagementRequest {
         execution_context: &ExecutionContext,
     ) -> Self {
         let transaction_descriptor_header = TransactionDescriptorHeader::new(
-            execution_context.transaction_descriptor,
-            execution_context.outstanding_requests,
+            execution_context.get_transaction_descriptor(),
+            execution_context.get_outstanding_requests(),
         );
         Self {
             headers: Vec::from([transaction_descriptor_header.into()]),

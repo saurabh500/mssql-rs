@@ -42,13 +42,8 @@ impl<'a> SqlRpc<'a> {
         db_collation: &'a SqlCollation,
         execution_context: &ExecutionContext,
     ) -> Self {
-        let transaction_descriptor_header = match execution_context.transaction_descriptor {
-            0 => TransactionDescriptorHeader::create_non_transaction_header(),
-            transaction_descriptor => TransactionDescriptorHeader::new(
-                transaction_descriptor,
-                execution_context.outstanding_requests,
-            ),
-        };
+        let transaction_descriptor_header: TransactionDescriptorHeader = execution_context.into();
+
         Self {
             rpc_type,
             headers: Vec::from([transaction_descriptor_header.into()]),

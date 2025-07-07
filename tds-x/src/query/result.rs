@@ -45,7 +45,7 @@ impl QueryResultType<'_> {
         processing_signal: DeferredSignal,
     ) -> TdsResult<QueryResultType<'_>> {
         let mut parent_batch_ref = parent_batch.lock().await;
-        if parent_batch_ref.execution_context.has_open_result_set {
+        if parent_batch_ref.execution_context.has_open_result_set() {
             return Err(UsageError("The previous ResultSet on this batch must be closed or fully consumed before requesting\
             another result.".to_string()));
         };
@@ -111,7 +111,9 @@ impl QueryResultType<'_> {
                     info!(?column_metadata);
                     parent_batch_ref.parser_context =
                         ParserContext::ColumnMetadata(column_metadata.clone());
-                    parent_batch_ref.execution_context.has_open_result_set = true;
+                    parent_batch_ref
+                        .execution_context
+                        .set_has_open_result_set(true);
                     break Ok(QueryResultType::ResultSet(ResultSet::new(
                         parent_batch.clone(),
                         processing_signal,
@@ -180,7 +182,7 @@ impl<'result> BatchResult<'result> {
             packet_reader,
             Box::new(GenericTokenParserRegistry::default()),
         );
-        tds_connection.execution_context.has_open_batch = true;
+        tds_connection.execution_context.set_has_open_batch(true);
         BatchResult {
             // TODO: Holding a mutable borrow of negotiated_settings prevents BatchResult from implementing
             // Send or Sync, which makes it illegal to use in an Arc<Mutex<>>. However the negotiated_settings
@@ -249,8 +251,8 @@ impl<'result> BatchResult<'result> {
         });
 
         if result.is_err() {
-            self.execution_context.has_open_result_set = false;
-            self.execution_context.has_open_batch = false;
+            self.execution_context.set_has_open_result_set(false);
+            self.execution_context.set_has_open_batch(false);
         }
         result
     }
@@ -258,8 +260,8 @@ impl<'result> BatchResult<'result> {
     pub async fn close(&mut self) -> TdsResult<()> {
         // Drain the stream until the first done token.
         let result = self.close_internal(false).await;
-        self.execution_context.has_open_batch = false;
-        self.execution_context.has_open_result_set = false;
+        self.execution_context.set_has_open_batch(false);
+        self.execution_context.set_has_open_result_set(false);
         result
     }
 
@@ -391,8 +393,10 @@ impl<'result> QueryResultTypeStream<'result> {
             batch_result.close_internal(false).await?;
             batch_result.received_last = true;
         }
-        batch_result.execution_context.has_open_batch = false;
-        batch_result.execution_context.has_open_result_set = false;
+        batch_result.execution_context.set_has_open_batch(false);
+        batch_result
+            .execution_context
+            .set_has_open_result_set(false);
         Ok(())
     }
 }
@@ -478,12 +482,14 @@ impl<'result> ResultSet<'result> {
                 Tokens::Done(t1) => {
                     debug!(?t1);
                     self.received_last_row = true;
-                    parent_batch_mut.execution_context.has_open_result_set = false;
+                    parent_batch_mut
+                        .execution_context
+                        .set_has_open_result_set(false);
                     self.row_count = Some(t1.row_count);
 
                     if !t1.status.contains(DoneStatus::MORE) {
                         parent_batch_mut.received_last = true;
-                        parent_batch_mut.execution_context.has_open_batch = false;
+                        parent_batch_mut.execution_context.set_has_open_batch(false);
                     }
                     parent_batch_mut.parser_context = ParserContext::None(());
                     return Ok(token);
@@ -491,24 +497,28 @@ impl<'result> ResultSet<'result> {
                 Tokens::DoneInProc(t1) => {
                     debug!(?t1);
                     self.received_last_row = true;
-                    parent_batch_mut.execution_context.has_open_result_set = false;
+                    parent_batch_mut
+                        .execution_context
+                        .set_has_open_result_set(false);
                     self.row_count = Some(t1.row_count);
 
                     if !t1.status.contains(DoneStatus::MORE) {
                         parent_batch_mut.received_last = true;
-                        parent_batch_mut.execution_context.has_open_batch = false;
+                        parent_batch_mut.execution_context.set_has_open_batch(false);
                     }
                     parent_batch_mut.parser_context = ParserContext::None(());
                     return Ok(token);
                 }
                 Tokens::DoneProc(t1) => {
                     self.received_last_row = true;
-                    parent_batch_mut.execution_context.has_open_result_set = false;
+                    parent_batch_mut
+                        .execution_context
+                        .set_has_open_result_set(false);
                     self.row_count = Some(t1.row_count);
 
                     if !t1.status.contains(DoneStatus::MORE) {
                         parent_batch_mut.received_last = true;
-                        parent_batch_mut.execution_context.has_open_batch = false;
+                        parent_batch_mut.execution_context.set_has_open_batch(false);
                     }
                     parent_batch_mut.parser_context = ParserContext::None(());
                     return Ok(token);
@@ -567,7 +577,9 @@ impl<'result> ResultSet<'result> {
         if !self.received_last_row {
             parent_batch.close_internal(true).await?;
             self.received_last_row = true;
-            parent_batch.execution_context.has_open_result_set = false;
+            parent_batch
+                .execution_context
+                .set_has_open_result_set(false);
         }
         Ok(())
     }
