@@ -8,8 +8,8 @@ use super::{
     fed_auth_info::FedAuthInfoToken,
     tokenitems::ReturnValueStatus,
     tokens::{
-        DoneInProcToken, DoneProcToken, DoneToken, EnvChangeToken, ErrorToken, FeatureExtAckToken,
-        ReturnStatusToken, ReturnValueToken, RowToken, Tokens,
+        DoneToken, EnvChangeToken, ErrorToken, FeatureExtAckToken, ReturnStatusToken,
+        ReturnValueToken, RowToken, Tokens,
     },
 };
 use crate::{core::TdsResult, read_write::packet_reader::TdsPacketReader};
@@ -283,7 +283,7 @@ where
         let current_command = CurrentCommand::try_from(current_command_value).unwrap();
         let row_count = reader.read_uint64().await?;
 
-        Ok(Tokens::from(DoneToken {
+        Ok(Tokens::Done(DoneToken {
             status: done_status,
             cur_cmd: current_command,
             row_count,
@@ -308,7 +308,7 @@ where
         let current_command = CurrentCommand::try_from(current_command_value).unwrap();
         let row_count = reader.read_uint64().await?;
 
-        Ok(Tokens::from(DoneInProcToken {
+        Ok(Tokens::DoneInProc(DoneToken {
             status: done_status,
             cur_cmd: current_command,
             row_count,
@@ -333,7 +333,7 @@ where
         let current_command = CurrentCommand::try_from(current_command_value).unwrap();
         let row_count = reader.read_uint64().await?;
 
-        Ok(Tokens::from(DoneProcToken {
+        Ok(Tokens::DoneProc(DoneToken {
             status: done_status,
             cur_cmd: current_command,
             row_count,

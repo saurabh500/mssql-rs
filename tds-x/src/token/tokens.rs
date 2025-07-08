@@ -73,8 +73,8 @@ pub trait Token {
 #[derive(Debug)]
 pub(crate) enum Tokens {
     Done(DoneToken),
-    DoneInProc(DoneInProcToken),
-    DoneProc(DoneProcToken),
+    DoneInProc(DoneToken),
+    DoneProc(DoneToken),
     EnvChange(EnvChangeToken),
     Error(ErrorToken),
     Info(InfoToken),
@@ -84,7 +84,7 @@ pub(crate) enum Tokens {
     Sspi(SspiToken),
     Row(RowToken),
     ColMetadata(ColMetadataToken),
-    NbcRow(NbcRowToken),
+    NbcRow(RowToken),
     Order(OrderToken),
     ReturnStatus(ReturnStatusToken),
     ReturnValue(ReturnValueToken),
@@ -103,16 +103,12 @@ macro_rules! impl_from_token {
 impl_from_token!(EnvChangeToken, EnvChange);
 impl_from_token!(ErrorToken, Error);
 impl_from_token!(InfoToken, Info);
-impl_from_token!(DoneToken, Done);
-impl_from_token!(DoneInProcToken, DoneInProc);
-impl_from_token!(DoneProcToken, DoneProc);
 impl_from_token!(LoginAckToken, LoginAck);
 impl_from_token!(FeatureExtAckToken, FeatureExtAck);
 impl_from_token!(FedAuthInfoToken, FedAuthInfo);
 impl_from_token!(SspiToken, Sspi);
 impl_from_token!(RowToken, Row);
 impl_from_token!(ColMetadataToken, ColMetadata);
-impl_from_token!(NbcRowToken, NbcRow);
 impl_from_token!(OrderToken, Order);
 impl_from_token!(ReturnStatusToken, ReturnStatus);
 impl_from_token!(ReturnValueToken, ReturnValue);
@@ -705,6 +701,12 @@ impl Token for DoneToken {
     }
 }
 
+impl DoneToken {
+    pub fn has_more(&self) -> bool {
+        self.status.contains(DoneStatus::MORE)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ReturnStatusToken {
     pub value: i32,
@@ -807,7 +809,7 @@ impl From<u16> for DoneStatus {
 }
 
 #[repr(u16)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CurrentCommand {
     None = 0x00,
     Select = 0xc1,

@@ -10,11 +10,22 @@ use crate::token::parsers::{
     ReturnStatusTokenParser, ReturnValueTokenParser, RowTokenParser, TokenParser,
 };
 use crate::token::tokens::{ColMetadataToken, DoneStatus, TokenType, Tokens};
+use async_trait::async_trait;
 use core::convert::From;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::event;
+
+#[async_trait]
+pub(crate) trait TdsTokenStreamReader {
+    async fn receive_token(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<Tokens>;
+}
 
 pub(crate) struct TokenStreamReader<T, R>
 where
@@ -52,36 +63,6 @@ where
             packet_reader,
             parser_registry,
         }
-    }
-
-    pub(crate) async fn receive_token(
-        &mut self,
-        context: &ParserContext,
-        remaining_request_timeout: Option<Duration>,
-        cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<Tokens> {
-        let cancellable_receive_token =
-            CancelHandle::run_until_cancelled(cancel_handle, self.receive_token_internal(context));
-        let token_result = match remaining_request_timeout.as_ref() {
-            Some(remaining_request_timeout) => {
-                match timeout(*remaining_request_timeout, cancellable_receive_token).await {
-                    Ok(result) => result,
-                    Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
-                }
-            }
-            None => cancellable_receive_token.await,
-        };
-
-        match &token_result {
-            Ok(_) => {}
-            Err(err) => match err {
-                OperationCancelledError(_) | TimeoutError(_) => {
-                    self.cancel_read_stream_and_wait().await?;
-                }
-                _ => {}
-            },
-        }
-        token_result
     }
 
     async fn receive_token_internal(&mut self, context: &ParserContext) -> TdsResult<Tokens> {
@@ -157,6 +138,42 @@ where
     }
 }
 
+#[async_trait]
+impl<T, R> TdsTokenStreamReader for TokenStreamReader<T, R>
+where
+    T: TdsPacketReader + Send + Sync,
+    R: TokenParserRegistry + Send + Sync,
+{
+    async fn receive_token(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<Tokens> {
+        let cancellable_receive_token =
+            CancelHandle::run_until_cancelled(cancel_handle, self.receive_token_internal(context));
+        let token_result = match remaining_request_timeout.as_ref() {
+            Some(remaining_request_timeout) => {
+                match timeout(*remaining_request_timeout, cancellable_receive_token).await {
+                    Ok(result) => result,
+                    Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
+                }
+            }
+            None => cancellable_receive_token.await,
+        };
+
+        match &token_result {
+            Ok(_) => {}
+            Err(err) => match err {
+                OperationCancelledError(_) | TimeoutError(_) => {
+                    self.cancel_read_stream_and_wait().await?;
+                }
+                _ => {}
+            },
+        }
+        token_result
+    }
+}
 pub(crate) trait TokenParserRegistry: Send + Sync {
     fn has_parser(&self, token_type: &TokenType) -> bool;
     fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers>;

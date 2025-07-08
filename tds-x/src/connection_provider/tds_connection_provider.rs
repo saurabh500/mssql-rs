@@ -4,12 +4,19 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::connection::client_context::{ClientContext, TransportContext};
+use crate::connection::tds_client::TdsClient;
 use crate::connection::tds_connection::TdsConnection;
 use crate::connection::transport::network_transport;
 use crate::core::{CancelHandle, TdsResult};
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::{Error, TimeoutErrorType};
 use crate::handler::handler_factory::HandlerFactory;
+use crate::read_write::token_stream::GenericTokenParserRegistry;
+
+use std::sync::LazyLock;
+
+pub(crate) static PARSER_REGISTRY: LazyLock<GenericTokenParserRegistry> =
+    LazyLock::new(GenericTokenParserRegistry::default);
 
 pub struct TdsConnectionProvider {}
 
@@ -36,12 +43,63 @@ impl TdsConnectionProvider {
                     .await
                     {
                         Ok(result) => result,
-                        Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
+                        Err(_) => Err(TimeoutError(TimeoutErrorType::String(
+                            "Timeout while connecting".to_string(),
+                        ))),
                     }
                 }
                 None => {
                     self.create_connection_internal(&context, cancellation_token)
                         .await
+                }
+            }
+        })
+        .await
+    }
+
+    pub async fn create_client(
+        &self,
+        context: ClientContext,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<TdsClient> {
+        CancelHandle::run_until_cancelled(cancel_handle, async move {
+            let timeout_duration = match context.connect_timeout {
+                1.. => Some(Duration::from_secs(context.connect_timeout.into())),
+                _ => None,
+            };
+
+            let cancellation_token = cancel_handle.map(|handle| handle.cancel_token.child_token());
+
+            match timeout_duration.as_ref() {
+                Some(timeout_duration) => {
+                    match timeout(
+                        *timeout_duration,
+                        self.create_connection_internal(&context, cancellation_token),
+                    )
+                    .await
+                    {
+                        Ok(result) => {
+                            let result = result?;
+                            Ok(TdsClient::new(
+                                result.transport,
+                                result.negotiated_settings,
+                                result.execution_context,
+                            ))
+                        }
+                        Err(_) => Err(TimeoutError(TimeoutErrorType::String(
+                            "Timeout while connecting".to_string(),
+                        ))),
+                    }
+                }
+                None => {
+                    let connection = self
+                        .create_connection_internal(&context, cancellation_token)
+                        .await?;
+                    Ok(TdsClient::new(
+                        connection.transport,
+                        connection.negotiated_settings,
+                        connection.execution_context,
+                    ))
                 }
             }
         })

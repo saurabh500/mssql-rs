@@ -11,6 +11,7 @@ use crate::message::prelogin::{
 };
 use crate::read_write::packet_reader::TdsPacketReader;
 use crate::read_write::reader_writer::NetworkReaderWriter;
+use crate::read_write::token_stream::TdsTokenStreamReader;
 use crate::token::tokens::SqlCollation;
 use uuid::Uuid;
 
@@ -162,7 +163,7 @@ impl<'a, 'b> SessionHandler<'a, 'b> {
         }
     }
 
-    pub(crate) async fn execute<T: NetworkReaderWriter + TdsPacketReader>(
+    pub(crate) async fn execute<T: NetworkReaderWriter + TdsTokenStreamReader + TdsPacketReader>(
         &mut self,
         reader_writer: &mut T,
     ) -> TdsResult<NegotiatedSettings> {
@@ -240,9 +241,9 @@ impl<'a, 'b> SessionHandler<'a, 'b> {
         )
     }
 
-    async fn get_login_result(
+    async fn get_login_result<T: TdsTokenStreamReader + NetworkReaderWriter>(
         &mut self,
-        reader_writer: &mut impl NetworkReaderWriter,
+        reader_writer: &mut T,
         prelogin_fedauth_supported: bool,
     ) -> TdsResult<LoginResult> {
         self.factory
@@ -354,9 +355,9 @@ pub struct LoginHandler<'a> {
 }
 
 impl LoginHandler<'_> {
-    async fn execute(
+    async fn execute<T: TdsTokenStreamReader + NetworkReaderWriter>(
         &self,
-        reader_writer: &mut impl NetworkReaderWriter,
+        reader_writer: &mut T,
         transport_context: &TransportContext,
     ) -> TdsResult<LoginResult> {
         let encryption = reader_writer.get_encryption_setting();
@@ -442,9 +443,9 @@ impl LoginHandler<'_> {
         Ok(request.model)
     }
 
-    async fn get_login_response(
+    async fn get_login_response<T: TdsTokenStreamReader>(
         &self,
-        reader_writer: &mut impl NetworkReaderWriter,
+        reader_writer: &mut T,
         requested_features: FeaturesRequest,
     ) -> TdsResult<LoginResponseModel> {
         let response = self.factory.create_login_response();

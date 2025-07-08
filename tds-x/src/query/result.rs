@@ -1,12 +1,11 @@
 use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
+use crate::connection::transport::network_transport::NetworkTransport;
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::column_values::ColumnValues;
 use crate::error::Error::{SqlServerError, UsageError};
 use crate::query::metadata::ColumnMetadata;
-use crate::read_write::packet_reader::PacketReader;
-use crate::read_write::token_stream::{
-    GenericTokenParserRegistry, ParserContext, TokenStreamReader,
-};
+use crate::read_write::packet_reader::TdsPacketReader;
+use crate::read_write::token_stream::{ParserContext, TdsTokenStreamReader};
 use crate::token::tokenitems::ReturnValueStatus;
 use crate::token::tokens::{ColMetadataToken, DoneStatus, ReturnValueToken, Tokens};
 use futures::task::AtomicWaker;
@@ -143,7 +142,7 @@ impl QueryResultType<'_> {
 
 pub struct BatchResult<'result> {
     //  negotiated_settings: &'result mut NegotiatedSettings,
-    token_stream_reader: TokenStreamReader<PacketReader<'result>, GenericTokenParserRegistry>,
+    token_stream_reader: &'result mut NetworkTransport,
 
     /// The context for the parser, which is used to keep track of the current state of parsing.
     /// It holds the current column metadata, if any, and other parsing context.
@@ -177,12 +176,8 @@ impl<'result> BatchResult<'result> {
         cancel_handle: Option<&CancelHandle>,
     ) -> BatchResult<'result> {
         debug!("Batch result created.");
-        let packet_reader = PacketReader::new(tds_connection.transport.as_mut());
-        let token_stream_reader = TokenStreamReader::new(
-            packet_reader,
-            Box::new(GenericTokenParserRegistry::default()),
-        );
         tds_connection.execution_context.set_has_open_batch(true);
+        tds_connection.transport.reset_reader();
         BatchResult {
             // TODO: Holding a mutable borrow of negotiated_settings prevents BatchResult from implementing
             // Send or Sync, which makes it illegal to use in an Arc<Mutex<>>. However the negotiated_settings
@@ -191,7 +186,7 @@ impl<'result> BatchResult<'result> {
             // by reading the tokens, then propagated-by-copy back to the original one.
 
             //negotiated_settings: &mut tds_connection.negotiated_settings,
-            token_stream_reader,
+            token_stream_reader: &mut tds_connection.transport,
             parser_context: ParserContext::default(),
             received_last: false,
             execution_context: &mut tds_connection.execution_context,

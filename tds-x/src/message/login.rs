@@ -4,9 +4,8 @@ use crate::message::login_options::{
     OptionFlags1, OptionFlags2, OptionFlags3, OptionsValue, TdsVersion, TypeFlags,
 };
 use crate::message::messages::{PacketType, Request, TdsError};
-use crate::read_write::packet_reader::PacketReader;
+
 use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
-use crate::read_write::reader_writer::NetworkReaderWriter;
 use crate::token::fed_auth_info::FedAuthInfoToken;
 use crate::token::login_ack::LoginAckToken;
 use crate::token::tokens::{
@@ -18,9 +17,7 @@ use std::collections::HashMap;
 use super::features::fedauth::FedAuthFeature;
 use super::features::utf8::Utf8Feature;
 use crate::core::TdsResult;
-use crate::read_write::token_stream::{
-    GenericTokenParserRegistry, ParserContext, TokenStreamReader,
-};
+use crate::read_write::token_stream::{ParserContext, TdsTokenStreamReader};
 use tracing::{debug, event, info, trace, Level};
 
 pub(crate) const FIXED_LOGIN_RECORD_LENGTH: i32 = 94;
@@ -283,7 +280,12 @@ impl LoginResponseModel {
 
     fn capture_change_property(&mut self, change_token: EnvChangeToken) -> TdsResult<()> {
         let sub_type = change_token.sub_type;
-
+        event!(
+            Level::DEBUG,
+            "Capturing change property: {:?} with sub type: {:?}",
+            change_token.change_type,
+            sub_type
+        );
         match change_token.change_type {
             EnvChangeContainer::String(string_change) => match sub_type {
                 EnvChangeTokenSubType::Database => {
@@ -427,18 +429,11 @@ impl LoginResponse {
         LoginResponse {}
     }
 
-    pub(crate) async fn deserialize(
+    pub(crate) async fn deserialize<T: TdsTokenStreamReader>(
         &self,
-        reader: &mut dyn NetworkReaderWriter,
+        token_stream_reader: &mut T,
         requested_features: FeaturesRequest,
     ) -> TdsResult<LoginResponseModel> {
-        let packet_reader = PacketReader::new(reader);
-        let login_token_registry = GenericTokenParserRegistry::default();
-        let mut token_stream_reader = TokenStreamReader {
-            packet_reader,
-            parser_registry: Box::new(login_token_registry),
-        };
-
         let mut response_model = LoginResponseModel::new(requested_features);
         let parser_context = ParserContext::default();
         loop {

@@ -6,10 +6,7 @@ use tds_x::{
 };
 use tokio::sync::Mutex;
 
-use crate::{
-  connection::{Connection, TdsClient},
-  context::JsClientContext,
-};
+use crate::{connection::Connection, context::JsClientContext};
 
 #[macro_use]
 extern crate napi_derive;
@@ -21,15 +18,13 @@ pub mod context;
 pub async fn connect(context: JsClientContext) -> napi::Result<Connection> {
   let client_context: ClientContext = context.clone().into();
   let provider = TdsConnectionProvider {};
-  let connection = provider
-    .create_connection(client_context.clone(), None)
+  let tds_client = provider
+    .create_client(client_context.clone(), None)
     .await
     .unwrap();
 
-  let client = TdsClient::new(Arc::new(Mutex::new(connection)));
-
   let connection = Connection {
-    tds_client: Arc::new(Mutex::new(client)),
+    tds_client: Arc::new(Mutex::new(tds_client)),
   };
   // Here you can use the connection object as needed
   // For example, you can execute queries or perform other operations

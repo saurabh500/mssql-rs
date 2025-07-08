@@ -7,8 +7,9 @@ pub(crate) mod query_processing_driver {
     use crate::error::Error::ProtocolError;
     use crate::message::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
     use crate::message::messages::PacketType;
-    use crate::read_write::packet_reader::PacketReader;
+
     use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
+    use crate::read_write::token_stream::TdsTokenStreamReader;
     use crate::{
         connection::{
             client_context::{ClientContext, TransportContext},
@@ -23,7 +24,7 @@ pub(crate) mod query_processing_driver {
             parameters::rpc_parameters::{build_parameter_list_string, RpcParameter, StatusFlags},
             rpc::{RpcProcs, RpcType, SqlRpc},
         },
-        read_write::token_stream::{GenericTokenParserRegistry, ParserContext, TokenStreamReader},
+        read_write::token_stream::ParserContext,
         token::tokens::{DoneStatus, Tokens},
     };
     use async_trait::async_trait;
@@ -239,16 +240,10 @@ pub(crate) mod query_processing_driver {
     }
 
     async fn iterate_over_rpc_tokens(connection: &mut Box<TdsConnection>) {
-        // Now read the results.
-        let packet_reader = PacketReader::new(&mut *connection.transport);
-        let mut token_stream_reader = TokenStreamReader::new(
-            packet_reader,
-            Box::new(GenericTokenParserRegistry::default()),
-        );
-
         let mut parser_context = ParserContext::default();
         let mut _row_count = 0;
-        while let Ok(token) = token_stream_reader
+        while let Ok(token) = connection
+            .transport
             .receive_token(&parser_context, None, None)
             .await
         {
@@ -335,6 +330,13 @@ pub(crate) mod query_processing_driver {
     #[tokio::test]
     async fn test_multi_query_no_panic() {
         execute_test_query("select * from sys.databases; select * from sys.columns")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_multi_query_with_client_no_panic() {
+        execute_test_query_with_client("select * from sys.databases; select * from sys.columns")
             .await
             .unwrap();
     }
@@ -819,6 +821,37 @@ pub(crate) mod query_processing_driver {
         }
     }
 
+    pub async fn execute_test_query_with_client(query: &str) -> TdsResult<()> {
+        dotenv().ok();
+
+        let transport = TransportContext::Tcp {
+            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
+            port: env::var("DB_PORT")
+                .expect("DB_PORT environment variable not set")
+                .parse::<u16>()
+                .expect("DB_PORT must be a valid u16"),
+        };
+        let context = ClientContext {
+            transport_context: transport,
+            user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
+            password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: trust_server_certificate(),
+                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            },
+            // database: "drivers".to_string(),
+            ..Default::default()
+        };
+        let provider = TdsConnectionProvider {};
+        let mut tds_client = provider.create_client(context, None).await?;
+        tds_client.execute(query.to_string(), None, None).await?;
+        while let Some(row) = tds_client.next_row().await? {
+            println!("Row: {:?}", row);
+        }
+        Ok(())
+    }
+
     pub async fn execute_test_query(query: &str) -> TdsResult<()> {
         dotenv().ok();
 
@@ -893,16 +926,11 @@ pub(crate) mod query_processing_driver {
             .serialize_and_handle_timeout(tds_connection.as_mut(), None, None)
             .await?;
 
-        let packet_reader = PacketReader::new(&mut *tds_connection.transport);
-        let mut token_stream_reader = TokenStreamReader::new(
-            packet_reader,
-            Box::new(GenericTokenParserRegistry::default()),
-        );
-
         let mut parser_context = ParserContext::default();
         let mut _row_count = 0;
         loop {
-            let token = token_stream_reader
+            let token = tds_connection
+                .transport
                 .receive_token(&parser_context, None, None)
                 .await?;
             match token {

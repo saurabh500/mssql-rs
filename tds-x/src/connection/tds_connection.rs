@@ -17,10 +17,7 @@ use crate::message::transaction_management::{
     TransactionManagementRequest, TransactionManagementType,
 };
 use crate::query::result::BatchResult;
-use crate::read_write::packet_reader::PacketReader;
-use crate::read_write::token_stream::{
-    GenericTokenParserRegistry, ParserContext, TokenStreamReader,
-};
+use crate::read_write::token_stream::{ParserContext, TdsTokenStreamReader};
 use crate::token::tokens::{
     DoneStatus, EnvChangeContainer, EnvChangeToken, EnvChangeTokenSubType, Tokens,
 };
@@ -33,7 +30,7 @@ pub struct TdsConnection {
     pub(crate) execution_context: ExecutionContext,
 }
 
-const ALREADY_EXECUTING_ERROR: &str = "There is an open BatchResult on the current TdsConnection. It must be closed or fully consumed\
+pub(crate) const ALREADY_EXECUTING_ERROR: &str = "There is an open BatchResult on the current TdsConnection. It must be closed or fully consumed\
             as a QueryResultTypeStream before executing another operation on this TdsConnection.";
 
 impl TdsConnection {
@@ -442,15 +439,11 @@ impl TdsConnection {
     }
 
     pub(crate) async fn drain_until_done_status(&mut self, search_status: DoneStatus) {
-        let packet_reader = PacketReader::new(self.transport.as_mut());
-        let mut token_stream_reader = TokenStreamReader::new(
-            packet_reader,
-            Box::new(GenericTokenParserRegistry::default()),
-        );
         let parser_context = ParserContext::None(());
 
         // Drain the stream until we receive a Done with the Attention bit set.
-        while let Ok(token) = token_stream_reader
+        while let Ok(token) = self
+            .transport
             .receive_token(&parser_context, None, None)
             .await
         {
