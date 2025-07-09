@@ -172,7 +172,7 @@ macro_rules! impl_try_from_tdstypes {
         #[repr(u8)]
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub enum $enum_name:ident {
-            $($variant:ident = $tds_type:expr),* $(,)?
+            $($variant:ident = $tds_type:expr_2021),* $(,)?
         }
     ) => {
         #[repr(u8)]

@@ -362,22 +362,25 @@ impl<'result> QueryResultTypeStream<'result> {
     ) -> Poll<Option<TdsResult<QueryResultType<'result>>>> {
         // Poll the executing future. Note that this may have just been created.
         assert!(self.executing_future.is_some());
-        if let Some(mut future) = self.executing_future.take() {
-            trace!("Consuming future.");
-            match future.as_mut().poll(cx) {
-                Poll::Pending => {
-                    trace!("Future pending.");
-                    // Put this future back so that it can be polled again.
-                    self.executing_future = Some(future);
-                    Poll::Pending
-                }
-                Poll::Ready(result) => {
-                    trace!("Future ready.");
-                    Poll::Ready(Some(result))
+        match self.executing_future.take() {
+            Some(mut future) => {
+                trace!("Consuming future.");
+                match future.as_mut().poll(cx) {
+                    Poll::Pending => {
+                        trace!("Future pending.");
+                        // Put this future back so that it can be polled again.
+                        self.executing_future = Some(future);
+                        Poll::Pending
+                    }
+                    Poll::Ready(result) => {
+                        trace!("Future ready.");
+                        Poll::Ready(Some(result))
+                    }
                 }
             }
-        } else {
-            unreachable!("Unexpected: Executing future not available.");
+            _ => {
+                unreachable!("Unexpected: Executing future not available.");
+            }
         }
     }
 
@@ -602,26 +605,29 @@ impl<'result> RowStream<'result> {
     ) -> Poll<Option<TdsResult<RowData>>> {
         // Poll the executing future. Note that this may have just been created.
         assert!(self.executing_future.is_some());
-        if let Some(mut future) = self.executing_future.take() {
-            match future.as_mut().poll(cx) {
-                Poll::Pending => {
-                    // Put this future back so that it can be polled again.
-                    self.executing_future = Some(future);
-                    Poll::Pending
-                }
-                Poll::Ready(result) => match result.as_ref() {
-                    Ok(row_data_ref) => {
-                        if row_data_ref.is_terminal {
-                            Poll::Ready(None)
-                        } else {
-                            Poll::Ready(Some(result))
-                        }
+        match self.executing_future.take() {
+            Some(mut future) => {
+                match future.as_mut().poll(cx) {
+                    Poll::Pending => {
+                        // Put this future back so that it can be polled again.
+                        self.executing_future = Some(future);
+                        Poll::Pending
                     }
-                    Err(_) => Poll::Ready(Some(result)),
-                },
+                    Poll::Ready(result) => match result.as_ref() {
+                        Ok(row_data_ref) => {
+                            if row_data_ref.is_terminal {
+                                Poll::Ready(None)
+                            } else {
+                                Poll::Ready(Some(result))
+                            }
+                        }
+                        Err(_) => Poll::Ready(Some(result)),
+                    },
+                }
             }
-        } else {
-            panic!("Executing future not available.");
+            _ => {
+                panic!("Executing future not available.");
+            }
         }
     }
 

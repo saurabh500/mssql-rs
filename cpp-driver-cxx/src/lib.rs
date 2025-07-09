@@ -197,10 +197,12 @@ unsafe fn create_connection_async<'a, 'result>(
 where
     'a: 'result,
 {
-    let future = create_connection_async_internal(context);
-    std::mem::transmute(Box::new(TdsConnectionFuture {
-        future_connection: Some(Box::new(Box::pin(future))),
-    }))
+    unsafe {
+        let future = create_connection_async_internal(context);
+        std::mem::transmute(Box::new(TdsConnectionFuture {
+            future_connection: Some(Box::new(Box::pin(future))),
+        }))
+    }
 }
 
 impl<'a, 'result> TdsConnection<'a, 'result> {
@@ -249,27 +251,30 @@ impl<'result> QueryResultTypeStream<'result> {
     }
 
     pub fn current_result(&'result mut self) -> TdsResult<Box<QueryResultType<'result>>> {
-        if let Some(result) = self.current_result.take() {
-            let result_type = ffi::ResultType::from(&result);
-            match result {
-                tds_x::query::result::QueryResultType::DmlResult(dml_result) => {
-                    Ok(Box::new(QueryResultType {
-                        result_set: None,
-                        dml_result: Some(dml_result),
-                        result_type,
-                    }))
-                }
-                tds_x::query::result::QueryResultType::ResultSet(result_set) => {
-                    Ok(Box::new(QueryResultType {
-                        result_set: Some(result_set),
-                        dml_result: None,
-                        result_type,
-                    }))
+        match self.current_result.take() {
+            Some(result) => {
+                let result_type = ffi::ResultType::from(&result);
+                match result {
+                    tds_x::query::result::QueryResultType::DmlResult(dml_result) => {
+                        Ok(Box::new(QueryResultType {
+                            result_set: None,
+                            dml_result: Some(dml_result),
+                            result_type,
+                        }))
+                    }
+                    tds_x::query::result::QueryResultType::ResultSet(result_set) => {
+                        Ok(Box::new(QueryResultType {
+                            result_set: Some(result_set),
+                            dml_result: None,
+                            result_type,
+                        }))
+                    }
                 }
             }
-        } else {
-            // Todo: use a more appropriate error.
-            Err(Error::ProtocolError("No result available".to_string()))
+            _ => {
+                // Todo: use a more appropriate error.
+                Err(Error::ProtocolError("No result available".to_string()))
+            }
         }
     }
 }
@@ -377,12 +382,11 @@ impl ColumnValue {
 
 impl<'a, 'result> TdsConnectionFuture<'a, 'result> {
     pub fn await_connection(&mut self) -> TdsResult<Box<TdsConnection<'a, 'result>>> {
-        if let Some(future) = self.future_connection.take() {
-            CURRENT_THREAD_RUNTIME.with(|rt| rt.block_on(future))
-        } else {
-            Err(Error::ProtocolError(
+        match self.future_connection.take() {
+            Some(future) => CURRENT_THREAD_RUNTIME.with(|rt| rt.block_on(future)),
+            _ => Err(Error::ProtocolError(
                 "TdsConnectionFuture already consumed.".to_string(),
-            ))
+            )),
         }
     }
 }
@@ -400,12 +404,13 @@ impl<'a, 'result> TdsConnection<'a, 'result> {
 
 impl<'result> QueryResultTypeFuture<'result> {
     pub fn await_query_result_type(&mut self) -> TdsResult<Box<QueryResultTypeStream<'result>>> {
-        if let Some(future_query_result_type) = self.future_query_result_type.take() {
-            Ok(CURRENT_THREAD_RUNTIME.with(|rt| rt.block_on(future_query_result_type)))
-        } else {
-            Err(Error::ProtocolError(
+        match self.future_query_result_type.take() {
+            Some(future_query_result_type) => {
+                Ok(CURRENT_THREAD_RUNTIME.with(|rt| rt.block_on(future_query_result_type)))
+            }
+            _ => Err(Error::ProtocolError(
                 "QueryResultTypeFuture already consumed.".to_string(),
-            ))
+            )),
         }
     }
 }
@@ -421,12 +426,11 @@ impl QueryResultTypeStream<'_> {
 
 impl BoolFuture<'_> {
     pub fn await_bool(&mut self) -> TdsResult<bool> {
-        if let Some(future_bool) = self.future_bool.take() {
-            CURRENT_THREAD_RUNTIME.with(|rt| rt.block_on(future_bool))
-        } else {
-            Err(Error::ProtocolError(
+        match self.future_bool.take() {
+            Some(future_bool) => CURRENT_THREAD_RUNTIME.with(|rt| rt.block_on(future_bool)),
+            _ => Err(Error::ProtocolError(
                 "QueryResultTypeFuture already consumed.".to_string(),
-            ))
+            )),
         }
     }
 }

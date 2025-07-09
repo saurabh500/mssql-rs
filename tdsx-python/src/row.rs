@@ -50,7 +50,7 @@ impl PyRowStream {
 }
 
 macro_rules! handle_py_result {
-    ($py_result:expr) => {
+    ($py_result:expr_2021) => {
         match $py_result {
             Ok(value) => value.into(),
             Err(e) => return Err(PyRuntimeError::new_err(e.to_string())),

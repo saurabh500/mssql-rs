@@ -98,31 +98,34 @@ impl GenericDecoder {
         let fixed_length_type_result = FixedLengthTypes::try_from(tds_type);
 
         // The type may be a fixed length type, or it may be a variable length type like Guid/DateN
-        if let Ok(fixed_length_type) = fixed_length_type_result {
-            let type_info = TypeInfo {
-                tds_type,
-                length: data_length as usize,
-                type_info_variant: TypeInfoVariant::FixedLen(fixed_length_type),
-            };
-            let variant_actual_type_md = ColumnMetadata {
-                user_type: 0,
-                flags: 0,
-                type_info,
-                data_type: tds_type,
-                column_name: "".to_string(),
-                multi_part_name: None,
-            };
-            self.decode(reader, &variant_actual_type_md).await
-        } else {
-            // If the type is not a fixed length type, we should not reach here.
-            match tds_type {
-                TdsDataType::Guid => Self::read_guid(reader, data_length as u8).await,
-                TdsDataType::DateN => Self::read_daten(reader, data_length as u8).await,
-                _ => {
-                    unreachable!(
-                        "For 0 byte property, only Guid and DateN are expected, but got: {:?}",
-                        tds_type
-                    );
+        match fixed_length_type_result {
+            Ok(fixed_length_type) => {
+                let type_info = TypeInfo {
+                    tds_type,
+                    length: data_length as usize,
+                    type_info_variant: TypeInfoVariant::FixedLen(fixed_length_type),
+                };
+                let variant_actual_type_md = ColumnMetadata {
+                    user_type: 0,
+                    flags: 0,
+                    type_info,
+                    data_type: tds_type,
+                    column_name: "".to_string(),
+                    multi_part_name: None,
+                };
+                self.decode(reader, &variant_actual_type_md).await
+            }
+            _ => {
+                // If the type is not a fixed length type, we should not reach here.
+                match tds_type {
+                    TdsDataType::Guid => Self::read_guid(reader, data_length as u8).await,
+                    TdsDataType::DateN => Self::read_daten(reader, data_length as u8).await,
+                    _ => {
+                        unreachable!(
+                            "For 0 byte property, only Guid and DateN are expected, but got: {:?}",
+                            tds_type
+                        );
+                    }
                 }
             }
         }

@@ -470,7 +470,7 @@ pub(crate) mod tests {
 
     //append_method!(append_i64, i64, 8, write_i64);
     macro_rules! append_method {
-        ($name:ident, $type:ty, $size:expr, $write_fn:ident) => {
+        ($name:ident, $type:ty, $size:expr_2021, $write_fn:ident) => {
             pub(crate) fn $name(&mut self, number: $type) -> &mut TestPacketBuilder {
                 let mut buffer = [0u8; $size];
                 LittleEndian::$write_fn(&mut buffer, number);
