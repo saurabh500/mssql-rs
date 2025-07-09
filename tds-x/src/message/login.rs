@@ -329,8 +329,7 @@ impl LoginResponseModel {
                         sub_type
                     );
                     Err(crate::error::Error::ProtocolError(format!(
-                        "Unaccounted numeric change property type: {:?}",
-                        sub_type
+                        "Unaccounted numeric change property type: {sub_type:?}"
                     )))
                 }
             },

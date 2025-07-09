@@ -59,7 +59,7 @@ mod rpc_datatypes {
         ];
 
         let query = generate_select_statement(&columns);
-        println!("{}", query);
+        println!("{query}");
         let mut named_parameters = Vec::new();
         for column in columns.iter() {
             let param =
@@ -78,7 +78,7 @@ mod rpc_datatypes {
         let (metadata, first_row_columns) = get_first_row(batch_result).await.unwrap();
 
         for (i, column) in metadata.iter().enumerate() {
-            println!("Column {}: {:?}", i, column);
+            println!("Column {i}: {column:?}");
         }
 
         assert_eq!(first_row_columns.len(), columns.len());
@@ -132,7 +132,7 @@ mod rpc_datatypes {
         let columns = vec![("json", SqlType::Json(Some(json_value.clone().into())))];
 
         let query = generate_select_statement(&columns);
-        println!("{}", query);
+        println!("{query}");
         let mut named_parameters = Vec::new();
         for column in columns.iter() {
             let param =

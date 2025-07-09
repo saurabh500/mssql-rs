@@ -906,7 +906,7 @@ pub(crate) mod tests {
         let result = transport.send(&data_vector[..]).await;
         match result {
             Ok(_) => {}
-            Err(e) => panic!("Error sending data: {}", e),
+            Err(e) => panic!("Error sending data: {e}"),
         }
 
         let received = framed_reader

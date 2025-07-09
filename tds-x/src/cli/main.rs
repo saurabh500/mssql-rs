@@ -103,7 +103,7 @@ impl Session {
             let result_type = result.unwrap();
             match result_type {
                 crate::query::result::QueryResultType::DmlResult(update) => {
-                    println!("Rows updated {}", update);
+                    println!("Rows updated {update}");
                 }
                 crate::query::result::QueryResultType::ResultSet(result_set) => {
                     let mut row_stream = result_set.into_row_stream()?;
@@ -200,7 +200,7 @@ pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
             Err(err) => {
-                println!("Error: {:?}", err);
+                println!("Error: {err:?}");
                 break;
             }
         }

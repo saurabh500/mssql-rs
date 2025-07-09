@@ -469,8 +469,7 @@ impl SqlTypeDecode for GenericDecoder {
                     0 => ColumnValues::Null,
                     _ => {
                         return Err(crate::error::Error::ProtocolError(format!(
-                            "Invalid MoneyN length - {}",
-                            byte_len
+                            "Invalid MoneyN length - {byte_len}"
                         )));
                     }
                 }

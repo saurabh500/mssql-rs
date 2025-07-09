@@ -215,7 +215,7 @@ impl<'a, 'result> TdsConnection<'a, 'result> {
         &'a mut self,
         sql_command: String,
     ) -> Box<QueryResultTypeStream<'result>> {
-        println!("Executing SQL query: {}", sql_command);
+        println!("Executing SQL query: {sql_command}");
         let batch_results = self
             .connection
             .execute(sql_command, None, None)
@@ -370,7 +370,7 @@ impl RowData {
 impl ColumnValue {
     pub fn print_column_value(&mut self) -> TdsResult<()> {
         if let Some(unwrapped_column_value) = self.value.take() {
-            print!("{:?}", unwrapped_column_value);
+            print!("{unwrapped_column_value:?}");
             Ok(())
         } else {
             Err(Error::ProtocolError(

@@ -142,18 +142,14 @@ mod timeout_and_cancel_tests {
 
                     assert!(
                         duration < Duration::from_millis(expected_duration_upper),
-                        "Expected duration < {:?}ms, got {:?}",
-                        expected_duration_upper,
-                        duration
+                        "Expected duration < {expected_duration_upper:?}ms, got {duration:?}"
                     );
                     assert!(
                         duration > Duration::from_millis(expected_duration_lower),
-                        "Expected duration > {:?}ms, got {:?}",
-                        expected_duration_lower,
-                        duration
+                        "Expected duration > {expected_duration_lower:?}ms, got {duration:?}"
                     );
                 }
-                _ => panic!("Expected timeoutError error, got {:?}", error),
+                _ => panic!("Expected timeoutError error, got {error:?}"),
             },
         };
     }

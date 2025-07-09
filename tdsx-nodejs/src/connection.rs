@@ -22,8 +22,7 @@ impl Connection {
         match result {
             Ok(_) => Ok(()),
             Err(e) => Err(napi::Error::from_reason(format!(
-                "Failed to execute query: {}",
-                e
+                "Failed to execute query: {e}"
             ))),
         }
     }
@@ -86,8 +85,7 @@ impl Connection {
         match result {
             Ok(_) => Ok(()),
             Err(e) => Err(napi::Error::from_reason(format!(
-                "Failed to close query: {}",
-                e
+                "Failed to close query: {e}"
             ))),
         }
     }
@@ -99,8 +97,7 @@ impl Connection {
         match result {
             Ok(_) => Ok(()),
             Err(e) => Err(napi::Error::from_reason(format!(
-                "Failed to close connection: {}",
-                e
+                "Failed to close connection: {e}"
             ))),
         }
     }

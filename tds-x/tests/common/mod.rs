@@ -67,7 +67,7 @@ pub async fn assert_matches_expected(qrt: QueryResultType<'_>, expected: &Expect
             let mut row_stream = result_set.into_row_stream().unwrap();
             while let Some(row) = row_stream.next().await {
                 let mut unwrapped_row = row.unwrap();
-                print!("Row {:?}: ", actual_rows);
+                print!("Row {actual_rows:?}: ");
                 while let Some(cell) = unwrapped_row.next().await {
                     print!("{:?},", cell.unwrap());
                 }
@@ -126,7 +126,7 @@ pub async fn validate_results(
     let mut expected_index = 0;
     println!("Before looping.");
     while let Some(query_result_type) = query_result_stream.next().await {
-        println!("Current index {:?}", expected_index);
+        println!("Current index {expected_index:?}");
         assert!(expected_index < expected_results.len());
         let qrt = query_result_type.unwrap();
         assert_matches_expected(qrt, &expected_results[expected_index]).await;

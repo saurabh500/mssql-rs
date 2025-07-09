@@ -1430,7 +1430,7 @@ mod datetime_tests {
                 1 | 2 => assert_eq!(length, 0x03),
                 3 | 4 => assert_eq!(length, 0x04),
                 5..=7 => assert_eq!(length, 0x05),
-                _ => panic!("Invalid scale: {}", scale),
+                _ => panic!("Invalid scale: {scale}"),
             }
         }
 

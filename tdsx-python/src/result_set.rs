@@ -52,8 +52,7 @@ impl PyResultSet {
                         inner: Some(row_stream),
                     }),
                     Err(e) => Err(PyRuntimeError::new_err(format!(
-                        "Error creating row stream: {}",
-                        e
+                        "Error creating row stream: {e}"
                     ))),
                 }
             }

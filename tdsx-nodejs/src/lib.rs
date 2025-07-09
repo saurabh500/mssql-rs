@@ -37,8 +37,7 @@ pub async fn connect(context: JsClientContext) -> napi::Result<Connection> {
         Err(e) => {
             // Handle the error
             Err(napi::Error::from_reason(format!(
-                "Failed to create TdsClient: {}",
-                e
+                "Failed to create TdsClient: {e}"
             )))
         }
     }

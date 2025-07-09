@@ -28,7 +28,7 @@ impl std::convert::From<u8> for EncryptionType {
             0x01 => EncryptionType::On,
             0x02 => EncryptionType::NotSupported,
             0x03 => EncryptionType::Required,
-            _ => panic!("unknown encryption type {}", v),
+            _ => panic!("unknown encryption type {v}"),
         }
     }
 }
@@ -68,7 +68,7 @@ impl std::convert::From<u8> for OptionType {
             0x07 => OptionType::Nonce,
             0xff => OptionType::Terminator,
             _ => {
-                panic!("invalid option type {:x}", v);
+                panic!("invalid option type {v:x}");
             }
         }
     }

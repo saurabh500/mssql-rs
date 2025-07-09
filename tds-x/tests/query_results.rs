@@ -164,7 +164,7 @@ mod query_result_reads {
                         let mut row_stream = result_set.into_row_stream().unwrap();
                         while let Some(row) = row_stream.next().await {
                             let mut unwrapped_row = row.unwrap();
-                            print!("Row {:?}: ", row_number);
+                            print!("Row {row_number:?}: ");
                             while let Some(cell) = unwrapped_row.next().await {
                                 print!("{:?},", cell.unwrap());
                             }
@@ -294,7 +294,7 @@ mod query_result_reads {
             Err(UsageError(_)) => {
                 // Success case.
             }
-            Err(err) => panic!("Expected error but got different error: {}", err),
+            Err(err) => panic!("Expected error but got different error: {err}"),
         }
     }
 
@@ -330,7 +330,7 @@ mod query_result_reads {
                 Err(UsageError(_)) => {
                     // Success case.
                 }
-                Err(err) => panic!("Expected error but got different error: {}", err),
+                Err(err) => panic!("Expected error but got different error: {err}"),
             }
             result_stream.close().await.unwrap();
         }

@@ -11,7 +11,7 @@ impl From<u8> for FedAuthInfoId {
         match v {
             0x02 => FedAuthInfoId::SPN,
             0x01 => FedAuthInfoId::STSUrl,
-            _ => panic!("Unknown FedAuthInfoId: {}", v),
+            _ => panic!("Unknown FedAuthInfoId: {v}"),
         }
     }
 }

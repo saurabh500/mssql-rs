@@ -52,7 +52,7 @@ mod tests {
         let result = network_writer.send(&data_vector[..]).await;
         match result {
             Ok(_) => {}
-            Err(e) => panic!("Error sending data: {}", e),
+            Err(e) => panic!("Error sending data: {e}"),
         }
 
         let received = framed_reader
@@ -78,7 +78,7 @@ mod tests {
         let result = server_transport.send(&data_vector[..]).await;
         match result {
             Ok(_) => {}
-            Err(e) => panic!("Error sending data: {}", e),
+            Err(e) => panic!("Error sending data: {e}"),
         }
 
         let mut buffer = vec![0u8; MAX_BUFFER_SIZE];

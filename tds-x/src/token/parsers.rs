@@ -565,7 +565,7 @@ where
             if some_data_type.is_err() {
                 return Err(crate::error::Error::from(Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Invalid data type: {}", raw_data_type),
+                    format!("Invalid data type: {raw_data_type}"),
                 )));
             }
             let data_type = some_data_type?;
@@ -810,7 +810,7 @@ impl<T: SqlTypeDecode + Sync, P: TdsPacketReader + Send + Sync> TokenParser<P>
             Vec::with_capacity(column_metadata_token.column_count as usize);
         let col_count = all_metadata.len();
 
-        let bitmap_length = (col_count + 7) / 8;
+        let bitmap_length = col_count.div_ceil(8);
         let mut bitmap: Vec<u8> = vec![0; bitmap_length as usize];
         reader.read_bytes(bitmap.as_mut_slice()).await?;
         // let mut index = 0;

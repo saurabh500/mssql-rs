@@ -61,7 +61,7 @@ impl From<u8> for TokenType {
             0xD1 => TokenType::Row,
             0xED => TokenType::SSPI,
             0xA4 => TokenType::TabName,
-            _ => panic!("Unknown token type: {:#X}", value),
+            _ => panic!("Unknown token type: {value:#X}"),
         }
     }
 }
@@ -194,12 +194,12 @@ impl From<(u64, u64)> for EnvChangeContainer {
 impl fmt::Debug for EnvChangeContainer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EnvChangeContainer::String(value) => write!(f, "String: {:?}", value),
-            EnvChangeContainer::SqlCollation(value) => write!(f, "SqlCollation: {:?}", value),
-            EnvChangeContainer::UInt32(value) => write!(f, "UInt32: {:?}", value),
-            EnvChangeContainer::RoutingType(value) => write!(f, "RoutingType: {:?}", value),
-            EnvChangeContainer::BytesType(value) => write!(f, "ByteType: {:?}", value),
-            EnvChangeContainer::UInt64(value) => write!(f, "UInt64 {:?}", value),
+            EnvChangeContainer::String(value) => write!(f, "String: {value:?}"),
+            EnvChangeContainer::SqlCollation(value) => write!(f, "SqlCollation: {value:?}"),
+            EnvChangeContainer::UInt32(value) => write!(f, "UInt32: {value:?}"),
+            EnvChangeContainer::RoutingType(value) => write!(f, "RoutingType: {value:?}"),
+            EnvChangeContainer::BytesType(value) => write!(f, "ByteType: {value:?}"),
+            EnvChangeContainer::UInt64(value) => write!(f, "UInt64 {value:?}"),
         }
     }
 }
@@ -893,7 +893,7 @@ impl From<u8> for EnvChangeTokenSubType {
             19 => EnvChangeTokenSubType::UserInstanceName,
             20 => EnvChangeTokenSubType::Routing,
             // Panic on unknown values, since From must be infallible.
-            _ => panic!("Invalid value for EnvChangeTokenSubType: {}", value),
+            _ => panic!("Invalid value for EnvChangeTokenSubType: {value}"),
         }
     }
 }

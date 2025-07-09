@@ -91,7 +91,7 @@ impl<'b> RpcParameter<'b> {
         if len_in_metadata.is_empty() {
             type_name.to_string()
         } else {
-            format!("{}({})", type_name, len_in_metadata).to_string()
+            format!("{type_name}({len_in_metadata})").to_string()
         }
     }
 
@@ -161,7 +161,7 @@ pub(crate) fn build_parameter_list_string(
             } else {
                 params_list.push_str(", ");
             }
-            params_list.push_str(&format!("{} {} ", param_name, param_type_name));
+            params_list.push_str(&format!("{param_name} {param_type_name} "));
         }
     }
 }

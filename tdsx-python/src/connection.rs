@@ -94,9 +94,6 @@ pub fn create_connection_sync(py_ctx: PyClientContext) -> PyResult<PyTdsConnecti
             context: Arc::clone(&context),
             connection: Some(Arc::new(Mutex::new(tds_conn))),
         }),
-        Err(e) => Err(PyRuntimeError::new_err(format!(
-            "Connection error: {:?}",
-            e
-        ))),
+        Err(e) => Err(PyRuntimeError::new_err(format!("Connection error: {e:?}"))),
     }
 }

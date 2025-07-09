@@ -42,7 +42,7 @@ mod connectivity {
         let token_response = credential.unwrap().get_token(&[SCOPE], None).await;
 
         let secret = token_response.as_ref().unwrap().token.secret();
-        print!("{}", secret);
+        print!("{secret}");
         secret.to_string()
     }
 
@@ -81,7 +81,7 @@ mod connectivity {
         };
 
         let secret = token_response.as_ref().unwrap().token.secret();
-        print!("{}", secret);
+        print!("{secret}");
         secret.to_string()
     }
 
@@ -216,9 +216,9 @@ mod connectivity {
         ) -> TdsResult<Vec<u8>> {
             let spn = if !_spn.ends_with("/.default") {
                 if _spn.ends_with('/') {
-                    format!("{}.default", _spn)
+                    format!("{_spn}.default")
                 } else {
-                    format!("{}/.default", _spn)
+                    format!("{_spn}/.default")
                 }
             } else {
                 _spn.clone()

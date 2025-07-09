@@ -162,8 +162,8 @@ impl<'a> PacketWriter<'a> {
     ///
     /// * `is_last_packet` - Flag indicating that this is the last packet of the current message.
     /// * `is_ignore_packet` - Flag indicating that the current message should be ignored by the
-    ///    server. If this flag is set to true, the `is_last_packet` flag also must be set to true
-    ///    as specified by the TDS protocol.
+    ///   server. If this flag is set to true, the `is_last_packet` flag also must be set to true
+    ///   as specified by the TDS protocol.
     /// ```
     async fn populate_header_and_send(
         &mut self,
@@ -428,7 +428,6 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl NetworkWriter for MockNetworkWriter {
-        #[must_use]
         #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
         async fn send(&mut self, _data: &[u8]) -> TdsResult<()> {
             // No op

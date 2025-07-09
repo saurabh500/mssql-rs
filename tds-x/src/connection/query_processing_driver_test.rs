@@ -188,7 +188,7 @@ pub(crate) mod query_processing_driver {
 
         build_parameter_list_string(&named_parameters, &mut params_list_as_string);
 
-        print!("Params list: {}", params_list_as_string);
+        print!("Params list: {params_list_as_string}");
 
         let params_as_sql_string =
             SqlType::NVarcharMax(Some(SqlString::from_utf8_string(params_list_as_string)));
@@ -250,34 +250,34 @@ pub(crate) mod query_processing_driver {
             // let token = token_stream_reader.receive_token().await?;
             match token {
                 Tokens::Done(t1) => {
-                    println!("Received Done token: {:?}", t1);
+                    println!("Received Done token: {t1:?}");
                     if !t1.status.contains(DoneStatus::MORE) {
                         break;
                     }
                 }
                 Tokens::DoneInProc(t1) => {
-                    println!("Received DoneInProc token: {:?}", t1);
+                    println!("Received DoneInProc token: {t1:?}");
                     parser_context = ParserContext::None(());
                 }
                 Tokens::DoneProc(t1) => {
-                    println!("Received DoneProc token: {:?}", t1);
+                    println!("Received DoneProc token: {t1:?}");
                     parser_context = ParserContext::None(());
                     if !t1.status.contains(DoneStatus::MORE) {
                         break;
                     }
                 }
                 Tokens::EnvChange(t1) => {
-                    println!("Received EnvChange token: {:?}", t1);
+                    println!("Received EnvChange token: {t1:?}");
                 }
                 Tokens::Error(t1) => {
-                    println!("Received Error token: {:?}", t1);
+                    println!("Received Error token: {t1:?}");
                     panic!("Error token received: {:?}", t1);
                 }
                 Tokens::FeatureExtAck(t1) => {
-                    println!("Received FeatureExtAck token: {:?}", t1);
+                    println!("Received FeatureExtAck token: {t1:?}");
                 }
                 Tokens::ColMetadata(column_metadata) => {
-                    println!("Received ColMetadata token: {:?}", column_metadata);
+                    println!("Received ColMetadata token: {column_metadata:?}");
                     _row_count = 0;
                     parser_context = ParserContext::ColumnMetadata(column_metadata);
                 }
@@ -287,10 +287,10 @@ pub(crate) mod query_processing_driver {
                     //     println!("Received Row Data: {:?}", row);
                     // }
                     _row_count += 1;
-                    println!("Received Row Index: {:?}", row);
+                    println!("Received Row Index: {row:?}");
                 }
                 _ => {
-                    println!("Received token: {:?}", token);
+                    println!("Received token: {token:?}");
                 }
             }
         }
@@ -384,9 +384,8 @@ pub(crate) mod query_processing_driver {
                 "
             select CAST(NULL as JSON); 
             select CAST('[]' as JSON);
-            select CAST('{}' as JSON);
-        ",
-                emoji_json
+            select CAST('{emoji_json}' as JSON);
+        "
             )
             .as_str(),
         )
@@ -609,8 +608,7 @@ pub(crate) mod query_processing_driver {
             format!(
                 "
         SELECT CAST(NULL AS XML);
-        SELECT CAST('{}' AS XML) as foo",
-                xml_document
+        SELECT CAST('{xml_document}' AS XML) as foo"
             )
             .as_str(),
         )
@@ -629,27 +627,24 @@ pub(crate) mod query_processing_driver {
         let test_result = execute_test_multi_query(
             vec![
                 format!(
-                    "CREATE XML SCHEMA COLLECTION [{}] AS '
+                    "CREATE XML SCHEMA COLLECTION [{test_sys_identifier}] AS '
                     <schema xmlns=\"http://www.w3.org/2001/XMLSchema\">
                         <element name=\"root\" type=\"string\"/>
                     </schema>
-                    '",
-                    test_sys_identifier
+                    '"
                 )
                 .as_str(),
                 format!(
-                    "CREATE TABLE xml_test_{0} (Col1 xml([{0}]))",
-                    test_sys_identifier
+                    "CREATE TABLE xml_test_{test_sys_identifier} (Col1 xml([{test_sys_identifier}]))"
                 )
                 .as_str(),
                 format!(
-                    "INSERT INTO xml_test_{} VALUES ('<?xml version=\"1.0\"?><root>Test</root>')",
-                    test_sys_identifier
+                    "INSERT INTO xml_test_{test_sys_identifier} VALUES ('<?xml version=\"1.0\"?><root>Test</root>')"
                 )
                 .as_str(),
-                format!("SELECT * FROM xml_test_{}", test_sys_identifier).as_str(),
-                format!("DROP TABLE xml_test_{}", test_sys_identifier).as_str(),
-                format!("DROP XML SCHEMA COLLECTION [{}];", test_sys_identifier).as_str(),
+                format!("SELECT * FROM xml_test_{test_sys_identifier}").as_str(),
+                format!("DROP TABLE xml_test_{test_sys_identifier}").as_str(),
+                format!("DROP XML SCHEMA COLLECTION [{test_sys_identifier}];").as_str(),
             ],
             false,
         )
@@ -658,8 +653,8 @@ pub(crate) mod query_processing_driver {
         // Clean-up regardless of pass/fail case
         let _ = execute_test_multi_query(
             vec![
-                format!("DROP TABLE xml_test_{}", test_sys_identifier).as_str(),
-                format!("DROP XML SCHEMA COLLECTION [{}];", test_sys_identifier).as_str(),
+                format!("DROP TABLE xml_test_{test_sys_identifier}").as_str(),
+                format!("DROP XML SCHEMA COLLECTION [{test_sys_identifier}];").as_str(),
             ],
             false,
         )
@@ -815,7 +810,7 @@ pub(crate) mod query_processing_driver {
             Err(error) => match error {
                 Error::TimeoutError(_) => {} // Success
                 _ => {
-                    std::panic!("Expected timeout error but got {:?}", error);
+                    std::panic!("Expected timeout error but got {error:?}");
                 }
             },
         }
@@ -847,7 +842,7 @@ pub(crate) mod query_processing_driver {
         let mut tds_client = provider.create_client(context, None).await?;
         tds_client.execute(query.to_string(), None, None).await?;
         while let Some(row) = tds_client.next_row().await? {
-            println!("Row: {:?}", row);
+            println!("Row: {row:?}");
         }
         Ok(())
     }
@@ -903,7 +898,7 @@ pub(crate) mod query_processing_driver {
         };
         let mut connection = create_connection(context).await.unwrap();
         for q in query {
-            println!("Executing query: {}", q);
+            println!("Executing query: {q}");
             submit_sql_batch(&mut connection, q.to_string(), panic_on_error).await?;
         }
         Ok(())
@@ -935,40 +930,40 @@ pub(crate) mod query_processing_driver {
                 .await?;
             match token {
                 Tokens::Done(t1) => {
-                    println!("Received Done token: {:?}", t1);
+                    println!("Received Done token: {t1:?}");
                     if !t1.status.contains(DoneStatus::MORE) {
                         break;
                     }
                 }
                 Tokens::DoneInProc(t1) => {
-                    println!("Received DoneInProc token: {:?}", t1);
+                    println!("Received DoneInProc token: {t1:?}");
                     parser_context = ParserContext::None(());
                 }
                 Tokens::DoneProc(t1) => {
-                    println!("Received DoneProc token: {:?}", t1);
+                    println!("Received DoneProc token: {t1:?}");
                     parser_context = ParserContext::None(());
                     if !t1.status.contains(DoneStatus::MORE) {
                         break;
                     }
                 }
                 Tokens::EnvChange(t1) => {
-                    println!("Received EnvChange token: {:?}", t1);
+                    println!("Received EnvChange token: {t1:?}");
                 }
                 Tokens::Error(t1) => {
-                    println!("Received Error token: {:?}", t1);
+                    println!("Received Error token: {t1:?}");
                     if panic_on_error {
                         panic!("Error token received: {:?}", t1);
                     } else {
-                        eprintln!("Error token received: {:?}", t1);
+                        eprintln!("Error token received: {t1:?}");
                         eprintln!("Backtrace: {}", std::backtrace::Backtrace::capture());
                         return Err(ProtocolError("A query in the batch failed.".to_string()));
                     }
                 }
                 Tokens::FeatureExtAck(t1) => {
-                    println!("Received FeatureExtAck token: {:?}", t1);
+                    println!("Received FeatureExtAck token: {t1:?}");
                 }
                 Tokens::ColMetadata(column_metadata) => {
-                    println!("Received ColMetadata token: {:?}", column_metadata);
+                    println!("Received ColMetadata token: {column_metadata:?}");
                     _row_count = 0;
                     parser_context = ParserContext::ColumnMetadata(column_metadata);
                 }
@@ -978,10 +973,10 @@ pub(crate) mod query_processing_driver {
                     //     println!("Received Row Data: {:?}", row);
                     // }
                     _row_count += 1;
-                    println!("Received Row Index: {:?}", row);
+                    println!("Received Row Index: {row:?}");
                 }
                 _ => {
-                    println!("Received token: {:?}", token);
+                    println!("Received token: {token:?}");
                 }
             }
         }

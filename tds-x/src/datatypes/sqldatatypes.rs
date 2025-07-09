@@ -158,8 +158,7 @@ impl TryFrom<u8> for TdsDataType {
             0xF1 => Ok(TdsDataType::Xml),
             0xF4 => Ok(TdsDataType::Json),
             _ => Err(Error::ProtocolError(format(format_args!(
-                "Invalid TDS Type {:?}",
-                value
+                "Invalid TDS Type {value:?}"
             )))),
         }
     }
@@ -537,7 +536,7 @@ where
                 }
             }
             ty => {
-                println!("Unsupported TDS type: {:?}", ty);
+                println!("Unsupported TDS type: {ty:?}");
                 unimplemented!("Unsupported TDS type encountered. Cannot retrieve it's type info");
             }
         };
