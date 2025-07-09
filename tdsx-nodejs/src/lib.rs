@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use tds_x::{
-  connection::client_context::ClientContext,
-  connection_provider::tds_connection_provider::TdsConnectionProvider,
+    connection::client_context::ClientContext,
+    connection_provider::tds_connection_provider::TdsConnectionProvider,
 };
 use tokio::sync::Mutex;
 
@@ -16,17 +16,30 @@ pub mod context;
 
 #[napi]
 pub async fn connect(context: JsClientContext) -> napi::Result<Connection> {
-  let client_context: ClientContext = context.clone().into();
-  let provider = TdsConnectionProvider {};
-  let tds_client = provider
-    .create_client(client_context.clone(), None)
-    .await
-    .unwrap();
+    let client_context: ClientContext = context.clone().into();
+    let provider = TdsConnectionProvider {};
+    let tds_client = provider.create_client(client_context.clone(), None).await;
 
-  let connection = Connection {
-    tds_client: Arc::new(Mutex::new(tds_client)),
-  };
-  // Here you can use the connection object as needed
-  // For example, you can execute queries or perform other operations
-  Ok(connection)
+    if tds_client.is_err() {
+        return Err(napi::Error::from_reason(format!(
+            "Failed to Connect to SQL Server: {}",
+            tds_client.err().unwrap()
+        )));
+    }
+
+    match tds_client {
+        Ok(client) => {
+            let connection = Connection {
+                tds_client: Arc::new(Mutex::new(client)),
+            };
+            Ok(connection)
+        }
+        Err(e) => {
+            // Handle the error
+            Err(napi::Error::from_reason(format!(
+                "Failed to create TdsClient: {}",
+                e
+            )))
+        }
+    }
 }

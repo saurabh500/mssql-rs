@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
 use crate::error::Error::UsageError;
+use crate::message::parameters::rpc_parameters::RpcParameter;
+use crate::message::rpc::{RpcType, SqlRpc};
+use crate::query::result::ReturnValue;
 use crate::{
     connection::{
         tds_connection::{ExecutionContext, ALREADY_EXECUTING_ERROR},
@@ -31,6 +34,8 @@ pub struct TdsClient {
     // pub(crate) batch_result: Option<BatchResult<'static>>,
     current_metadata: Option<ColMetadataToken>,
     count_map: HashMap<CurrentCommand, usize>,
+
+    return_values: Vec<ReturnValue>,
 }
 
 impl TdsClient {
@@ -45,6 +50,7 @@ impl TdsClient {
             execution_context,
             current_metadata: None,
             count_map: HashMap::new(),
+            return_values: Vec::new(),
         }
     }
 
@@ -60,6 +66,7 @@ impl TdsClient {
         &self.execution_context
     }
 
+    /// Executes a SQL command (batch) against the server.
     pub async fn execute(
         &mut self,
         sql_command: String,
@@ -81,14 +88,65 @@ impl TdsClient {
         let mut command_count_map = HashMap::new();
         let metadata =
             Self::move_to_column_metadata(&mut self.transport, &mut command_count_map).await?;
-        self.current_metadata = metadata;
+        // No metadata means no rows were returned, so we set has_open_batch to false.
+        if metadata.is_none() {
+            self.execution_context.set_has_open_batch(false);
+        } else {
+            self.current_metadata = metadata;
+
+            self.execution_context.set_has_open_batch(true);
+        }
         Ok(())
     }
 
+    /// Executes a stored procedure with the given name and parameters.
+    pub async fn execute_stored_procedure(
+        &mut self,
+        stored_procedure_name: String,
+        positional_parameters: Option<&Vec<RpcParameter<'_>>>,
+        named_parameters: Option<&Vec<RpcParameter<'_>>>,
+        timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<()> {
+        if self.execution_context.has_open_batch() {
+            return Err(crate::error::Error::UsageError(
+                ALREADY_EXECUTING_ERROR.to_string(),
+            ));
+        };
+        self.transport.reset_reader();
+        let database_collation = self.negotiated_settings.database_collation;
+
+        let rpc = SqlRpc::new(
+            RpcType::Named(stored_procedure_name),
+            positional_parameters,
+            named_parameters,
+            &database_collation,
+            &self.execution_context,
+        );
+
+        let mut packet_writer =
+            rpc.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
+        rpc.serialize(&mut packet_writer).await?;
+
+        let mut command_count_map = HashMap::new();
+        let metadata =
+            Self::move_to_column_metadata(&mut self.transport, &mut command_count_map).await?;
+        // No metadata means no rows were returned, so we set has_open_batch to false.
+        if metadata.is_none() {
+            self.execution_context.set_has_open_batch(false);
+        } else {
+            self.current_metadata = metadata;
+
+            self.execution_context.set_has_open_batch(true);
+        }
+        Ok(())
+    }
+
+    /// Gets the next row of data, even from across result sets.
     pub async fn next_row(&mut self) -> TdsResult<Option<Vec<ColumnValues>>> {
         if self.current_metadata.is_none() {
             return Err(UsageError(
-                "No metadata found while fetching the next row. Have you called the execute method?".to_string(),
+                "No metadata found while fetching the next row. Have you called the execute method or was the query supposed to return resultset?".to_string(),
             ));
         }
         let mut parser_context =
@@ -116,6 +174,7 @@ impl TdsClient {
 
                     if !done.has_more() {
                         info!("No more rows for current command: {:?}", done.cur_cmd);
+                        self.execution_context.set_has_open_batch(false);
                         break;
                     }
                 }
@@ -126,7 +185,12 @@ impl TdsClient {
                 }
                 Tokens::EnvChange(env_change) => {
                     info!(?env_change);
-                    // Handle environment change if needed
+                    self.execution_context
+                        .capture_change_property(&env_change)?;
+                }
+                Tokens::ReturnValue(return_value_token) => {
+                    let return_value = return_value_token.into();
+                    self.return_values.push(return_value);
                 }
                 _ => {
                     info!(?token);
@@ -179,5 +243,33 @@ impl TdsClient {
             }
         }
         Ok(col_metadata)
+    }
+
+    /// Gets the return values collected so far.
+    pub fn get_return_values(&self) -> &Vec<ReturnValue> {
+        &self.return_values
+    }
+
+    pub async fn close_query(&mut self) -> TdsResult<()> {
+        if !self.execution_context.has_open_batch() {
+            return Err(crate::error::Error::UsageError(
+                "No open batch to close.".to_string(),
+            ));
+        }
+        // call next row to consume any remaining tokens
+        while let Ok(Some(_)) = self.next_row().await {
+            // Consume all remaining rows until no more rows are available.
+        }
+
+        // Reset the current metadata and return values.
+        self.current_metadata = None;
+        self.return_values.clear();
+        self.execution_context.set_has_open_batch(false);
+        Ok(())
+    }
+
+    pub async fn close_connection(&mut self) -> TdsResult<()> {
+        self.transport.close_transport().await?;
+        Ok(())
     }
 }

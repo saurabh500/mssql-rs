@@ -11,4 +11,8 @@ export interface JsClientContext {
   database: string
   trustServerCertificate: boolean
 }
-export declare class Connection { }
+export declare function connect(context: JsClientContext): Promise<Connection>
+export declare class Connection {
+  execute(query: string): Promise<void>
+  nextRow(): Promise<Array<number | string | boolean | Buffer | null | Date>>
+}

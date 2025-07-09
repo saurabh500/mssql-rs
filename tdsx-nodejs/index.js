@@ -310,6 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Connection } = nativeBinding
+const { Connection, connect } = nativeBinding
 
 module.exports.Connection = Connection
+module.exports.connect = connect
