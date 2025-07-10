@@ -2,8 +2,8 @@ use byteorder::{ByteOrder, LittleEndian};
 use uuid::Uuid;
 
 use crate::datatypes::column_values::{
-    DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlMoney, SqlSmallDateTime, SqlSmallMoney,
-    SqlXml, Time, DEFAULT_VARTIME_SCALE,
+    DEFAULT_VARTIME_SCALE, DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlMoney,
+    SqlSmallDateTime, SqlSmallMoney, SqlXml, Time,
 };
 use crate::datatypes::sql_json::SqlJson;
 use crate::{
@@ -773,7 +773,7 @@ impl SqlType {
         let nullable_type: NullableTdsType = self.get_nullable_type();
         packet_writer.write_byte_async(nullable_type as u8).await?;
         let byte_len = 8; // DateTime is 8 bytes for non-null datetime.
-                          // Write the length of datatype
+        // Write the length of datatype
         packet_writer.write_byte_async(byte_len).await?;
         match date {
             Some(datetime) => {
@@ -907,7 +907,7 @@ fn get_scale_based_length(time: &Time) -> TdsResult<u8> {
         _ => {
             return Err(Error::UsageError(
                 format!("Invalid scale for Time type. {}", time.scale).to_string(),
-            ))
+            ));
         }
     };
     Ok(scale_based_byte_length)
@@ -937,7 +937,7 @@ fn get_scale_adjusted_time(t: &Time) -> TdsResult<u64> {
         _ => {
             return Err(Error::UsageError(
                 "Invalid scale for Time type.".to_string(),
-            ))
+            ));
         }
     };
     let scale_adjusted_time = t.time_nanoseconds / divider;
@@ -972,11 +972,11 @@ mod datetime_tests {
     use crate::{
         datatypes::{
             column_values::{
-                DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlSmallDateTime, Time,
-                DEFAULT_VARTIME_SCALE,
+                DEFAULT_VARTIME_SCALE, DateTime2, DateTimeOffset, SqlDate, SqlDateTime,
+                SqlSmallDateTime, Time,
             },
             sqldatatypes::TdsDataType,
-            sqltypes::{get_scale_adjusted_time, get_scale_based_length, SqlType, NULL_LENGTH},
+            sqltypes::{NULL_LENGTH, SqlType, get_scale_adjusted_time, get_scale_based_length},
         },
         message::messages::PacketType,
         read_write::{
@@ -1501,7 +1501,7 @@ mod binary_tests {
     use crate::{
         datatypes::{
             sqldatatypes::TdsDataType,
-            sqltypes::{SqlType, MAX_SHORT_DATA_LENGTH, PLP_TERMINATOR_CHUNK_LEN, VAR_NULL_LENGTH},
+            sqltypes::{MAX_SHORT_DATA_LENGTH, PLP_TERMINATOR_CHUNK_LEN, SqlType, VAR_NULL_LENGTH},
         },
         message::messages::PacketType,
         read_write::{
@@ -1640,7 +1640,7 @@ mod nvarchar_tests {
         datatypes::{
             sql_string::SqlString,
             sqldatatypes::TdsDataType,
-            sqltypes::{SqlType, MAX_SHORT_DATA_LENGTH, PLP_TERMINATOR_CHUNK_LEN, VAR_NULL_LENGTH},
+            sqltypes::{MAX_SHORT_DATA_LENGTH, PLP_TERMINATOR_CHUNK_LEN, SqlType, VAR_NULL_LENGTH},
         },
         message::messages::PacketType,
         read_write::{
@@ -1791,7 +1791,7 @@ mod bigint_tests {
     use crate::{
         datatypes::{
             sqldatatypes::{FixedLengthTypes, TdsDataType},
-            sqltypes::{SqlType, NULL_LENGTH},
+            sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
         read_write::{
@@ -1865,7 +1865,7 @@ mod f32_tests {
     use crate::{
         datatypes::{
             sqldatatypes::{FixedLengthTypes, TdsDataType},
-            sqltypes::{SqlType, NULL_LENGTH},
+            sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
         read_write::{
@@ -1935,7 +1935,7 @@ mod f64_tests {
     use crate::{
         datatypes::{
             sqldatatypes::{FixedLengthTypes, TdsDataType},
-            sqltypes::{SqlType, NULL_LENGTH},
+            sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
         read_write::{
@@ -2005,7 +2005,7 @@ mod decimalparts_tests {
     use crate::{
         datatypes::{
             sqldatatypes::TdsDataType,
-            sqltypes::{SqlType, DECIMAL_FIXED_SIZE, NULL_LENGTH},
+            sqltypes::{DECIMAL_FIXED_SIZE, NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
         read_write::{
@@ -2150,7 +2150,7 @@ mod int_tests {
     use crate::{
         datatypes::{
             sqldatatypes::{FixedLengthTypes, TdsDataType},
-            sqltypes::{SqlType, NULL_LENGTH},
+            sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
         read_write::{
@@ -2248,7 +2248,7 @@ mod smallint_tests {
     use crate::{
         datatypes::{
             sqldatatypes::{FixedLengthTypes, TdsDataType},
-            sqltypes::{SqlType, NULL_LENGTH},
+            sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
         read_write::{
@@ -2515,7 +2515,7 @@ mod xml_tests {
         datatypes::{
             column_values::SqlXml,
             sqldatatypes::TdsDataType,
-            sqltypes::{SqlType, NO_XML_SCHEMA, PLP_NULL, PLP_UNKNOWN_LENGTH},
+            sqltypes::{NO_XML_SCHEMA, PLP_NULL, PLP_UNKNOWN_LENGTH, SqlType},
         },
         message::messages::PacketType,
         read_write::{
@@ -2653,7 +2653,7 @@ mod uuid_tests {
     use crate::{
         datatypes::{
             sqldatatypes::TdsDataType,
-            sqltypes::{SqlType, NULL_LENGTH},
+            sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
         read_write::{
@@ -2724,7 +2724,7 @@ mod money_tests {
     use crate::{
         datatypes::{
             sqldatatypes::TdsDataType,
-            sqltypes::{SqlType, NULL_LENGTH},
+            sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
         read_write::{
@@ -2863,7 +2863,7 @@ mod json_tests {
         datatypes::{
             sql_json::SqlJson,
             sqldatatypes::TdsDataType,
-            sqltypes::{SqlType, PLP_NULL, PLP_UNKNOWN_LENGTH},
+            sqltypes::{PLP_NULL, PLP_UNKNOWN_LENGTH, SqlType},
         },
         message::messages::PacketType,
         read_write::{

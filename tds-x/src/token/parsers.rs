@@ -18,7 +18,7 @@ use crate::{
     datatypes::{
         column_values::ColumnValues,
         decoder::SqlTypeDecode,
-        sqldatatypes::{read_type_info, TdsDataType},
+        sqldatatypes::{TdsDataType, read_type_info},
     },
     message::{
         login::{FeatureExtension, RoutingInfo},
@@ -837,8 +837,8 @@ pub(crate) mod tests {
         message::messages::PacketType,
         read_write::{
             packet_reader::{
-                tests::{MockNetworkReaderWriter, TestPacketBuilder},
                 PacketReader, TdsPacketReader,
+                tests::{MockNetworkReaderWriter, TestPacketBuilder},
             },
             token_stream::ParserContext,
         },

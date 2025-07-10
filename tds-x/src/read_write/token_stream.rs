@@ -74,7 +74,10 @@ where
         // We should always have a parser for the token type.
         // If we don't, then we have a bug in the code.
         if !self.parser_registry.has_parser(&token_type) {
-            unreachable!("No parser implemented for token type: {:?}. This is an internal implementation error.", token_type);
+            unreachable!(
+                "No parser implemented for token type: {:?}. This is an internal implementation error.",
+                token_type
+            );
         }
 
         let parser = self

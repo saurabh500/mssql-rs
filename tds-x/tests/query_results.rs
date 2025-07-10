@@ -3,8 +3,8 @@ mod common;
 
 mod query_result_reads {
     use crate::common::{
-        begin_connection, connect_query_and_validate, create_context, run_query_and_check_results,
-        ExpectedQueryResultType,
+        ExpectedQueryResultType, begin_connection, connect_query_and_validate, create_context,
+        run_query_and_check_results,
     };
     use futures::StreamExt;
     use tds_x::error::Error::{SqlServerError, UsageError};

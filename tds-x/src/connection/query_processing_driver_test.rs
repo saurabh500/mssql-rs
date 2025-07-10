@@ -5,7 +5,7 @@ pub(crate) mod query_processing_driver {
     use crate::datatypes::sqltypes::SqlType;
     use crate::error::Error;
     use crate::error::Error::ProtocolError;
-    use crate::message::headers::{write_headers, TdsHeaders, TransactionDescriptorHeader};
+    use crate::message::headers::{TdsHeaders, TransactionDescriptorHeader, write_headers};
     use crate::message::messages::PacketType;
 
     use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
@@ -21,7 +21,7 @@ pub(crate) mod query_processing_driver {
         message::{
             batch::SqlBatch,
             messages::Request,
-            parameters::rpc_parameters::{build_parameter_list_string, RpcParameter, StatusFlags},
+            parameters::rpc_parameters::{RpcParameter, StatusFlags, build_parameter_list_string},
             rpc::{RpcProcs, RpcType, SqlRpc},
         },
         read_write::token_stream::ParserContext,

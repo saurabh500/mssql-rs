@@ -382,7 +382,9 @@ impl LoginHandler<'_> {
             let fed_auth_info = match &login_response.fed_auth_info {
                 Some(fed_auth_info) => fed_auth_info,
                 None => {
-                    unreachable!("Federated authentication info should be present, if the status is WaitingForFedAuth.");
+                    unreachable!(
+                        "Federated authentication info should be present, if the status is WaitingForFedAuth."
+                    );
                 }
             };
             let context = &self.factory.context;

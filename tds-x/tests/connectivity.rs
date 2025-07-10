@@ -87,7 +87,9 @@ mod connectivity {
 
     pub fn create_context_with_accesstoken(access_token: String) -> ClientContext {
         dotenv().ok();
-        println!("This test expects that `az login --tenant E8F4741A-817A-403A-B28F-200D2B07D656` was run to get a token.");
+        println!(
+            "This test expects that `az login --tenant E8F4741A-817A-403A-B28F-200D2B07D656` was run to get a token."
+        );
         init_tracing();
 
         ClientContext {

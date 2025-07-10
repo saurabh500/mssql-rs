@@ -2,13 +2,13 @@ use std::io::Error;
 
 use clap::Parser;
 use futures::StreamExt;
+use rustyline::Helper;
+use rustyline::Result as RustylineResult;
 use rustyline::completion::{Completer, Pair};
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::{ValidationContext, ValidationResult, Validator};
-use rustyline::Helper;
-use rustyline::Result as RustylineResult;
-use rustyline::{error::ReadlineError, CompletionType, Config, Editor};
+use rustyline::{CompletionType, Config, Editor, error::ReadlineError};
 
 use crate::connection::tds_connection::TdsConnection;
 use crate::core::TdsResult;

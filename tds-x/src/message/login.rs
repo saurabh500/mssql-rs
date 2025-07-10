@@ -18,7 +18,7 @@ use super::features::fedauth::FedAuthFeature;
 use super::features::utf8::Utf8Feature;
 use crate::core::TdsResult;
 use crate::read_write::token_stream::{ParserContext, TdsTokenStreamReader};
-use tracing::{debug, event, info, trace, Level};
+use tracing::{Level, debug, event, info, trace};
 
 pub(crate) const FIXED_LOGIN_RECORD_LENGTH: i32 = 94;
 
@@ -1053,7 +1053,9 @@ impl ClientContext {
             self.tds_authentication_method,
             TdsAuthenticationMethod::SSPI
         ) {
-            todo!("SSPI authentication not implemented yet. Add logic to compute the length of the SSPI information to be sent to the server.");
+            todo!(
+                "SSPI authentication not implemented yet. Add logic to compute the length of the SSPI information to be sent to the server."
+            );
         }
         length
     }

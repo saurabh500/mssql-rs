@@ -6,7 +6,7 @@ pub mod result_set;
 pub mod row;
 
 use client_context::PyClientContext;
-use connection::{create_connection_sync, PyTdsConnection};
+use connection::{PyTdsConnection, create_connection_sync};
 use once_cell::sync::Lazy;
 use pyo3::prelude::*;
 use query_result::PyQueryResultStream;

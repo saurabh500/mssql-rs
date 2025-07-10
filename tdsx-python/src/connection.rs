@@ -6,7 +6,7 @@ use tds_x::connection::tds_connection::TdsConnection;
 use tds_x::connection_provider::tds_connection_provider::TdsConnectionProvider;
 use tds_x::query::result::BatchResult;
 
-use crate::{batch_result::PyBatchResult, client_context::PyClientContext, RUNTIME};
+use crate::{RUNTIME, batch_result::PyBatchResult, client_context::PyClientContext};
 
 /// Represents a Python TDS connection.
 ///

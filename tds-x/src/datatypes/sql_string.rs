@@ -2,7 +2,7 @@ use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 use core::fmt;
 use std::{fmt::Debug, fmt::Display};
 
-use super::sqldatatypes::{is_unicode_type, TypeInfoVariant};
+use super::sqldatatypes::{TypeInfoVariant, is_unicode_type};
 
 #[derive(PartialEq, Clone)]
 pub enum EncodingType {

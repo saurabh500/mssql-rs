@@ -170,8 +170,8 @@ impl From<&SqlMoney> for TdsResult<f32> {
         // TDS value of money is the value multiplied by 10^4, hence we need to divide while decoding.
         let scaled_value = (value.lsb_part as f64) / 10000.0000; // f64 so that we don't lose precision
         Ok(scaled_value as f32) // Post division, money value  must fit in f32
-                                // TODO: For max (& min) value of smallmoney (214748.3647), the f32 value is 214748.36, which is not accurate. Debug & fix this.
-                                //       See test test_money_no_panic. Trying to query these max values from SSMS or ODBC gives correct value.
+        // TODO: For max (& min) value of smallmoney (214748.3647), the f32 value is 214748.36, which is not accurate. Debug & fix this.
+        //       See test test_money_no_panic. Trying to query these max values from SSMS or ODBC gives correct value.
     }
 }
 

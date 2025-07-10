@@ -3,7 +3,7 @@ use core::fmt;
 use std::{fmt::Debug, io::Error, vec};
 
 use super::{
-    sql_string::{get_encoding_type, SqlString},
+    sql_string::{SqlString, get_encoding_type},
     sqldatatypes::{TdsDataType, TypeInfoVariant},
 };
 use crate::datatypes::sqldatatypes::TypeInfo;
@@ -80,7 +80,10 @@ impl GenericDecoder {
                 decode_seven_propbyte_variant(reader, tds_type, data_length).await?
             }
             _ => {
-                unreachable!("Unexpected variant properties length: {}. This shouldn't have happened. Did the server send the wrong payload?", variant_prop_bytes);
+                unreachable!(
+                    "Unexpected variant properties length: {}. This shouldn't have happened. Did the server send the wrong payload?",
+                    variant_prop_bytes
+                );
             }
         };
         Ok(col_value)
@@ -155,7 +158,10 @@ impl GenericDecoder {
                     .await?
             }
             _ => {
-                unreachable!("For 1 byte property, only TimeN, DateTime2N and DateTimeOffsetN are expected, but got: {:?}", tds_type);
+                unreachable!(
+                    "For 1 byte property, only TimeN, DateTime2N and DateTimeOffsetN are expected, but got: {:?}",
+                    tds_type
+                );
             }
         })
     }
@@ -562,7 +568,7 @@ impl SqlTypeDecode for GenericDecoder {
                     _ => {
                         return Ok(ColumnValues::Time(
                             self.read_time(reader, length, metadata.get_scale()).await?,
-                        ))
+                        ));
                     }
                 }
             }
@@ -720,11 +726,7 @@ impl DecimalParts {
 
         d_ret /= 10.0_f64.powi(self.scale as i32);
 
-        if self.is_positive {
-            d_ret
-        } else {
-            -d_ret
-        }
+        if self.is_positive { d_ret } else { -d_ret }
     }
 }
 

@@ -409,8 +409,8 @@ pub(crate) mod tests {
     };
 
     use crate::read_write::packet_reader::TdsPacketReader;
-    use crate::read_write::packet_writer::tests::MockNetworkWriter;
     use crate::read_write::packet_writer::PacketWriter;
+    use crate::read_write::packet_writer::tests::MockNetworkWriter;
     use async_trait::async_trait;
     use byteorder::{BigEndian, ReadBytesExt};
     use futures::executor::block_on;

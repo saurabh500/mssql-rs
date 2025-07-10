@@ -599,7 +599,7 @@ where
                     None => {
                         return Err(Error::ProtocolError(
                             "Missing UDT assembly qualified name".to_string(),
-                        ))
+                        ));
                     }
                 };
                 TypeInfo {

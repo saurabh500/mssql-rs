@@ -3,8 +3,8 @@ mod common;
 
 mod timeout_and_cancel_tests {
     use crate::common::{
-        begin_connection, create_context, run_query_and_check_results, trust_server_certificate,
-        ExpectedQueryResultType,
+        ExpectedQueryResultType, begin_connection, create_context, run_query_and_check_results,
+        trust_server_certificate,
     };
     use std::time::{Duration, Instant};
     use tds_x::connection::client_context::ClientContext;

@@ -6,7 +6,7 @@ use crate::message::rpc::{RpcType, SqlRpc};
 use crate::query::result::ReturnValue;
 use crate::{
     connection::{
-        tds_connection::{ExecutionContext, ALREADY_EXECUTING_ERROR},
+        tds_connection::{ALREADY_EXECUTING_ERROR, ExecutionContext},
         transport::network_transport::NetworkTransport,
     },
     datatypes::column_values::ColumnValues,

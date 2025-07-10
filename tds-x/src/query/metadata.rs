@@ -48,18 +48,21 @@ impl ColumnMetadata {
 
 impl fmt::Display for ColumnMetadata {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f,  "Column Name: {}\nData Type: {:?} (UserType: {})\nFlags: [Nullable: {}, CaseSensitive: {}, Identity: {}, Computed: {}, \
+        write!(
+            f,
+            "Column Name: {}\nData Type: {:?} (UserType: {})\nFlags: [Nullable: {}, CaseSensitive: {}, Identity: {}, Computed: {}, \
         SparseColumnSet: {}, Encrypted: {}, MultiPartName: {:?}]\n",
-        self.column_name,
-        self.data_type,
-        self.user_type,
-        self.is_nullable(),
-        self.is_case_sensitive(),
-        self.is_identity(),
-        self.is_computed(),
-        self.is_sparse_column_set(),
-        self.is_encrypted(),
-        self.multi_part_name)
+            self.column_name,
+            self.data_type,
+            self.user_type,
+            self.is_nullable(),
+            self.is_case_sensitive(),
+            self.is_identity(),
+            self.is_computed(),
+            self.is_sparse_column_set(),
+            self.is_encrypted(),
+            self.multi_part_name
+        )
     }
 }
 

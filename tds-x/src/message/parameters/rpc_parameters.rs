@@ -130,7 +130,9 @@ impl<'b> RpcParameter<'b> {
                     // we expect that a name is provided.
                     // If it is not provided, then the called made a mistake.
                     // Since this is a programming error, we can panic.
-                    unreachable!("Parameter name is None for a non-positional parameter. Unexpected implemetation path");
+                    unreachable!(
+                        "Parameter name is None for a non-positional parameter. Unexpected implemetation path"
+                    );
                 }
             }
         }

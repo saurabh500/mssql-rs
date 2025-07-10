@@ -3,8 +3,8 @@ mod common;
 #[cfg(test)]
 mod transactions {
     use crate::common::{
-        begin_connection, create_context, run_query_and_check_results, validate_results,
-        ExpectedQueryResultType,
+        ExpectedQueryResultType, begin_connection, create_context, run_query_and_check_results,
+        validate_results,
     };
     use tds_x::message::transaction_management::{
         CreateTxnParams, TransactionIsolationLevel, TransactionManagementType,

@@ -1,4 +1,4 @@
-use crate::{result_set::PyResultSet, RUNTIME};
+use crate::{RUNTIME, result_set::PyResultSet};
 use futures::StreamExt;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -12,7 +12,7 @@ pub struct PyQueryResultStream {
 #[pymethods]
 impl PyQueryResultStream {
     fn __iter__(&mut self) -> PyResult<PyResultSet> {
-        let result = RUNTIME.block_on(async {
+        RUNTIME.block_on(async {
             let stream = self
                 .inner
                 .as_mut()
@@ -33,12 +33,11 @@ impl PyQueryResultStream {
                 }
             }
             Ok(PyResultSet { inner: None })
-        });
-        result
+        })
     }
 
     fn next_result(&mut self) -> PyResult<Option<PyResultSet>> {
-        let result = {
+        {
             let stream = self.inner.as_mut();
             if stream.is_none() {
                 return Ok(None);
@@ -60,7 +59,6 @@ impl PyQueryResultStream {
                 }
             }
             Ok(None)
-        };
-        result
+        }
     }
 }

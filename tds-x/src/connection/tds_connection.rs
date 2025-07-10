@@ -10,7 +10,7 @@ use crate::message::attention::AttentionRequest;
 use crate::message::batch::SqlBatch;
 use crate::message::messages::Request;
 use crate::message::parameters::rpc_parameters::{
-    build_parameter_list_string, RpcParameter, StatusFlags,
+    RpcParameter, StatusFlags, build_parameter_list_string,
 };
 use crate::message::rpc::{ProcOptions, RpcProcs, RpcType, SqlRpc};
 use crate::message::transaction_management::{
@@ -22,7 +22,7 @@ use crate::token::tokens::{
     DoneStatus, EnvChangeContainer, EnvChangeToken, EnvChangeTokenSubType, Tokens,
 };
 use std::time::{Duration, Instant};
-use tracing::{event, info, Level};
+use tracing::{Level, event, info};
 
 pub struct TdsConnection {
     pub(crate) transport: Box<NetworkTransport>,
