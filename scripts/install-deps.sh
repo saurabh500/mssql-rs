@@ -133,6 +133,22 @@ if [[ "$1" != "--skip-rustup" ]]; then
     install_rustup
 fi
 
+# Download and install fnm:
+if ! command -v fnm &> /dev/null
+then
+    echo "fnm not found, installing..."
+    curl -o- https://fnm.vercel.app/install | bash
+    source "$HOME/.bashrc"
+else
+    echo "fnm is already installed"
+fi
+# Download and install Node.js:
+fnm install 20
+
+fnm use 20
+
+corepack enable
+
 
 echo "Home dir is $HOME"
 echo "Current dir is $(pwd)"

@@ -1,4 +1,4 @@
-FROM tdslibrs.azurecr.io/arm64/alpine:3.18
+FROM tdslibrs.azurecr.io/arm64/ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
