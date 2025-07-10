@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [ 
-    "tds-x", "tdsx-python", "cpp-driver-cxx", "tdsx-nodejs"
+    "tds-x", "tdsx-nodejs"
 ]
 
 [profile.release]

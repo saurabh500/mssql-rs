@@ -32,11 +32,6 @@ steps:
   displayName: Fetch Crates
 
 - script: |
-    make
-  displayName: Run the Cpp build.
-  condition: and(succeeded(), ne('${{parameters.osType}}', 'Windows'))
-
-- script: |
     cargo build --frozen 2>&1
   displayName: Rust Debug Build
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
@@ -53,13 +48,6 @@ steps:
 - script: cargo bfmt
   displayName: Check Format
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
-
-- ${{ if eq(parameters.osType, 'Linux') }}:
-  - script: scripts/buildpythoninterop.sh
-    displayName: Build Python Interop
-    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
-    env:
-      CARGO_REGISTRIES_ONELAKECLIENT_TOKEN: $(OneLakeClientSecret)
 
 - script: cargo install cargo-llvm-cov --version 0.6.16 --locked && cargo install cargo-nextest --version 0.9.99 --locked
   displayName: Install llvm-cov and nextest 
