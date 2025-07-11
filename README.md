@@ -112,7 +112,7 @@ The configuration is done in the `.cargo/config.toml` file.
 I want to build the tests in one place, and run the binaries on a different machine/OS
 
 On the source machine with source code, build the tests and archive them
-` cd tds-x && cargo nextest archive --archive-file tdslib-nextest.tar.zst && mv tdslib-nextest.tar.zst ..`
+` cd mssql-tds && cargo nextest archive --archive-file tdslib-nextest.tar.zst && mv tdslib-nextest.tar.zst ..`
 
 Copy the archive file to a destination which has cargo and nextest installed, no source code needed. The tests can be executed using.
 `cargo nextest run --archive-file tdslib-nextest.tar.zst`

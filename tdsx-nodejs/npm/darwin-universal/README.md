@@ -1,3 +1,0 @@
-# `tdsx-nodejs-darwin-universal`
-
-This is the **universal-apple-darwin** binary for `tdsx-nodejs`
