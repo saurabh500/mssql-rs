@@ -992,6 +992,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"mssql-js@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "mssql-js@workspace:."
+  dependencies:
+    "@napi-rs/cli": "npm:^2.18.4"
+    ava: "npm:^6.0.1"
+  languageName: unknown
+  linkType: soft
+
 "node-fetch@npm:^2.6.7":
   version: 2.7.0
   resolution: "node-fetch@npm:2.7.0"
@@ -1318,15 +1327,6 @@ __metadata:
   checksum: 10c0/d4679609bb2a9b48eeaf84632b6d844128d2412b95b6de07d53d8ee8baf4ca0857c9331dfa510390a0727b550fd543d4d1a10995ad86cdf078423fbb8d99831d
   languageName: node
   linkType: hard
-
-"mssql-js@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "mssql-js@workspace:."
-  dependencies:
-    "@napi-rs/cli": "npm:^2.18.4"
-    ava: "npm:^6.0.1"
-  languageName: unknown
-  linkType: soft
 
 "temp-dir@npm:^3.0.0":
   version: 3.0.0

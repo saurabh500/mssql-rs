@@ -1,8 +1,8 @@
 {
   "name": "mssql-js",
   "version": "0.0.0",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "main": "js/generated/index.js",
+  "types": "js/generated/index.d.ts",
   "napi": {
     "name": "mssql-js",
     "triples": {
@@ -28,8 +28,8 @@
   },
   "scripts": {
     "artifacts": "napi artifacts",
-    "build": "napi build --platform --release",
-    "build:debug": "napi build --platform",
+    "build": "napi build --platform --release --dts js/generated/index.d.ts && mv mssql-js*.node js/generated/ && mv index.js js/generated/",
+    "build:debug": "napi build --platform --dts js/generated/index.d.ts && mv mssql-js*.node js/generated/ && mv index.js js/generated/",
     "prepublishOnly": "napi prepublish -t npm",
     "test": "ava \"**/*.mjs\" --extensions mjs",
     "universal": "napi universal",

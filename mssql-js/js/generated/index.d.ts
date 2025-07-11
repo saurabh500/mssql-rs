@@ -15,4 +15,6 @@ export declare function connect(context: JsClientContext): Promise<Connection>
 export declare class Connection {
   execute(query: string): Promise<void>
   nextRow(): Promise<Array<number | string | boolean | Buffer | null | Date>>
+  closeQuery(): Promise<void>
+  close(): Promise<void>
 }

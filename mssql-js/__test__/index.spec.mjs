@@ -1,6 +1,6 @@
 import test from 'ava'
 
-import { connect } from '../index.js'
+import { connect } from '../js/generated/index.js'
 
 // test('sum from native', (t) => {
 //   t.is(sum(1, 2), 3)
