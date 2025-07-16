@@ -1,5 +1,6 @@
 #[cfg(not(target_os = "macos"))]
 pub(crate) mod query_processing_driver {
+    use crate::connection::tds_client::{ResultSet, ResultSetClient};
     use crate::core::EncryptionOptions;
 
     use crate::datatypes::sqltypes::SqlType;
@@ -839,10 +840,21 @@ pub(crate) mod query_processing_driver {
             ..Default::default()
         };
         let provider = TdsConnectionProvider {};
-        let mut tds_client = provider.create_client(context, None).await?;
+        let tds_client = provider.create_client(context, None).await;
+        let is_err = tds_client.is_err();
+        if is_err {
+            // eprintln!("Failed to create TDS client: {:?}", tds_client.err().unwrap());
+            return Err(tds_client.err().unwrap());
+        }
+        let mut tds_client = tds_client.unwrap();
         tds_client.execute(query.to_string(), None, None).await?;
-        while let Some(row) = tds_client.next_row().await? {
-            println!("Row: {row:?}");
+        while let Some(result_set) = tds_client.get_current_resultset() {
+            while let Some(row) = result_set.next_row().await? {
+                println!("Row: {row:?}");
+            }
+            if tds_client.move_to_next().await? {
+                continue;
+            }
         }
         Ok(())
     }

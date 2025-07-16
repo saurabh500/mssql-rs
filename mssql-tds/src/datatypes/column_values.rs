@@ -52,9 +52,9 @@ pub enum ColumnValues {
     String(SqlString),
     DateTime(SqlDateTime),
     Date(SqlDate),
-    Time(Time),
-    DateTime2(DateTime2),
-    DateTimeOffset(DateTimeOffset),
+    Time(SqlTime),
+    DateTime2(SqlDateTime2),
+    DateTimeOffset(SqlDateTimeOffset),
     SmallDateTime(SqlSmallDateTime),
     SmallMoney(SqlSmallMoney),
     Money(SqlMoney),
@@ -68,26 +68,26 @@ pub enum ColumnValues {
 pub const DEFAULT_VARTIME_SCALE: u8 = 7;
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Time {
+pub struct SqlTime {
     pub time_nanoseconds: u64,
     pub scale: u8,
 }
 
-impl Time {
+impl SqlTime {
     pub(crate) fn get_scale(&self) -> u8 {
         self.scale
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct DateTime2 {
+pub struct SqlDateTime2 {
     pub days: u32,
-    pub time: Time,
+    pub time: SqlTime,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct DateTimeOffset {
-    pub datetime2: DateTime2,
+pub struct SqlDateTimeOffset {
+    pub datetime2: SqlDateTime2,
     pub offset: i16,
 }
 

@@ -2,6 +2,7 @@ use mssql_tds::{
     connection::client_context::{ClientContext, TransportContext},
     core::{EncryptionOptions, EncryptionSetting},
 };
+use tracing::info;
 
 #[napi(object)]
 #[derive(Clone)]
@@ -21,13 +22,10 @@ impl From<JsClientContext> for ClientContext {
             trust_server_certificate: js_ctx.trust_server_certificate,
             host_name_in_cert: None,
         };
-        println!(
-            "Creating ClientContext with server_name: {}, port: {}, user_name: {}, database: {}, trust_server_certificate: {}",
-            js_ctx.server_name,
-            js_ctx.port,
-            js_ctx.user_name,
-            js_ctx.database,
-            encryption_options.trust_server_certificate
+
+        info!(
+            "Creating ClientContext with server_name: {}, port: {}, user_name: {}, database: {}",
+            js_ctx.server_name, js_ctx.port, js_ctx.user_name, js_ctx.database
         );
         ClientContext {
             transport_context: TransportContext::Tcp {

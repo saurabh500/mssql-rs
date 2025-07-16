@@ -468,6 +468,7 @@ impl TdsConnection {
 /// It holds information about the current transaction,
 /// outstanding requests, and whether there are open batches or result sets.
 /// This context is used to manage the state of the query execution on the connection.
+#[derive(Debug, Clone)]
 pub(crate) struct ExecutionContext {
     transaction_descriptor: u64,
     outstanding_requests: u32,

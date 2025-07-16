@@ -13,8 +13,8 @@ use crate::{
 };
 use crate::{
     datatypes::column_values::{
-        ColumnValues, DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlMoney, SqlSmallDateTime,
-        SqlSmallMoney, SqlXml, Time,
+        ColumnValues, SqlDate, SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlMoney,
+        SqlSmallDateTime, SqlSmallMoney, SqlTime, SqlXml,
     },
     read_write::packet_reader::TdsPacketReader,
 };
@@ -245,7 +245,7 @@ impl GenericDecoder {
         Ok(SqlDate::unchecked_create(days))
     }
 
-    async fn read_time<T>(&self, reader: &mut T, byte_len: u8, scale: u8) -> TdsResult<Time>
+    async fn read_time<T>(&self, reader: &mut T, byte_len: u8, scale: u8) -> TdsResult<SqlTime>
     where
         T: TdsPacketReader + Send + Sync,
     {
@@ -254,7 +254,7 @@ impl GenericDecoder {
             4 => reader.read_uint32().await? as u64,
             _ => reader.read_uint40().await?,
         };
-        Ok(Time {
+        Ok(SqlTime {
             time_nanoseconds: nanoseconds,
             scale, // Default scale for TimeN
         })
@@ -271,7 +271,7 @@ impl GenericDecoder {
     {
         let sql_date = Self::read_date(reader).await?;
         let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
-        let datetime2 = DateTime2 {
+        let datetime2 = SqlDateTime2 {
             days: sql_date.get_days(),
             time: time_nanos,
         };
@@ -290,11 +290,11 @@ impl GenericDecoder {
         let sql_date = Self::read_date(reader).await?;
         let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
         let offset = reader.read_int16().await?;
-        let datetime2 = DateTime2 {
+        let datetime2 = SqlDateTime2 {
             days: sql_date.get_days(),
             time: time_nanos,
         };
-        let datetime_offset = DateTimeOffset { datetime2, offset };
+        let datetime_offset = SqlDateTimeOffset { datetime2, offset };
         Ok(ColumnValues::DateTimeOffset(datetime_offset))
     }
 
@@ -433,6 +433,19 @@ impl SqlTypeDecode for GenericDecoder {
             }
             TdsDataType::Money4 => ColumnValues::SmallMoney(self.read_money4(reader).await?),
             TdsDataType::Money => ColumnValues::Money(self.read_money8(reader).await?),
+            TdsDataType::MoneyN => {
+                let byte_len = reader.read_byte().await?;
+                match byte_len {
+                    4 => ColumnValues::SmallMoney(self.read_money4(reader).await?),
+                    8 => ColumnValues::Money(self.read_money8(reader).await?),
+                    0 => ColumnValues::Null,
+                    _ => {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "Invalid MoneyN length - {byte_len}"
+                        )));
+                    }
+                }
+            }
             TdsDataType::DecimalN => {
                 let value = self.read_decimal(reader, metadata).await?;
                 match value {
@@ -466,19 +479,6 @@ impl SqlTypeDecode for GenericDecoder {
             TdsDataType::IntN => {
                 let byte_len = reader.read_byte().await?;
                 self.read_intn(reader, byte_len).await?
-            }
-            TdsDataType::MoneyN => {
-                let byte_len = reader.read_byte().await?;
-                match byte_len {
-                    4 => ColumnValues::SmallMoney(self.read_money4(reader).await?),
-                    8 => ColumnValues::Money(self.read_money8(reader).await?),
-                    0 => ColumnValues::Null,
-                    _ => {
-                        return Err(crate::error::Error::ProtocolError(format!(
-                            "Invalid MoneyN length - {byte_len}"
-                        )));
-                    }
-                }
             }
             TdsDataType::BigBinary => {
                 let length = reader.read_uint16().await?;
@@ -703,6 +703,7 @@ impl SqlTypeDecode for StringDecoder {
     }
 }
 
+/// TDS representation of Decimal and Numeric types.
 #[derive(PartialEq, Clone)]
 pub struct DecimalParts {
     pub is_positive: bool,

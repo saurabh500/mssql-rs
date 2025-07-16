@@ -19,7 +19,8 @@ use crate::{
     },
     token::tokens::{ColMetadataToken, CurrentCommand, Tokens},
 };
-use tracing::info;
+use async_trait::async_trait;
+use tracing::{info, instrument};
 
 use crate::{
     core::{CancelHandle, TdsResult},
@@ -32,10 +33,11 @@ pub struct TdsClient {
     pub(crate) execution_context: ExecutionContext,
 
     // pub(crate) batch_result: Option<BatchResult<'static>>,
-    current_metadata: Option<ColMetadataToken>,
+    pub(crate) current_metadata: Option<ColMetadataToken>,
     count_map: HashMap<CurrentCommand, usize>,
 
     return_values: Vec<ReturnValue>,
+    current_result_set_has_been_read_till_end: bool,
 }
 
 impl TdsClient {
@@ -51,6 +53,7 @@ impl TdsClient {
             current_metadata: None,
             count_map: HashMap::new(),
             return_values: Vec::new(),
+            current_result_set_has_been_read_till_end: false,
         }
     }
 
@@ -85,9 +88,7 @@ impl TdsClient {
             batch.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
         batch.serialize(&mut packet_writer).await?;
 
-        let mut command_count_map = HashMap::new();
-        let metadata =
-            Self::move_to_column_metadata(&mut self.transport, &mut command_count_map).await?;
+        let metadata = self.move_to_column_metadata().await?;
         // No metadata means no rows were returned, so we set has_open_batch to false.
         if metadata.is_none() {
             self.execution_context.set_has_open_batch(false);
@@ -128,30 +129,41 @@ impl TdsClient {
             rpc.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
         rpc.serialize(&mut packet_writer).await?;
 
-        let mut command_count_map = HashMap::new();
-        let metadata =
-            Self::move_to_column_metadata(&mut self.transport, &mut command_count_map).await?;
+        let metadata = self.move_to_column_metadata().await?;
         // No metadata means no rows were returned, so we set has_open_batch to false.
         if metadata.is_none() {
             self.execution_context.set_has_open_batch(false);
+            self.current_result_set_has_been_read_till_end = true;
         } else {
             self.current_metadata = metadata;
-
+            self.current_result_set_has_been_read_till_end = false;
             self.execution_context.set_has_open_batch(true);
         }
         Ok(())
     }
 
-    /// Gets the next row of data, even from across result sets.
-    pub async fn next_row(&mut self) -> TdsResult<Option<Vec<ColumnValues>>> {
-        if self.current_metadata.is_none() {
-            return Err(UsageError(
-                "No metadata found while fetching the next row. Have you called the execute method or was the query supposed to return resultset?".to_string(),
-            ));
+    async fn drain_rows(&mut self) -> TdsResult<()> {
+        if self.maybe_has_unread_rows() {
+            // Drain the current result set.
+            while let Some(row) = self.get_next_row().await? {
+                info!("Consuming row while draining result set {:?}", row.len());
+            }
         }
-        let mut parser_context =
-            ParserContext::ColumnMetadata(self.current_metadata.clone().unwrap());
-        let mut result: Option<Vec<ColumnValues>> = None;
+        Ok(())
+    }
+
+    #[instrument(skip(self), level = "debug", name = "move_to_column_metadata")]
+    pub(crate) async fn move_to_column_metadata(&mut self) -> TdsResult<Option<ColMetadataToken>> {
+        // Check if we have an open batch. When the rows are read and
+        // we encounter a Done token without a More status, we should
+        // not try to read the column metadata again. This would make a network call
+        // and cause a hang.
+        if self.execution_context.has_open_batch() {
+            return Ok(None);
+        }
+
+        let parser_context = ParserContext::None(());
+        let mut col_metadata: Option<ColMetadataToken> = None;
 
         while let Ok(token) = self
             .transport
@@ -161,27 +173,20 @@ impl TdsClient {
             match token {
                 Tokens::ColMetadata(md) => {
                     info!(?md);
-                    self.current_metadata = Some(md);
-                    parser_context =
-                        ParserContext::ColumnMetadata(self.current_metadata.clone().unwrap());
-                    // Don't break on col metadata. Store and move on.
+                    col_metadata = Some(md);
+                    self.current_result_set_has_been_read_till_end = false;
+                    break;
                 }
                 Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
                     info!(?done);
 
                     let count = self.count_map.entry(done.cur_cmd).or_insert(0);
                     *count += done.row_count as usize;
-
+                    self.current_result_set_has_been_read_till_end = true;
                     if !done.has_more() {
-                        info!("No more rows for current command: {:?}", done.cur_cmd);
                         self.execution_context.set_has_open_batch(false);
                         break;
                     }
-                }
-                Tokens::Row(row) | Tokens::NbcRow(row) => {
-                    info!("Row Received");
-                    result = Some(row.all_values);
-                    break;
                 }
                 Tokens::EnvChange(env_change) => {
                     info!(?env_change);
@@ -193,56 +198,60 @@ impl TdsClient {
                     self.return_values.push(return_value);
                 }
                 _ => {
-                    info!(?token);
-                }
-            }
-        }
-        Ok(result)
-    }
-
-    pub fn get_metdata(&self) -> TdsResult<Vec<ColumnMetadata>> {
-        if self.current_metadata.is_none() {
-            return Err(crate::error::Error::UsageError(
-                "No metadata found. Is there a query executed?".to_string(),
-            ));
-        }
-        Ok(self.current_metadata.clone().unwrap_or_default().columns)
-    }
-
-    pub(crate) async fn move_to_column_metadata(
-        token_stream_reader: &mut NetworkTransport,
-        count_map: &mut HashMap<CurrentCommand, usize>,
-    ) -> TdsResult<Option<ColMetadataToken>> {
-        // Implementation for moving to the first column metadata
-        let parser_context = ParserContext::None(());
-        let mut col_metadata: Option<ColMetadataToken> = None;
-
-        while let Ok(token) = token_stream_reader
-            .receive_token(&parser_context, None, None)
-            .await
-        {
-            match token {
-                Tokens::ColMetadata(md) => {
-                    info!(?md);
-                    col_metadata = Some(md);
-                    break;
-                }
-                Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
-                    info!(?done);
-
-                    let count = count_map.entry(done.cur_cmd).or_insert(0);
-                    *count += done.row_count as usize;
-
-                    if !done.has_more() {
-                        break;
-                    }
-                }
-                _ => {
-                    info!(?token);
+                    info!("move_to_column_metadata: {:?}", token);
+                    return Err(UsageError(format!(
+                        "Unexpected token while moving to column metadata: {token:?}"
+                    )));
                 }
             }
         }
         Ok(col_metadata)
+    }
+
+    /// This functions returns to the next row in the result set.
+    /// If there are no more rows, it returns None.
+    #[instrument(skip(self), level = "debug", name = "get_next_row")]
+    pub(crate) async fn get_next_row(&mut self) -> TdsResult<Option<Vec<ColumnValues>>> {
+        if self.current_metadata.is_none() {
+            return Err(UsageError(
+                "No metadata found while fetching the next row. Have you called the execute method or was the query supposed to return resultset?".to_string(),
+            ));
+        }
+        let parser_context = ParserContext::ColumnMetadata(self.current_metadata.clone().unwrap());
+        let mut result: Option<Vec<ColumnValues>> = None;
+
+        let token = self
+            .transport
+            .receive_token(&parser_context, None, None)
+            .await?;
+
+        match token {
+            Tokens::Row(row) | Tokens::NbcRow(row) => {
+                info!("Row Received");
+                result = Some(row.all_values);
+            }
+            Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
+                info!("done while get_next_row: {:?}", done);
+
+                let count = self.count_map.entry(done.cur_cmd).or_insert(0);
+                *count += done.row_count as usize;
+
+                self.current_result_set_has_been_read_till_end = true;
+                if !done.has_more() {
+                    // Token stream is terminated. Save this information.
+                    info!("No more rows for current command: {:?}", done.cur_cmd);
+                    self.execution_context.set_has_open_batch(false);
+                }
+            }
+            _ => {
+                unreachable!(
+                    "This method shouldn't be called if we are not in a result set. Make sure to get to the ColMetadata Token before calling this method. {:?}",
+                    token
+                );
+            }
+        }
+
+        Ok(result)
     }
 
     /// Gets the return values collected so far.
@@ -252,14 +261,11 @@ impl TdsClient {
 
     pub async fn close_query(&mut self) -> TdsResult<()> {
         if !self.execution_context.has_open_batch() {
-            return Err(crate::error::Error::UsageError(
-                "No open batch to close.".to_string(),
-            ));
+            return Ok(());
         }
         // call next row to consume any remaining tokens
-        while let Ok(Some(_)) = self.next_row().await {
-            // Consume all remaining rows until no more rows are available.
-        }
+        while self.move_to_next().await? {}
+        info!("No more rows to consume.");
 
         // Reset the current metadata and return values.
         self.current_metadata = None;
@@ -272,4 +278,112 @@ impl TdsClient {
         self.transport.close_transport().await?;
         Ok(())
     }
+}
+
+#[async_trait]
+impl ResultSet for TdsClient {
+    fn get_metadata(&self) -> &Vec<ColumnMetadata> {
+        if self.current_metadata.is_none() {
+            unreachable!("No metadata found. Is there a query executed?");
+        }
+        &self.current_metadata.as_ref().unwrap().columns
+    }
+
+    async fn next_row(&mut self) -> TdsResult<Option<Vec<ColumnValues>>> {
+        if self.maybe_has_unread_rows() {
+            // If there are rows available, fetch the next row.
+            self.get_next_row().await
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn maybe_has_unread_rows(&self) -> bool {
+        !self.current_result_set_has_been_read_till_end
+    }
+
+    async fn close(&mut self) -> TdsResult<()> {
+        self.close_query().await
+    }
+}
+
+#[async_trait]
+impl ResultSetClient for TdsClient {
+    fn get_current_resultset(&mut self) -> Option<&mut TdsClient> {
+        if self.execution_context.has_open_batch() {
+            Some(self)
+        } else {
+            None
+        }
+    }
+
+    #[instrument(skip(self), level = "debug", name = "move_to_next")]
+    async fn move_to_next(&mut self) -> TdsResult<bool> {
+        if !self.execution_context.has_open_batch() {
+            return Ok(false);
+        }
+        // Drain the current result set.
+        if self.maybe_has_unread_rows() {
+            self.drain_rows().await?;
+        }
+
+        info!("Moving to next result set...");
+
+        let has_open_batch = self.execution_context.has_open_batch();
+        info!("Has open batch: {}", has_open_batch);
+        if !has_open_batch {
+            return Ok(false);
+        }
+        let metadata_token = self.move_to_column_metadata().await?;
+
+        match metadata_token {
+            Some(metadata) => {
+                self.current_metadata = Some(metadata);
+                self.execution_context.set_has_open_batch(true);
+                self.current_result_set_has_been_read_till_end = false;
+                Ok(true)
+            }
+            None => {
+                // No metadata means no more result sets.
+                self.execution_context.set_has_open_batch(false);
+                self.current_metadata = None;
+                self.current_result_set_has_been_read_till_end = true;
+                Ok(false)
+            }
+        }
+    }
+}
+
+#[async_trait]
+pub trait ResultSet {
+    /// Returns the metadata of the result set.
+    /// This metadata includes information about the columns in the result set.
+    fn get_metadata(&self) -> &Vec<ColumnMetadata>;
+
+    /// Returns the next row of data as a vector of column values.
+    /// If there is no more data, it returns None.
+    async fn next_row(&mut self) -> TdsResult<Option<Vec<ColumnValues>>>;
+
+    fn maybe_has_unread_rows(&self) -> bool;
+
+    /// Iterates over the result set, and marks it as closed. After calling close, the next_row method,
+    /// will always return None.
+    async fn close(&mut self) -> TdsResult<()>;
+}
+
+#[async_trait]
+pub trait ResultSetClient<T = TdsClient> {
+    /// Returns the current result set on the client.
+    /// Execution of query positions the client at the first result set.
+    /// If we have read all the results from the current result set,
+    /// this method will return None.
+    fn get_current_resultset(&mut self) -> Option<&mut T>;
+
+    /// Moves to the next result set, if available.
+    /// Returns true if there is a next result set, false otherwise.
+    /// The current_resultset will be closed and if the next result set is available,
+    /// it will be set as the current result set.
+    /// If there is no next result set, the current result set will be closed and
+    /// the method will return false.
+    async fn move_to_next(&mut self) -> TdsResult<bool>;
 }

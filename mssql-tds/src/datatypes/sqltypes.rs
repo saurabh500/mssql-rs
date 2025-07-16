@@ -2,8 +2,8 @@ use byteorder::{ByteOrder, LittleEndian};
 use uuid::Uuid;
 
 use crate::datatypes::column_values::{
-    DEFAULT_VARTIME_SCALE, DateTime2, DateTimeOffset, SqlDate, SqlDateTime, SqlMoney,
-    SqlSmallDateTime, SqlSmallMoney, SqlXml, Time,
+    DEFAULT_VARTIME_SCALE, SqlDate, SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlMoney,
+    SqlSmallDateTime, SqlSmallMoney, SqlTime, SqlXml,
 };
 use crate::datatypes::sql_json::SqlJson;
 use crate::{
@@ -32,9 +32,9 @@ pub enum SqlType {
     Money(Option<SqlMoney>),
     SmallMoney(Option<SqlSmallMoney>),
 
-    Time(Option<Time>),
-    DateTime2(Option<DateTime2>),
-    DateTimeOffset(Option<DateTimeOffset>),
+    Time(Option<SqlTime>),
+    DateTime2(Option<SqlDateTime2>),
+    DateTimeOffset(Option<SqlDateTimeOffset>),
     SmallDateTime(Option<SqlSmallDateTime>),
     DateTime(Option<SqlDateTime>),
     Date(Option<SqlDate>),
@@ -640,7 +640,7 @@ impl SqlType {
     async fn serialize_datetime2(
         &self,
         packet_writer: &mut PacketWriter<'_>,
-        datetime2: &Option<DateTime2>,
+        datetime2: &Option<SqlDateTime2>,
     ) -> TdsResult<()> {
         let nullable_type: NullableTdsType = self.get_nullable_type();
         packet_writer.write_byte_async(nullable_type as u8).await?;
@@ -683,7 +683,7 @@ impl SqlType {
     async fn serialize_datetimeoffset(
         &self,
         packet_writer: &mut PacketWriter<'_>,
-        datetimeoffset: &Option<DateTimeOffset>,
+        datetimeoffset: &Option<SqlDateTimeOffset>,
     ) -> TdsResult<()> {
         let nullable_type: NullableTdsType = self.get_nullable_type();
         packet_writer.write_byte_async(nullable_type as u8).await?;
@@ -734,7 +734,7 @@ impl SqlType {
     async fn serialize_time(
         &self,
         packet_writer: &mut PacketWriter<'_>,
-        time: &Option<Time>,
+        time: &Option<SqlTime>,
     ) -> TdsResult<()> {
         let nullable_type: NullableTdsType = self.get_nullable_type();
         packet_writer.write_byte_async(nullable_type as u8).await?;
@@ -899,7 +899,7 @@ impl SqlType {
 // However the scale essentially defines the precision of the time and
 // the length of bytes can be computed from the scale. But since
 // this is documented, we will use this map.
-fn get_scale_based_length(time: &Time) -> TdsResult<u8> {
+fn get_scale_based_length(time: &SqlTime) -> TdsResult<u8> {
     let scale_based_byte_length: u8 = match time.scale {
         1 | 2 => 0x03,
         3 | 4 => 0x04,
@@ -924,7 +924,7 @@ async fn write_default_scale_and_null(packet_writer: &mut PacketWriter<'_>) -> T
     Ok(())
 }
 
-fn get_scale_adjusted_time(t: &Time) -> TdsResult<u64> {
+fn get_scale_adjusted_time(t: &SqlTime) -> TdsResult<u64> {
     let scale = t.get_scale();
     let divider = match scale {
         1 => 1_000_001,
@@ -972,8 +972,8 @@ mod datetime_tests {
     use crate::{
         datatypes::{
             column_values::{
-                DEFAULT_VARTIME_SCALE, DateTime2, DateTimeOffset, SqlDate, SqlDateTime,
-                SqlSmallDateTime, Time,
+                DEFAULT_VARTIME_SCALE, SqlDate, SqlDateTime, SqlDateTime2, SqlDateTimeOffset,
+                SqlSmallDateTime, SqlTime,
             },
             sqldatatypes::TdsDataType,
             sqltypes::{NULL_LENGTH, SqlType, get_scale_adjusted_time, get_scale_based_length},
@@ -1187,11 +1187,11 @@ mod datetime_tests {
     #[tokio::test]
     async fn test_write_datetime2() {
         let nanoseconds = 4_300_001;
-        let time = Time {
+        let time = SqlTime {
             time_nanoseconds: nanoseconds,
             scale: 5,
         };
-        let datetime2 = DateTime2 {
+        let datetime2 = SqlDateTime2 {
             time: time.clone(),
             days: 1_000,
         };
@@ -1264,11 +1264,11 @@ mod datetime_tests {
     #[tokio::test]
     async fn test_write_datetimeoffset() {
         let nanoseconds = 4_300_001;
-        let time = Time {
+        let time = SqlTime {
             time_nanoseconds: nanoseconds,
             scale: 5,
         };
-        let datetime2 = DateTime2 {
+        let datetime2 = SqlDateTime2 {
             time: time.clone(),
             days: 1_000,
         };
@@ -1279,7 +1279,7 @@ mod datetime_tests {
             None,
             None,
         );
-        let datetimeoffset = DateTimeOffset {
+        let datetimeoffset = SqlDateTimeOffset {
             datetime2: datetime2.clone(),
             offset: 120, // Example offset in minutes
         };
@@ -1346,7 +1346,7 @@ mod datetime_tests {
     #[tokio::test]
     async fn test_write_time() {
         let nanoseconds = 1_000_001;
-        let time = Time {
+        let time = SqlTime {
             time_nanoseconds: nanoseconds,
             scale: 1,
         };
@@ -1421,7 +1421,7 @@ mod datetime_tests {
     #[test]
     fn test_scale_based_length() {
         for scale in 1..=7 {
-            let time = Time {
+            let time = SqlTime {
                 time_nanoseconds: 0,
                 scale,
             };
@@ -1435,7 +1435,7 @@ mod datetime_tests {
         }
 
         // Test an invalid scale
-        let time = Time {
+        let time = SqlTime {
             time_nanoseconds: 0,
             scale: 8, // Invalid scale
         };
@@ -1445,45 +1445,45 @@ mod datetime_tests {
 
     #[test]
     fn test_get_scale_adjusted_time() {
-        let time = Time {
+        let time = SqlTime {
             time_nanoseconds: 1_000_001, // 100 nanoseconds
             scale: 1,
         };
         let adjusted_time = get_scale_adjusted_time(&time).unwrap();
         assert_eq!(adjusted_time, 1);
 
-        let time = Time {
+        let time = SqlTime {
             time_nanoseconds: 1_000_001,
             scale: 2,
         };
         let adjusted_time = get_scale_adjusted_time(&time).unwrap();
         assert_eq!(adjusted_time, 10);
-        let time = Time {
+        let time = SqlTime {
             time_nanoseconds: 1_000_001,
             scale: 3,
         };
         let adjusted_time = get_scale_adjusted_time(&time).unwrap();
         assert_eq!(adjusted_time, 1_00);
-        let time = Time {
+        let time = SqlTime {
             time_nanoseconds: 1_000_001,
             scale: 4,
         };
         let adjusted_time = get_scale_adjusted_time(&time).unwrap();
         assert_eq!(adjusted_time, 1_000); // 100 microseconds
-        let time = Time {
+        let time = SqlTime {
             time_nanoseconds: 1_000_001, // 1 millisecond
             scale: 5,
         };
         let adjusted_time = get_scale_adjusted_time(&time).unwrap();
         assert_eq!(adjusted_time, 10_000); // 1 millisecond
-        let time = Time {
+        let time = SqlTime {
             time_nanoseconds: 1_000_001, // 10 milliseconds
             scale: 6,
         };
         let adjusted_time = get_scale_adjusted_time(&time).unwrap();
         assert_eq!(adjusted_time, 100_000);
 
-        let time = Time {
+        let time = SqlTime {
             time_nanoseconds: 1_000_001,
             scale: 7,
         };

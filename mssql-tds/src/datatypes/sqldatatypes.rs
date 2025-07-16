@@ -546,6 +546,8 @@ where
         match data_type {
             TdsDataType::BigVarChar | TdsDataType::BigVarBinary | TdsDataType::NVarChar => {
                 let plp_type = PartialLengthType::try_from(data_type);
+                // Only if the length from earlier metadata is unknown (0xFFFF), then
+                // we can convert it to a PLP type.
                 if type_info.length == 0xFFFF {
                     let info = match type_info.type_info_variant {
                         TypeInfoVariant::VarLenString(_, _, collation) => Ok(TypeInfo {

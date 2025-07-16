@@ -1,4 +1,7 @@
-use crate::datatypes::sqldatatypes::{TdsDataType, TypeInfo, TypeInfoVariant};
+use crate::{
+    datatypes::sqldatatypes::{TdsDataType, TypeInfo, TypeInfoVariant},
+    token::tokens::SqlCollation,
+};
 
 use std::fmt;
 
@@ -42,6 +45,16 @@ impl ColumnMetadata {
             TypeInfoVariant::VarLenScale(_, scale) => scale,
             TypeInfoVariant::VarLenPrecisionScale(_, _, _, scale) => scale,
             _ => unreachable!("get_scale called on a type that does not have scale"),
+        }
+    }
+
+    pub fn get_collation(&self) -> Option<SqlCollation> {
+        // Collation is only applicable to string types which are either VarLen strings
+        // Or PLP types with a collation.
+        match self.type_info.type_info_variant {
+            TypeInfoVariant::VarLenString(_, _, collation) => collation,
+            TypeInfoVariant::PartialLen(_, _, collation, _, _) => collation,
+            _ => None,
         }
     }
 }

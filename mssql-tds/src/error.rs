@@ -30,8 +30,8 @@ pub enum Error {
     #[error("Operation Cancelled Error: {0}")]
     OperationCancelledError(String),
 
-    #[error("Sql Error: {number}: {class}: {state}: {message} on {} in {} at line {}",
-            server_name.clone().unwrap(), proc_name.clone().unwrap(), line_number.unwrap())]
+    #[error("Sql Error: {number}: Class {class}: State {state}: {message} on {} in {} at line {}",
+            server_name.clone().unwrap_or_else(|| "Unknown".into()), proc_name.clone().unwrap_or_else(|| "Unknown".into()), line_number.unwrap_or_default())]
     SqlServerError {
         message: String,
         state: u8,
