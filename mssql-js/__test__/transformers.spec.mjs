@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import test from 'ava';
 import { JsSqlDataTypes, tdsToJsTransformers } from '../js/index.js';
 
