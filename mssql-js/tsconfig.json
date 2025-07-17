@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "ESNext",
+    "module": "commonjs",
     "moduleResolution": "node",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
@@ -10,18 +10,14 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "outDir": "./dist",
-    "rootDir": "./",
+    "outDir": "./js",
     "types": ["node"]
   },
   "include": [
     "src/**/*",
     "__test__/**/*",
-    "index.d.ts"
+    "js/generated/index.d.ts",
+    "js/**/*.ts"
   ],
-  "exclude": [
-    "node_modules",
-    "target",
-    "dist"
-  ]
+  "exclude": ["node_modules", "target", "js/dist"]
 }

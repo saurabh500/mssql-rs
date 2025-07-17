@@ -1,8 +1,8 @@
 {
   "name": "mssql-js",
   "version": "0.0.0",
-  "main": "js/generated/index.js",
-  "types": "js/generated/index.d.ts",
+  "main": "js/index.js",
+  "types": "js/index.ts",
   "napi": {
     "name": "mssql-js",
     "triples": {
@@ -16,9 +16,20 @@
     }
   },
   "license": "MIT",
+  "dependencies": {
+    "iconv-lite": "^0.6.3"
+  },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
-    "ava": "^6.0.1"
+    "@types/node": "^24.0.14",
+    "@typescript-eslint/eslint-plugin": "^8.37.0",
+    "@typescript-eslint/parser": "^8.37.0",
+    "ava": "^6.0.1",
+    "eslint": "^9.31.0",
+    "eslint-config-prettier": "^10.1.5",
+    "eslint-plugin-prettier": "^5.5.1",
+    "prettier": "^3.6.2",
+    "typescript": "^5.8.3"
   },
   "ava": {
     "timeout": "3m"
@@ -28,12 +39,16 @@
   },
   "scripts": {
     "artifacts": "napi artifacts",
+    "buildapi": "tsc",
     "build": "napi build --platform --release --dts js/generated/index.d.ts && mv mssql-js*.node js/generated/ && mv index.js js/generated/",
     "build:debug": "napi build --platform --dts js/generated/index.d.ts && mv mssql-js*.node js/generated/ && mv index.js js/generated/",
     "prepublishOnly": "napi prepublish -t npm",
     "test": "ava \"**/*.mjs\" --extensions mjs",
     "universal": "napi universal",
-    "version": "napi version"
+    "version": "napi version",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint . --ext .ts,.js --max-warnings=0"
   },
   "packageManager": "yarn@4.9.2"
 }

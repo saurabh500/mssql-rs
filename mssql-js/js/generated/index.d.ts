@@ -11,10 +11,94 @@ export interface JsClientContext {
   database: string
   trustServerCertificate: boolean
 }
+export interface CollationMetadata {
+  info: number
+  lcidLanguageId: number
+  colFlags: number
+  sortId: number
+  isUtf8: boolean
+}
+export const enum SqlDataTypes {
+  Void = 31,
+  Image = 34,
+  Text = 35,
+  Guid = 36,
+  VarBinary = 37,
+  VarChar = 39,
+  Date = 40,
+  Time = 41,
+  DateTime2 = 42,
+  DateTimeOffset = 43,
+  Binary = 45,
+  Char = 47,
+  Int1 = 48,
+  Bit = 50,
+  Int2 = 52,
+  Decimal = 55,
+  Int4 = 56,
+  SmallDateTime = 58,
+  Flt4 = 59,
+  Money = 60,
+  DateTime = 61,
+  Flt8 = 62,
+  Numeric = 63,
+  SsVariant = 98,
+  NText = 99,
+  FltN = 109,
+  Money4 = 122,
+  Int8 = 127,
+  BigVarBinary = 165,
+  BigVarChar = 167,
+  BigBinary = 173,
+  BigChar = 175,
+  NVarChar = 231,
+  NChar = 239,
+  Udt = 240,
+  Xml = 241,
+  Json = 244
+}
+export interface RowItem {
+  metadata: Metadata
+  rowVal: RowDataType
+}
+export interface NapiSqlDateTime {
+  days: number
+  time: number
+}
+export interface NapiSqlTime {
+  timeNanoseconds: bigint
+  scale: number
+}
+export interface NapiSqlDateTime2 {
+  days: number
+  time: NapiSqlTime
+}
+export interface NapiSqlDateTimeOffset {
+  datetime2: NapiSqlDateTime2
+  offset: number
+}
+export interface NapiSqlMoney {
+  lsbPart: number
+  msbPart: number
+}
+export interface NapiDecimalParts {
+  isPositive: boolean
+  scale: number
+  precision: number
+  intParts: Array<number>
+}
+export interface Metadata {
+  name: string
+  dataType: SqlDataTypes
+  encoding?: CollationMetadata
+}
 export declare function connect(context: JsClientContext): Promise<Connection>
 export declare class Connection {
   execute(query: string): Promise<void>
-  nextRow(): Promise<Array<number | string | boolean | Buffer | null | Date>>
+  nextRow2(): Promise<Array<RowItem> | null>
+  nextRowInResultset(): Promise<Array<number | bigint | boolean | Buffer | null | NapiSqlDateTime | number | NapiSqlTime | NapiSqlDateTime | NapiSqlDateTime2 | NapiSqlDateTimeOffset | NapiSqlMoney | NapiDecimalParts | number> | null>
+  getMetadata(): Promise<Array<Metadata> | null>
+  nextResultSet(): Promise<boolean>
   closeQuery(): Promise<void>
   close(): Promise<void>
 }
