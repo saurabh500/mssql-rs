@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use byteorder::{ByteOrder, LittleEndian};
 use uuid::Uuid;
 

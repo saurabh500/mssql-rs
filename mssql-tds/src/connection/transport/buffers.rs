@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::connection::transport::network_transport::PRE_NEGOTIATED_PACKET_SIZE;
 use crate::core::CancelHandle;
 use crate::message::messages::PacketType;

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use super::headers::{TdsHeaders, TransactionDescriptorHeader, write_headers};
 use super::messages::{PacketType, Request};
 use crate::connection::tds_connection::ExecutionContext;

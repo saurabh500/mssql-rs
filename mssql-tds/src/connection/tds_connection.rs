@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use super::transport::network_transport::NetworkTransport;
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::column_values::ColumnValues;

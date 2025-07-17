@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::error::Error;
 use crate::error::Error::OperationCancelledError;
 use std::future::Future;

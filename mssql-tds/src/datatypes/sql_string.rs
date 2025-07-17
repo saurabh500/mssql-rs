@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 use core::fmt;
 use std::{fmt::Debug, fmt::Display};

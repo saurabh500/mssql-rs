@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 pub mod client_context;
 pub mod tds_client;
 pub mod tds_connection;

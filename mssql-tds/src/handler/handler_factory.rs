@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::connection::client_context::{ClientContext, TransportContext};
 use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::error::Error;

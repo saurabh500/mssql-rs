@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
 use crate::connection::transport::network_transport::NetworkTransport;
 use crate::core::{CancelHandle, TdsResult};

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::connection::client_context::{ClientContext, TdsAuthenticationMethod, TransportContext};
 use crate::message::features::jsonfeature::JsonFeature;
 use crate::message::login_options::{

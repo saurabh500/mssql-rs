@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::decoder::GenericDecoder;
 use crate::error::Error::{OperationCancelledError, TimeoutError};

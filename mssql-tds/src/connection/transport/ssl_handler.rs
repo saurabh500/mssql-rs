@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::connection::transport::network_transport::{Stream, StreamRecoverer};
 use crate::message::messages::PacketType;
 use crate::read_write::packet_writer::PacketWriter;

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;

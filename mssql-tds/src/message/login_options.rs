@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::connection::client_context::ClientContext;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

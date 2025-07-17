@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::connection::client_context::{IPAddressPreference, TransportContext};
 use crate::connection::transport::buffers::TdsReadBuffer;
 use crate::connection::transport::ssl_handler::{SslHandler, Tds7StreamRecoverer};

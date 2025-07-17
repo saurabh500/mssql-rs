@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::{
     datatypes::sqldatatypes::{TdsDataType, TypeInfo, TypeInfoVariant},
     token::tokens::SqlCollation,

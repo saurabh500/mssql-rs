@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use mssql_tds::{
     datatypes::{
         column_values::{SqlDateTime2, SqlDateTimeOffset, SqlMoney, SqlTime},

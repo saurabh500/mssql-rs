@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use async_trait::async_trait;
 use core::fmt;
 use std::{fmt::Debug, io::Error, vec};

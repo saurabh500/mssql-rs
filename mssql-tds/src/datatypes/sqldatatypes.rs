@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::core::TdsResult;
 use crate::error::Error;
 use crate::read_write::packet_reader::TdsPacketReader;

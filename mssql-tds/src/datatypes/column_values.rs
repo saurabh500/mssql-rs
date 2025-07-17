@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::core::TdsResult;
 use crate::datatypes::decoder::DecimalParts;
 use crate::datatypes::sql_json::SqlJson;

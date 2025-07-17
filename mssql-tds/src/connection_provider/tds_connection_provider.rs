@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use std::time::Duration;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::core::TdsResult;
 use crate::message::headers::write_headers;
 use crate::message::messages::{PacketType, Request};

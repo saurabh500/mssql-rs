@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #[cfg(not(target_os = "macos"))]
 pub(crate) mod query_processing_driver {
     use crate::connection::tds_client::{ResultSet, ResultSetClient};

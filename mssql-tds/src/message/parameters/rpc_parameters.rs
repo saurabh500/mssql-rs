@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use bitflags::bitflags;
 
 use crate::datatypes::column_values::DEFAULT_VARTIME_SCALE;

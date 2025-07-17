@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use mssql_tds::{
     connection::client_context::{ClientContext, TransportContext},
     core::{EncryptionOptions, EncryptionSetting},

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::core::{EncryptionSetting, TdsResult};
 use crate::message::messages::{PacketType, Request};
 use crate::read_write::packet_reader::TdsPacketReader;

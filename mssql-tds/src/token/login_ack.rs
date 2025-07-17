@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::core::Version;
 use crate::message::login_options::TdsVersion;
 use crate::token::tokens::{Token, TokenType};

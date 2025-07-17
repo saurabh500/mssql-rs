@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use super::reader_writer::NetworkWriter;
 use crate::core::{CancelHandle, TdsResult};
 use crate::error::Error::TimeoutError;

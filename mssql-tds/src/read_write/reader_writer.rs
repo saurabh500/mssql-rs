@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use crate::connection::transport::network_transport::TransportSslHandler;
 use crate::core::{NegotiatedEncryptionSetting, TdsResult};
 use crate::handler::handler_factory::SessionSettings;

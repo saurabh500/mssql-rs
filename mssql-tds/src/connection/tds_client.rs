@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use std::collections::HashMap;
 
 use crate::error::Error::UsageError;
