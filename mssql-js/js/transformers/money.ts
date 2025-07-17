@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { Metadata, NapiSqlMoney } from '../generated/index.js';
 
 export const moneyTransformer = (

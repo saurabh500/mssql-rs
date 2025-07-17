@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { Metadata, NapiDecimalParts } from '../generated/index.js';
 
 export const decimalTransformer = (

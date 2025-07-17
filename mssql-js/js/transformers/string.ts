@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { Metadata } from '../generated/index.js';
 import { codepageByLanguageId, codepageBySortId } from '../codepages.js';
 import * as iconv from 'iconv-lite';

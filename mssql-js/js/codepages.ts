@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 type Encoding =
   | 'utf-8'
   | 'CP437'
