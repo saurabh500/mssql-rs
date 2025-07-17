@@ -102,9 +102,8 @@ test('smallMoneyTransformer', (t) => {
 // --- Guid test ---
 test('guidTransformer', (t) => {
   const transformer = tdsToJsTransformers[JsSqlDataTypes.Guid];
-  const str = 'guid-test';
-  const buf = Buffer.from(str, 'utf8');
-  t.is(transformer(mockMetadata(JsSqlDataTypes.Guid), buf), str);
+  const str = '0e7fa998-68e7-4c88-8637-96d75972d644';
+  t.is(transformer(mockMetadata(JsSqlDataTypes.Guid), str), str);
 });
 
 // --- Float test ---

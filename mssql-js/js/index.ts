@@ -5,7 +5,6 @@ import {
   JsClientContext,
   Connection,
   Metadata,
-  RowItem,
   NapiSqlDateTime,
   NapiSqlTime,
   NapiSqlDateTime2,
@@ -105,7 +104,8 @@ export class SqlJsConnection {
       | NapiSqlDateTime2
       | NapiSqlDateTimeOffset
       | NapiSqlMoney
-      | NapiDecimalParts,
+      | NapiDecimalParts
+      | string,
   ): Row {
     let jsdatatype = metadata.dataType as unknown as JsSqlDataTypes;
 

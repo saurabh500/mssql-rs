@@ -96,7 +96,7 @@ export declare function connect(context: JsClientContext): Promise<Connection>
 export declare class Connection {
   execute(query: string): Promise<void>
   nextRow2(): Promise<Array<RowItem> | null>
-  nextRowInResultset(): Promise<Array<number | bigint | boolean | Buffer | null | NapiSqlDateTime | number | NapiSqlTime | NapiSqlDateTime | NapiSqlDateTime2 | NapiSqlDateTimeOffset | NapiSqlMoney | NapiDecimalParts | number> | null>
+  nextRowInResultset(): Promise<Array<number | bigint | boolean | Buffer | null | NapiSqlDateTime | number | NapiSqlTime | NapiSqlDateTime | NapiSqlDateTime2 | NapiSqlDateTimeOffset | NapiSqlMoney | NapiDecimalParts | number | string> | null>
   getMetadata(): Promise<Array<Metadata> | null>
   nextResultSet(): Promise<boolean>
   closeQuery(): Promise<void>

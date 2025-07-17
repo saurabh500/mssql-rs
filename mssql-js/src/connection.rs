@@ -7,7 +7,7 @@ use mssql_tds::{
     connection::tds_client::{ResultSet, ResultSetClient, TdsClient},
     datatypes::column_values::ColumnValues,
 };
-use napi::bindgen_prelude::{BigInt, Buffer, Either14, Null};
+use napi::bindgen_prelude::{BigInt, Buffer, Either15, Null};
 use tokio::sync::Mutex;
 
 use crate::ffidatatypes::{
@@ -15,7 +15,7 @@ use crate::ffidatatypes::{
     NapiSqlMoney, NapiSqlTime, RowItem,
 };
 
-pub(crate) type RowDataType = Either14<
+pub(crate) type RowDataType = Either15<
     i32,                   // A
     BigInt,                // B
     bool,                  // C
@@ -30,6 +30,7 @@ pub(crate) type RowDataType = Either14<
     NapiSqlMoney,          // L
     NapiDecimalParts,      // M
     f64,                   // N
+    String,                // O
 >;
 
 #[napi]
@@ -56,9 +57,7 @@ impl Connection {
         for col in row {
             match col {
                 ColumnValues::Int(v) => ret_val.push(RowDataType::A(v)),
-                ColumnValues::Uuid(v) => {
-                    ret_val.push(RowDataType::D(Buffer::from(v.into_bytes().to_vec())))
-                }
+                ColumnValues::Uuid(uuid) => ret_val.push(RowDataType::O(uuid.to_string())),
                 ColumnValues::Bit(v) => ret_val.push(RowDataType::C(v)),
                 ColumnValues::BigInt(v) => ret_val.push(RowDataType::B(v.into())),
                 ColumnValues::TinyInt(v) => ret_val.push(RowDataType::G(v.into())),
@@ -162,7 +161,7 @@ impl Connection {
     ) -> napi::Result<
         Option<
             Vec<
-                Either14<
+                Either15<
                     i32,
                     BigInt,
                     bool,
@@ -177,6 +176,7 @@ impl Connection {
                     NapiSqlMoney,
                     NapiDecimalParts,
                     f64,
+                    String,
                 >,
             >,
         >,
