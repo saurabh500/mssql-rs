@@ -272,8 +272,8 @@ impl GenericDecoder {
     where
         T: TdsPacketReader + Send + Sync,
     {
-        let sql_date = Self::read_date(reader).await?;
         let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
+        let sql_date = Self::read_date(reader).await?;
         let datetime2 = SqlDateTime2 {
             days: sql_date.get_days(),
             time: time_nanos,
@@ -290,13 +290,12 @@ impl GenericDecoder {
     where
         T: TdsPacketReader + Send + Sync,
     {
-        let sql_date = Self::read_date(reader).await?;
-        let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
-        let offset = reader.read_int16().await?;
-        let datetime2 = SqlDateTime2 {
-            days: sql_date.get_days(),
-            time: time_nanos,
+        let datetime2 = self.read_datetime2(reader, byte_len - 2, scale).await?;
+        let datetime2 = match datetime2 {
+            ColumnValues::DateTime2(dt2) => dt2,
+            _ => unreachable!("Expected DateTime2 variant"),
         };
+        let offset = reader.read_int16().await?;
         let datetime_offset = SqlDateTimeOffset { datetime2, offset };
         Ok(ColumnValues::DateTimeOffset(datetime_offset))
     }
