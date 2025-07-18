@@ -155,6 +155,30 @@ impl TdsClient {
         Ok(())
     }
 
+    async fn drain_stream(&mut self) -> TdsResult<()> {
+        loop {
+            let token = self
+                .transport
+                .receive_token(&ParserContext::None(()), None, None)
+                .await?;
+            match token {
+                Tokens::Done(t1) => {
+                    info!(?t1);
+                    if !t1.has_more() {
+                        break;
+                    }
+                }
+                Tokens::EnvChange(t1) => {
+                    self.execution_context.capture_change_property(&t1)?;
+                }
+                _ => {
+                    info!(?token);
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[instrument(skip(self), level = "debug", name = "move_to_column_metadata")]
     pub(crate) async fn move_to_column_metadata(&mut self) -> TdsResult<Option<ColMetadataToken>> {
         let parser_context = ParserContext::None(());
@@ -191,6 +215,20 @@ impl TdsClient {
                 Tokens::ReturnValue(return_value_token) => {
                     let return_value = return_value_token.into();
                     self.return_values.push(return_value);
+                }
+                Tokens::Error(error_token) => {
+                    info!(?error_token);
+                    self.drain_stream().await?;
+                    // Drain the stream till the done token with no more rows.
+                    return Err(crate::error::Error::SqlServerError {
+                        message: error_token.message.clone(),
+                        state: error_token.state,
+                        class: error_token.severity as i32,
+                        number: error_token.number,
+                        server_name: Some(error_token.server_name.clone()),
+                        proc_name: Some(error_token.proc_name.clone()),
+                        line_number: Some(error_token.line_number as i32),
+                    });
                 }
                 _ => {
                     info!("move_to_column_metadata: {:?}", token);

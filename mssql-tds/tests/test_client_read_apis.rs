@@ -80,4 +80,34 @@ mod client_based_iterators {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_bad_query_error_followed_by_valid_query() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let context = create_context();
+
+        let provider = TdsConnectionProvider {};
+        let mut client = provider.create_client(context, None).await?;
+        let query = "bad bad query";
+
+        let err = client.execute(query.to_string(), None, None).await;
+        assert!(err.is_err(), "Expected error for bad query");
+
+        let query = "SELECT TOP(2) * FROM sys.databases; SELECT 1";
+        client.execute(query.to_string(), None, None).await?;
+        let mut row_count = 0;
+        loop {
+            while client.next_row().await?.is_some() {
+                row_count += 1;
+            }
+            if !client.move_to_next().await? {
+                break;
+            }
+        }
+        assert_eq!(
+            row_count, 3,
+            "Expected 3 rows from the valid query execution after bad query"
+        );
+        Ok(())
+    }
 }
