@@ -157,14 +157,6 @@ impl TdsClient {
 
     #[instrument(skip(self), level = "debug", name = "move_to_column_metadata")]
     pub(crate) async fn move_to_column_metadata(&mut self) -> TdsResult<Option<ColMetadataToken>> {
-        // Check if we have an open batch. When the rows are read and
-        // we encounter a Done token without a More status, we should
-        // not try to read the column metadata again. This would make a network call
-        // and cause a hang.
-        if self.execution_context.has_open_batch() {
-            return Ok(None);
-        }
-
         let parser_context = ParserContext::None(());
         let mut col_metadata: Option<ColMetadataToken> = None;
 

@@ -5,7 +5,7 @@ import test from 'ava';
 
 import { create_connection } from '../js/index.js';
 
-test('connect to sqlserver', async (t) => {
+test('connect to sqlserver and fetch multiple result sets', async (t) => {
   // Example TypeScript test with proper typing
   const context = {
     serverName: process.env.DB_HOST || 'localhost',
@@ -22,7 +22,7 @@ test('connect to sqlserver', async (t) => {
     // Example of executing a query
 
     let query =
-      "SELECT CAST('SOMETHING SOMETHING SOMETHING SOMETHING' AS VARCHAR(MAX)) COLLATE Latin1_General_100_CI_AS_SC_UTF8;";
+      'select top(1) * from sys.databases; select top(1) * from sys.tables; select top(1) * from sys.columns';
     await connection.execute(query);
 
     // select * from sys.databases
@@ -31,15 +31,12 @@ test('connect to sqlserver', async (t) => {
     while (true) {
       row = await connection.nextRow();
       if (row && row.length > 0) {
-        // t.log('Row fetched:', row);
         row_count++;
-        console.log(row);
       } else {
         break;
       }
     }
-    t.assert(row_count > 0, 'Expected to fetch some rows');
-    t.log(`Total rows fetched: ${row_count}`);
+    t.is(row_count, 3, 'Expected to fetch 3 rows');
     await connection.closeQuery();
     await connection.close();
     t.pass('Query executed successfully');

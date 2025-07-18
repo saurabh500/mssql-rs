@@ -15,8 +15,14 @@ test('bigint conversion', async (t) => {
   };
   const connection = await create_connection(context);
   const testCases = [
-    { sql: 'SELECT CAST(-9223372036854775808 AS BIGINT) AS val', expected: -9223372036854775808n },
-    { sql: 'SELECT CAST(9223372036854775807 AS BIGINT) AS val', expected: 9223372036854775807n },
+    {
+      sql: 'SELECT CAST(-9223372036854775808 AS BIGINT) AS val',
+      expected: -9223372036854775808n,
+    },
+    {
+      sql: 'SELECT CAST(9223372036854775807 AS BIGINT) AS val',
+      expected: 9223372036854775807n,
+    },
     { sql: 'SELECT CAST(0 AS BIGINT) AS val', expected: 0n },
   ];
   for (const { sql, expected } of testCases) {
