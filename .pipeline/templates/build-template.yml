@@ -21,13 +21,12 @@ parameters:
   type: string
   default: ''
 
+- name: enableJsBuild
+  displayName: Enable JS Build
+  type: boolean
+  default: false
+
 steps:
-# - task: Docker@2
-#   displayName: Login to registry
-#   inputs: 
-#     command: login
-#     containerRegistry: 'tdslibrs' # variable with Service Connection name
-    
 - script: cargo fetch
   displayName: Fetch Crates
 
@@ -115,6 +114,32 @@ steps:
       *
       !.cargo-lock
     TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
+
+- ${{ if eq(parameters.enableJsBuild, true) }}:
+  - script: |
+      export DB_USER=sa
+      . $HOME/.bashrc
+      export FNM_PATH="$HOME/.local/share/fnm"
+      export PATH="$FNM_PATH:$PATH"
+      eval "`fnm env`"
+      fnm use 20
+      cd mssql-js 
+      yarn install
+      yarn build
+      yarn buildapi 
+      yarn testci > junit.xml 
+    displayName: Build/Test JS Integration
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)
+      RUST_BACKTRACE: full
+
+  - task: PublishTestResults@2
+    condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
+    displayName: "Publish JS test results"
+    inputs:
+      testResultsFormat: "JUnit"
+      testResultsFiles: $(Build.SourcesDirectory)/mssql-js/junit.xml
+      testRunTitle: $(System.PhaseName)-Js
 
 - task: PublishBuildArtifacts@1
   displayName: Publish Build Drop

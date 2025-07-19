@@ -142,13 +142,9 @@ then
 else
     echo "fnm is already installed"
 fi
-# Download and install Node.js:
-fnm install 20
 
-fnm use 20
-
-corepack enable
-
+cat /home/cloudtest/.bashrc
+cat $HOME/.bashrc
 
 echo "Home dir is $HOME"
 echo "Current dir is $(pwd)"

@@ -20,10 +20,16 @@ steps:
     displayName: "Disable unattended upgrades"
 
   - script: |
-      scripts/install-deps.sh ${{ parameters.installdepsparams }} 
+      scripts/install-deps.sh ${{ parameters.installdepsparams }}
       # This is a workaround for the fact that the PATH variable is not updated in the same shell.
-      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/bin:$HOME/.cargo/bin:$PATH"      
+      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
     displayName: "Install linux dependencies"
+
+  - script: |
+      # This is a workaround for the fact that the PATH variable is not updated in the same shell.
+      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/share/fnm:$PATH"
+      scripts/install-jsdeps.sh
+    displayName: "Install JS dependencies"
 
   - script: |
       docker ps

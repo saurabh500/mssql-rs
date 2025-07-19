@@ -77,6 +77,7 @@ stages:
           osType: Linux
           buildType: ${{ parameters.buildType }}
           testFilter: -E 'not (test(connectivity))'
+          enableJsBuild: true
 
   - job: Build_Linux_ARM
     displayName: Build Linux ARM

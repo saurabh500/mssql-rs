@@ -29,6 +29,7 @@
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-prettier": "^5.5.1",
     "prettier": "^3.6.2",
+    "tap-xunit": "^2.4.1",
     "typescript": "^5.8.3"
   },
   "ava": {
@@ -44,6 +45,7 @@
     "build:debug": "napi build --platform --dts js/generated/index.d.ts && mv mssql-js*.node js/generated/ && mv index.js js/generated/",
     "prepublishOnly": "napi prepublish -t npm",
     "test": "ava \"**/*.mjs\" --extensions mjs",
+    "testci": "ava \"**/*.mjs\" --extensions mjs -t | tap-xunit",
     "universal": "napi universal",
     "version": "napi version",
     "format": "prettier --write .",
