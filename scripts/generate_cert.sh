@@ -38,6 +38,7 @@ subjectAltName = @alt_names
 
 [ alt_names ]
 DNS.1 = $SAN_DNS
+DNS.2 = localhost
 
 [ v3_ext ]
 authorityKeyIdentifier=keyid,issuer

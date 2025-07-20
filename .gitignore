@@ -43,6 +43,7 @@ Pipfile.lock
 *.tar.zst
 
 *.crt
+*.srl
 *.key
 *.pem
 *.csr
