@@ -49,7 +49,7 @@
     "universal": "napi universal",
     "version": "napi version",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format:check": "prettier --check \"js/**/*.ts\" \"__test__/**/*.{js,mjs,ts}\"",
     "lint": "eslint . --ext .ts,.js --max-warnings=0"
   },
   "packageManager": "yarn@4.9.2"

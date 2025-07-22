@@ -129,6 +129,8 @@ steps:
       yarn build
       echo "Generated files:"
       ls js/generated
+      echo "Check for formatting"
+      yarn format:check
       echo "Compiling Typescript files"
       yarn buildapi 
       yarn testci > junit.xml 
