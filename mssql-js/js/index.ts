@@ -54,6 +54,14 @@ export class SqlJsConnection {
     return this.internal_connection.execute(query);
   }
 
+  async nextResultSet() {
+    return this.internal_connection.nextResultSet();
+  }
+
+  async nextRowInResultset() {
+    return this.internal_connection.nextRowInResultset();
+  }
+
   async nextRow(): Promise<Array<Row>> {
     let metadata = await this.internal_connection.getMetadata();
 
@@ -141,7 +149,7 @@ export enum JsSqlDataTypes {
   Void = 31,
   Image = 34,
   Text = 35,
-  Guid = 36,
+  UniqueIdentifier = 36,
   VarBinary = 37,
   VarChar = 39,
   Date = 40,
@@ -150,22 +158,22 @@ export enum JsSqlDataTypes {
   DateTimeOffset = 43,
   Binary = 45,
   Char = 47,
-  Int1 = 48,
+  TinyInt = 48,
   Bit = 50,
-  Int2 = 52,
+  SmallInt = 52,
   Decimal = 55,
-  Int4 = 56,
+  Int = 56,
   SmallDateTime = 58,
-  Flt4 = 59,
+  Real = 59,
   Money = 60,
   DateTime = 61,
-  Flt8 = 62,
+  Float = 62,
   Numeric = 63,
   SsVariant = 98,
   NText = 99,
   FltN = 109,
   SmallMoney = 122,
-  Int8 = 127,
+  BigInt = 127,
   BigVarBinary = 165,
   BigVarChar = 167,
   BigBinary = 173,
@@ -200,14 +208,14 @@ export const tdsToJsTransformers: Partial<
   [JsSqlDataTypes.Binary]: binaryTransformer,
   [JsSqlDataTypes.Image]: binaryTransformer,
   [JsSqlDataTypes.Bit]: bitTransformer,
-  [JsSqlDataTypes.Int1]: intTransformer,
-  [JsSqlDataTypes.Int2]: intTransformer,
-  [JsSqlDataTypes.Int4]: intTransformer,
-  [JsSqlDataTypes.Int8]: bigintTransformer,
+  [JsSqlDataTypes.TinyInt]: intTransformer,
+  [JsSqlDataTypes.SmallInt]: intTransformer,
+  [JsSqlDataTypes.Int]: intTransformer,
+  [JsSqlDataTypes.BigInt]: bigintTransformer,
   [JsSqlDataTypes.Money]: moneyTransformer,
   [JsSqlDataTypes.SmallMoney]: smallMoneyTransformer,
-  [JsSqlDataTypes.Guid]: guidTransformer,
-  [JsSqlDataTypes.Flt4]: floatTransformer,
-  [JsSqlDataTypes.Flt8]: floatTransformer,
+  [JsSqlDataTypes.UniqueIdentifier]: guidTransformer,
+  [JsSqlDataTypes.Real]: floatTransformer,
+  [JsSqlDataTypes.Float]: floatTransformer,
   [JsSqlDataTypes.FltN]: floatTransformer,
 };

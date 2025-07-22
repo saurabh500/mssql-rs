@@ -4,6 +4,7 @@
 import test from 'ava';
 
 import { create_connection } from '../js/index.js';
+import { Request } from '../js/request.js';
 
 test('connect to sqlserver and fetch multiple result sets', async (t) => {
   // Example TypeScript test with proper typing
@@ -43,6 +44,33 @@ test('connect to sqlserver and fetch multiple result sets', async (t) => {
   } catch (error) {
     t.log('Connection failed:', error);
     t.fail('Connection should succeed');
+  }
+});
+
+test('query using request.ts', async (t) => {
+  const context = {
+    serverName: process.env.DB_HOST || 'localhost',
+    port: 1433,
+    userName: process.env.DB_USER || 'sa',
+    password: process.env.SQL_PASSWORD,
+    database: 'master',
+    trustServerCertificate: true,
+  };
+  try {
+    const connection = await create_connection(context);
+
+    const request = new Request(connection);
+
+    let result = await request.query('select 1; select 10');
+
+    //t.log('Received: ', result.IRecordSet);
+
+    t.assert(result.row_count > 1, 'Expected to fetch 2 rows');
+    await connection.close();
+    t.pass('Successfully queries using new Request class');
+  } catch (err) {
+    t.log(err);
+    t.fail('Error querying');
   }
 });
 

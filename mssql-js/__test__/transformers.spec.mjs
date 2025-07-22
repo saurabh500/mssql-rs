@@ -75,14 +75,14 @@ test('bitTransformer', (t) => {
 
 // --- Integer test ---
 test('intTransformer', (t) => {
-  const transformer = tdsToJsTransformers[JsSqlDataTypes.Int4];
-  t.is(transformer(mockMetadata(JsSqlDataTypes.Int4), 42), 42);
+  const transformer = tdsToJsTransformers[JsSqlDataTypes.Int];
+  t.is(transformer(mockMetadata(JsSqlDataTypes.Int), 42), 42);
 });
 
 test('bigintTransformer', (t) => {
-  const transformer = tdsToJsTransformers[JsSqlDataTypes.Int8];
+  const transformer = tdsToJsTransformers[JsSqlDataTypes.BigInt];
   t.is(
-    transformer(mockMetadata(JsSqlDataTypes.Int8), 1234567890123456789n),
+    transformer(mockMetadata(JsSqlDataTypes.BigInt), 1234567890123456789n),
     1234567890123456789n,
   );
 });
@@ -101,13 +101,13 @@ test('smallMoneyTransformer', (t) => {
 
 // --- Guid test ---
 test('guidTransformer', (t) => {
-  const transformer = tdsToJsTransformers[JsSqlDataTypes.Guid];
+  const transformer = tdsToJsTransformers[JsSqlDataTypes.UniqueIdentifier];
   const str = '0e7fa998-68e7-4c88-8637-96d75972d644';
-  t.is(transformer(mockMetadata(JsSqlDataTypes.Guid), str), str);
+  t.is(transformer(mockMetadata(JsSqlDataTypes.UniqueIdentifier), str), str);
 });
 
 // --- Float test ---
 test('floatTransformer', (t) => {
-  const transformer = tdsToJsTransformers[JsSqlDataTypes.Flt8];
-  t.is(transformer(mockMetadata(JsSqlDataTypes.Flt8), 3.14), 3.14);
+  const transformer = tdsToJsTransformers[JsSqlDataTypes.Float];
+  t.is(transformer(mockMetadata(JsSqlDataTypes.Float), 3.14), 3.14);
 });
