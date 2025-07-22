@@ -197,3 +197,5 @@ Cargo.lock
 *.node
 
 junit.xml
+
+js/generated/*

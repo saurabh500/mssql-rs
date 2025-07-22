@@ -41,8 +41,8 @@
   "scripts": {
     "artifacts": "napi artifacts",
     "buildapi": "tsc",
-    "build": "napi build --platform --release --dts js/generated/index.d.ts && mv mssql-js*.node js/generated/ && mv index.js js/generated/",
-    "build:debug": "napi build --platform --dts js/generated/index.d.ts && mv mssql-js*.node js/generated/ && mv index.js js/generated/",
+    "build": "napi build --platform --release js/generated",
+    "build:debug": "napi build --platform js/generated",
     "prepublishOnly": "napi prepublish -t npm",
     "test": "ava \"**/*.mjs\" --extensions mjs",
     "testci": "ava \"**/*.mjs\" --extensions mjs -t | tap-xunit",
