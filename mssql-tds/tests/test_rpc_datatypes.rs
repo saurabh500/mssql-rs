@@ -62,11 +62,11 @@ mod rpc_datatypes {
         ];
 
         let query = generate_select_statement(&columns);
-        println!("{query}");
+        let col_count = columns.len();
         let mut named_parameters = Vec::new();
-        for column in columns.iter() {
+        for column in columns.into_iter() {
             let param =
-                RpcParameter::new(Some(format!("@{}", column.0)), StatusFlags::NONE, &column.1);
+                RpcParameter::new(Some(format!("@{}", column.0)), StatusFlags::NONE, column.1);
             named_parameters.push(param);
         }
 
@@ -84,7 +84,7 @@ mod rpc_datatypes {
             println!("Column {i}: {column:?}");
         }
 
-        assert_eq!(first_row_columns.len(), columns.len());
+        assert_eq!(first_row_columns.len(), col_count);
         for column in first_row_columns.iter() {
             match &column {
                 ColumnValues::Int(value) => {
@@ -134,12 +134,13 @@ mod rpc_datatypes {
         let json_value = "[\"abc\",\"ghi\",\"def\"]".to_string();
         let columns = vec![("json", SqlType::Json(Some(json_value.clone().into())))];
 
+        let col_count = columns.len();
         let query = generate_select_statement(&columns);
         println!("{query}");
         let mut named_parameters = Vec::new();
-        for column in columns.iter() {
+        for column in columns.into_iter() {
             let param =
-                RpcParameter::new(Some(format!("@{}", column.0)), StatusFlags::NONE, &column.1);
+                RpcParameter::new(Some(format!("@{}", column.0)), StatusFlags::NONE, column.1);
             named_parameters.push(param);
         }
 
@@ -153,7 +154,7 @@ mod rpc_datatypes {
 
         let (_, first_row_columns) = get_first_row(batch_result).await.unwrap();
 
-        assert_eq!(first_row_columns.len(), columns.len());
+        assert_eq!(first_row_columns.len(), col_count);
         for column in first_row_columns.iter() {
             match &column {
                 ColumnValues::Json(value) => {

@@ -46,13 +46,13 @@ mod rpc_results {
         let param1 = RpcParameter::new(
             Some("@InputInt".to_string()),
             StatusFlags::NONE,
-            &param_value,
+            param_value,
         );
 
         let param2 = RpcParameter::new(
             Some("@OutputInt".to_string()),
             StatusFlags::BY_REF_VALUE, // Output parameter
-            &SqlType::Int(None),       // This is an output parameter. Set to null.
+            SqlType::Int(None),        // This is an output parameter. Set to null.
         );
 
         let named_parameters = vec![param1, param2];
@@ -63,7 +63,7 @@ mod rpc_results {
             .execute_stored_procedure(
                 stored_procedure_query.to_string(),
                 None,
-                Some(&named_parameters),
+                Some(named_parameters),
                 None,
                 None,
             )
@@ -105,13 +105,13 @@ mod rpc_results {
         let param1 = RpcParameter::new(
             Some("@InputInt".to_string()),
             StatusFlags::NONE,
-            &param_value,
+            param_value,
         );
 
         let param2 = RpcParameter::new(
             Some("@OutputInt".to_string()),
             StatusFlags::BY_REF_VALUE, // Output parameter
-            &SqlType::Int(None),       // This is an output parameter. Set to null.
+            SqlType::Int(None),        // This is an output parameter. Set to null.
         );
 
         let named_parameters = vec![param1, param2];
@@ -122,7 +122,7 @@ mod rpc_results {
             .execute_stored_procedure(
                 stored_procedure_query.to_string(),
                 None,
-                Some(&named_parameters),
+                Some(named_parameters),
                 None,
                 None,
             )
@@ -158,13 +158,13 @@ mod rpc_results {
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
-            &SqlType::Int(Some(1)),
+            SqlType::Int(Some(1)),
         );
 
         let compat_level_param = RpcParameter::new(
             Some("@compat_level".to_string()),
             StatusFlags::NONE,
-            &SqlType::Int(Some(100)),
+            SqlType::Int(Some(100)),
         );
 
         let context = create_context();
@@ -192,7 +192,7 @@ mod rpc_results {
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
-            &SqlType::Int(Some(1)),
+            SqlType::Int(Some(1)),
         );
 
         let context = create_context();
@@ -220,13 +220,13 @@ mod rpc_results {
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
-            &SqlType::Int(Some(1)),
+            SqlType::Int(Some(1)),
         );
 
         let compat_level_param = RpcParameter::new(
             Some("@compat_level".to_string()),
             StatusFlags::NONE,
-            &SqlType::Int(Some(100)),
+            SqlType::Int(Some(100)),
         );
 
         let context = create_context();
@@ -252,13 +252,13 @@ mod rpc_results {
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
-            &SqlType::Int(Some(1)),
+            SqlType::Int(Some(1)),
         );
 
         let compat_level_param = RpcParameter::new(
             Some("@compat_level".to_string()),
             StatusFlags::NONE,
-            &SqlType::Int(Some(100)),
+            SqlType::Int(Some(100)),
         );
 
         let context = create_context();
@@ -267,7 +267,7 @@ mod rpc_results {
         let named_parameters = vec![database_id_param, compat_level_param];
 
         let mut batch_result = connection
-            .execute_sp_prepexec(query.to_string(), &named_parameters, None, None)
+            .execute_sp_prepexec(query.to_string(), named_parameters.clone(), None, None)
             .await
             .unwrap();
 
@@ -290,7 +290,7 @@ mod rpc_results {
         assert_eq!(handle_param.status, ReturnValueStatus::OutputParam);
 
         let second_result = connection
-            .execute_sp_execute(retrieved_handle, None, Some(&named_parameters), None, None)
+            .execute_sp_execute(retrieved_handle, None, Some(named_parameters), None, None)
             .await
             .unwrap();
         let scalar_value = get_scalar_value(second_result).await.unwrap();

@@ -40,8 +40,8 @@ pub(crate) enum RpcType {
 impl<'a> SqlRpc<'a> {
     pub fn new(
         rpc_type: RpcType,
-        positional_parameters: Option<&'a Vec<RpcParameter<'a>>>,
-        named_parameters: Option<&'a Vec<RpcParameter<'a>>>,
+        positional_parameters: Option<Vec<RpcParameter>>,
+        named_parameters: Option<Vec<RpcParameter>>,
         db_collation: &'a SqlCollation,
         execution_context: &ExecutionContext,
     ) -> Self {
@@ -69,7 +69,7 @@ impl<'a> SqlRpc<'a> {
         // Example: Write a placeholder implementation
         if let Some(positional_parameters) = &self.positional_parameters {
             let encoder = GenericEncoder::new();
-            for parameter in *positional_parameters {
+            for parameter in positional_parameters {
                 parameter
                     .serialize(packet_writer, self.db_collation, true, &encoder)
                     .await?;
@@ -85,7 +85,7 @@ impl<'a> SqlRpc<'a> {
         // Example: Write a placeholder implementation
         if let Some(parameters) = &self.named_parameters {
             let encoder = GenericEncoder::new();
-            for parameter in *parameters {
+            for parameter in parameters {
                 parameter
                     .serialize(packet_writer, self.db_collation, false, &encoder)
                     .await?;
@@ -150,8 +150,8 @@ impl RpcProcs {
 pub(crate) struct SqlRpc<'param> {
     pub headers: Vec<TdsHeaders>,
     pub rpc_type: RpcType,
-    pub positional_parameters: Option<&'param Vec<RpcParameter<'param>>>,
-    pub named_parameters: Option<&'param Vec<RpcParameter<'param>>>,
+    pub positional_parameters: Option<Vec<RpcParameter>>,
+    pub named_parameters: Option<Vec<RpcParameter>>,
     pub db_collation: &'param SqlCollation,
     pub proc_options: ProcOptions,
 }

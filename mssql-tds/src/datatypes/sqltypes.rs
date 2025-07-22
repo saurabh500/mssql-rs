@@ -21,7 +21,7 @@ use crate::{
     token::tokens::SqlCollation,
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum SqlType {
     Bit(Option<bool>),
     TinyInt(Option<u8>),

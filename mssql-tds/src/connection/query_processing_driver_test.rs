@@ -102,14 +102,14 @@ pub(crate) mod query_processing_driver {
         let param1 = RpcParameter::new(
             Some("@InputInt".to_string()),
             StatusFlags::NONE,
-            &input_value,
+            input_value,
         );
 
         let output_param = SqlType::Int(None);
         let param2 = RpcParameter::new(
             Some("@OutputInt".to_string()),
             StatusFlags::BY_REF_VALUE, // Output parameter
-            &output_param,
+            output_param,
         );
 
         let named_parameters = vec![param1, param2];
@@ -166,13 +166,13 @@ pub(crate) mod query_processing_driver {
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
-            &SqlType::Int(Some(1)),
+            SqlType::Int(Some(1)),
         );
 
         let compat_level_param = RpcParameter::new(
             Some("@compat_level".to_string()),
             StatusFlags::NONE,
-            &SqlType::Int(Some(100)),
+            SqlType::Int(Some(100)),
         );
 
         let named_parameters = vec![database_id_param, compat_level_param];
@@ -181,7 +181,7 @@ pub(crate) mod query_processing_driver {
         let database_collation = connection.negotiated_settings.database_collation;
 
         let statement_parameter_val =
-            &SqlType::NVarcharMax(Some(SqlString::from_utf8_string(query.to_string())));
+            SqlType::NVarcharMax(Some(SqlString::from_utf8_string(query.to_string())));
 
         // Create the parameter list for sp_execute_sql
         let statement_parameter =
@@ -197,20 +197,20 @@ pub(crate) mod query_processing_driver {
         let params_as_sql_string =
             SqlType::NVarcharMax(Some(SqlString::from_utf8_string(params_list_as_string)));
 
-        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, &params_as_sql_string);
+        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, params_as_sql_string);
 
         let out_param_value = SqlType::Int(None);
-        let handle_parameter = RpcParameter::new(None, StatusFlags::BY_REF_VALUE, &out_param_value);
+        let handle_parameter = RpcParameter::new(None, StatusFlags::BY_REF_VALUE, out_param_value);
 
         let positional_parameters_list =
             vec![handle_parameter, params_parameter, statement_parameter];
-        let positional_parameters = Some(&positional_parameters_list);
+        let positional_parameters = Some(positional_parameters_list);
 
         // Build the RPC request.
         let rpc = SqlRpc::new(
             RpcType::ProcId(RpcProcs::PrepExec),
             positional_parameters,
-            Some(&named_parameters),
+            Some(named_parameters),
             &database_collation,
             &connection.execution_context,
         );
@@ -224,14 +224,14 @@ pub(crate) mod query_processing_driver {
     async fn submit_stored_procedure(
         connection: &mut Box<TdsConnection>,
         stored_proc_name: String,
-        named_parameters: Vec<RpcParameter<'_>>,
+        named_parameters: Vec<RpcParameter>,
     ) -> TdsResult<()> {
         let database_collation = connection.negotiated_settings.database_collation;
 
         let rpc = SqlRpc::new(
             RpcType::Named(stored_proc_name),
             None,
-            Some(&named_parameters),
+            Some(named_parameters),
             &database_collation,
             &connection.execution_context,
         );

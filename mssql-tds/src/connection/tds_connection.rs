@@ -74,8 +74,8 @@ impl TdsConnection {
     pub async fn execute_stored_procedure<'rpc_result>(
         &'rpc_result mut self,
         stored_procedure_name: String,
-        positional_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
-        named_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
+        positional_parameters: Option<Vec<RpcParameter>>,
+        named_parameters: Option<Vec<RpcParameter>>,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'rpc_result>> {
@@ -106,7 +106,7 @@ impl TdsConnection {
     pub async fn execute_sp_executesql<'rpc_result>(
         &'rpc_result mut self,
         sql: String,
-        named_params: Vec<RpcParameter<'rpc_result>>,
+        named_params: Vec<RpcParameter>,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'rpc_result>> {
@@ -119,7 +119,7 @@ impl TdsConnection {
         let sql_statement_value = SqlType::NVarcharMax(Some(SqlString::from_utf8_string(sql)));
 
         // Create the parameter list for sp_execute_sql
-        let statement_parameter = RpcParameter::new(None, StatusFlags::NONE, &sql_statement_value);
+        let statement_parameter = RpcParameter::new(None, StatusFlags::NONE, sql_statement_value);
 
         // Build the comma separated list of parameters
         let mut params_list_as_string = String::new();
@@ -129,19 +129,19 @@ impl TdsConnection {
         let params_as_sql_string =
             SqlType::NVarcharMax(Some(SqlString::from_utf8_string(params_list_as_string)));
 
-        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, &params_as_sql_string);
+        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, params_as_sql_string);
 
         // Create the parameter list for positional parameters of sp_execute_sql.
         // These could be named parameters as well, but we want to avoid sending the name
         // to send less data over the wire.
         let positional_parameters_vec = vec![statement_parameter, params_parameter];
-        let positional_parameters = Some(&positional_parameters_vec);
+        let positional_parameters = Some(positional_parameters_vec);
 
         // Build the RPC request.
         let rpc = SqlRpc::new(
             RpcType::ProcId(RpcProcs::ExecuteSql),
             positional_parameters,
-            Some(&named_params),
+            Some(named_params),
             &database_collation,
             &self.execution_context,
         );
@@ -155,10 +155,10 @@ impl TdsConnection {
     }
 
     // Prepare a SQL Statement for execution and returns the prepared handle.
-    pub async fn execute_sp_prepare<'rpc_result>(
-        &'rpc_result mut self,
+    pub async fn execute_sp_prepare(
+        &mut self,
         sql: String,
-        named_params: Vec<RpcParameter<'rpc_result>>,
+        named_params: Vec<RpcParameter>,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<i32> {
@@ -172,7 +172,7 @@ impl TdsConnection {
 
         // Create the parameter list for sp_execute_sql
         let execute_sql_statement_parameter =
-            RpcParameter::new(None, StatusFlags::NONE, &sql_statement_value);
+            RpcParameter::new(None, StatusFlags::NONE, sql_statement_value);
 
         // Build the comma separated list of parameters
         let mut params_list_as_string = String::new();
@@ -182,14 +182,14 @@ impl TdsConnection {
         let params_as_sql_string =
             SqlType::NVarcharMax(Some(SqlString::from_utf8_string(params_list_as_string)));
 
-        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, &params_as_sql_string);
+        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, params_as_sql_string);
 
         let output_handler_value = SqlType::Int(None);
 
         let output_handler_parameter = RpcParameter::new(
             None,
             StatusFlags::BY_REF_VALUE, // Output parameter
-            &output_handler_value,
+            output_handler_value,
         );
 
         // Create the parameter list for positional parameters of sp_execute_sql.
@@ -200,13 +200,13 @@ impl TdsConnection {
             params_parameter,
             execute_sql_statement_parameter,
         ];
-        let positional_parameters = Some(&positional_parameters_vec);
+        let positional_parameters = Some(positional_parameters_vec);
 
         // Build the RPC request.
         let rpc = SqlRpc::new(
             RpcType::ProcId(RpcProcs::Prepare),
             positional_parameters,
-            Some(&named_params),
+            Some(named_params),
             &database_collation,
             &self.execution_context,
         );
@@ -261,14 +261,14 @@ impl TdsConnection {
         let handle_parameter = RpcParameter::new(
             None,
             StatusFlags::NONE, // Output parameter
-            &handle_value,
+            handle_value,
         );
 
         // Create the parameter list for positional parameters of sp_execute_sql.
         // These could be named parameters as well, but we want to avoid sending the name
         // to send less data over the wire.
         let positional_parameters_vec = vec![handle_parameter];
-        let positional_parameters = Some(&positional_parameters_vec);
+        let positional_parameters = Some(positional_parameters_vec);
 
         // Build the RPC request.
         let rpc = SqlRpc::new(
@@ -296,7 +296,7 @@ impl TdsConnection {
     pub async fn execute_sp_prepexec<'rpc_result>(
         &'rpc_result mut self,
         sql: String,
-        named_params: &Vec<RpcParameter<'rpc_result>>,
+        named_params: Vec<RpcParameter>,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'rpc_result>> {
@@ -309,28 +309,28 @@ impl TdsConnection {
         let sql_statement_value = SqlType::NVarcharMax(Some(SqlString::from_utf8_string(sql)));
 
         // Create the parameter list for sp_execute_sql
-        let statement_parameter = RpcParameter::new(None, StatusFlags::NONE, &sql_statement_value);
+        let statement_parameter = RpcParameter::new(None, StatusFlags::NONE, sql_statement_value);
 
         // Build the comma separated list of parameters
         let mut params_list_as_string = String::new();
 
-        build_parameter_list_string(named_params, &mut params_list_as_string);
+        build_parameter_list_string(&named_params, &mut params_list_as_string);
 
         let params_as_sql_string =
             SqlType::NVarcharMax(Some(SqlString::from_utf8_string(params_list_as_string)));
 
-        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, &params_as_sql_string);
+        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, params_as_sql_string);
 
         let handle_value = SqlType::Int(None);
 
-        let handle_parameter = RpcParameter::new(None, StatusFlags::BY_REF_VALUE, &handle_value);
+        let handle_parameter = RpcParameter::new(None, StatusFlags::BY_REF_VALUE, handle_value);
 
         // Create the parameter list for positional parameters of sp_prepareexec.
         // These could be named parameters as well, but we want to avoid sending the name
         // to send less data over the wire.
         let positional_parameters_list =
             vec![handle_parameter, params_parameter, statement_parameter];
-        let positional_parameters = Some(&positional_parameters_list);
+        let positional_parameters = Some(positional_parameters_list);
 
         // Build the RPC request.
         let rpc = SqlRpc::new(
@@ -352,8 +352,8 @@ impl TdsConnection {
     pub async fn execute_sp_execute<'rpc_result>(
         &'rpc_result mut self,
         handle: i32,
-        positional_parameters: Option<Vec<RpcParameter<'rpc_result>>>,
-        named_parameters: Option<&Vec<RpcParameter<'rpc_result>>>,
+        positional_parameters: Option<Vec<RpcParameter>>,
+        named_parameters: Option<Vec<RpcParameter>>,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<BatchResult<'rpc_result>> {
@@ -367,7 +367,7 @@ impl TdsConnection {
         let handle_parameter = RpcParameter::new(
             None,
             StatusFlags::NONE, // Output parameter
-            &handle_value,
+            handle_value,
         );
 
         // Create the parameter list for positional parameters of sp_execute_sql.
@@ -378,7 +378,7 @@ impl TdsConnection {
         if let Some(mut params) = positional_parameters {
             all_positional_parameters.append(&mut params);
         }
-        let all_positional_parameters = Some(&all_positional_parameters);
+        let all_positional_parameters = Some(all_positional_parameters);
 
         // Build the RPC request.
         let mut rpc = SqlRpc::new(

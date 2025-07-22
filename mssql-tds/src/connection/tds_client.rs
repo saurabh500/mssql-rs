@@ -107,8 +107,8 @@ impl TdsClient {
     pub async fn execute_stored_procedure(
         &mut self,
         stored_procedure_name: String,
-        positional_parameters: Option<&Vec<RpcParameter<'_>>>,
-        named_parameters: Option<&Vec<RpcParameter<'_>>>,
+        positional_parameters: Option<Vec<RpcParameter>>,
+        named_parameters: Option<Vec<RpcParameter>>,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<()> {

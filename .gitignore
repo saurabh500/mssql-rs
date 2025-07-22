@@ -48,3 +48,5 @@ Pipfile.lock
 *.pem
 *.csr
 openssl.cnf
+
+node_modules/

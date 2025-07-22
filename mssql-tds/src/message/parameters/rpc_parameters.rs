@@ -15,6 +15,7 @@ use crate::{
 };
 
 bitflags! {
+    #[derive(Debug, Clone, Copy)]
     pub struct StatusFlags: u8 {
         const NONE = 0b0000_0000;
         const BY_REF_VALUE = 0b0000_0001;
@@ -26,21 +27,23 @@ bitflags! {
 }
 
 /// Represents a parameter in an RPC (Remote Procedure Call) message.
-pub struct RpcParameter<'a> {
+#[derive(Debug, Clone)]
+pub struct RpcParameter {
     /// The name of the parameter, if applicable. For positional
     /// parameters, this will be `None`.
     pub(crate) name: Option<String>,
+
     /// Options for the parameter. This is a bitmask
     /// represents whether the parameter is input, output, or both, as well as the encryption setting.
     options: StatusFlags,
 
     /// The data type and value of the parameter.
     ///  This is used to determine how to serialize the value.
-    value: &'a SqlType,
+    value: SqlType,
 }
 
-impl<'b> RpcParameter<'b> {
-    pub fn new(name: Option<String>, options: StatusFlags, value: &'b SqlType) -> Self {
+impl RpcParameter {
+    pub fn new(name: Option<String>, options: StatusFlags, value: SqlType) -> Self {
         Self {
             name,
             options,
@@ -144,7 +147,7 @@ impl<'b> RpcParameter<'b> {
         packet_writer.write_byte_async(self.options.bits()).await?;
 
         encoder
-            .encode_sqlvalue(packet_writer, self.value, db_collation)
+            .encode_sqlvalue(packet_writer, &self.value, db_collation)
             .await?;
         Ok(())
     }
@@ -160,7 +163,7 @@ pub(crate) fn build_parameter_list_string(
         if let Some(param_name) = &param.name {
             // TODO: while persisting types with length, we need to compute the length and
             // add the length after the type name. e.g. Nvarchar(200), varchar(100) etc.
-            let param_type_name = RpcParameter::get_sql_name(param.value);
+            let param_type_name = RpcParameter::get_sql_name(&param.value);
             if first_param {
                 first_param = false;
             } else {
