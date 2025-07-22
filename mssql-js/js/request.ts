@@ -4,7 +4,8 @@
 import { JsSqlDataTypes, SqlJsConnection, Row } from '.';
 
 interface IResult {
-  IRecordSet: Row[][];
+  IRecordSets: Row[][];
+  IRecordSet: Row[];
   row_count: number;
 }
 
@@ -61,38 +62,24 @@ export class Request {
   async query(command: string): Promise<IResult> {
     await this.connection.execute(command);
     let result: IResult = {
+      IRecordSets: [],
       IRecordSet: [],
       row_count: 0,
     };
 
+    // Process all rows from the executed commands
     while (true) {
-      let currentResultSet: Row[] = [];
-
-      // Process all rows in the current result set
-      while (true) {
-        let row = await this.connection.nextRow();
-        if (row && row.length > 0) {
-          currentResultSet.push(...row);
-          result.row_count++;
-        } else {
-          // No more rows in current result set
-          break;
-        }
-      }
-
-      // Add the current result set to the results (even if empty)
-      if (currentResultSet.length > 0) {
-        result.IRecordSet.push(currentResultSet);
-      }
-
-      // Try to move to the next result set
-      const hasNextResultSet = await this.connection.nextResultSet();
-      if (!hasNextResultSet) {
-        // No more result sets
+      let row = await this.connection.nextRow();
+      if (row && row.length > 0) {
+        result.IRecordSets.push(row);
+        result.row_count++;
+      } else {
         break;
       }
     }
 
+    result.IRecordSet =
+      result.IRecordSets.length > 0 ? result.IRecordSets[0] : [];
     await this.connection.closeQuery();
 
     return result;

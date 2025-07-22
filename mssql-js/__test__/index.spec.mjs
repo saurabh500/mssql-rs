@@ -61,11 +61,11 @@ test('query using request.ts', async (t) => {
 
     const request = new Request(connection);
 
-    let result = await request.query('select 1; select 10');
+    let result = await request.query('select 1, 2; select 10');
 
     //t.log('Received: ', result.IRecordSet);
 
-    t.assert(result.row_count > 1, 'Expected to fetch 2 rows');
+    t.assert(result.row_count === 2, 'Expected to fetch 2 rows');
     await connection.close();
     t.pass('Successfully queries using new Request class');
   } catch (err) {
