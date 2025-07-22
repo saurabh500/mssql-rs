@@ -11,6 +11,7 @@ import {
   NapiDecimalParts,
   NapiSqlDateTimeOffset,
   NapiSqlMoney,
+  Parameter,
 } from './generated/index.js';
 import { connect } from './generated/index.js';
 
@@ -50,8 +51,12 @@ export class SqlJsConnection {
     this.internal_connection = internal_connection;
   }
 
-  async execute(query: string): Promise<void> {
-    return this.internal_connection.execute(query);
+  async execute(query: string, params?: Array<Parameter>): Promise<void> {
+    if (params && params.length > 0) {
+      return this.internal_connection.executeWithParams(query, params);
+    } else {
+      return this.internal_connection.execute(query);
+    }
   }
 
   async nextResultSet() {

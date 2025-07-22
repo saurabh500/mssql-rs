@@ -3,7 +3,7 @@
 
 import test from 'ava';
 
-import { create_connection } from '../js/index.js';
+import { create_connection, JsSqlDataTypes } from '../js/index.js';
 import { Request } from '../js/request.js';
 
 test('connect to sqlserver and fetch multiple result sets', async (t) => {
@@ -71,6 +71,52 @@ test('query using request.ts', async (t) => {
   } catch (err) {
     t.log(err);
     t.fail('Error querying');
+  }
+});
+
+test('connect to sqlserver and execute parameterized query.', async (t) => {
+  // Example TypeScript test with proper typing
+  const context = {
+    serverName: process.env.DB_HOST || 'localhost',
+    port: 1433,
+    userName: process.env.DB_USER || 'sa',
+    password: process.env.SQL_PASSWORD,
+    database: 'master',
+    trustServerCertificate: true,
+  };
+
+  try {
+    const connection = await create_connection(context);
+    t.pass('Connection successful');
+    let query = 'select * from sys.columns where object_id > @input_parameter;';
+
+    let params = [
+      {
+        name: '@input_parameter',
+        dataType: JsSqlDataTypes.Int,
+        value: 3,
+      },
+    ];
+
+    await connection.execute(query, params);
+
+    let row = undefined;
+    let row_count = 0;
+    while (true) {
+      row = await connection.nextRow();
+      if (row && row.length > 0) {
+        row_count++;
+      } else {
+        break;
+      }
+    }
+    t.assert(row_count > 1000, 'Expected to fetch more than 1000 rows');
+    await connection.closeQuery();
+    await connection.close();
+    t.pass('Query executed successfully');
+  } catch (error) {
+    t.log('Connection failed:', error);
+    t.fail('Connection should succeed');
   }
 });
 
