@@ -3,9 +3,13 @@
 
 use std::collections::HashMap;
 
+use crate::datatypes::sql_string::SqlString;
+use crate::datatypes::sqltypes::SqlType;
 use crate::error::Error::UsageError;
-use crate::message::parameters::rpc_parameters::RpcParameter;
-use crate::message::rpc::{RpcType, SqlRpc};
+use crate::message::parameters::rpc_parameters::{
+    RpcParameter, StatusFlags, build_parameter_list_string,
+};
+use crate::message::rpc::{RpcProcs, RpcType, SqlRpc};
 use crate::query::result::ReturnValue;
 use crate::{
     connection::{
@@ -98,6 +102,70 @@ impl TdsClient {
         } else {
             self.current_metadata = metadata;
 
+            self.execution_context.set_has_open_batch(true);
+        }
+        Ok(())
+    }
+
+    // Executes a stored procedure with the given proc_id and parameters.
+    // The parameters can be either positional or named.
+    pub async fn execute_sp_executesql(
+        &mut self,
+        sql: String,
+        named_params: Vec<RpcParameter>,
+        timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<()> {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
+        let database_collation = self.negotiated_settings.database_collation;
+
+        let sql_statement_value =
+            SqlType::NVarcharMax(Some(SqlString::from_utf8_string(sql.clone())));
+
+        // Create the parameter list for sp_execute_sql
+        let statement_parameter = RpcParameter::new(None, StatusFlags::NONE, sql_statement_value);
+
+        // Build the comma separated list of parameters
+        let mut params_list_as_string = String::new();
+
+        build_parameter_list_string(&named_params, &mut params_list_as_string);
+
+        let params_as_sql_string = SqlType::NVarcharMax(Some(SqlString::from_utf8_string(
+            params_list_as_string.clone(),
+        )));
+
+        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, params_as_sql_string);
+
+        // Create the parameter list for positional parameters of sp_execute_sql.
+        // These could be named parameters as well, but we want to avoid sending the name
+        // to send less data over the wire.
+        let positional_parameters_vec = vec![statement_parameter, params_parameter];
+        let positional_parameters = Some(positional_parameters_vec);
+
+        // Build the RPC request.
+        let rpc = SqlRpc::new(
+            RpcType::ProcId(RpcProcs::ExecuteSql),
+            positional_parameters,
+            Some(named_params),
+            &database_collation,
+            &self.execution_context,
+        );
+
+        let mut packet_writer =
+            rpc.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
+        rpc.serialize(&mut packet_writer).await?;
+
+        let metadata = self.move_to_column_metadata().await?;
+        // No metadata means no rows were returned, so we set has_open_batch to false.
+        if metadata.is_none() {
+            self.execution_context.set_has_open_batch(false);
+            self.current_result_set_has_been_read_till_end = true;
+        } else {
+            self.current_metadata = metadata;
+            self.current_result_set_has_been_read_till_end = false;
             self.execution_context.set_has_open_batch(true);
         }
         Ok(())
@@ -215,6 +283,10 @@ impl TdsClient {
                 Tokens::ReturnValue(return_value_token) => {
                     let return_value = return_value_token.into();
                     self.return_values.push(return_value);
+                }
+                Tokens::ReturnStatus(return_status) => {
+                    info!("Received return_status token: {:?}", return_status);
+                    continue;
                 }
                 Tokens::Error(error_token) => {
                     info!(?error_token);

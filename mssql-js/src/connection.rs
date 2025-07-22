@@ -5,14 +5,14 @@ use std::sync::Arc;
 
 use mssql_tds::{
     connection::tds_client::{ResultSet, ResultSetClient, TdsClient},
-    datatypes::column_values::ColumnValues,
+    message::parameters::rpc_parameters::{RpcParameter, StatusFlags},
 };
 use napi::bindgen_prelude::{BigInt, Buffer, Either15, Null};
 use tokio::sync::Mutex;
 
 use crate::ffidatatypes::{
     Metadata, NapiDecimalParts, NapiSqlDateTime, NapiSqlDateTime2, NapiSqlDateTimeOffset,
-    NapiSqlMoney, NapiSqlTime, RowItem,
+    NapiSqlMoney, NapiSqlTime, Parameter, RowItem, transform_row,
 };
 
 pub(crate) type RowDataType = Either15<
@@ -52,64 +52,29 @@ impl Connection {
         }
     }
 
-    fn transform_row(&self, row: Vec<ColumnValues>) -> Vec<RowDataType> {
-        let mut ret_val: Vec<RowDataType> = Vec::with_capacity(row.len());
-        for col in row {
-            match col {
-                ColumnValues::Int(v) => ret_val.push(RowDataType::A(v)),
-                ColumnValues::Uuid(uuid) => ret_val.push(RowDataType::O(uuid.to_string())),
-                ColumnValues::Bit(v) => ret_val.push(RowDataType::C(v)),
-                ColumnValues::BigInt(v) => ret_val.push(RowDataType::B(v.into())),
-                ColumnValues::TinyInt(v) => ret_val.push(RowDataType::G(v.into())),
-                ColumnValues::SmallInt(v) => ret_val.push(RowDataType::A(v.into())),
-                ColumnValues::Real(v) => ret_val.push(RowDataType::N(v.into())),
-                ColumnValues::Float(v) => ret_val.push(RowDataType::N(v)),
-                ColumnValues::Decimal(decimal_parts) => {
-                    ret_val.push(RowDataType::M(decimal_parts.into()));
-                }
-                ColumnValues::Numeric(decimal_parts) => {
-                    ret_val.push(RowDataType::M(decimal_parts.into()));
-                }
-                ColumnValues::String(sql_string) => {
-                    ret_val.push(RowDataType::D(Buffer::from(sql_string.bytes)))
-                }
-                ColumnValues::DateTime(sql_date_time) => {
-                    ret_val.push(RowDataType::F(NapiSqlDateTime {
-                        days: sql_date_time.days,
-                        time: sql_date_time.time,
-                    }));
-                }
-                ColumnValues::Date(sql_date) => {
-                    ret_val.push(RowDataType::G(sql_date.get_days()));
-                }
-                ColumnValues::Time(_time) => ret_val.push(RowDataType::H(NapiSqlTime::from(_time))),
-                ColumnValues::DateTime2(_date_time2) => {
-                    ret_val.push(RowDataType::J(NapiSqlDateTime2::from(_date_time2)))
-                }
-                ColumnValues::DateTimeOffset(date_time_offset) => ret_val.push(RowDataType::K(
-                    NapiSqlDateTimeOffset::from(date_time_offset),
-                )),
-                ColumnValues::SmallDateTime(sql_small_date_time) => {
-                    ret_val.push(RowDataType::F(NapiSqlDateTime {
-                        days: sql_small_date_time.days.into(),
-                        time: sql_small_date_time.time.into(),
-                    }));
-                }
-                ColumnValues::SmallMoney(sql_small_money) => {
-                    ret_val.push(RowDataType::A(sql_small_money.int_val))
-                }
-                ColumnValues::Money(sql_money) => ret_val.push(RowDataType::L(sql_money.into())),
-                ColumnValues::Bytes(items) => ret_val.push(RowDataType::D(Buffer::from(items))),
-                ColumnValues::Xml(sql_xml) => {
-                    ret_val.push(RowDataType::D(Buffer::from(sql_xml.bytes)))
-                }
-                ColumnValues::Null => ret_val.push(RowDataType::E(Null)),
-                ColumnValues::Json(sql_json) => {
-                    ret_val.push(RowDataType::D(Buffer::from(sql_json.bytes)))
-                }
-            }
+    #[napi]
+    pub async fn execute_with_params(
+        &self,
+        query: String,
+        params: Vec<Parameter>,
+    ) -> napi::Result<()> {
+        let mut client = self.tds_client.lock().await;
+
+        let rpc_params: Vec<RpcParameter> = params
+            .into_iter()
+            .map(|p| RpcParameter::new(Some(p.name.clone()), StatusFlags::NONE, p.into()))
+            .collect();
+
+        let result = client
+            .execute_sp_executesql(query, rpc_params, None, None)
+            .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(napi::Error::from_reason(format!(
+                "Failed to execute query with parameters: {e}"
+            ))),
         }
-        ret_val
     }
 
     #[napi]
@@ -129,7 +94,7 @@ impl Connection {
         let md = result_set.get_metadata();
         match next_row {
             Some(row) => {
-                let transformed_row = self.transform_row(row);
+                let transformed_row = transform_row(row);
                 let col_count = transformed_row.len();
                 let mut row_items: Vec<RowItem> = Vec::with_capacity(col_count);
                 for (i, item) in transformed_row.into_iter().enumerate() {
@@ -196,7 +161,7 @@ impl Connection {
 
         match next_row {
             Some(row) => {
-                let transformed_row = self.transform_row(row);
+                let transformed_row = transform_row(row);
                 Ok(Some(transformed_row))
             }
             None => Ok(None),
