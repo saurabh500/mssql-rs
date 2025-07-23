@@ -36,6 +36,10 @@ import { moneyTransformer, smallMoneyTransformer } from './transformers/money';
 import { guidTransformer } from './transformers/guid';
 import { floatTransformer } from './transformers/float';
 
+import { Request } from './request.js';
+
+export { Request };
+
 export type { JsClientContext, Connection, Metadata };
 
 export function create_connection(

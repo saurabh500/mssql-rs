@@ -1,18 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import { error } from 'console';
 import { JsSqlDataTypes, SqlJsConnection, Row } from '.';
+import { SqlDataTypes, Parameter } from './generated';
 
 interface IResult {
   IRecordSets: Row[][];
   IRecordSet: Row[];
   row_count: number;
-}
-
-interface Parameter {
-  name: string;
-  type: JsSqlParameterTypes;
-  value: unknown;
 }
 
 //data types that are able to be parameterized
@@ -52,15 +48,23 @@ export class Request {
   }
 
   input(varName: string, type: JsSqlParameterTypes, value: unknown) {
+    //adds a '@' to a variable name if the use does not put one
+    if (!varName.startsWith('@')) {
+      varName = '@' + varName;
+    }
+
+    //collects the inputed parameters into the global parameters
     this.params.push({
       name: varName,
-      type: type,
+      dataType: type as unknown as SqlDataTypes,
       value: value,
     });
   }
 
   async query(command: string): Promise<IResult> {
-    await this.connection.execute(command);
+    //will correctly run regardless if there are parameters or not
+    await this.connection.execute(command, this.params);
+
     let result: IResult = {
       IRecordSets: [],
       IRecordSet: [],

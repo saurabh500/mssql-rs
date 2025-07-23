@@ -3,9 +3,7 @@
 
 import test from 'ava';
 
-import { create_connection, JsSqlDataTypes } from '../js/index.js';
-import { Request } from '../js/request.js';
-
+import { create_connection, JsSqlDataTypes, Request } from '../js/index.js';
 test('connect to sqlserver and fetch multiple result sets', async (t) => {
   // Example TypeScript test with proper typing
   const context = {
@@ -112,6 +110,68 @@ test('connect to sqlserver and execute parameterized query.', async (t) => {
     }
     t.assert(row_count > 1000, 'Expected to fetch more than 1000 rows');
     await connection.closeQuery();
+    await connection.close();
+    t.pass('Query executed successfully');
+  } catch (error) {
+    t.log('Connection failed:', error);
+    t.fail('Connection should succeed');
+  }
+});
+
+test('execute parameterized query with request class.', async (t) => {
+  // Example TypeScript test with proper typing
+  const context = {
+    serverName: process.env.DB_HOST || 'localhost',
+    port: 1433,
+    userName: process.env.DB_USER || 'sa',
+    password: process.env.SQL_PASSWORD,
+    database: 'master',
+    trustServerCertificate: true,
+  };
+
+  try {
+    const connection = await create_connection(context);
+    t.pass('Connection successful');
+    let query = 'select * from sys.columns where object_id > @input_parameter;';
+
+    let request = new Request(connection);
+
+    request.input('@input_parameter', JsSqlDataTypes.Int, 3);
+
+    let result = await request.query(query);
+
+    t.assert(result.row_count > 1000, 'Expected to fetch more than 1000 rows');
+    await connection.close();
+    t.pass('Query executed successfully');
+  } catch (error) {
+    t.log('Connection failed:', error);
+    t.fail('Connection should succeed');
+  }
+});
+
+test('adding @ to the parameter names if needed.', async (t) => {
+  // Example TypeScript test with proper typing
+  const context = {
+    serverName: process.env.DB_HOST || 'localhost',
+    port: 1433,
+    userName: process.env.DB_USER || 'sa',
+    password: process.env.SQL_PASSWORD,
+    database: 'master',
+    trustServerCertificate: true,
+  };
+
+  try {
+    const connection = await create_connection(context);
+    t.pass('Connection successful');
+    let query = 'select * from sys.columns where object_id > @input_parameter;';
+
+    let request = new Request(connection);
+
+    request.input('input_parameter', JsSqlDataTypes.Int, 3);
+
+    let result = await request.query(query);
+
+    t.assert(result.row_count > 1000, 'Expected to fetch more than 1000 rows');
     await connection.close();
     t.pass('Query executed successfully');
   } catch (error) {
