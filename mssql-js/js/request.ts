@@ -222,6 +222,7 @@ function transformForWrites(
     case JsSqlDataTypes.SmallInt:
     case JsSqlDataTypes.Int:
     case JsSqlDataTypes.BigInt:
+      if (row === null) return null;
       if (typeof row === 'bigint') return row;
       if (typeof row === 'number') return row;
       if (typeof row === 'string' && row.trim() !== '' && !isNaN(Number(row)))
