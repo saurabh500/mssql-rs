@@ -63,7 +63,7 @@ test('query using request.ts', async (t) => {
 
     //t.log('Received: ', result.IRecordSet);
 
-    t.assert(result.row_count === 2, 'Expected to fetch 2 rows');
+    t.assert(result.rowCount === 2, 'Expected to fetch 2 rows');
     await connection.close();
     t.pass('Successfully queries using new Request class');
   } catch (err) {
@@ -140,7 +140,7 @@ test('execute parameterized query with request class.', async (t) => {
 
     let result = await request.query(query);
 
-    t.assert(result.row_count > 1000, 'Expected to fetch more than 1000 rows');
+    t.assert(result.rowCount > 1000, 'Expected to fetch more than 1000 rows');
     await connection.close();
     t.pass('Query executed successfully');
   } catch (error) {
@@ -171,7 +171,7 @@ test('adding @ to the parameter names if needed.', async (t) => {
 
     let result = await request.query(query);
 
-    t.assert(result.row_count > 1000, 'Expected to fetch more than 1000 rows');
+    t.assert(result.rowCount > 1000, 'Expected to fetch more than 1000 rows');
     await connection.close();
     t.pass('Query executed successfully');
   } catch (error) {

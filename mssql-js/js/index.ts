@@ -71,6 +71,10 @@ export class SqlJsConnection {
     return this.internal_connection.nextRowInResultset();
   }
 
+  async getMetadata() {
+    return this.internal_connection.getMetadata();
+  }
+
   async nextRow(): Promise<Array<Row>> {
     let metadata = await this.internal_connection.getMetadata();
 
