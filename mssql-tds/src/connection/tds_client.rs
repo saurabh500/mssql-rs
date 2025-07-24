@@ -230,9 +230,10 @@ impl TdsClient {
                 .receive_token(&ParserContext::None(()), None, None)
                 .await?;
             match token {
-                Tokens::Done(t1) => {
-                    info!(?t1);
-                    if !t1.has_more() {
+                Tokens::Done(done) | Tokens::DoneProc(done) | Tokens::DoneInProc(done) => {
+                    info!(?done);
+                    info!(?done.status);
+                    if !done.has_more() {
                         break;
                     }
                 }

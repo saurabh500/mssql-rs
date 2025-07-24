@@ -5,7 +5,10 @@
 mod common;
 
 mod rpc_datatypes {
-    use crate::common::{begin_connection, create_context, get_first_row, init_tracing};
+    use crate::common::{
+        begin_connection, create_client, create_context, get_first_row, init_tracing,
+    };
+    use mssql_tds::core::TdsResult;
     use mssql_tds::datatypes::column_values::{SqlDate, SqlDateTime};
     use mssql_tds::datatypes::sql_string::SqlString;
     use mssql_tds::{
@@ -163,6 +166,31 @@ mod rpc_datatypes {
                 _ => {}
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_bad_sql_statement_with_trailing_comma() -> TdsResult<()> {
+        let context = create_context();
+        let mut client = create_client(context).await?;
+
+        let query = "SELECT @bit AS bit,;".to_string();
+
+        let mut named_parameters = Vec::new();
+        let param = RpcParameter::new(
+            Some("@bit".to_string()),
+            StatusFlags::NONE,
+            SqlType::Bit(Some(false)),
+        );
+        named_parameters.push(param);
+        let result = client
+            .execute_sp_executesql(query, named_parameters, None, None)
+            .await;
+
+        assert!(
+            result.is_err(),
+            "Expected an error due to trailing comma in SQL statement"
+        );
+        Ok(())
     }
 
     pub fn generate_select_statement(columns: &Vec<(&str, SqlType)>) -> String {

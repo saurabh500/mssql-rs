@@ -60,11 +60,27 @@ impl Connection {
     ) -> napi::Result<()> {
         let mut client = self.tds_client.lock().await;
 
-        let rpc_params: Vec<RpcParameter> = params
+        let rpc_params: Result<Vec<RpcParameter>, napi::Error> = params
             .into_iter()
-            .map(|p| RpcParameter::new(Some(p.name.clone()), StatusFlags::NONE, p.into()))
+            .map(|p| {
+                let param_name = p.name.clone();
+                let param_value = match p.try_into() {
+                    Ok(value) => value,
+                    Err(e) => {
+                        return Err(napi::Error::from_reason(format!(
+                            "Parameter conversion failed: {e}"
+                        )));
+                    }
+                };
+                Ok(RpcParameter::new(
+                    Some(param_name),
+                    StatusFlags::NONE,
+                    param_value,
+                ))
+            })
             .collect();
 
+        let rpc_params = rpc_params?;
         let result = client
             .execute_sp_executesql(query, rpc_params, None, None)
             .await;

@@ -11,7 +11,10 @@ use mssql_tds::{
     query::metadata::ColumnMetadata,
     token::tokens::SqlCollation,
 };
-use napi::bindgen_prelude::{BigInt, Buffer, Null};
+use napi::{
+    Error,
+    bindgen_prelude::{BigInt, Buffer, Null},
+};
 
 use crate::connection::RowDataType;
 
@@ -37,6 +40,7 @@ impl From<SqlCollation> for CollationMetadata {
     }
 }
 
+#[derive(Debug)]
 #[napi]
 pub enum SqlDataTypes {
     Void = 0x1F,
@@ -300,37 +304,121 @@ pub struct Parameter {
     pub value: RowDataType,
 }
 
-impl From<Parameter> for SqlType {
-    fn from(_param: Parameter) -> SqlType {
-        let is_null = matches!(_param.value, RowDataType::E(Null));
-        // match _param.data_type {
-        //     SqlDataTypes::Int4 => {
-        //         if is_null {
-        //             SqlType::Int(None)
-        //         } else {
-        //             SqlType::Int(Some(_param.value.as_int()))
-        //         }
-        //     },
+impl TryFrom<Parameter> for SqlType {
+    fn try_from(param: Parameter) -> Result<SqlType, Error> {
+        // If we have a null as the input value, then we return the SqlType with None.
+        if matches!(param.value, RowDataType::E(Null)) {
+            let null_val = match param.data_type {
+                SqlDataTypes::Int1
+                | SqlDataTypes::Int2
+                | SqlDataTypes::Int4
+                | SqlDataTypes::Int8 => Ok(SqlType::Int(None)),
+                SqlDataTypes::Bit => Ok(SqlType::Bit(None)),
+                SqlDataTypes::Decimal | SqlDataTypes::Numeric => Ok(SqlType::Decimal(None)),
+                SqlDataTypes::Money | SqlDataTypes::Money4 => Ok(SqlType::Money(None)),
+                SqlDataTypes::Void => Err(Error::from_reason("Void type not implemented")),
+                SqlDataTypes::Image => Err(Error::from_reason("Image conversion not implemented")),
+                SqlDataTypes::Text => Ok(SqlType::Text(None)),
+                SqlDataTypes::Guid => Ok(SqlType::Uuid(None)),
+                SqlDataTypes::VarBinary => Ok(SqlType::VarBinary(None, 0)),
+                SqlDataTypes::VarChar => Ok(SqlType::Varchar(None, 0)),
+                SqlDataTypes::Date => Ok(SqlType::Date(None)),
+                SqlDataTypes::Time => Ok(SqlType::Time(None)),
+                SqlDataTypes::DateTime2 => Ok(SqlType::DateTime2(None)),
+                SqlDataTypes::DateTimeOffset => Ok(SqlType::DateTimeOffset(None)),
+                SqlDataTypes::Binary => Ok(SqlType::Binary(None, 0)),
+                SqlDataTypes::Char => Ok(SqlType::Char(None, 0)),
+                SqlDataTypes::SmallDateTime => Ok(SqlType::SmallDateTime(None)),
+                SqlDataTypes::Flt4 => Ok(SqlType::Real(None)),
+                SqlDataTypes::DateTime => Ok(SqlType::DateTime(None)),
+                SqlDataTypes::Flt8 => Ok(SqlType::Float(None)),
+                SqlDataTypes::SsVariant => {
+                    Err(Error::from_reason("SSVariant conversion not implemented"))
+                }
+                SqlDataTypes::NText => Ok(SqlType::NText(None)),
+                SqlDataTypes::FltN => Ok(SqlType::Float(None)),
+                SqlDataTypes::BigVarBinary => Ok(SqlType::VarBinary(None, 0)),
+                SqlDataTypes::BigVarChar => Ok(SqlType::Varchar(None, 0)),
+                SqlDataTypes::BigBinary => Ok(SqlType::Binary(None, 0)),
+                SqlDataTypes::BigChar => Ok(SqlType::Char(None, 0)),
+                SqlDataTypes::NVarChar => Ok(SqlType::NVarchar(None, 0)),
+                SqlDataTypes::NChar => Ok(SqlType::NChar(None, 0)),
+                SqlDataTypes::Udt => Err(Error::from_reason("Udt conversion not implemented")),
+                SqlDataTypes::Xml => Ok(SqlType::Xml(None)),
+                SqlDataTypes::Json => Ok(SqlType::Json(None)),
+            };
+            return null_val;
+        }
 
-        match _param.value {
+        match param.value {
             RowDataType::A(v) => {
-                if is_null {
-                    SqlType::Int(None)
-                } else {
-                    SqlType::Int(Some(v))
+                if !matches!(
+                    param.data_type,
+                    SqlDataTypes::Int1
+                        | SqlDataTypes::Int2
+                        | SqlDataTypes::Int4
+                        | SqlDataTypes::Int8
+                ) {
+                    return Err(Error::from_reason(format!(
+                        "Invalid data_type for number: {:?}. Only smallint, tinyint, int and bigint are allowed.",
+                        param.data_type
+                    )));
+                }
+                match param.data_type {
+                    SqlDataTypes::Int1 => {
+                        if v < u8::MIN as i32 || v > u8::MAX as i32 {
+                            return Err(Error::from_reason(format!(
+                                "Value {v} out of range for Int1"
+                            )));
+                        }
+                        Ok(SqlType::TinyInt(Some(v as u8)))
+                    }
+                    SqlDataTypes::Int2 => {
+                        if v < i16::MIN as i32 || v > i16::MAX as i32 {
+                            return Err(Error::from_reason(format!(
+                                "Value {v} out of range for Int2"
+                            )));
+                        }
+                        Ok(SqlType::SmallInt(Some(v as i16)))
+                    }
+                    SqlDataTypes::Int4 => Ok(SqlType::Int(Some(v))),
+                    SqlDataTypes::Int8 => Ok(SqlType::BigInt(Some(v as i64))),
+                    _ => Err(Error::from_reason(format!(
+                        "Invalid data_type for RowDataType::A: {:?}. Only Int1, Int2, Int4, Int8 are allowed.",
+                        param.data_type
+                    ))),
                 }
             }
-            RowDataType::B(_v) => {
-                todo!("Converting BigInt value: ");
+
+            RowDataType::B(bigint) => {
+                let (i64val, is_lossless) = bigint.get_i64();
+                if !is_lossless {
+                    return Err(Error::from_reason(format!(
+                        "BigInt value {i64val} is not lossless. A value out of range of i64 was provided."
+                    )));
+                }
+                if !matches!(param.data_type, SqlDataTypes::Int8) {
+                    return Err(Error::from_reason(format!(
+                        "Invalid data_type for RowDataType::B: {:?}. Only Int8 is allowed.",
+                        param.data_type
+                    )));
+                }
+                Ok(SqlType::BigInt(Some(i64val)))
             }
-            RowDataType::C(v) => {
-                todo!("Converting Bool value: {}", v);
+            RowDataType::C(bit_val) => {
+                if !matches!(param.data_type, SqlDataTypes::Bit) {
+                    return Err(Error::from_reason(format!(
+                        "Invalid data_type for RowDataType::C: {:?}. Only Bit is allowed.",
+                        param.data_type
+                    )));
+                }
+                Ok(SqlType::Bit(Some(bit_val)))
             }
             RowDataType::D(_v) => {
                 todo!("Converting Buffer value: ");
             }
             RowDataType::E(_) => {
-                todo!("Converting Null value");
+                unreachable!("Null value should have been handled earlier");
             }
             RowDataType::F(_v) => {
                 todo!("Converting NapiSqlDateTime value: ");
@@ -345,11 +433,28 @@ impl From<Parameter> for SqlType {
                 todo!("Converting NapiSqlDateTime value: ");
                 // Here you can add the conversion logic for NapiSqlDateTime
             }
-            _ => {
-                todo!("Unsupported RowDataType: ");
+            RowDataType::J(_v) => {
+                todo!("Converting NapiSqlDateTime2 value: ");
+            }
+            RowDataType::K(_v) => {
+                todo!("Converting NapiSqlDateTimeOffset value: ");
+            }
+            RowDataType::L(_v) => {
+                todo!("Converting NapiSqlMoney value: ");
+            }
+            RowDataType::M(_v) => {
+                todo!("Converting NapiDecimalParts value: ");
+            }
+            RowDataType::N(_v) => {
+                todo!("Converting f64 value: {}", _v);
+            }
+            RowDataType::O(_v) => {
+                todo!("Converting String value: {}", _v);
             }
         }
     }
+
+    type Error = napi::Error;
 }
 
 pub(crate) fn transform_row(row: Vec<ColumnValues>) -> Vec<RowDataType> {

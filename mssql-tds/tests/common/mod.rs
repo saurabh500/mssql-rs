@@ -9,6 +9,7 @@ use std::sync::Once;
 use dotenv::dotenv;
 use futures::StreamExt;
 use mssql_tds::connection::client_context::TransportContext;
+use mssql_tds::connection::tds_client::TdsClient;
 use mssql_tds::core::{EncryptionOptions, TdsResult};
 use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::query::metadata::ColumnMetadata;
@@ -113,6 +114,13 @@ pub fn create_context() -> ClientContext {
 
 pub async fn begin_connection(client_context: ClientContext) -> Box<TdsConnection> {
     create_connection(client_context).await.unwrap()
+}
+
+#[allow(dead_code)]
+pub async fn create_client(client_context: ClientContext) -> TdsResult<TdsClient> {
+    let provider = TdsConnectionProvider {};
+    let client = provider.create_client(client_context, None).await?;
+    Ok(client)
 }
 
 pub async fn create_connection(context: ClientContext) -> TdsResult<Box<TdsConnection>> {

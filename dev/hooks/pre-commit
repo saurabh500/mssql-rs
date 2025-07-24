@@ -4,10 +4,10 @@
 cargo fmt
 
 # Check if there are any unstaged changes after formatting
-if ! git diff --quiet; then
-    echo "Code formatting changes detected. Please review and add the formatted files:"
+if ! git diff --quiet -- '*.rs'; then
+    echo "Code formatting changes detected in Rust files. Please review and add the formatted files:"
     echo ""
-    git diff --name-only
+    git diff --name-only -- '*.rs'
     echo ""
     echo "Run 'git add .' to stage the formatted files and commit again."
     exit 1

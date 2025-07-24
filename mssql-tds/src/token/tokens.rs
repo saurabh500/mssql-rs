@@ -708,6 +708,10 @@ impl DoneToken {
     pub fn has_more(&self) -> bool {
         self.status.contains(DoneStatus::MORE)
     }
+
+    pub fn has_error(&self) -> bool {
+        self.status.contains(DoneStatus::ERROR)
+    }
 }
 
 #[derive(Debug)]
