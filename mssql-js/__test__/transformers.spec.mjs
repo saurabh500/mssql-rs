@@ -39,7 +39,10 @@ test('nCharNVarCharTransformer', (t) => {
   const transformer = tdsToJsTransformers[JsSqlDataTypes.NVarChar];
   const str = 'hello';
   const buf = Buffer.from(str, 'ucs2');
-  const result = transformer(mockMetadata(JsSqlDataTypes.NVarChar), buf);
+  const result = transformer(
+    mockMetadata(JsSqlDataTypes.NVarChar, { isUtf8: false }),
+    buf,
+  );
   t.is(result, str);
 });
 

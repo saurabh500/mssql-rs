@@ -11,8 +11,8 @@ use napi::bindgen_prelude::{BigInt, Buffer, Either15, Null};
 use tokio::sync::Mutex;
 
 use crate::ffidatatypes::{
-    Metadata, NapiDecimalParts, NapiSqlDateTime, NapiSqlDateTime2, NapiSqlDateTimeOffset,
-    NapiSqlMoney, NapiSqlTime, Parameter, RowItem, transform_row,
+    CollationMetadata, Metadata, NapiDecimalParts, NapiSqlDateTime, NapiSqlDateTime2,
+    NapiSqlDateTimeOffset, NapiSqlMoney, NapiSqlTime, Parameter, RowItem, transform_row,
 };
 
 pub(crate) type RowDataType = Either15<
@@ -36,10 +36,16 @@ pub(crate) type RowDataType = Either15<
 #[napi]
 pub struct Connection {
     pub(crate) tds_client: Arc<Mutex<TdsClient>>,
+    pub(crate) collation: Option<CollationMetadata>,
 }
 
 #[napi]
 impl Connection {
+    #[napi]
+    pub fn get_collation(&self) -> Option<CollationMetadata> {
+        self.collation.clone()
+    }
+
     #[napi]
     pub async fn execute(&self, query: String) -> napi::Result<()> {
         let mut client = self.tds_client.lock().await;

@@ -12,6 +12,9 @@ pub enum EncodingType {
     Utf8,
     Utf16,
     LcidBased(SqlCollation),
+    // This is to be used when we want to have an empty encoding, which
+    // is later written over the protocol by getting the collation from the connection.
+    DelayedSet,
 }
 
 #[derive(PartialEq, Clone)]
@@ -51,7 +54,11 @@ impl SqlString {
                 String::from_utf16(&u16_buffer).unwrap()
             }
             EncodingType::LcidBased(_) => {
-                unimplemented!("LCID based encoding not implemented");
+                unimplemented!("LCID based encoding conversion to UTF8 not implemented");
+            }
+            EncodingType::DelayedSet => {
+                // DelayedSet encoding is not defined, so we return the bytes as a UTF-8 string.
+                unimplemented!("DelayedSet encoding conversion to UTF8 not implemented");
             }
         }
     }

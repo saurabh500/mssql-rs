@@ -2,7 +2,12 @@
 // Licensed under the MIT License.
 
 import { JsSqlDataTypes, SqlJsConnection } from '.';
-import { SqlDataTypes, Parameter, Metadata, RowItem } from './generated';
+import { Encoding } from './codepages';
+import { SqlDataTypes, Parameter } from './generated';
+import {
+  nCharNVarCharTdsTransformer,
+  varCharTdsTransformer,
+} from './transformers/string';
 
 type ColumnValue =
   | number
@@ -80,11 +85,14 @@ export class Request {
       varName = '@' + varName;
     }
 
+    // Transform from Js Types to Tds Types.
+    let transformed_value = transformForWrites(type, value);
+
     //collects the inputed parameters into the global parameters
     this.params.push({
       name: varName,
       dataType: type as unknown as SqlDataTypes,
-      value: value,
+      value: transformed_value,
     });
   }
 
@@ -172,5 +180,70 @@ export class Request {
     await this.connection.closeQuery();
 
     return result;
+  }
+}
+function transformForWrites(
+  type: JsSqlDataTypes,
+  row: unknown,
+  encoding?: Encoding,
+) {
+  switch (type) {
+    case JsSqlDataTypes.VarBinary:
+    case JsSqlDataTypes.Binary:
+      if (Buffer.isBuffer(row)) return row;
+      throw new TypeError('Expected a Buffer for VarBinary/Binary types');
+
+    case JsSqlDataTypes.NVarChar:
+    case JsSqlDataTypes.NChar:
+      if (row === null || typeof row === 'string') {
+        return nCharNVarCharTdsTransformer(row as string, encoding);
+      } else {
+        throw new TypeError('Expected a string for NVarChar/NChar');
+      }
+    case JsSqlDataTypes.Xml:
+      throw new Error('not implemented');
+    case JsSqlDataTypes.VarChar:
+    case JsSqlDataTypes.Char:
+      // check if the row type is string
+      if (row === null || typeof row === 'string') {
+        return varCharTdsTransformer(row, encoding);
+      } else {
+        throw new TypeError('Expected a string for VarChar/Char types');
+      }
+    case JsSqlDataTypes.Date:
+    case JsSqlDataTypes.DateTime:
+    case JsSqlDataTypes.DateTime2:
+    case JsSqlDataTypes.SmallDateTime:
+    case JsSqlDataTypes.DateTimeOffset:
+      throw new Error('not implemented');
+    case JsSqlDataTypes.Time:
+      throw new Error('not implemented');
+    case JsSqlDataTypes.TinyInt:
+    case JsSqlDataTypes.SmallInt:
+    case JsSqlDataTypes.Int:
+    case JsSqlDataTypes.BigInt:
+      if (typeof row === 'bigint') return row;
+      if (typeof row === 'number') return row;
+      if (typeof row === 'string' && row.trim() !== '' && !isNaN(Number(row)))
+        return Number(row);
+      throw new TypeError(
+        'Expected a non-empty string or number for TinyInt/SmallInt/Int/BigInt types',
+      );
+    case JsSqlDataTypes.Bit:
+      if (typeof row === 'boolean') return row;
+      if (typeof row === 'number') return Boolean(row);
+      if (typeof row === 'string') return row === 'true' || row === '1';
+      return null;
+    case JsSqlDataTypes.Decimal:
+    case JsSqlDataTypes.Numeric:
+    case JsSqlDataTypes.Money:
+    case JsSqlDataTypes.SmallMoney:
+    case JsSqlDataTypes.Float:
+    case JsSqlDataTypes.Real:
+      throw new Error('not implemented');
+    case JsSqlDataTypes.UniqueIdentifier:
+      throw new Error('not implemented');
+    default:
+      return row;
   }
 }

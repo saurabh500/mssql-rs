@@ -149,6 +149,37 @@ test('execute parameterized query with request class.', async (t) => {
   }
 });
 
+test('test strings with request class.', async (t) => {
+  // Example TypeScript test with proper typing
+  const context = {
+    serverName: process.env.DB_HOST || 'localhost',
+    port: 1433,
+    userName: process.env.DB_USER || 'sa',
+    password: process.env.SQL_PASSWORD,
+    database: 'master',
+    trustServerCertificate: true,
+  };
+
+  try {
+    const connection = await create_connection(context);
+    t.pass('Connection successful');
+    let query = 'select @str as string;';
+
+    let request = new Request(connection);
+
+    request.input('@str', JsSqlDataTypes.VarChar, 'test');
+
+    let result = await request.query(query);
+
+    t.assert(result.rowCount === 1, 'Expected to fetch exactly 1 row');
+    await connection.close();
+    t.pass('Query executed successfully');
+  } catch (error) {
+    t.log('Connection failed:', error);
+    t.fail('Connection should succeed');
+  }
+});
+
 test('adding @ to the parameter names if needed.', async (t) => {
   // Example TypeScript test with proper typing
   const context = {

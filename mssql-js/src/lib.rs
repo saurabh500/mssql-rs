@@ -13,7 +13,7 @@ use mssql_tds::{
 use tokio::sync::Mutex;
 use tracing::Level;
 
-use crate::{connection::Connection, context::JsClientContext};
+use crate::{connection::Connection, context::JsClientContext, ffidatatypes::CollationMetadata};
 use tracing_subscriber::FmtSubscriber;
 
 #[macro_use]
@@ -55,8 +55,10 @@ pub async fn connect(context: JsClientContext) -> napi::Result<Connection> {
 
     match tds_client {
         Ok(client) => {
+            let collation = CollationMetadata::from(client.get_collation());
             let connection = Connection {
                 tds_client: Arc::new(Mutex::new(client)),
+                collation: Some(collation),
             };
             Ok(connection)
         }

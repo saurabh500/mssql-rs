@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-type Encoding =
+export type Encoding =
   | 'utf-8'
   | 'CP437'
   | 'CP850'

@@ -2,7 +2,11 @@
 // Licensed under the MIT License.
 
 import { Metadata } from '../generated/index.js';
-import { codepageByLanguageId, codepageBySortId } from '../codepages.js';
+import {
+  codepageByLanguageId,
+  codepageBySortId,
+  Encoding,
+} from '../codepages.js';
 import * as iconv from 'iconv-lite';
 
 export const nCharNVarCharTransformer = (
@@ -10,7 +14,19 @@ export const nCharNVarCharTransformer = (
   row: Buffer | null,
 ): string | null => {
   const nvarchar_buff = row;
-  return nvarchar_buff == null ? null : nvarchar_buff.toString('ucs2');
+  if (metadata.encoding != null && metadata.encoding.isUtf8) {
+    return nvarchar_buff == null ? null : nvarchar_buff.toString('utf8');
+  } else {
+    return nvarchar_buff == null ? null : nvarchar_buff.toString('ucs2');
+  }
+};
+
+export const nCharNVarCharTdsTransformer = (
+  row: string | null,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  encoding?: Encoding,
+): Buffer | null => {
+  return row == null ? null : iconv.encode(row, 'ucs2');
 };
 
 export const varCharTransformer = (
@@ -31,4 +47,11 @@ export const varCharTransformer = (
     encoding = 'utf8';
   }
   return varchar_buff == null ? null : iconv.decode(varchar_buff, encoding);
+};
+
+export const varCharTdsTransformer = (
+  row: string | null,
+  encoding?: Encoding,
+): Buffer | null => {
+  return row == null ? null : iconv.encode(row, encoding || 'utf8');
 };

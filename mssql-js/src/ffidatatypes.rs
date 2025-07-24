@@ -5,6 +5,7 @@ use mssql_tds::{
     datatypes::{
         column_values::{ColumnValues, SqlDateTime2, SqlDateTimeOffset, SqlMoney, SqlTime},
         decoder::DecimalParts,
+        sql_string::{EncodingType, SqlString},
         sqldatatypes::TdsDataType,
         sqltypes::SqlType,
     },
@@ -302,6 +303,8 @@ pub struct Parameter {
     pub name: String,
     pub data_type: SqlDataTypes,
     pub value: RowDataType,
+    // Applicable to Varchar, NVarChar, VarBinary, NVarBinary, and similar types
+    pub length: Option<u32>,
 }
 
 impl TryFrom<Parameter> for SqlType {
@@ -414,9 +417,23 @@ impl TryFrom<Parameter> for SqlType {
                 }
                 Ok(SqlType::Bit(Some(bit_val)))
             }
-            RowDataType::D(_v) => {
-                todo!("Converting Buffer value: ");
-            }
+            RowDataType::D(_v) => match param.data_type {
+                SqlDataTypes::VarChar => {
+                    let bytes: Vec<u8> = _v.to_vec();
+                    Ok(SqlType::VarcharMax(Some(SqlString::new(
+                        bytes,
+                        EncodingType::DelayedSet,
+                    ))))
+                }
+                SqlDataTypes::NVarChar => {
+                    let bytes: Vec<u8> = _v.to_vec();
+                    Ok(SqlType::NVarcharMax(Some(SqlString::new(
+                        bytes,
+                        EncodingType::DelayedSet,
+                    ))))
+                }
+                _ => todo!("Buffer subtype not implemeted"),
+            },
             RowDataType::E(_) => {
                 unreachable!("Null value should have been handled earlier");
             }

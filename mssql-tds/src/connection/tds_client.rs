@@ -11,6 +11,7 @@ use crate::message::parameters::rpc_parameters::{
 };
 use crate::message::rpc::{RpcProcs, RpcType, SqlRpc};
 use crate::query::result::ReturnValue;
+use crate::token::tokens::SqlCollation;
 use crate::{
     connection::{
         tds_connection::{ALREADY_EXECUTING_ERROR, ExecutionContext},
@@ -62,6 +63,10 @@ impl TdsClient {
             return_values: Vec::new(),
             current_result_set_has_been_read_till_end: false,
         }
+    }
+
+    pub fn get_collation(&self) -> SqlCollation {
+        self.negotiated_settings.database_collation
     }
 
     pub(crate) fn get_transport(&self) -> &NetworkTransport {

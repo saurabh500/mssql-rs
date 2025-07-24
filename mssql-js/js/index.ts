@@ -27,6 +27,7 @@ import {
 } from './transformers/datetime';
 import {
   nCharNVarCharTransformer,
+  varCharTdsTransformer,
   varCharTransformer,
 } from './transformers/string';
 import { binaryTransformer } from './transformers/binary';
@@ -37,6 +38,7 @@ import { guidTransformer } from './transformers/guid';
 import { floatTransformer } from './transformers/float';
 
 import { Request } from './request.js';
+import { Encoding } from './codepages.js';
 
 export { Request };
 
@@ -158,6 +160,10 @@ export interface TdsToJsTransformer {
   (metadata: Metadata, row: any): any;
 }
 
+export interface JsToTdsTransformer {
+  (row: any, encoding?: Encoding): any;
+}
+
 export enum JsSqlDataTypes {
   Void = 31,
   Image = 34,
@@ -231,4 +237,10 @@ export const tdsToJsTransformers: Partial<
   [JsSqlDataTypes.Real]: floatTransformer,
   [JsSqlDataTypes.Float]: floatTransformer,
   [JsSqlDataTypes.FltN]: floatTransformer,
+};
+
+export const jsToTdstransformers: Partial<
+  Record<JsSqlDataTypes, JsToTdsTransformer>
+> = {
+  [JsSqlDataTypes.VarChar]: varCharTdsTransformer,
 };
