@@ -98,7 +98,7 @@ export const timeTransformer = (
   }
   // Convert timeNanoseconds to milliseconds.
   let received_time = row.timeNanoseconds;
-  let normalize_time = Number(received_time) / 10 ** (7 - scale);
+  let normalize_time = Number(received_time) * 10 ** (7 - scale);
   let millis = Number(normalize_time) / 10_000; // Convert nanoseconds to milliseconds
 
   // Extract nanoseconds precision

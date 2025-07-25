@@ -54,6 +54,14 @@ test('datetime conversion', async (t) => {
       },
     },
     {
+      sql: "SELECT CAST('12:34:56.1234567' AS TIME(3)) AS val",
+      expected: () => {
+        const date = new Date('1970-01-01T12:34:56.123Z');
+        date.nanosecondsDelta = 0; // Example nanoseconds delta
+        return date;
+      },
+    },
+    {
       sql: "SELECT CAST('00:00:00.0000000' AS TIME(7)) AS val",
       expected: () => {
         const date = new Date('1970-01-01T00:00:00.000Z');
