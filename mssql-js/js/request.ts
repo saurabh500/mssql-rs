@@ -9,19 +9,11 @@ import {
   varCharTdsTransformer,
 } from './transformers/string';
 
-type ColumnValue =
-  | number
-  | string
-  | boolean
-  | Buffer
-  | null
-  | Date
-  | bigint
-  | Array<Column>;
+type ColumnValue = number | string | boolean | Buffer | null | Date | bigint;
 
 // makes a row interface that assigns a key string to a value
 interface RecordSetRow {
-  [key: string]: ColumnValue;
+  [key: string]: ColumnValue | Array<ColumnValue>;
 }
 
 // interface to group together column metadata
@@ -124,7 +116,7 @@ export class Request {
           break;
         }
         //builds the current row as an object and counts the number of anonymous columns
-        let currentRow = {};
+        let currentRow: RecordSetRow = {};
         let anonymousColumns: number = 0;
         next_row.forEach((rowVal, index) => {
           if (index >= metadata.length) {
@@ -136,29 +128,31 @@ export class Request {
             let column = {
               index: index,
               name: transformed.metadata.name,
+              //if the column is an anonymous column, make the column type undefined
               type:
-                //if the column is an anonymous column, make the type undefined
                 transformed.metadata.name.length > 0
                   ? transformed.metadata.dataType
                   : undefined,
             };
-            currentRecordSet.columns.push(column);
+
+            //avoids readding unnamed columns for each anonymous column
+            if (!(column.name === '' && '' in currentRow)) {
+              currentRecordSet.columns.push(column);
+            }
           }
           //pushes the row item as a column name and associated value
           //if there is no name associated such as if querying "SELECT 10", add it to an array for all anonymous columns
           if (transformed.metadata.name === '' && '' in currentRow) {
             if (Array.isArray(currentRow[''])) {
               currentRow[''].push(transformed.rowVal);
-              anonymousColumns++; //only increments the count for anonymous columns past 1
+              anonymousColumns++; //only increments the count for anonymous columns after the first
             }
             //creates an array only if there are more than 1 anonymous column values
             else {
               currentRow[''] = [currentRow[''], transformed.rowVal];
             }
           } else {
-            Object.assign(currentRow, {
-              [transformed.metadata.name]: transformed.rowVal,
-            });
+            currentRow[transformed.metadata.name] = transformed.rowVal;
           }
         });
         //keeps track of the row count for each record set
@@ -166,7 +160,7 @@ export class Request {
         currentRecordSet.rowCount++;
       }
 
-      //keeps count of all rows in all record sets
+      //keeps count of every rows in all record sets
       result.rowCount += currentRecordSet.rowCount;
       result.IRecordSets.push(currentRecordSet);
 
@@ -177,6 +171,7 @@ export class Request {
 
     result.IRecordSet =
       result.IRecordSets.length > 0 ? result.IRecordSets[0] : null;
+
     await this.connection.closeQuery();
 
     return result;
