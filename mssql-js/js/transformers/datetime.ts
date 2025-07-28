@@ -11,6 +11,7 @@ import {
 } from '../generated/index.js';
 
 const SQL_EPOCH_DATE = LocalDate.of(1, Month.JANUARY, 1);
+const SQL_1900_EPOCH_DATE = LocalDate.of(1900, Month.JANUARY, 1);
 
 export interface DateWithNanosecondsDelta extends Date {
   nanosecondsDelta: number;
@@ -195,4 +196,49 @@ export const fromJsToNapiTimeTransformer = (
     scale: scale,
     timeNanoseconds: BigInt(timeToSend),
   };
+};
+
+export const fromJsToNapiDateTimeTransformer = (
+  date: Date | null,
+): NapiSqlDateTime | null => {
+  if (!date) return null;
+  let local_date = LocalDate.of(
+    date.getUTCFullYear(),
+    date.getUTCMonth() + 1,
+    date.getUTCDate(),
+  );
+  let days = SQL_1900_EPOCH_DATE.until(local_date, ChronoUnit.DAYS);
+  let millis =
+    date.getUTCHours() * 3_600 * 1_000 + // Hours to millis
+    date.getUTCMinutes() * 60 * 1_000 + // Minutes to millis
+    date.getUTCSeconds() * 1_000 + // Seconds to millis
+    date.getUTCMilliseconds(); // Millis
+  let time = Math.round((millis / 10) * 3); // Convert milliseconds to  1/300th of seconds
+  return {
+    days: days,
+    time: time,
+  } as NapiSqlDateTime;
+};
+
+export const fromJsToNapiSmallDateTimeTransformer = (
+  date: Date | null,
+): NapiSqlDateTime | null => {
+  if (!date) return null;
+  let local_date = LocalDate.of(
+    date.getUTCFullYear(),
+    date.getUTCMonth() + 1,
+    date.getUTCDate(),
+  );
+  let days = SQL_1900_EPOCH_DATE.until(local_date, ChronoUnit.DAYS);
+  if (days < 0) {
+    throw new Error('Date cannot be before 1900-01-01 for SmallDateTime');
+  }
+  let minutes =
+    date.getUTCHours() * 60 + // Hours to minutes
+    date.getUTCMinutes();
+
+  return {
+    days: days,
+    time: minutes,
+  } as NapiSqlDateTime;
 };

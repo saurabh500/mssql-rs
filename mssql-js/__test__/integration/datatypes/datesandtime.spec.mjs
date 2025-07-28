@@ -105,3 +105,43 @@ test(
   null,
   JsSqlDataTypes.DateTimeOffset,
 );
+
+test(
+  'test DateTime somevalue in UTC',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56)),
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56)),
+  JsSqlDataTypes.DateTime,
+);
+
+test(
+  'test DateTime before 1900 in UTC',
+  genericMacro,
+  new Date(Date.UTC(1800, 0, 1, 12, 34, 56)),
+  new Date(Date.UTC(1800, 0, 1, 12, 34, 56)),
+  JsSqlDataTypes.DateTime,
+);
+
+test(
+  'test DateTime null in UTC',
+  genericMacro,
+  null,
+  null,
+  JsSqlDataTypes.DateTime,
+);
+
+test(
+  'test SmallDateTime somevalue in UTC',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56)),
+  new Date(Date.UTC(2023, 0, 1, 12, 34)),
+  JsSqlDataTypes.SmallDateTime,
+);
+
+test(
+  'test SmallDateTime null in UTC',
+  genericMacro,
+  null,
+  null,
+  JsSqlDataTypes.SmallDateTime,
+);

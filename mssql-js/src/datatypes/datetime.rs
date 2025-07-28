@@ -1,7 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use mssql_tds::datatypes::column_values::{SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlTime};
+use mssql_tds::datatypes::column_values::{
+    SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlSmallDateTime, SqlTime,
+};
 use napi::{Error, bindgen_prelude::BigInt};
 
 #[napi(object)]
@@ -16,6 +18,30 @@ impl From<NapiSqlDateTime> for SqlDateTime {
             days: datetime.days,
             time: datetime.time,
         }
+    }
+}
+
+impl TryFrom<NapiSqlDateTime> for SqlSmallDateTime {
+    type Error = napi::Error;
+    fn try_from(napi_sql_datetime: NapiSqlDateTime) -> Result<Self, Error> {
+        //  check if napi_sql_datetime.days is convertible to u16 else return an error.
+        if napi_sql_datetime.days < 0 || napi_sql_datetime.days > u16::MAX as i32 {
+            return Err(Error::from_reason(format!(
+                "Days value {} is out of range for SmallDateTime.",
+                napi_sql_datetime.days
+            )));
+        }
+        //  check if napi_sql_datetime.time is convertible to u32 else return an error.
+        if napi_sql_datetime.time > u16::MAX as u32 {
+            return Err(Error::from_reason(format!(
+                "Time value {} is out of range for SmallDateTime.",
+                napi_sql_datetime.time
+            )));
+        }
+        Ok(SqlSmallDateTime {
+            days: napi_sql_datetime.days as u16,
+            time: napi_sql_datetime.time as u16,
+        })
     }
 }
 

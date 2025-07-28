@@ -9,6 +9,8 @@ import {
   fromJsToNapiDatetime2Transformer,
   fromJsToNapiDateTimeOffsetTransformer,
   fromJsToNapiTimeTransformer,
+  fromJsToNapiDateTimeTransformer,
+  fromJsToNapiSmallDateTimeTransformer as fromJsToNapiSmallDatetimeTransformer,
 } from './transformers/datetime';
 import {
   nCharNVarCharTdsTransformer,
@@ -219,18 +221,23 @@ function transformForWrites(
         return fromJsToNapiDateTransformer(row);
       }
       throw new TypeError('Expected a number for Date');
+    case JsSqlDataTypes.SmallDateTime:
+      if (row instanceof Date) {
+        return fromJsToNapiSmallDatetimeTransformer(row);
+      }
+      throw new TypeError('Expected a Date for SmallDateTime');
     case JsSqlDataTypes.DateTime:
-      // not implemented
-      throw new Error('not implemented');
+      if (row instanceof Date) {
+        return fromJsToNapiDateTimeTransformer(row);
+      }
+      throw new TypeError('Expected a Date for DateTime');
     case JsSqlDataTypes.DateTime2:
       if (row instanceof Date) {
         return fromJsToNapiDatetime2Transformer(row);
       } else {
         throw new TypeError('Expected a Date for DateTime/DateTime2');
       }
-    case JsSqlDataTypes.SmallDateTime:
-      // not implemented
-      throw new Error('not implemented');
+
     case JsSqlDataTypes.DateTimeOffset:
       if (row instanceof Date) {
         return fromJsToNapiDateTimeOffsetTransformer(row);

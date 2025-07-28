@@ -6,7 +6,8 @@ use std::str::FromStr;
 use mssql_tds::{
     datatypes::{
         column_values::{
-            ColumnValues, SqlDate, SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlMoney, SqlTime,
+            ColumnValues, SqlDate, SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlMoney,
+            SqlSmallDateTime, SqlTime,
         },
         decoder::DecimalParts,
         sql_string::{EncodingType, SqlString},
@@ -371,6 +372,10 @@ impl TryFrom<Parameter> for SqlType {
                 SqlDataTypes::DateTime => {
                     let sql_datetime: SqlDateTime = napi_sql_date_time.into();
                     Ok(SqlType::DateTime(Some(sql_datetime)))
+                }
+                SqlDataTypes::SmallDateTime => {
+                    let sql_small_datetime: SqlSmallDateTime = napi_sql_date_time.try_into()?;
+                    Ok(SqlType::SmallDateTime(Some(sql_small_datetime)))
                 }
                 _ => Err(Error::from_reason(format!(
                     "Invalid data_type for RowDataType::F: {:?}. Only DateTime is allowed.",
