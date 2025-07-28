@@ -660,15 +660,13 @@ impl SqlType {
 
                 let length = byte_count_for_time + byte_count_for_date;
 
-                let scale_adjusted_time = get_scale_adjusted_time(t)?;
-
                 packet_writer.write_byte_async(scale).await?;
 
                 packet_writer.write_byte_async(length).await?;
 
                 // Write the time in nanoseconds.
                 packet_writer
-                    .write_partial_u64_async(scale_adjusted_time, byte_count_for_time)
+                    .write_partial_u64_async(t.time_nanoseconds, byte_count_for_time)
                     .await?;
 
                 // Write the day count.
@@ -704,15 +702,13 @@ impl SqlType {
 
                 let length = byte_count_for_time + byte_count_for_date + byte_count_for_offset;
 
-                let scale_adjusted_time = get_scale_adjusted_time(t)?;
-
                 packet_writer.write_byte_async(scale).await?;
 
                 packet_writer.write_byte_async(length).await?;
 
                 // Write the time in nanoseconds.
                 packet_writer
-                    .write_partial_u64_async(scale_adjusted_time, byte_count_for_time)
+                    .write_partial_u64_async(t.time_nanoseconds, byte_count_for_time)
                     .await?;
                 // Write the day count.
                 packet_writer
@@ -748,8 +744,6 @@ impl SqlType {
 
                 let scale_based_byte_length = get_scale_based_length(t)?;
 
-                let scale_adjusted_time = get_scale_adjusted_time(t)?;
-
                 packet_writer.write_byte_async(scale).await?;
 
                 packet_writer
@@ -758,7 +752,7 @@ impl SqlType {
 
                 // Write the time in nanoseconds.
                 packet_writer
-                    .write_partial_u64_async(scale_adjusted_time, scale_based_byte_length)
+                    .write_partial_u64_async(t.time_nanoseconds, scale_based_byte_length)
                     .await?;
             }
             None => {
@@ -927,26 +921,6 @@ async fn write_default_scale_and_null(packet_writer: &mut PacketWriter<'_>) -> T
     Ok(())
 }
 
-fn get_scale_adjusted_time(t: &SqlTime) -> TdsResult<u64> {
-    let scale = t.get_scale();
-    let divider = match scale {
-        1 => 1_000_001,
-        2 => 100_000,
-        3 => 10_000,
-        4 => 1_000,
-        5 => 100,
-        6 => 10,
-        7 => 1,
-        _ => {
-            return Err(Error::UsageError(
-                "Invalid scale for Time type.".to_string(),
-            ));
-        }
-    };
-    let scale_adjusted_time = t.time_nanoseconds / divider;
-    Ok(scale_adjusted_time)
-}
-
 impl TryFrom<&SqlType> for FixedLengthTypes {
     type Error = Error;
 
@@ -979,7 +953,7 @@ mod datetime_tests {
                 SqlSmallDateTime, SqlTime,
             },
             sqldatatypes::TdsDataType,
-            sqltypes::{NULL_LENGTH, SqlType, get_scale_adjusted_time, get_scale_based_length},
+            sqltypes::{NULL_LENGTH, SqlType, get_scale_based_length},
         },
         message::messages::PacketType,
         read_write::{
@@ -1218,8 +1192,7 @@ mod datetime_tests {
         packet_writer.finalize().await.unwrap();
         let byte_len = get_scale_based_length(&time).unwrap() + 3;
         let mut written_bytes = vec![0u8; byte_len as usize];
-        let test_time_bytes =
-            get_partial_bytes(get_scale_adjusted_time(&time).unwrap(), byte_len - 3);
+        let test_time_bytes = get_partial_bytes(time.time_nanoseconds, byte_len - 3);
         let test_days_bytes = get_partial_bytes(datetime2.days as u64, 3);
         let payload = mock_reader_writer.get_written_data();
 
@@ -1298,8 +1271,7 @@ mod datetime_tests {
         packet_writer.finalize().await.unwrap();
         let byte_len = get_scale_based_length(&time).unwrap() + 3 + 2;
         let mut written_bytes = vec![0u8; (byte_len - 2) as usize];
-        let test_time_bytes =
-            get_partial_bytes(get_scale_adjusted_time(&time).unwrap(), byte_len - 5);
+        let test_time_bytes = get_partial_bytes(time.time_nanoseconds, byte_len - 5);
         let test_days_bytes = get_partial_bytes(datetime2.days as u64, 3);
         let payload = mock_reader_writer.get_written_data();
 
@@ -1373,7 +1345,7 @@ mod datetime_tests {
         packet_writer.finalize().await.unwrap();
         let byte_len = get_scale_based_length(&time).unwrap();
         let mut written_bytes = vec![0u8; byte_len as usize];
-        let test_bytes = get_partial_bytes(get_scale_adjusted_time(&time).unwrap(), byte_len);
+        let test_bytes = get_partial_bytes(time.time_nanoseconds, byte_len);
 
         let payload = mock_reader_writer.get_written_data();
 
@@ -1444,54 +1416,6 @@ mod datetime_tests {
         };
         let result = get_scale_based_length(&time);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_get_scale_adjusted_time() {
-        let time = SqlTime {
-            time_nanoseconds: 1_000_001, // 100 nanoseconds
-            scale: 1,
-        };
-        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
-        assert_eq!(adjusted_time, 1);
-
-        let time = SqlTime {
-            time_nanoseconds: 1_000_001,
-            scale: 2,
-        };
-        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
-        assert_eq!(adjusted_time, 10);
-        let time = SqlTime {
-            time_nanoseconds: 1_000_001,
-            scale: 3,
-        };
-        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
-        assert_eq!(adjusted_time, 1_00);
-        let time = SqlTime {
-            time_nanoseconds: 1_000_001,
-            scale: 4,
-        };
-        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
-        assert_eq!(adjusted_time, 1_000); // 100 microseconds
-        let time = SqlTime {
-            time_nanoseconds: 1_000_001, // 1 millisecond
-            scale: 5,
-        };
-        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
-        assert_eq!(adjusted_time, 10_000); // 1 millisecond
-        let time = SqlTime {
-            time_nanoseconds: 1_000_001, // 10 milliseconds
-            scale: 6,
-        };
-        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
-        assert_eq!(adjusted_time, 100_000);
-
-        let time = SqlTime {
-            time_nanoseconds: 1_000_001,
-            scale: 7,
-        };
-        let adjusted_time = get_scale_adjusted_time(&time).unwrap();
-        assert_eq!(adjusted_time, 1_000_001); // 100 milliseconds
     }
 }
 

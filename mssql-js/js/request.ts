@@ -5,6 +5,12 @@ import { JsSqlDataTypes, SqlJsConnection } from '.';
 import { Encoding } from './codepages';
 import { SqlDataTypes, Parameter } from './generated';
 import {
+  dateTdsTransformer,
+  dateTime2TdsTransformer,
+  dateTimeOffsetTdsTransformer,
+  timeTdsTransformer,
+} from './transformers/datetime';
+import {
   nCharNVarCharTdsTransformer,
   varCharTdsTransformer,
 } from './transformers/string';
@@ -182,6 +188,9 @@ function transformForWrites(
   row: unknown,
   encoding?: Encoding,
 ) {
+  if (row === undefined || row === null) {
+    return null;
+  }
   switch (type) {
     case JsSqlDataTypes.VarBinary:
     case JsSqlDataTypes.Binary:
@@ -206,13 +215,34 @@ function transformForWrites(
         throw new TypeError('Expected a string for VarChar/Char types');
       }
     case JsSqlDataTypes.Date:
+      if (row instanceof Date) {
+        return dateTdsTransformer(row);
+      }
+      throw new TypeError('Expected a number for Date');
     case JsSqlDataTypes.DateTime:
+      // not implemented
+      throw new Error('not implemented');
     case JsSqlDataTypes.DateTime2:
+      if (row instanceof Date) {
+        return dateTime2TdsTransformer(row);
+      } else {
+        throw new TypeError('Expected a Date for DateTime/DateTime2');
+      }
     case JsSqlDataTypes.SmallDateTime:
+      // not implemented
+      throw new Error('not implemented');
     case JsSqlDataTypes.DateTimeOffset:
-      throw new Error('not implemented');
+      if (row instanceof Date) {
+        return dateTimeOffsetTdsTransformer(row);
+      } else {
+        throw new TypeError('Expected a Date for DateTimeOffset');
+      }
     case JsSqlDataTypes.Time:
-      throw new Error('not implemented');
+      if (row instanceof Date) {
+        return timeTdsTransformer(row);
+      } else {
+        throw new TypeError('Expected a Date for Time');
+      }
     case JsSqlDataTypes.TinyInt:
     case JsSqlDataTypes.SmallInt:
     case JsSqlDataTypes.Int:

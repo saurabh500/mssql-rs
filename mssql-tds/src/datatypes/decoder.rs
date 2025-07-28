@@ -259,7 +259,7 @@ impl GenericDecoder {
         };
         Ok(SqlTime {
             time_nanoseconds: nanoseconds,
-            scale, // Default scale for TimeN
+            scale,
         })
     }
 

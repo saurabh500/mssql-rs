@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import { ChronoUnit, LocalDate, Month } from '@js-joda/core';
 import {
   Metadata,
   NapiSqlDateTime,
@@ -8,6 +9,8 @@ import {
   NapiSqlTime,
   NapiSqlDateTimeOffset,
 } from '../generated/index.js';
+
+const SQL_EPOCH_DATE = LocalDate.of(1, Month.JANUARY, 1);
 
 export interface DateWithNanosecondsDelta extends Date {
   nanosecondsDelta: number;
@@ -43,6 +46,16 @@ export const dateTransformer = (
   );
 };
 
+export const dateTdsTransformer = (date: Date | null): number | null => {
+  if (!date) return null;
+  let local_date = LocalDate.of(
+    date.getFullYear(),
+    date.getMonth() + 1,
+    date.getDate(),
+  );
+  return SQL_EPOCH_DATE.until(local_date, ChronoUnit.DAYS);
+};
+
 export const dateTime2Transformer = (
   metadata: Metadata,
   row: NapiSqlDateTime2 | null,
@@ -73,6 +86,19 @@ export const dateTime2Transformer = (
   return date as DateWithNanosecondsDelta;
 };
 
+export const dateTime2TdsTransformer = (
+  row: Date | null,
+  scale: number = 7,
+): NapiSqlDateTime2 | null => {
+  if (!row) return null;
+  let sqlTime = timeTdsTransformer(row, scale);
+  let daysSince010101 = dateTdsTransformer(row);
+  return {
+    days: daysSince010101!,
+    time: sqlTime!,
+  };
+};
+
 export const dateTimeOffsetTransformer = (
   metadata: Metadata,
   row: NapiSqlDateTimeOffset | null,
@@ -83,6 +109,18 @@ export const dateTimeOffsetTransformer = (
   // We discard the offset, since the time returned by SQL server is always in UTC.
   // Offset is meant to be used for display purposes only.
   return datetime2;
+};
+
+export const dateTimeOffsetTdsTransformer = (
+  row: Date | null,
+): NapiSqlDateTimeOffset | null => {
+  if (!row) return null;
+  let datetime2 = dateTime2TdsTransformer(row);
+  let offset = row.getTimezoneOffset();
+  return {
+    datetime2: datetime2!,
+    offset: offset,
+  };
 };
 
 /// Transform the NapiSqlTime to a Date object
@@ -96,12 +134,23 @@ export const timeTransformer = (
   if (scale < 0 || scale > 7) {
     throw new Error(`Invalid scale: ${scale}. Must be between 0 and 7.`);
   }
-  // Convert timeNanoseconds to milliseconds.
+
+  // Lets say we get 1234567 from SQL with 7 scale, this means 0.123 seconds or 123 millis 456 micros and 700 nanos.
+  // Lets say we get 1234567 from SQL with 5 scale, this means 12 seconds or 345 millis 670 micros and 0 nanos.
   let received_time = row.timeNanoseconds;
+  // Convert timeNanoseconds to milliseconds.
+  // Scale 7: 1234567 * 10 ^ (7-7) -> 1234567 * 10^0 = 001234567
+  // Scale 5: 1234567 * 10 ^ (7-5) -> 1234567 * 10^2 = 123456700
   let normalize_time = Number(received_time) * 10 ** (7 - scale);
+
+  // Extract the milliseconds.
+  // Scale 7:  001234567 / 10000 = 123.4567 -> 123 millis
+  // Scale 5: 123456700 / 10000 = 12345.67 -> 12345 millis which is 12 seconds and 345 millis
   let millis = Number(normalize_time) / 10_000; // Convert nanoseconds to milliseconds
 
   // Extract nanoseconds precision
+  // Scale 7:  001234567 % 10000 -> 4567 / 10_000_000 = 0.0004567
+  // Scale 5:  123456700 % 10000 -> 6700 / 10_000_000 = 0.00067
   let nanos_precision = (normalize_time % 10_000) / Math.pow(10, 7);
 
   // Create a Date object starting from the epoch (1970-01-01)
@@ -114,4 +163,32 @@ export const timeTransformer = (
   let datePart = new Date(Date.UTC(1970, 0, 1, 0, 0, 0, millis));
   (datePart as DateWithNanosecondsDelta).nanosecondsDelta = nanos_precision;
   return datePart as DateWithNanosecondsDelta;
+};
+
+/// Transform the NapiSqlTime to a Date object
+export const timeTdsTransformer = (
+  time: Date | null,
+  scale: number = 7,
+): NapiSqlTime | null => {
+  if (!time) return null;
+
+  // Normalize to 7 scale.
+  if (scale < 0 || scale > 7) {
+    throw new Error(`Invalid scale: ${scale}. Must be between 0 and 7.`);
+  }
+  let seconds =
+    (time.getHours() * 60 + time.getMinutes()) * 60 + time.getSeconds();
+
+  // We extract the millis from the date and create a number which repreents the input date in millis.
+  let millis = seconds * 1000 + time.getMilliseconds();
+
+  // Millis by default have scale 3. Adjust the number based on the intended scale.
+  // E.g. If 1234567 millis are to be sent with scale 5, we need to multiply it by 10^(5-3) = 100, which gives us 123456700.
+  // If the scale is 2 then we need to multiply it by 10^(2-3) = 0.1, which gives us 123456.7.
+  let timeToSend = millis * Math.pow(10, scale - 3);
+  timeToSend = Math.round(timeToSend); // Round to avoid floating point issues
+  return {
+    scale: scale,
+    timeNanoseconds: BigInt(timeToSend),
+  };
 };

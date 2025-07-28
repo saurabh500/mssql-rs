@@ -9,7 +9,7 @@ mod rpc_datatypes {
         begin_connection, create_client, create_context, get_first_row, init_tracing,
     };
     use mssql_tds::core::TdsResult;
-    use mssql_tds::datatypes::column_values::{SqlDate, SqlDateTime};
+    use mssql_tds::datatypes::column_values::{SqlDate, SqlDateTime, SqlDateTime2, SqlTime};
     use mssql_tds::datatypes::sql_string::SqlString;
     use mssql_tds::{
         datatypes::{column_values::ColumnValues, sqltypes::SqlType},
@@ -60,6 +60,16 @@ mod rpc_datatypes {
                 SqlType::DateTime(Some(SqlDateTime {
                     days: dayssincebeginning,
                     time: timesincebeginning,
+                })),
+            ),
+            (
+                "datetime2",
+                SqlType::DateTime2(Some(SqlDateTime2 {
+                    days: dayssincebeginning as u32,
+                    time: SqlTime {
+                        time_nanoseconds: timesincebeginning as u64,
+                        scale: 6,
+                    },
                 })),
             ),
         ];
@@ -123,6 +133,11 @@ mod rpc_datatypes {
                 ColumnValues::DateTime(value) => {
                     assert_eq!(value.days, dayssincebeginning);
                     assert_eq!(value.time, timesincebeginning);
+                }
+                ColumnValues::DateTime2(value) => {
+                    assert_eq!(value.days, dayssincebeginning as u32);
+                    assert_eq!(value.time.scale, 6);
+                    assert_eq!(value.time.time_nanoseconds, timesincebeginning as u64);
                 }
                 _ => {}
             }

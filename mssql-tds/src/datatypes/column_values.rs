@@ -206,13 +206,15 @@ pub struct SqlDateTime {
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlDate {
     // date is represented as one 3-byte unsigned integer that represents the number of days since January 1, year 1.
-    days: u32,
+    days_since_01_01_0001: u32,
 }
 
 impl SqlDate {
     pub fn create(days: u32) -> TdsResult<SqlDate> {
         if days <= 0xFFFFFF {
-            Ok(SqlDate { days })
+            Ok(SqlDate {
+                days_since_01_01_0001: days,
+            })
         } else {
             Err(Error::UsageError(
                 "Value out of range for SqlDate (must be <= 0xFFFFFF)".to_string(),
@@ -225,10 +227,12 @@ impl SqlDate {
     // (0 to 0xFFFFFF). This is meant for scenarios where SQL server is sending
     // us the date value and we need to create a SqlDate from it without validation.
     pub(crate) fn unchecked_create(days: u32) -> SqlDate {
-        SqlDate { days }
+        SqlDate {
+            days_since_01_01_0001: days,
+        }
     }
 
     pub fn get_days(&self) -> u32 {
-        self.days
+        self.days_since_01_01_0001
     }
 }

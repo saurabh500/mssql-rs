@@ -10,9 +10,12 @@ use mssql_tds::{
 use napi::bindgen_prelude::{BigInt, Buffer, Either15, Null};
 use tokio::sync::Mutex;
 
-use crate::ffidatatypes::{
-    CollationMetadata, Metadata, NapiDecimalParts, NapiSqlDateTime, NapiSqlDateTime2,
-    NapiSqlDateTimeOffset, NapiSqlMoney, NapiSqlTime, Parameter, RowItem, transform_row,
+use crate::{
+    datatypes::datetime::{NapiSqlDateTime, NapiSqlDateTime2, NapiSqlDateTimeOffset, NapiSqlTime},
+    ffidatatypes::{
+        CollationMetadata, Metadata, NapiDecimalParts, NapiSqlMoney, Parameter, RowItem,
+        transform_row,
+    },
 };
 
 pub(crate) type RowDataType = Either15<

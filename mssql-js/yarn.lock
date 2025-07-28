@@ -152,6 +152,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@js-joda/core@npm:^5.6.5":
+  version: 5.6.5
+  resolution: "@js-joda/core@npm:5.6.5"
+  checksum: 10c0/bad9d67736eb7dfbc99f09b2f485c63c4d64cad2661648be88028e777f93769767c41d6019c0a35ba6f55a1b9846666f3528ae8746496a9f1ed9b60eade174be
+  languageName: node
+  linkType: hard
+
 "@mapbox/node-pre-gyp@npm:^2.0.0":
   version: 2.0.0
   resolution: "@mapbox/node-pre-gyp@npm:2.0.0"
@@ -1728,6 +1735,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "mssql-js@workspace:."
   dependencies:
+    "@js-joda/core": "npm:^5.6.5"
     "@napi-rs/cli": "npm:^2.18.4"
     "@types/node": "npm:^24.0.14"
     "@typescript-eslint/eslint-plugin": "npm:^8.37.0"

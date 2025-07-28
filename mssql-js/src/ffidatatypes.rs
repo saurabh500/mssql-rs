@@ -3,7 +3,9 @@
 
 use mssql_tds::{
     datatypes::{
-        column_values::{ColumnValues, SqlDateTime2, SqlDateTimeOffset, SqlMoney, SqlTime},
+        column_values::{
+            ColumnValues, SqlDate, SqlDateTime2, SqlDateTimeOffset, SqlMoney, SqlTime,
+        },
         decoder::DecimalParts,
         sql_string::{EncodingType, SqlString},
         sqldatatypes::TdsDataType,
@@ -14,10 +16,13 @@ use mssql_tds::{
 };
 use napi::{
     Error,
-    bindgen_prelude::{BigInt, Buffer, Null},
+    bindgen_prelude::{Buffer, Null},
 };
 
-use crate::connection::RowDataType;
+use crate::{
+    connection::RowDataType,
+    datatypes::datetime::{NapiSqlDateTime, NapiSqlDateTime2, NapiSqlDateTimeOffset, NapiSqlTime},
+};
 
 #[napi(object)]
 #[derive(Debug, Clone)]
@@ -41,7 +46,7 @@ impl From<SqlCollation> for CollationMetadata {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 #[napi]
 pub enum SqlDataTypes {
     Void = 0x1F,
@@ -140,57 +145,6 @@ impl TryFrom<TdsDataType> for SqlDataTypes {
 pub struct RowItem {
     pub metadata: Metadata,
     pub row_val: RowDataType,
-}
-
-#[napi(object)]
-pub struct NapiSqlDateTime {
-    pub days: i32,
-    pub time: u32,
-}
-
-#[napi(object)]
-pub struct NapiSqlTime {
-    pub time_nanoseconds: BigInt,
-    pub scale: u8,
-}
-
-impl From<SqlTime> for NapiSqlTime {
-    fn from(sql_time: SqlTime) -> Self {
-        NapiSqlTime {
-            time_nanoseconds: BigInt::from(sql_time.time_nanoseconds),
-            scale: sql_time.scale,
-        }
-    }
-}
-
-#[napi(object)]
-pub struct NapiSqlDateTime2 {
-    pub days: u32,
-    pub time: NapiSqlTime,
-}
-
-impl From<SqlDateTime2> for NapiSqlDateTime2 {
-    fn from(datetime2: SqlDateTime2) -> Self {
-        NapiSqlDateTime2 {
-            days: datetime2.days,
-            time: NapiSqlTime::from(datetime2.time),
-        }
-    }
-}
-
-#[napi(object)]
-pub struct NapiSqlDateTimeOffset {
-    pub datetime2: NapiSqlDateTime2,
-    pub offset: i16,
-}
-
-impl From<SqlDateTimeOffset> for NapiSqlDateTimeOffset {
-    fn from(datetime_offset: SqlDateTimeOffset) -> Self {
-        NapiSqlDateTimeOffset {
-            datetime2: NapiSqlDateTime2::from(datetime_offset.datetime2),
-            offset: datetime_offset.offset,
-        }
-    }
 }
 
 #[napi(object)]
@@ -361,6 +315,7 @@ impl TryFrom<Parameter> for SqlType {
                         | SqlDataTypes::Int2
                         | SqlDataTypes::Int4
                         | SqlDataTypes::Int8
+                        | SqlDataTypes::Date
                 ) {
                     return Err(Error::from_reason(format!(
                         "Invalid data_type for number: {:?}. Only smallint, tinyint, int and bigint are allowed.",
@@ -386,6 +341,15 @@ impl TryFrom<Parameter> for SqlType {
                     }
                     SqlDataTypes::Int4 => Ok(SqlType::Int(Some(v))),
                     SqlDataTypes::Int8 => Ok(SqlType::BigInt(Some(v as i64))),
+                    SqlDataTypes::Date => {
+                        // Conversion to u32 is safe
+                        let sql_date = SqlDate::create(v as u32).map_err(|e| {
+                            Error::from_reason(format!(
+                                "Failed to create SqlDate from u32 value: {e}"
+                            ))
+                        })?;
+                        Ok(SqlType::Date(Some(sql_date)))
+                    }
                     _ => Err(Error::from_reason(format!(
                         "Invalid data_type for RowDataType::A: {:?}. Only Int1, Int2, Int4, Int8 are allowed.",
                         param.data_type
@@ -417,16 +381,16 @@ impl TryFrom<Parameter> for SqlType {
                 }
                 Ok(SqlType::Bit(Some(bit_val)))
             }
-            RowDataType::D(_v) => match param.data_type {
+            RowDataType::D(buffer) => match param.data_type {
                 SqlDataTypes::VarChar => {
-                    let bytes: Vec<u8> = _v.to_vec();
+                    let bytes: Vec<u8> = buffer.to_vec();
                     Ok(SqlType::VarcharMax(Some(SqlString::new(
                         bytes,
                         EncodingType::DelayedSet,
                     ))))
                 }
                 SqlDataTypes::NVarChar => {
-                    let bytes: Vec<u8> = _v.to_vec();
+                    let bytes: Vec<u8> = buffer.to_vec();
                     Ok(SqlType::NVarcharMax(Some(SqlString::new(
                         bytes,
                         EncodingType::DelayedSet,
@@ -441,21 +405,55 @@ impl TryFrom<Parameter> for SqlType {
                 todo!("Converting NapiSqlDateTime value: ");
             }
             RowDataType::G(v) => {
-                todo!("Converting u32 value: {}", v);
+                // Check if the data_type is date
+                if matches!(param.data_type, SqlDataTypes::Date) {
+                    // Convert the u32 value to SqlDate
+                    let sql_date = SqlDate::create(v).map_err(|e| {
+                        Error::from_reason(format!("Failed to create SqlDate from u32 value: {e}"))
+                    })?;
+                    return Ok(SqlType::Date(Some(sql_date)));
+                }
+                todo!(
+                    "u32 {} value conversion for {:?} not supported.",
+                    v,
+                    param.data_type
+                );
             }
-            RowDataType::H(_v) => {
-                todo!("Converting NapiSqlTime value: ");
+            RowDataType::H(napi_sql_time) => {
+                if !matches!(param.data_type, SqlDataTypes::Time) {
+                    return Err(Error::from_reason(format!(
+                        "Invalid data_type for RowDataType::H: {:?}. Only Time is allowed.",
+                        param.data_type
+                    )));
+                }
+                let sql_time = SqlTime::try_from(napi_sql_time)?;
+                Ok(SqlType::Time(Some(sql_time)))
             }
             RowDataType::I(_v) => {
                 todo!("Converting NapiSqlDateTime value: ");
                 // Here you can add the conversion logic for NapiSqlDateTime
             }
-            RowDataType::J(_v) => {
-                todo!("Converting NapiSqlDateTime2 value: ");
-            }
-            RowDataType::K(_v) => {
-                todo!("Converting NapiSqlDateTimeOffset value: ");
-            }
+            RowDataType::J(_v) => match param.data_type {
+                SqlDataTypes::DateTime2 => {
+                    let sql_datetime2: SqlDateTime2 = _v.try_into()?;
+                    Ok(SqlType::DateTime2(Some(sql_datetime2)))
+                }
+                _ => Err(Error::from_reason(format!(
+                    "Invalid data_type for RowDataType::J: {:?}. Only DateTime2 is allowed.",
+                    param.data_type
+                ))),
+            },
+            RowDataType::K(napi_date_time_offset) => match param.data_type {
+                SqlDataTypes::DateTimeOffset => {
+                    let sql_datetime_offset: SqlDateTimeOffset =
+                        napi_date_time_offset.try_into()?;
+                    Ok(SqlType::DateTimeOffset(Some(sql_datetime_offset)))
+                }
+                _ => Err(Error::from_reason(format!(
+                    "Invalid data_type for RowDataType::K: {:?}. Only DateTimeOffset is allowed.",
+                    param.data_type
+                ))),
+            },
             RowDataType::L(_v) => {
                 todo!("Converting NapiSqlMoney value: ");
             }

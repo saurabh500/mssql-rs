@@ -21,6 +21,7 @@ extern crate napi_derive;
 
 pub mod connection;
 pub mod context;
+pub mod datatypes;
 pub mod ffidatatypes;
 
 static INIT: Once = Once::new();

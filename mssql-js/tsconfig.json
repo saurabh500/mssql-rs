@@ -13,11 +13,6 @@
     "outDir": "./js",
     "types": ["node"]
   },
-  "include": [
-    "src/**/*",
-    "__test__/**/*",
-    "js/generated/index.d.ts",
-    "js/**/*.ts"
-  ],
+  "include": ["src/**/*", "js/generated/index.d.ts", "js/**/*.ts"],
   "exclude": ["node_modules", "target", "js/dist"]
 }
