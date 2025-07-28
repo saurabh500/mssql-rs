@@ -366,7 +366,11 @@ impl SqlType {
                 // The fourth part is always 0 as per your requirement.
                 packet_writer.write_i32_async(0).await?;
             }
-            None => packet_writer.write_byte_async(NULL_LENGTH).await?,
+            None => {
+                packet_writer.write_byte_async(1).await?;
+                packet_writer.write_byte_async(0).await?;
+                packet_writer.write_byte_async(NULL_LENGTH).await?;
+            }
         };
         Ok(())
     }
@@ -2064,6 +2068,8 @@ mod decimalparts_tests {
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
         assert_eq!(test_cursor.get_u8(), TdsDataType::NumericN as u8); // Valdate tds type
         assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // type length data
+        assert_eq!(test_cursor.get_u8(), 1); // type length data
+        assert_eq!(test_cursor.get_u8(), 0); // type length data
         assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // length data
     }
 }

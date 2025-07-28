@@ -194,6 +194,17 @@ impl From<DecimalParts> for NapiDecimalParts {
     }
 }
 
+impl From<NapiDecimalParts> for DecimalParts {
+    fn from(napi_decimal_parts: NapiDecimalParts) -> Self {
+        DecimalParts {
+            is_positive: napi_decimal_parts.is_positive,
+            scale: napi_decimal_parts.scale,
+            precision: napi_decimal_parts.precision,
+            int_parts: napi_decimal_parts.int_parts,
+        }
+    }
+}
+
 #[napi(object)]
 pub struct Metadata {
     pub name: String,
@@ -274,6 +285,7 @@ pub struct Parameter {
     pub length: Option<u32>,
 }
 
+/// Values are converted from Parameter to SqlType to be sent over the wire.
 impl TryFrom<Parameter> for SqlType {
     fn try_from(param: Parameter) -> Result<SqlType, Error> {
         match param.value {
@@ -437,8 +449,17 @@ impl TryFrom<Parameter> for SqlType {
                 }
                 Ok(SqlType::Money(Some(napi_sql_money.into())))
             }
-            RowDataType::L(_v) => {
-                todo!("Converting decimal value: ");
+            RowDataType::L(decimal_parts) => {
+                if !matches!(
+                    param.data_type,
+                    SqlDataTypes::Decimal | SqlDataTypes::Numeric
+                ) {
+                    return Err(Error::from_reason(format!(
+                        "Invalid data_type for RowDataType::L: {:?}. Only Decimal and Numeric are allowed.",
+                        param.data_type
+                    )));
+                }
+                Ok(SqlType::Decimal(Some(decimal_parts.into())))
             }
             RowDataType::M(_v) => {
                 todo!("Converting f64 value: ");

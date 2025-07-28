@@ -223,6 +223,11 @@ test('decimal and numeric conversion', async (t) => {
   const connection = await create_connection(context);
   // Test various decimal/numeric values, including large values that require multiple parts
   const testCases = [
+    {
+      sql: 'SELECT CAST(-0.00000000000000000000000000012345000456 AS DECIMAL(38,38)) AS val',
+      expected: -0.00000000000000000000000000012345000456,
+    },
+    { sql: 'SELECT CAST(-123.45 AS DECIMAL(10,0)) AS val', expected: -123 },
     { sql: 'SELECT CAST(123.45 AS DECIMAL(10,2)) AS val', expected: 123.45 },
     {
       sql: 'SELECT CAST(-9876543210.12 AS DECIMAL(20,2)) AS val',

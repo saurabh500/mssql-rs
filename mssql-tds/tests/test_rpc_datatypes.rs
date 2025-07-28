@@ -12,6 +12,7 @@ mod rpc_datatypes {
     };
     use mssql_tds::core::TdsResult;
     use mssql_tds::datatypes::column_values::{SqlDate, SqlDateTime, SqlDateTime2, SqlTime};
+    use mssql_tds::datatypes::decoder::DecimalParts;
     use mssql_tds::datatypes::sql_string::SqlString;
     use mssql_tds::{
         datatypes::{column_values::ColumnValues, sqltypes::SqlType},
@@ -41,6 +42,13 @@ mod rpc_datatypes {
         let timesincebeginning = 1000;
 
         let guid = "123e4567-e89b-12d3-a456-426614174000".to_string();
+
+        let decimal = DecimalParts {
+            is_positive: true,
+            int_parts: vec![-123, 0, 0, 0],
+            scale: 38,
+            precision: 38,
+        };
 
         let columns = vec![
             ("int", SqlType::Int(Some(int_value))),
@@ -78,6 +86,7 @@ mod rpc_datatypes {
                 })),
             ),
             ("guid", SqlType::Uuid(Some(Uuid::from_str(&guid).unwrap()))),
+            ("decimal", SqlType::Decimal(Some(decimal.clone()))),
         ];
 
         let query = generate_select_statement(&columns);
@@ -147,6 +156,9 @@ mod rpc_datatypes {
                 }
                 ColumnValues::Uuid(value) => {
                     assert_eq!(value.to_string(), guid);
+                }
+                ColumnValues::Decimal(value) => {
+                    assert_eq!(value, &decimal);
                 }
                 _ => {}
             }

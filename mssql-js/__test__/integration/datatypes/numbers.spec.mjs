@@ -11,7 +11,14 @@ async function executeScalar(request, query) {
   return Object.values(firstRowDictionary)[0];
 }
 
-async function runTinyIntTest(t, inputValue, expectedValue, sqlType) {
+async function runNumberQueryTest(
+  t,
+  inputValue,
+  expectedValue,
+  sqlType,
+  precision,
+  scale,
+) {
   const connection = await openConnection(createContext());
   try {
     let query = 'select @param;';
@@ -25,8 +32,22 @@ async function runTinyIntTest(t, inputValue, expectedValue, sqlType) {
   }
 }
 
-const genericMacro = async (t, inputValue, expectedValue, sqlType) => {
-  await runTinyIntTest(t, inputValue, expectedValue, sqlType);
+const genericMacro = async (
+  t,
+  inputValue,
+  expectedValue,
+  sqlType,
+  precision = 18,
+  scale = 0,
+) => {
+  await runNumberQueryTest(
+    t,
+    inputValue,
+    expectedValue,
+    sqlType,
+    precision,
+    scale,
+  );
 };
 
 test('test tinyint somevalue', genericMacro, 123, 123, JsSqlDataTypes.TinyInt);
@@ -55,3 +76,43 @@ test('test int negative', genericMacro, -123, -123, JsSqlDataTypes.Int);
 test('test bigint somevalue', genericMacro, 123, 123n, JsSqlDataTypes.BigInt);
 test('test bigint null', genericMacro, null, null, JsSqlDataTypes.BigInt);
 test('test bigint negative', genericMacro, -123, -123n, JsSqlDataTypes.BigInt);
+
+test(
+  'test decimal negative',
+  genericMacro,
+  -123.45,
+  // Default scale is 0 and precision is 18
+  -123,
+  JsSqlDataTypes.Decimal,
+);
+
+test(
+  'test decimal positive',
+  genericMacro,
+  12323123123.45,
+  // Default scale is 0 and precision is 18
+  12323123123,
+  JsSqlDataTypes.Decimal,
+);
+
+test('test decimal null', genericMacro, null, null, JsSqlDataTypes.Decimal);
+
+test('test numeric null', genericMacro, null, null, JsSqlDataTypes.Numeric);
+
+test(
+  'test numeric negative',
+  genericMacro,
+  -123.45,
+  // Default scale is 0 and precision is 18
+  -123,
+  JsSqlDataTypes.Numeric,
+);
+
+test(
+  'test numeric positive',
+  genericMacro,
+  12323123123.45,
+  // Default scale is 0 and precision is 18
+  12323123123,
+  JsSqlDataTypes.Decimal,
+);

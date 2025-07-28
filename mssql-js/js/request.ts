@@ -12,6 +12,7 @@ import {
   fromJsToNapiDateTimeTransformer,
   fromJsToNapiSmallDateTimeTransformer as fromJsToNapiSmallDatetimeTransformer,
 } from './transformers/datetime';
+import { fromJsToNapiDecimalPartTransformer } from './transformers/decimal';
 import {
   nCharNVarCharTdsTransformer,
   varCharTdsTransformer,
@@ -269,6 +270,13 @@ function transformForWrites(
       return null;
     case JsSqlDataTypes.Decimal:
     case JsSqlDataTypes.Numeric:
+      if (typeof row === 'number') {
+        // Convert number to NAPI decimal representation
+        return fromJsToNapiDecimalPartTransformer(row);
+      }
+      throw new TypeError(
+        'Expected a number or NapiDecimalParts for Decimal/Numeric types',
+      );
     case JsSqlDataTypes.Money:
     case JsSqlDataTypes.SmallMoney:
     case JsSqlDataTypes.Float:

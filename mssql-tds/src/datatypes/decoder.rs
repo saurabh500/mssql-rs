@@ -706,7 +706,7 @@ impl SqlTypeDecode for StringDecoder {
 }
 
 /// TDS representation of Decimal and Numeric types.
-#[derive(PartialEq, Clone)]
+#[derive(Clone)]
 pub struct DecimalParts {
     pub is_positive: bool,
     pub scale: u8,
@@ -733,17 +733,42 @@ impl DecimalParts {
     }
 }
 
+impl PartialEq for DecimalParts {
+    fn eq(&self, other: &Self) -> bool {
+        let min_len = self.int_parts.len().min(other.int_parts.len());
+        for i in 0..min_len {
+            if self.int_parts[i] != other.int_parts[i] {
+                return false;
+            }
+        }
+        if self.int_parts.len() > other.int_parts.len() {
+            if self.int_parts[min_len..].iter().any(|&x| x != 0) {
+                return false;
+            }
+        } else if other.int_parts.len() > self.int_parts.len()
+            && other.int_parts[min_len..].iter().any(|&x| x != 0)
+        {
+            return false;
+        }
+        self.is_positive == other.is_positive
+            && self.scale == other.scale
+            && self.precision == other.precision
+    }
+}
+
 impl Debug for DecimalParts {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Decimal: {}{} F64 value: {}",
+            "Decimal: {}{} Precision {} Scale {} F64 value: {}",
             if self.is_positive { "" } else { "-" },
             self.int_parts
                 .iter()
                 .map(|part| part.to_string())
                 .collect::<Vec<String>>()
                 .join(" "),
+            self.precision,
+            self.scale,
             self.to_f64()
         )
     }

@@ -91,6 +91,16 @@ impl RpcParameter {
                     None => DEFAULT_VARTIME_SCALE.to_string(), // Default scale for DateTimeOffset
                 }
             }
+            SqlType::Decimal(value) | SqlType::Numeric(value) => {
+                // For Decimal and Numeric, we need to send the precision and scale as the length.
+                // The format is "precision,scale".
+                match value {
+                    Some(parts) => {
+                        format!("{},{}", parts.precision, parts.scale)
+                    }
+                    None => "18, 10".to_string(), // Default precision and scale
+                }
+            }
             _ => "".to_string(),
         };
 
