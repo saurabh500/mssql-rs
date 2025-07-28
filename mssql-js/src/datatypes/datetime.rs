@@ -1,13 +1,22 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use mssql_tds::datatypes::column_values::{SqlDateTime2, SqlDateTimeOffset, SqlTime};
+use mssql_tds::datatypes::column_values::{SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlTime};
 use napi::{Error, bindgen_prelude::BigInt};
 
 #[napi(object)]
 pub struct NapiSqlDateTime {
     pub days: i32,
     pub time: u32,
+}
+
+impl From<NapiSqlDateTime> for SqlDateTime {
+    fn from(datetime: NapiSqlDateTime) -> Self {
+        SqlDateTime {
+            days: datetime.days,
+            time: datetime.time,
+        }
+    }
 }
 
 #[napi(object)]

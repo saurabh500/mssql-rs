@@ -16,25 +16,28 @@ import {
 import { connect } from './generated/index.js';
 
 // --- Transformers ---
-import { decimalTransformer } from './transformers/decimal';
+import { fromNapiToJsDecimalTransformer } from './transformers/decimal';
 import {
-  smallDateTimeTransformer,
-  dateTimeTransformer,
-  dateTransformer,
-  dateTime2Transformer,
-  dateTimeOffsetTransformer,
-  timeTransformer,
+  fromNapiToJsSmallDateTimeTransformer,
+  fromNapiToJsDateTimeTransformer,
+  fromNapiToJsDateTransformer,
+  fromNapiToJsDatetime2Transformer,
+  fromNapiToJsDateTimeOffsetTransformer,
+  fromNapiToJsTimeTransformer,
 } from './transformers/datetime';
 import {
   nCharNVarCharTransformer,
   varCharTdsTransformer,
   varCharTransformer,
 } from './transformers/string';
-import { binaryTransformer } from './transformers/binary';
-import { bitTransformer } from './transformers/bit';
-import { intTransformer, bigintTransformer } from './transformers/int';
+import { fromNapiToJsBinaryTransformer } from './transformers/binary';
+import { fromNapiToJsBitTransformer } from './transformers/bit';
+import {
+  fromNapiToJsIntTransformer,
+  fromNapiToJsBigintTransformer,
+} from './transformers/int';
 import { moneyTransformer, smallMoneyTransformer } from './transformers/money';
-import { guidTransformer } from './transformers/guid';
+import { fromNapiToJsGuidTransformer } from './transformers/guid';
 import { floatTransformer } from './transformers/float';
 
 import { Request } from './request.js';
@@ -207,33 +210,33 @@ export enum JsSqlDataTypes {
 export const tdsToJsTransformers: Partial<
   Record<JsSqlDataTypes, TdsToJsTransformer>
 > = {
-  [JsSqlDataTypes.Decimal]: decimalTransformer,
-  [JsSqlDataTypes.Numeric]: decimalTransformer,
-  [JsSqlDataTypes.SmallDateTime]: smallDateTimeTransformer,
-  [JsSqlDataTypes.DateTime]: dateTimeTransformer,
-  [JsSqlDataTypes.Date]: dateTransformer,
-  [JsSqlDataTypes.DateTime2]: dateTime2Transformer,
-  [JsSqlDataTypes.DateTimeOffset]: dateTimeOffsetTransformer,
-  [JsSqlDataTypes.Time]: timeTransformer,
+  [JsSqlDataTypes.Decimal]: fromNapiToJsDecimalTransformer,
+  [JsSqlDataTypes.Numeric]: fromNapiToJsDecimalTransformer,
+  [JsSqlDataTypes.SmallDateTime]: fromNapiToJsSmallDateTimeTransformer,
+  [JsSqlDataTypes.DateTime]: fromNapiToJsDateTimeTransformer,
+  [JsSqlDataTypes.Date]: fromNapiToJsDateTransformer,
+  [JsSqlDataTypes.DateTime2]: fromNapiToJsDatetime2Transformer,
+  [JsSqlDataTypes.DateTimeOffset]: fromNapiToJsDateTimeOffsetTransformer,
+  [JsSqlDataTypes.Time]: fromNapiToJsTimeTransformer,
   [JsSqlDataTypes.NChar]: nCharNVarCharTransformer,
   [JsSqlDataTypes.NVarChar]: nCharNVarCharTransformer,
   [JsSqlDataTypes.VarChar]: varCharTransformer,
   [JsSqlDataTypes.Char]: varCharTransformer,
   [JsSqlDataTypes.BigVarChar]: varCharTransformer,
   [JsSqlDataTypes.BigChar]: varCharTransformer,
-  [JsSqlDataTypes.VarBinary]: binaryTransformer,
-  [JsSqlDataTypes.BigVarBinary]: binaryTransformer,
-  [JsSqlDataTypes.BigBinary]: binaryTransformer,
-  [JsSqlDataTypes.Binary]: binaryTransformer,
-  [JsSqlDataTypes.Image]: binaryTransformer,
-  [JsSqlDataTypes.Bit]: bitTransformer,
-  [JsSqlDataTypes.TinyInt]: intTransformer,
-  [JsSqlDataTypes.SmallInt]: intTransformer,
-  [JsSqlDataTypes.Int]: intTransformer,
-  [JsSqlDataTypes.BigInt]: bigintTransformer,
+  [JsSqlDataTypes.VarBinary]: fromNapiToJsBinaryTransformer,
+  [JsSqlDataTypes.BigVarBinary]: fromNapiToJsBinaryTransformer,
+  [JsSqlDataTypes.BigBinary]: fromNapiToJsBinaryTransformer,
+  [JsSqlDataTypes.Binary]: fromNapiToJsBinaryTransformer,
+  [JsSqlDataTypes.Image]: fromNapiToJsBinaryTransformer,
+  [JsSqlDataTypes.Bit]: fromNapiToJsBitTransformer,
+  [JsSqlDataTypes.TinyInt]: fromNapiToJsIntTransformer,
+  [JsSqlDataTypes.SmallInt]: fromNapiToJsIntTransformer,
+  [JsSqlDataTypes.Int]: fromNapiToJsIntTransformer,
+  [JsSqlDataTypes.BigInt]: fromNapiToJsBigintTransformer,
   [JsSqlDataTypes.Money]: moneyTransformer,
   [JsSqlDataTypes.SmallMoney]: smallMoneyTransformer,
-  [JsSqlDataTypes.UniqueIdentifier]: guidTransformer,
+  [JsSqlDataTypes.UniqueIdentifier]: fromNapiToJsGuidTransformer,
   [JsSqlDataTypes.Real]: floatTransformer,
   [JsSqlDataTypes.Float]: floatTransformer,
   [JsSqlDataTypes.FltN]: floatTransformer,

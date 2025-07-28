@@ -5,6 +5,8 @@
 mod common;
 
 mod rpc_datatypes {
+    use std::str::FromStr;
+
     use crate::common::{
         begin_connection, create_client, create_context, get_first_row, init_tracing,
     };
@@ -15,6 +17,7 @@ mod rpc_datatypes {
         datatypes::{column_values::ColumnValues, sqltypes::SqlType},
         message::parameters::rpc_parameters::{RpcParameter, StatusFlags},
     };
+    use uuid::Uuid;
 
     #[ctor::ctor]
     fn init() {
@@ -36,6 +39,8 @@ mod rpc_datatypes {
 
         let dayssincebeginning = 300;
         let timesincebeginning = 1000;
+
+        let guid = "123e4567-e89b-12d3-a456-426614174000".to_string();
 
         let columns = vec![
             ("int", SqlType::Int(Some(int_value))),
@@ -72,6 +77,7 @@ mod rpc_datatypes {
                     },
                 })),
             ),
+            ("guid", SqlType::Uuid(Some(Uuid::from_str(&guid).unwrap()))),
         ];
 
         let query = generate_select_statement(&columns);
@@ -138,6 +144,9 @@ mod rpc_datatypes {
                     assert_eq!(value.days, dayssincebeginning as u32);
                     assert_eq!(value.time.scale, 6);
                     assert_eq!(value.time.time_nanoseconds, timesincebeginning as u64);
+                }
+                ColumnValues::Uuid(value) => {
+                    assert_eq!(value.to_string(), guid);
                 }
                 _ => {}
             }

@@ -16,7 +16,7 @@ export interface DateWithNanosecondsDelta extends Date {
   nanosecondsDelta: number;
 }
 
-export const smallDateTimeTransformer = (
+export const fromNapiToJsSmallDateTimeTransformer = (
   metadata: Metadata,
   row: NapiSqlDateTime | null,
 ): Date | null => {
@@ -25,7 +25,7 @@ export const smallDateTimeTransformer = (
   return new Date(1900, 0, 1 + days, 0, time);
 };
 
-export const dateTimeTransformer = (
+export const fromNapiToJsDateTimeTransformer = (
   metadata: Metadata,
   row: NapiSqlDateTime | null,
 ): Date | null => {
@@ -35,7 +35,7 @@ export const dateTimeTransformer = (
   return new Date(Date.UTC(1900, 0, 1 + days, 0, 0, 0, milliseconds));
 };
 
-export const dateTransformer = (
+export const fromNapiToJsDateTransformer = (
   metadata: Metadata,
   daysSince010101: number | null,
 ): Date | null => {
@@ -46,32 +46,34 @@ export const dateTransformer = (
   );
 };
 
-export const dateTdsTransformer = (date: Date | null): number | null => {
+export const fromJsToNapiDateTransformer = (
+  date: Date | null,
+): number | null => {
   if (!date) return null;
   let local_date = LocalDate.of(
-    date.getFullYear(),
-    date.getMonth() + 1,
-    date.getDate(),
+    date.getUTCFullYear(),
+    date.getUTCMonth() + 1,
+    date.getUTCDate(),
   );
   return SQL_EPOCH_DATE.until(local_date, ChronoUnit.DAYS);
 };
 
-export const dateTime2Transformer = (
+export const fromNapiToJsDatetime2Transformer = (
   metadata: Metadata,
   row: NapiSqlDateTime2 | null,
 ): DateWithNanosecondsDelta | null => {
   if (!row) return null;
-  let daysSince010101 = row.days;
-  const daysCountBetween010101And20000101 = 730118;
+
+  let local_date = SQL_EPOCH_DATE.plusDays(row.days);
 
   // time_part is guaranteed not to be null
-  const time_part = timeTransformer(metadata, row.time)!;
+  const time_part = fromNapiToJsTimeTransformer(metadata, row.time)!;
 
   const date = new Date(
     Date.UTC(
-      2000,
-      0,
-      daysSince010101 - daysCountBetween010101And20000101,
+      local_date.year(),
+      local_date.monthValue() - 1,
+      local_date.dayOfMonth(),
       0,
       0,
       0,
@@ -86,36 +88,37 @@ export const dateTime2Transformer = (
   return date as DateWithNanosecondsDelta;
 };
 
-export const dateTime2TdsTransformer = (
+export const fromJsToNapiDatetime2Transformer = (
   row: Date | null,
   scale: number = 7,
 ): NapiSqlDateTime2 | null => {
   if (!row) return null;
-  let sqlTime = timeTdsTransformer(row, scale);
-  let daysSince010101 = dateTdsTransformer(row);
+  let sqlTime = fromJsToNapiTimeTransformer(row, scale);
+  let daysSince010101 = fromJsToNapiDateTransformer(row);
   return {
     days: daysSince010101!,
     time: sqlTime!,
   };
 };
 
-export const dateTimeOffsetTransformer = (
+export const fromNapiToJsDateTimeOffsetTransformer = (
   metadata: Metadata,
   row: NapiSqlDateTimeOffset | null,
 ): DateWithNanosecondsDelta | null => {
   if (!row) return null;
 
-  let datetime2 = dateTime2Transformer(metadata, row.datetime2);
+  let datetime2 = fromNapiToJsDatetime2Transformer(metadata, row.datetime2);
   // We discard the offset, since the time returned by SQL server is always in UTC.
   // Offset is meant to be used for display purposes only.
   return datetime2;
 };
 
-export const dateTimeOffsetTdsTransformer = (
+export const fromJsToNapiDateTimeOffsetTransformer = (
   row: Date | null,
+  scale: number = 7,
 ): NapiSqlDateTimeOffset | null => {
   if (!row) return null;
-  let datetime2 = dateTime2TdsTransformer(row);
+  let datetime2 = fromJsToNapiDatetime2Transformer(row, scale);
   let offset = row.getTimezoneOffset();
   return {
     datetime2: datetime2!,
@@ -124,7 +127,7 @@ export const dateTimeOffsetTdsTransformer = (
 };
 
 /// Transform the NapiSqlTime to a Date object
-export const timeTransformer = (
+export const fromNapiToJsTimeTransformer = (
   metadata: Metadata,
   row: NapiSqlTime | null,
 ): DateWithNanosecondsDelta | null => {
@@ -166,7 +169,7 @@ export const timeTransformer = (
 };
 
 /// Transform the NapiSqlTime to a Date object
-export const timeTdsTransformer = (
+export const fromJsToNapiTimeTransformer = (
   time: Date | null,
   scale: number = 7,
 ): NapiSqlTime | null => {
@@ -177,10 +180,11 @@ export const timeTdsTransformer = (
     throw new Error(`Invalid scale: ${scale}. Must be between 0 and 7.`);
   }
   let seconds =
-    (time.getHours() * 60 + time.getMinutes()) * 60 + time.getSeconds();
+    (time.getUTCHours() * 60 + time.getUTCMinutes()) * 60 +
+    time.getUTCSeconds();
 
   // We extract the millis from the date and create a number which repreents the input date in millis.
-  let millis = seconds * 1000 + time.getMilliseconds();
+  let millis = seconds * 1000 + time.getUTCMilliseconds();
 
   // Millis by default have scale 3. Adjust the number based on the intended scale.
   // E.g. If 1234567 millis are to be sent with scale 5, we need to multiply it by 10^(5-3) = 100, which gives us 123456700.

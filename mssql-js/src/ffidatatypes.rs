@@ -1,10 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use std::str::FromStr;
+
 use mssql_tds::{
     datatypes::{
         column_values::{
-            ColumnValues, SqlDate, SqlDateTime2, SqlDateTimeOffset, SqlMoney, SqlTime,
+            ColumnValues, SqlDate, SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlMoney, SqlTime,
         },
         decoder::DecimalParts,
         sql_string::{EncodingType, SqlString},
@@ -18,6 +20,7 @@ use napi::{
     Error,
     bindgen_prelude::{Buffer, Null},
 };
+use uuid::Uuid;
 
 use crate::{
     connection::RowDataType,
@@ -162,6 +165,15 @@ impl From<SqlMoney> for NapiSqlMoney {
     }
 }
 
+impl From<NapiSqlMoney> for SqlMoney {
+    fn from(napi_sql_money: NapiSqlMoney) -> Self {
+        SqlMoney {
+            lsb_part: napi_sql_money.lsb_part,
+            msb_part: napi_sql_money.msb_part,
+        }
+    }
+}
+
 #[napi(object)]
 pub struct NapiDecimalParts {
     pub is_positive: bool,
@@ -263,50 +275,6 @@ pub struct Parameter {
 
 impl TryFrom<Parameter> for SqlType {
     fn try_from(param: Parameter) -> Result<SqlType, Error> {
-        // If we have a null as the input value, then we return the SqlType with None.
-        if matches!(param.value, RowDataType::E(Null)) {
-            let null_val = match param.data_type {
-                SqlDataTypes::Int1
-                | SqlDataTypes::Int2
-                | SqlDataTypes::Int4
-                | SqlDataTypes::Int8 => Ok(SqlType::Int(None)),
-                SqlDataTypes::Bit => Ok(SqlType::Bit(None)),
-                SqlDataTypes::Decimal | SqlDataTypes::Numeric => Ok(SqlType::Decimal(None)),
-                SqlDataTypes::Money | SqlDataTypes::Money4 => Ok(SqlType::Money(None)),
-                SqlDataTypes::Void => Err(Error::from_reason("Void type not implemented")),
-                SqlDataTypes::Image => Err(Error::from_reason("Image conversion not implemented")),
-                SqlDataTypes::Text => Ok(SqlType::Text(None)),
-                SqlDataTypes::Guid => Ok(SqlType::Uuid(None)),
-                SqlDataTypes::VarBinary => Ok(SqlType::VarBinary(None, 0)),
-                SqlDataTypes::VarChar => Ok(SqlType::Varchar(None, 0)),
-                SqlDataTypes::Date => Ok(SqlType::Date(None)),
-                SqlDataTypes::Time => Ok(SqlType::Time(None)),
-                SqlDataTypes::DateTime2 => Ok(SqlType::DateTime2(None)),
-                SqlDataTypes::DateTimeOffset => Ok(SqlType::DateTimeOffset(None)),
-                SqlDataTypes::Binary => Ok(SqlType::Binary(None, 0)),
-                SqlDataTypes::Char => Ok(SqlType::Char(None, 0)),
-                SqlDataTypes::SmallDateTime => Ok(SqlType::SmallDateTime(None)),
-                SqlDataTypes::Flt4 => Ok(SqlType::Real(None)),
-                SqlDataTypes::DateTime => Ok(SqlType::DateTime(None)),
-                SqlDataTypes::Flt8 => Ok(SqlType::Float(None)),
-                SqlDataTypes::SsVariant => {
-                    Err(Error::from_reason("SSVariant conversion not implemented"))
-                }
-                SqlDataTypes::NText => Ok(SqlType::NText(None)),
-                SqlDataTypes::FltN => Ok(SqlType::Float(None)),
-                SqlDataTypes::BigVarBinary => Ok(SqlType::VarBinary(None, 0)),
-                SqlDataTypes::BigVarChar => Ok(SqlType::Varchar(None, 0)),
-                SqlDataTypes::BigBinary => Ok(SqlType::Binary(None, 0)),
-                SqlDataTypes::BigChar => Ok(SqlType::Char(None, 0)),
-                SqlDataTypes::NVarChar => Ok(SqlType::NVarchar(None, 0)),
-                SqlDataTypes::NChar => Ok(SqlType::NChar(None, 0)),
-                SqlDataTypes::Udt => Err(Error::from_reason("Udt conversion not implemented")),
-                SqlDataTypes::Xml => Ok(SqlType::Xml(None)),
-                SqlDataTypes::Json => Ok(SqlType::Json(None)),
-            };
-            return null_val;
-        }
-
         match param.value {
             RowDataType::A(v) => {
                 if !matches!(
@@ -398,12 +366,17 @@ impl TryFrom<Parameter> for SqlType {
                 }
                 _ => todo!("Buffer subtype not implemeted"),
             },
-            RowDataType::E(_) => {
-                unreachable!("Null value should have been handled earlier");
-            }
-            RowDataType::F(_v) => {
-                todo!("Converting NapiSqlDateTime value: ");
-            }
+            RowDataType::E(_) => get_null_sql_type(&param),
+            RowDataType::F(napi_sql_date_time) => match param.data_type {
+                SqlDataTypes::DateTime => {
+                    let sql_datetime: SqlDateTime = napi_sql_date_time.into();
+                    Ok(SqlType::DateTime(Some(sql_datetime)))
+                }
+                _ => Err(Error::from_reason(format!(
+                    "Invalid data_type for RowDataType::F: {:?}. Only DateTime is allowed.",
+                    param.data_type
+                ))),
+            },
             RowDataType::G(v) => {
                 // Check if the data_type is date
                 if matches!(param.data_type, SqlDataTypes::Date) {
@@ -429,13 +402,9 @@ impl TryFrom<Parameter> for SqlType {
                 let sql_time = SqlTime::try_from(napi_sql_time)?;
                 Ok(SqlType::Time(Some(sql_time)))
             }
-            RowDataType::I(_v) => {
-                todo!("Converting NapiSqlDateTime value: ");
-                // Here you can add the conversion logic for NapiSqlDateTime
-            }
-            RowDataType::J(_v) => match param.data_type {
+            RowDataType::I(napi_sql_datetime2) => match param.data_type {
                 SqlDataTypes::DateTime2 => {
-                    let sql_datetime2: SqlDateTime2 = _v.try_into()?;
+                    let sql_datetime2: SqlDateTime2 = napi_sql_datetime2.try_into()?;
                     Ok(SqlType::DateTime2(Some(sql_datetime2)))
                 }
                 _ => Err(Error::from_reason(format!(
@@ -443,7 +412,7 @@ impl TryFrom<Parameter> for SqlType {
                     param.data_type
                 ))),
             },
-            RowDataType::K(napi_date_time_offset) => match param.data_type {
+            RowDataType::J(napi_date_time_offset) => match param.data_type {
                 SqlDataTypes::DateTimeOffset => {
                     let sql_datetime_offset: SqlDateTimeOffset =
                         napi_date_time_offset.try_into()?;
@@ -454,22 +423,76 @@ impl TryFrom<Parameter> for SqlType {
                     param.data_type
                 ))),
             },
+            RowDataType::K(napi_sql_money) => {
+                if !matches!(param.data_type, SqlDataTypes::Money | SqlDataTypes::Money4) {
+                    return Err(Error::from_reason(format!(
+                        "Invalid data_type for RowDataType::L: {:?}. Only Money and Money4 are allowed.",
+                        param.data_type
+                    )));
+                }
+                Ok(SqlType::Money(Some(napi_sql_money.into())))
+            }
             RowDataType::L(_v) => {
-                todo!("Converting NapiSqlMoney value: ");
+                todo!("Converting decimal value: ");
             }
             RowDataType::M(_v) => {
-                todo!("Converting NapiDecimalParts value: ");
+                todo!("Converting f64 value: ");
             }
-            RowDataType::N(_v) => {
-                todo!("Converting f64 value: {}", _v);
-            }
-            RowDataType::O(_v) => {
-                todo!("Converting String value: {}", _v);
-            }
+            RowDataType::N(uuid) => match param.data_type {
+                SqlDataTypes::Guid => {
+                    let uuid = Uuid::from_str(&uuid).map_err(|uuid| {
+                        Error::from_reason(format!("Failed to convert String to Uuid: {uuid}"))
+                    })?;
+                    Ok(SqlType::Uuid(Some(uuid)))
+                }
+                _ => Err(Error::from_reason(format!(
+                    "Invalid data_type for RowDataType::N: {:?}. Only Guid is allowed.",
+                    param.data_type
+                ))),
+            },
         }
     }
 
     type Error = napi::Error;
+}
+
+fn get_null_sql_type(param: &Parameter) -> Result<SqlType, Error> {
+    match param.data_type {
+        SqlDataTypes::Int1 | SqlDataTypes::Int2 | SqlDataTypes::Int4 | SqlDataTypes::Int8 => {
+            Ok(SqlType::Int(None))
+        }
+        SqlDataTypes::Bit => Ok(SqlType::Bit(None)),
+        SqlDataTypes::Decimal | SqlDataTypes::Numeric => Ok(SqlType::Decimal(None)),
+        SqlDataTypes::Money | SqlDataTypes::Money4 => Ok(SqlType::Money(None)),
+        SqlDataTypes::Void => Err(Error::from_reason("Void type not implemented")),
+        SqlDataTypes::Image => Err(Error::from_reason("Image conversion not implemented")),
+        SqlDataTypes::Text => Ok(SqlType::Text(None)),
+        SqlDataTypes::Guid => Ok(SqlType::Uuid(None)),
+        SqlDataTypes::VarBinary => Ok(SqlType::VarBinary(None, 0)),
+        SqlDataTypes::VarChar => Ok(SqlType::Varchar(None, 0)),
+        SqlDataTypes::Date => Ok(SqlType::Date(None)),
+        SqlDataTypes::Time => Ok(SqlType::Time(None)),
+        SqlDataTypes::DateTime2 => Ok(SqlType::DateTime2(None)),
+        SqlDataTypes::DateTimeOffset => Ok(SqlType::DateTimeOffset(None)),
+        SqlDataTypes::Binary => Ok(SqlType::Binary(None, 0)),
+        SqlDataTypes::Char => Ok(SqlType::Char(None, 0)),
+        SqlDataTypes::SmallDateTime => Ok(SqlType::SmallDateTime(None)),
+        SqlDataTypes::Flt4 => Ok(SqlType::Real(None)),
+        SqlDataTypes::DateTime => Ok(SqlType::DateTime(None)),
+        SqlDataTypes::Flt8 => Ok(SqlType::Float(None)),
+        SqlDataTypes::SsVariant => Err(Error::from_reason("SSVariant conversion not implemented")),
+        SqlDataTypes::NText => Ok(SqlType::NText(None)),
+        SqlDataTypes::FltN => Ok(SqlType::Float(None)),
+        SqlDataTypes::BigVarBinary => Ok(SqlType::VarBinary(None, 0)),
+        SqlDataTypes::BigVarChar => Ok(SqlType::Varchar(None, 0)),
+        SqlDataTypes::BigBinary => Ok(SqlType::Binary(None, 0)),
+        SqlDataTypes::BigChar => Ok(SqlType::Char(None, 0)),
+        SqlDataTypes::NVarChar => Ok(SqlType::NVarchar(None, 0)),
+        SqlDataTypes::NChar => Ok(SqlType::NChar(None, 0)),
+        SqlDataTypes::Udt => Err(Error::from_reason("Udt conversion not implemented")),
+        SqlDataTypes::Xml => Ok(SqlType::Xml(None)),
+        SqlDataTypes::Json => Ok(SqlType::Json(None)),
+    }
 }
 
 pub(crate) fn transform_row(row: Vec<ColumnValues>) -> Vec<RowDataType> {
@@ -477,18 +500,18 @@ pub(crate) fn transform_row(row: Vec<ColumnValues>) -> Vec<RowDataType> {
     for col in row {
         match col {
             ColumnValues::Int(v) => ret_val.push(RowDataType::A(v)),
-            ColumnValues::Uuid(uuid) => ret_val.push(RowDataType::O(uuid.to_string())),
+            ColumnValues::Uuid(uuid) => ret_val.push(RowDataType::N(uuid.to_string())),
             ColumnValues::Bit(v) => ret_val.push(RowDataType::C(v)),
             ColumnValues::BigInt(v) => ret_val.push(RowDataType::B(v.into())),
             ColumnValues::TinyInt(v) => ret_val.push(RowDataType::G(v.into())),
             ColumnValues::SmallInt(v) => ret_val.push(RowDataType::A(v.into())),
-            ColumnValues::Real(v) => ret_val.push(RowDataType::N(v.into())),
-            ColumnValues::Float(v) => ret_val.push(RowDataType::N(v)),
+            ColumnValues::Real(v) => ret_val.push(RowDataType::M(v.into())),
+            ColumnValues::Float(v) => ret_val.push(RowDataType::M(v)),
             ColumnValues::Decimal(decimal_parts) => {
-                ret_val.push(RowDataType::M(decimal_parts.into()));
+                ret_val.push(RowDataType::L(decimal_parts.into()));
             }
             ColumnValues::Numeric(decimal_parts) => {
-                ret_val.push(RowDataType::M(decimal_parts.into()));
+                ret_val.push(RowDataType::L(decimal_parts.into()));
             }
             ColumnValues::String(sql_string) => {
                 ret_val.push(RowDataType::D(Buffer::from(sql_string.bytes)))
@@ -504,9 +527,9 @@ pub(crate) fn transform_row(row: Vec<ColumnValues>) -> Vec<RowDataType> {
             }
             ColumnValues::Time(_time) => ret_val.push(RowDataType::H(NapiSqlTime::from(_time))),
             ColumnValues::DateTime2(_date_time2) => {
-                ret_val.push(RowDataType::J(NapiSqlDateTime2::from(_date_time2)))
+                ret_val.push(RowDataType::I(NapiSqlDateTime2::from(_date_time2)))
             }
-            ColumnValues::DateTimeOffset(date_time_offset) => ret_val.push(RowDataType::K(
+            ColumnValues::DateTimeOffset(date_time_offset) => ret_val.push(RowDataType::J(
                 NapiSqlDateTimeOffset::from(date_time_offset),
             )),
             ColumnValues::SmallDateTime(sql_small_date_time) => {
@@ -518,7 +541,7 @@ pub(crate) fn transform_row(row: Vec<ColumnValues>) -> Vec<RowDataType> {
             ColumnValues::SmallMoney(sql_small_money) => {
                 ret_val.push(RowDataType::A(sql_small_money.int_val))
             }
-            ColumnValues::Money(sql_money) => ret_val.push(RowDataType::L(sql_money.into())),
+            ColumnValues::Money(sql_money) => ret_val.push(RowDataType::K(sql_money.into())),
             ColumnValues::Bytes(items) => ret_val.push(RowDataType::D(Buffer::from(items))),
             ColumnValues::Xml(sql_xml) => ret_val.push(RowDataType::D(Buffer::from(sql_xml.bytes))),
             ColumnValues::Null => ret_val.push(RowDataType::E(Null)),

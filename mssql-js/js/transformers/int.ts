@@ -3,16 +3,16 @@
 
 import { Metadata } from '../generated/index.js';
 
-export const intTransformer = (
+export const fromNapiToJsIntTransformer = (
   metadata: Metadata,
   row: number | null,
 ): number | null => {
-  return row == null ? null : row;
+  return row;
 };
 
-export const bigintTransformer = (
+export const fromNapiToJsBigintTransformer = (
   metadata: Metadata,
   row: bigint | null,
 ): bigint | null => {
-  return row == null ? null : row;
+  return row;
 };

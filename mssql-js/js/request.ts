@@ -5,10 +5,10 @@ import { JsSqlDataTypes, SqlJsConnection } from '.';
 import { Encoding } from './codepages';
 import { SqlDataTypes, Parameter } from './generated';
 import {
-  dateTdsTransformer,
-  dateTime2TdsTransformer,
-  dateTimeOffsetTdsTransformer,
-  timeTdsTransformer,
+  fromJsToNapiDateTransformer,
+  fromJsToNapiDatetime2Transformer,
+  fromJsToNapiDateTimeOffsetTransformer,
+  fromJsToNapiTimeTransformer,
 } from './transformers/datetime';
 import {
   nCharNVarCharTdsTransformer,
@@ -216,7 +216,7 @@ function transformForWrites(
       }
     case JsSqlDataTypes.Date:
       if (row instanceof Date) {
-        return dateTdsTransformer(row);
+        return fromJsToNapiDateTransformer(row);
       }
       throw new TypeError('Expected a number for Date');
     case JsSqlDataTypes.DateTime:
@@ -224,7 +224,7 @@ function transformForWrites(
       throw new Error('not implemented');
     case JsSqlDataTypes.DateTime2:
       if (row instanceof Date) {
-        return dateTime2TdsTransformer(row);
+        return fromJsToNapiDatetime2Transformer(row);
       } else {
         throw new TypeError('Expected a Date for DateTime/DateTime2');
       }
@@ -233,13 +233,13 @@ function transformForWrites(
       throw new Error('not implemented');
     case JsSqlDataTypes.DateTimeOffset:
       if (row instanceof Date) {
-        return dateTimeOffsetTdsTransformer(row);
+        return fromJsToNapiDateTimeOffsetTransformer(row);
       } else {
         throw new TypeError('Expected a Date for DateTimeOffset');
       }
     case JsSqlDataTypes.Time:
       if (row instanceof Date) {
-        return timeTdsTransformer(row);
+        return fromJsToNapiTimeTransformer(row);
       } else {
         throw new TypeError('Expected a Date for Time');
       }
@@ -268,7 +268,8 @@ function transformForWrites(
     case JsSqlDataTypes.Real:
       throw new Error('not implemented');
     case JsSqlDataTypes.UniqueIdentifier:
-      throw new Error('not implemented');
+      if (typeof row === 'string') return row;
+      throw new TypeError('Expected a string for UniqueIdentifier');
     default:
       return row;
   }

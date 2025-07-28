@@ -7,7 +7,7 @@ use mssql_tds::{
     connection::tds_client::{ResultSet, ResultSetClient, TdsClient},
     message::parameters::rpc_parameters::{RpcParameter, StatusFlags},
 };
-use napi::bindgen_prelude::{BigInt, Buffer, Either15, Null};
+use napi::bindgen_prelude::{BigInt, Buffer, Either14, Null};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
     },
 };
 
-pub(crate) type RowDataType = Either15<
+pub(crate) type RowDataType = Either14<
     i32,                   // A
     BigInt,                // B
     bool,                  // C
@@ -27,13 +27,12 @@ pub(crate) type RowDataType = Either15<
     NapiSqlDateTime,       // F
     u32,                   // G
     NapiSqlTime,           // H
-    NapiSqlDateTime,       // I
-    NapiSqlDateTime2,      // J
-    NapiSqlDateTimeOffset, // K
-    NapiSqlMoney,          // L
-    NapiDecimalParts,      // M
-    f64,                   // N
-    String,                // O
+    NapiSqlDateTime2,      // I
+    NapiSqlDateTimeOffset, // J
+    NapiSqlMoney,          // K
+    NapiDecimalParts,      // L
+    f64,                   // M
+    String,                // N
 >;
 
 #[napi]
@@ -151,7 +150,7 @@ impl Connection {
     ) -> napi::Result<
         Option<
             Vec<
-                Either15<
+                Either14<
                     i32,
                     BigInt,
                     bool,
@@ -160,7 +159,6 @@ impl Connection {
                     NapiSqlDateTime,
                     u32,
                     NapiSqlTime,
-                    NapiSqlDateTime,
                     NapiSqlDateTime2,
                     NapiSqlDateTimeOffset,
                     NapiSqlMoney,

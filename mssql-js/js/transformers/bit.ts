@@ -3,7 +3,7 @@
 
 import { Metadata } from '../generated/index.js';
 
-export const bitTransformer = (
+export const fromNapiToJsBitTransformer = (
   metadata: Metadata,
   row: boolean | null,
 ): boolean | null => {

@@ -205,7 +205,7 @@ impl From<&SqlType> for TdsDataType {
             SqlType::VarcharMax(_) => TdsDataType::VarChar,
             SqlType::VarBinaryMax(_) => TdsDataType::VarBinary,
             SqlType::Xml(_) => TdsDataType::Xml,
-            SqlType::Uuid(_) => todo!(),
+            SqlType::Uuid(_) => TdsDataType::Guid,
             SqlType::DateTime(_) => TdsDataType::DateTime,
             SqlType::Date(_) => TdsDataType::DateN,
         }

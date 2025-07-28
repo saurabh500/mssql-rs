@@ -3,7 +3,7 @@
 
 import { Metadata } from '../generated/index.js';
 
-export const guidTransformer = (
+export const fromNapiToJsGuidTransformer = (
   metadata: Metadata,
   row: string | null,
 ): string | null => {
