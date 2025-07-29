@@ -5,7 +5,10 @@ use std::sync::Arc;
 
 use mssql_tds::{
     connection::tds_client::{ResultSet, ResultSetClient, TdsClient},
-    message::parameters::rpc_parameters::{RpcParameter, StatusFlags},
+    message::{
+        parameters::rpc_parameters::{RpcParameter, StatusFlags},
+        transaction_management::TransactionIsolationLevel,
+    },
 };
 use napi::bindgen_prelude::{BigInt, Buffer, Either14, Null};
 use tokio::sync::Mutex;
@@ -15,8 +18,7 @@ use crate::{
         NapiF64, NapiSqlDateTime, NapiSqlDateTime2, NapiSqlDateTimeOffset, NapiSqlTime,
     },
     ffidatatypes::{
-        CollationMetadata, Metadata, NapiDecimalParts, NapiSqlMoney, Parameter, RowItem,
-        transform_row,
+        CollationMetadata, Metadata, NapiDecimalParts, NapiSqlMoney, Parameter, transform_row,
     },
 };
 
@@ -102,47 +104,6 @@ impl Connection {
             Err(e) => Err(napi::Error::from_reason(format!(
                 "Failed to execute query with parameters: {e}"
             ))),
-        }
-    }
-
-    #[napi]
-    pub async fn next_row2(&self) -> napi::Result<Option<Vec<RowItem>>> {
-        let mut client = self.tds_client.lock().await;
-
-        let result_set = client.get_current_resultset();
-        // Check if the client has a result set.
-        if result_set.is_none() {
-            return Ok(None);
-        }
-        let result_set = result_set.unwrap();
-        let next_row = result_set
-            .next_row()
-            .await
-            .map_err(|e| napi::Error::from_reason(format!("Failed to get next row: {e}")))?;
-        let md = result_set.get_metadata();
-        match next_row {
-            Some(row) => {
-                let transformed_row = transform_row(row);
-                let col_count = transformed_row.len();
-                let mut row_items: Vec<RowItem> = Vec::with_capacity(col_count);
-                for (i, item) in transformed_row.into_iter().enumerate() {
-                    if let Some(meta) = md.get(i) {
-                        let metadata: Metadata = meta.into();
-                        let row_item = RowItem {
-                            metadata,
-                            row_val: item,
-                        };
-                        row_items.push(row_item);
-                    } else {
-                        return Err(napi::Error::from_reason(format!(
-                            "Metadata length mismatch: expected at least {col_count}, found {}",
-                            md.len()
-                        )));
-                    }
-                }
-                Ok(Some(row_items))
-            }
-            None => Ok(None),
         }
     }
 
@@ -243,6 +204,49 @@ impl Connection {
             Err(e) => Err(napi::Error::from_reason(format!(
                 "Failed to close connection: {e}"
             ))),
+        }
+    }
+
+    #[napi]
+    pub async fn begin_transaction(
+        &self,
+        isolation_level: SqlTransactionIsolationLevel,
+    ) -> napi::Result<()> {
+        let mut client = self.tds_client.lock().await;
+        let result = client.begin_transaction(isolation_level.into()).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(napi::Error::from_reason(format!(
+                "Failed to begin transaction: {e}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+#[napi]
+pub enum SqlTransactionIsolationLevel {
+    NoChange = 0x00,
+    ReadUncommitted = 0x01,
+    ReadCommitted = 0x02,
+    RepeatableRead = 0x03,
+    Serializable = 0x04,
+    Snapshot = 0x05,
+}
+
+impl From<SqlTransactionIsolationLevel> for TransactionIsolationLevel {
+    fn from(level: SqlTransactionIsolationLevel) -> Self {
+        match level {
+            SqlTransactionIsolationLevel::NoChange => TransactionIsolationLevel::NoChange,
+            SqlTransactionIsolationLevel::ReadUncommitted => {
+                TransactionIsolationLevel::ReadUncommitted
+            }
+            SqlTransactionIsolationLevel::ReadCommitted => TransactionIsolationLevel::ReadCommitted,
+            SqlTransactionIsolationLevel::RepeatableRead => {
+                TransactionIsolationLevel::RepeatableRead
+            }
+            SqlTransactionIsolationLevel::Serializable => TransactionIsolationLevel::Serializable,
+            SqlTransactionIsolationLevel::Snapshot => TransactionIsolationLevel::Snapshot,
         }
     }
 }

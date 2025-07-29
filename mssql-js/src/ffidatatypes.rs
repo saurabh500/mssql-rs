@@ -146,12 +146,6 @@ impl TryFrom<TdsDataType> for SqlDataTypes {
 }
 
 #[napi(object)]
-pub struct RowItem {
-    pub metadata: Metadata,
-    pub row_val: RowDataType,
-}
-
-#[napi(object)]
 pub struct NapiSqlMoney {
     pub lsb_part: i32, // LSB
     pub msb_part: i32, // MSB - Only populated for Money, 0 for SmallMoney

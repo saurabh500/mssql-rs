@@ -10,6 +10,10 @@ use crate::message::parameters::rpc_parameters::{
     RpcParameter, StatusFlags, build_parameter_list_string,
 };
 use crate::message::rpc::{RpcProcs, RpcType, SqlRpc};
+use crate::message::transaction_management::{
+    CreateTxnParams, TransactionIsolationLevel, TransactionManagementRequest,
+    TransactionManagementType,
+};
 use crate::query::result::ReturnValue;
 use crate::token::tokens::SqlCollation;
 use crate::{
@@ -392,6 +396,111 @@ impl TdsClient {
 
     pub async fn close_connection(&mut self) -> TdsResult<()> {
         self.transport.close_transport().await?;
+        Ok(())
+    }
+
+    pub async fn begin_transaction(
+        &mut self,
+        isolation_level: TransactionIsolationLevel,
+    ) -> TdsResult<()> {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(
+                "Cannot begin transaction while another batch is executing.".to_string(),
+            ));
+        }
+        let transaction_params = TransactionManagementType::Begin(CreateTxnParams {
+            level: isolation_level,
+            name: None,
+        });
+        let transaction =
+            TransactionManagementRequest::new(transaction_params, &self.execution_context);
+        let mut packet_writer =
+            transaction.create_packet_writer(self.transport.as_writer(), None, None);
+        transaction.serialize(&mut packet_writer).await?;
+
+        self.consume_transaction_response().await?;
+
+        Ok(())
+    }
+
+    pub async fn commit_transaction(&mut self) -> TdsResult<()> {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(
+                "Cannot commit transaction while another batch is executing.".to_string(),
+            ));
+        }
+        let transaction = TransactionManagementRequest::new(
+            TransactionManagementType::Commit {
+                name: None,
+                create_txn_params: None,
+            },
+            &self.execution_context,
+        );
+        let mut packet_writer =
+            transaction.create_packet_writer(self.transport.as_writer(), None, None);
+        transaction.serialize(&mut packet_writer).await?;
+
+        self.consume_transaction_response().await?;
+
+        Ok(())
+    }
+
+    pub async fn rollback_transaction(&mut self) -> TdsResult<()> {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(
+                "Cannot rollback transaction while another batch is executing.".to_string(),
+            ));
+        }
+        let transaction = TransactionManagementRequest::new(
+            TransactionManagementType::Rollback {
+                name: None,
+                create_txn_params: None,
+            },
+            &self.execution_context,
+        );
+        let mut packet_writer =
+            transaction.create_packet_writer(self.transport.as_writer(), None, None);
+        transaction.serialize(&mut packet_writer).await?;
+
+        self.consume_transaction_response().await?;
+
+        Ok(())
+    }
+
+    pub(crate) async fn consume_transaction_response(&mut self) -> TdsResult<()> {
+        loop {
+            let token = self
+                .transport
+                .receive_token(&ParserContext::None(()), None, None)
+                .await?;
+            match token {
+                Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
+                    info!("done while get_next_row: {:?}", done);
+
+                    let count = self.count_map.entry(done.cur_cmd).or_insert(0);
+                    *count += done.row_count as usize;
+
+                    if !done.has_more() {
+                        // Token stream is terminated. Save this information.
+                        info!("No more rows for current command: {:?}", done.cur_cmd);
+                    }
+                    break;
+                }
+                Tokens::EnvChange(env_change) => {
+                    info!(?env_change);
+                    self.execution_context
+                        .capture_change_property(&env_change)?;
+                    continue;
+                }
+                _ => {
+                    unreachable!(
+                        "Unexpected token while reading transaction request response. {:?}",
+                        token
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 }
