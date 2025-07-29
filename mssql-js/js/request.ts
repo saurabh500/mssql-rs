@@ -14,6 +14,10 @@ import {
 } from './transformers/datetime';
 import { fromJsToNapiDecimalPartTransformer } from './transformers/decimal';
 import {
+  fromJsToNapiMoneyTransformer,
+  fromJsToSmallMoneyTransformer,
+} from './transformers/money';
+import {
   nCharNVarCharTdsTransformer,
   varCharTdsTransformer,
 } from './transformers/string';
@@ -277,8 +281,18 @@ function transformForWrites(
       throw new TypeError(
         'Expected a number or NapiDecimalParts for Decimal/Numeric types',
       );
-    case JsSqlDataTypes.Money:
     case JsSqlDataTypes.SmallMoney:
+      if (typeof row === 'number') {
+        // The native library will do the multiplicaiton by 10000 for us.
+        return fromJsToSmallMoneyTransformer(row);
+      }
+      throw new TypeError('Expected a number for SmallMoney/Money types');
+    case JsSqlDataTypes.Money:
+      if (typeof row === 'number') {
+        // The native library will do the multiplicaiton by 10000 for us.
+        return fromJsToNapiMoneyTransformer(row);
+      }
+      throw new TypeError('Expected a number for SmallMoney/Money types');
     case JsSqlDataTypes.Float:
     case JsSqlDataTypes.Real:
       if (typeof row === 'number') {

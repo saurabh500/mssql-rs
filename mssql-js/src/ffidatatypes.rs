@@ -7,7 +7,7 @@ use mssql_tds::{
     datatypes::{
         column_values::{
             ColumnValues, SqlDate, SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlMoney,
-            SqlSmallDateTime, SqlTime,
+            SqlSmallDateTime, SqlSmallMoney, SqlTime,
         },
         decoder::DecimalParts,
         sql_string::{EncodingType, SqlString},
@@ -320,9 +320,10 @@ impl TryFrom<Parameter> for SqlType {
                         | SqlDataTypes::Int4
                         | SqlDataTypes::Int8
                         | SqlDataTypes::Date
+                        | SqlDataTypes::Money4
                 ) {
                     return Err(Error::from_reason(format!(
-                        "Invalid data_type for number: {:?}. Only smallint, tinyint, int and bigint are allowed. Value {:?}",
+                        "Invalid data_type for number: {:?}. DataType Value {:?}",
                         param.data_type, v
                     )));
                 }
@@ -353,6 +354,9 @@ impl TryFrom<Parameter> for SqlType {
                             ))
                         })?;
                         Ok(SqlType::Date(Some(sql_date)))
+                    }
+                    SqlDataTypes::Money4 => {
+                        Ok(SqlType::SmallMoney(Some(SqlSmallMoney { int_val: v })))
                     }
                     _ => Err(Error::from_reason(format!(
                         "Invalid data_type for RowDataType::A: {:?}. Only Int1, Int2, Int4, Int8 are allowed.",

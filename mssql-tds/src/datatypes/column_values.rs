@@ -168,6 +168,7 @@ impl From<&SqlMoney> for TdsResult<f64> {
         Ok((money_val as f64) / 10000.0000)
     }
 }
+
 impl From<&SqlMoney> for TdsResult<f32> {
     fn from(value: &SqlMoney) -> Self {
         // TDS value of money is the value multiplied by 10^4, hence we need to divide while decoding.

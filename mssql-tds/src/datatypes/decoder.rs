@@ -336,7 +336,10 @@ impl GenericDecoder {
     {
         let msb = reader.read_int32().await?;
         let lsb = reader.read_int32().await?;
-        Ok((lsb, msb).into())
+        Ok(SqlMoney {
+            lsb_part: lsb,
+            msb_part: msb,
+        })
     }
 
     async fn read_daten<T>(reader: &mut T, length: u8) -> TdsResult<ColumnValues>

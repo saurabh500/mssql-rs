@@ -11,7 +11,9 @@ mod rpc_datatypes {
         begin_connection, create_client, create_context, get_first_row, init_tracing,
     };
     use mssql_tds::core::TdsResult;
-    use mssql_tds::datatypes::column_values::{SqlDate, SqlDateTime, SqlDateTime2, SqlTime};
+    use mssql_tds::datatypes::column_values::{
+        SqlDate, SqlDateTime, SqlDateTime2, SqlMoney, SqlSmallMoney, SqlTime,
+    };
     use mssql_tds::datatypes::decoder::DecimalParts;
     use mssql_tds::datatypes::sql_string::SqlString;
     use mssql_tds::{
@@ -87,6 +89,17 @@ mod rpc_datatypes {
             ),
             ("guid", SqlType::Uuid(Some(Uuid::from_str(&guid).unwrap()))),
             ("decimal", SqlType::Decimal(Some(decimal.clone()))),
+            (
+                "smallmoney",
+                SqlType::SmallMoney(Some(SqlSmallMoney { int_val: 12345 })),
+            ),
+            (
+                "money",
+                SqlType::Money(Some(SqlMoney {
+                    lsb_part: 1234,
+                    msb_part: 5678,
+                })),
+            ),
         ];
 
         let query = generate_select_statement(&columns);
@@ -159,6 +172,13 @@ mod rpc_datatypes {
                 }
                 ColumnValues::Decimal(value) => {
                     assert_eq!(value, &decimal);
+                }
+                ColumnValues::SmallMoney(value) => {
+                    assert_eq!(value.int_val, 12345);
+                }
+                ColumnValues::Money(value) => {
+                    assert_eq!(value.lsb_part, 1234);
+                    assert_eq!(value.msb_part, 5678);
                 }
                 _ => {}
             }
