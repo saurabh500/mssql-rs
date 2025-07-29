@@ -112,5 +112,5 @@ test('guidTransformer', (t) => {
 // --- Float test ---
 test('floatTransformer', (t) => {
   const transformer = tdsToJsTransformers[JsSqlDataTypes.Float];
-  t.is(transformer(mockMetadata(JsSqlDataTypes.Float), 3.14), 3.14);
+  t.is(transformer(mockMetadata(JsSqlDataTypes.Float), { value: 3.14 }), 3.14);
 });

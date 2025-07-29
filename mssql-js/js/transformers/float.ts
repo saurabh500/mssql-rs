@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { Metadata } from '../generated/index.js';
+import { Metadata, NapiF64 } from '../generated/index.js';
 
 export const floatTransformer = (
   metadata: Metadata,
-  row: number | null,
+  row: NapiF64 | null,
 ): number | null => {
-  return row == null ? null : row;
+  return row == null ? null : row.value;
 };

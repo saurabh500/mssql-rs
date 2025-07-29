@@ -4,6 +4,7 @@
 import test from 'ava';
 import { createContext, openConnection } from '../../db.mjs';
 import { JsSqlDataTypes, Request } from '../../../js/index.js';
+import { match } from 'assert';
 
 async function executeScalar(request, query) {
   const result = await request.query(query);
@@ -18,6 +19,7 @@ async function runNumberQueryTest(
   sqlType,
   precision,
   scale,
+  transform,
 ) {
   const connection = await openConnection(createContext());
   try {
@@ -25,6 +27,9 @@ async function runNumberQueryTest(
     let request = new Request(connection);
     request.input('@param', sqlType, inputValue);
     let val = await executeScalar(request, query);
+    if (transform) {
+      val = transform(val);
+    }
     t.is(val, expectedValue, `Expected value to be ${expectedValue}`);
     t.pass('Query executed successfully');
   } finally {
@@ -39,6 +44,7 @@ const genericMacro = async (
   sqlType,
   precision = 18,
   scale = 0,
+  transformServeValueBeforeCompare = (value) => value,
 ) => {
   await runNumberQueryTest(
     t,
@@ -47,6 +53,7 @@ const genericMacro = async (
     sqlType,
     precision,
     scale,
+    transformServeValueBeforeCompare,
   );
 };
 
@@ -115,4 +122,66 @@ test(
   // Default scale is 0 and precision is 18
   12323123123,
   JsSqlDataTypes.Decimal,
+);
+
+test(
+  'test smallint somevalue',
+  genericMacro,
+  123,
+  123,
+  JsSqlDataTypes.SmallInt,
+);
+
+test('test smallint null', genericMacro, null, null, JsSqlDataTypes.SmallInt);
+
+test(
+  'test smallint negative',
+  genericMacro,
+  -123,
+  -123,
+  JsSqlDataTypes.SmallInt,
+);
+
+test(
+  'test real somevalue',
+  genericMacro,
+  123.45,
+  123.45,
+  JsSqlDataTypes.Real,
+  undefined,
+  undefined,
+  (value) => {
+    return Math.round(value * 100) / 100;
+  },
+);
+test('test real null', genericMacro, null, null, JsSqlDataTypes.Real);
+test(
+  'test real negative',
+  genericMacro,
+  -123.45,
+  -123.45,
+  JsSqlDataTypes.Real,
+  undefined,
+  undefined,
+  (value) => {
+    return Math.round(value * 100) / 100;
+  },
+);
+
+test(
+  'test float somevalue',
+  genericMacro,
+  123.45,
+  123.45,
+  JsSqlDataTypes.Float,
+);
+
+test('test float null', genericMacro, null, null, JsSqlDataTypes.Float);
+
+test(
+  'test float negative',
+  genericMacro,
+  -123.45,
+  -123.45,
+  JsSqlDataTypes.Float,
 );

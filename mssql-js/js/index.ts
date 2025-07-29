@@ -12,6 +12,7 @@ import {
   NapiSqlDateTimeOffset,
   NapiSqlMoney,
   Parameter,
+  NapiF64,
 } from './generated/index.js';
 import { connect } from './generated/index.js';
 
@@ -131,7 +132,8 @@ export class SqlJsConnection {
       | NapiSqlDateTimeOffset
       | NapiSqlMoney
       | NapiDecimalParts
-      | string,
+      | string
+      | NapiF64,
   ): Row {
     let jsdatatype = metadata.dataType as unknown as JsSqlDataTypes;
 

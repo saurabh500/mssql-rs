@@ -11,27 +11,31 @@ use napi::bindgen_prelude::{BigInt, Buffer, Either14, Null};
 use tokio::sync::Mutex;
 
 use crate::{
-    datatypes::datetime::{NapiSqlDateTime, NapiSqlDateTime2, NapiSqlDateTimeOffset, NapiSqlTime},
+    datatypes::datetime::{
+        NapiF64, NapiSqlDateTime, NapiSqlDateTime2, NapiSqlDateTimeOffset, NapiSqlTime,
+    },
     ffidatatypes::{
         CollationMetadata, Metadata, NapiDecimalParts, NapiSqlMoney, Parameter, RowItem,
         transform_row,
     },
 };
 
+/// The ordering is super important here as it defines the order in which napi will try to convert from one number
+/// to another.
 pub(crate) type RowDataType = Either14<
-    i32,                   // A
-    BigInt,                // B
-    bool,                  // C
-    Buffer,                // D
-    Null,                  // E
-    NapiSqlDateTime,       // F
-    u32,                   // G
-    NapiSqlTime,           // H
-    NapiSqlDateTime2,      // I
-    NapiSqlDateTimeOffset, // J
-    NapiSqlMoney,          // K
-    NapiDecimalParts,      // L
-    f64,                   // M
+    NapiF64,               // A
+    i32,                   // B
+    BigInt,                // C
+    bool,                  // D
+    Buffer,                // E
+    Null,                  // F
+    NapiSqlDateTime,       // G
+    u32,                   // H
+    NapiSqlTime,           // I
+    NapiSqlDateTime2,      // J
+    NapiSqlDateTimeOffset, // K
+    NapiSqlMoney,          // L
+    NapiDecimalParts,      // M
     String,                // N
 >;
 
@@ -151,20 +155,20 @@ impl Connection {
         Option<
             Vec<
                 Either14<
-                    i32,
-                    BigInt,
-                    bool,
-                    Buffer,
-                    Null,
-                    NapiSqlDateTime,
-                    u32,
-                    NapiSqlTime,
-                    NapiSqlDateTime2,
-                    NapiSqlDateTimeOffset,
-                    NapiSqlMoney,
-                    NapiDecimalParts,
-                    f64,
-                    String,
+                    NapiF64,               // A
+                    i32,                   // B
+                    BigInt,                // C
+                    bool,                  // D
+                    Buffer,                // E
+                    Null,                  // F
+                    NapiSqlDateTime,       // G
+                    u32,                   // H
+                    NapiSqlTime,           // I
+                    NapiSqlDateTime2,      // J
+                    NapiSqlDateTimeOffset, // K
+                    NapiSqlMoney,          // L
+                    NapiDecimalParts,      // M
+                    String,                // N
                 >,
             >,
         >,

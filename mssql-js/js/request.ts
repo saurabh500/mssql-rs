@@ -281,7 +281,10 @@ function transformForWrites(
     case JsSqlDataTypes.SmallMoney:
     case JsSqlDataTypes.Float:
     case JsSqlDataTypes.Real:
-      throw new Error('not implemented');
+      if (typeof row === 'number') {
+        return { value: row };
+      }
+      throw new TypeError('Expected a number for Float/Real types');
     case JsSqlDataTypes.UniqueIdentifier:
       if (typeof row === 'string') return row;
       throw new TypeError('Expected a string for UniqueIdentifier');

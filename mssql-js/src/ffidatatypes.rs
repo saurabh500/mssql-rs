@@ -262,6 +262,13 @@ impl From<&ColumnMetadata> for Metadata {
                         8 => SqlDataTypes::Money,
                         _ => unreachable!(),
                     },
+                    TdsDataType::FltN => match column_metadata.type_info.length {
+                        4 => SqlDataTypes::Flt4,
+                        8 => SqlDataTypes::Flt8,
+                        _ => unreachable!(),
+                    },
+                    TdsDataType::Flt4 => SqlDataTypes::Flt4,
+                    TdsDataType::Flt8 => SqlDataTypes::Flt8,
                     TdsDataType::None => unreachable!(),
                     _ => panic!("Unsupported SQL data type: {:?}", column_metadata.data_type),
                 },
@@ -289,7 +296,23 @@ pub struct Parameter {
 impl TryFrom<Parameter> for SqlType {
     fn try_from(param: Parameter) -> Result<SqlType, Error> {
         match param.value {
-            RowDataType::A(v) => {
+            RowDataType::A(f64val) => match param.data_type {
+                SqlDataTypes::Flt4 => {
+                    if *f64val < f32::MIN as f64 || *f64val > f32::MAX as f64 {
+                        return Err(Error::from_reason(format!(
+                            "Value {:?} out of range for F32",
+                            *f64val
+                        )));
+                    }
+                    Ok(SqlType::Real(Some(*f64val as f32)))
+                }
+                SqlDataTypes::Flt8 => Ok(SqlType::Float(Some(*f64val))),
+                _ => Err(Error::from_reason(format!(
+                    "Invalid data_type for RowDataType::A: {:?}. Only Flt4 and Flt8 are allowed.",
+                    param.data_type
+                ))),
+            },
+            RowDataType::B(v) => {
                 if !matches!(
                     param.data_type,
                     SqlDataTypes::Int1
@@ -299,8 +322,8 @@ impl TryFrom<Parameter> for SqlType {
                         | SqlDataTypes::Date
                 ) {
                     return Err(Error::from_reason(format!(
-                        "Invalid data_type for number: {:?}. Only smallint, tinyint, int and bigint are allowed.",
-                        param.data_type
+                        "Invalid data_type for number: {:?}. Only smallint, tinyint, int and bigint are allowed. Value {:?}",
+                        param.data_type, v
                     )));
                 }
                 match param.data_type {
@@ -338,7 +361,7 @@ impl TryFrom<Parameter> for SqlType {
                 }
             }
 
-            RowDataType::B(bigint) => {
+            RowDataType::C(bigint) => {
                 let (i64val, is_lossless) = bigint.get_i64();
                 if !is_lossless {
                     return Err(Error::from_reason(format!(
@@ -353,7 +376,7 @@ impl TryFrom<Parameter> for SqlType {
                 }
                 Ok(SqlType::BigInt(Some(i64val)))
             }
-            RowDataType::C(bit_val) => {
+            RowDataType::D(bit_val) => {
                 if !matches!(param.data_type, SqlDataTypes::Bit) {
                     return Err(Error::from_reason(format!(
                         "Invalid data_type for RowDataType::C: {:?}. Only Bit is allowed.",
@@ -362,7 +385,7 @@ impl TryFrom<Parameter> for SqlType {
                 }
                 Ok(SqlType::Bit(Some(bit_val)))
             }
-            RowDataType::D(buffer) => match param.data_type {
+            RowDataType::E(buffer) => match param.data_type {
                 SqlDataTypes::VarChar => {
                     let bytes: Vec<u8> = buffer.to_vec();
                     Ok(SqlType::VarcharMax(Some(SqlString::new(
@@ -379,8 +402,8 @@ impl TryFrom<Parameter> for SqlType {
                 }
                 _ => todo!("Buffer subtype not implemeted"),
             },
-            RowDataType::E(_) => get_null_sql_type(&param),
-            RowDataType::F(napi_sql_date_time) => match param.data_type {
+            RowDataType::F(_) => get_null_sql_type(&param),
+            RowDataType::G(napi_sql_date_time) => match param.data_type {
                 SqlDataTypes::DateTime => {
                     let sql_datetime: SqlDateTime = napi_sql_date_time.into();
                     Ok(SqlType::DateTime(Some(sql_datetime)))
@@ -394,7 +417,7 @@ impl TryFrom<Parameter> for SqlType {
                     param.data_type
                 ))),
             },
-            RowDataType::G(v) => {
+            RowDataType::H(v) => {
                 // Check if the data_type is date
                 if matches!(param.data_type, SqlDataTypes::Date) {
                     // Convert the u32 value to SqlDate
@@ -409,7 +432,7 @@ impl TryFrom<Parameter> for SqlType {
                     param.data_type
                 );
             }
-            RowDataType::H(napi_sql_time) => {
+            RowDataType::I(napi_sql_time) => {
                 if !matches!(param.data_type, SqlDataTypes::Time) {
                     return Err(Error::from_reason(format!(
                         "Invalid data_type for RowDataType::H: {:?}. Only Time is allowed.",
@@ -419,7 +442,7 @@ impl TryFrom<Parameter> for SqlType {
                 let sql_time = SqlTime::try_from(napi_sql_time)?;
                 Ok(SqlType::Time(Some(sql_time)))
             }
-            RowDataType::I(napi_sql_datetime2) => match param.data_type {
+            RowDataType::J(napi_sql_datetime2) => match param.data_type {
                 SqlDataTypes::DateTime2 => {
                     let sql_datetime2: SqlDateTime2 = napi_sql_datetime2.try_into()?;
                     Ok(SqlType::DateTime2(Some(sql_datetime2)))
@@ -429,7 +452,7 @@ impl TryFrom<Parameter> for SqlType {
                     param.data_type
                 ))),
             },
-            RowDataType::J(napi_date_time_offset) => match param.data_type {
+            RowDataType::K(napi_date_time_offset) => match param.data_type {
                 SqlDataTypes::DateTimeOffset => {
                     let sql_datetime_offset: SqlDateTimeOffset =
                         napi_date_time_offset.try_into()?;
@@ -440,7 +463,7 @@ impl TryFrom<Parameter> for SqlType {
                     param.data_type
                 ))),
             },
-            RowDataType::K(napi_sql_money) => {
+            RowDataType::L(napi_sql_money) => {
                 if !matches!(param.data_type, SqlDataTypes::Money | SqlDataTypes::Money4) {
                     return Err(Error::from_reason(format!(
                         "Invalid data_type for RowDataType::L: {:?}. Only Money and Money4 are allowed.",
@@ -449,7 +472,7 @@ impl TryFrom<Parameter> for SqlType {
                 }
                 Ok(SqlType::Money(Some(napi_sql_money.into())))
             }
-            RowDataType::L(decimal_parts) => {
+            RowDataType::M(decimal_parts) => {
                 if !matches!(
                     param.data_type,
                     SqlDataTypes::Decimal | SqlDataTypes::Numeric
@@ -460,9 +483,6 @@ impl TryFrom<Parameter> for SqlType {
                     )));
                 }
                 Ok(SqlType::Decimal(Some(decimal_parts.into())))
-            }
-            RowDataType::M(_v) => {
-                todo!("Converting f64 value: ");
             }
             RowDataType::N(uuid) => match param.data_type {
                 SqlDataTypes::Guid => {
@@ -525,54 +545,54 @@ pub(crate) fn transform_row(row: Vec<ColumnValues>) -> Vec<RowDataType> {
     let mut ret_val: Vec<RowDataType> = Vec::with_capacity(row.len());
     for col in row {
         match col {
-            ColumnValues::Int(v) => ret_val.push(RowDataType::A(v)),
+            ColumnValues::Int(v) => ret_val.push(RowDataType::B(v)),
             ColumnValues::Uuid(uuid) => ret_val.push(RowDataType::N(uuid.to_string())),
-            ColumnValues::Bit(v) => ret_val.push(RowDataType::C(v)),
-            ColumnValues::BigInt(v) => ret_val.push(RowDataType::B(v.into())),
-            ColumnValues::TinyInt(v) => ret_val.push(RowDataType::G(v.into())),
-            ColumnValues::SmallInt(v) => ret_val.push(RowDataType::A(v.into())),
-            ColumnValues::Real(v) => ret_val.push(RowDataType::M(v.into())),
-            ColumnValues::Float(v) => ret_val.push(RowDataType::M(v)),
+            ColumnValues::Bit(v) => ret_val.push(RowDataType::D(v)),
+            ColumnValues::BigInt(v) => ret_val.push(RowDataType::C(v.into())),
+            ColumnValues::TinyInt(v) => ret_val.push(RowDataType::H(v.into())),
+            ColumnValues::SmallInt(v) => ret_val.push(RowDataType::B(v.into())),
+            ColumnValues::Real(v) => ret_val.push(RowDataType::A(v.into())),
+            ColumnValues::Float(v) => ret_val.push(RowDataType::A(v.into())),
             ColumnValues::Decimal(decimal_parts) => {
-                ret_val.push(RowDataType::L(decimal_parts.into()));
+                ret_val.push(RowDataType::M(decimal_parts.into()));
             }
             ColumnValues::Numeric(decimal_parts) => {
-                ret_val.push(RowDataType::L(decimal_parts.into()));
+                ret_val.push(RowDataType::M(decimal_parts.into()));
             }
             ColumnValues::String(sql_string) => {
-                ret_val.push(RowDataType::D(Buffer::from(sql_string.bytes)))
+                ret_val.push(RowDataType::E(Buffer::from(sql_string.bytes)))
             }
             ColumnValues::DateTime(sql_date_time) => {
-                ret_val.push(RowDataType::F(NapiSqlDateTime {
+                ret_val.push(RowDataType::G(NapiSqlDateTime {
                     days: sql_date_time.days,
                     time: sql_date_time.time,
                 }));
             }
             ColumnValues::Date(sql_date) => {
-                ret_val.push(RowDataType::G(sql_date.get_days()));
+                ret_val.push(RowDataType::H(sql_date.get_days()));
             }
-            ColumnValues::Time(_time) => ret_val.push(RowDataType::H(NapiSqlTime::from(_time))),
+            ColumnValues::Time(_time) => ret_val.push(RowDataType::I(NapiSqlTime::from(_time))),
             ColumnValues::DateTime2(_date_time2) => {
-                ret_val.push(RowDataType::I(NapiSqlDateTime2::from(_date_time2)))
+                ret_val.push(RowDataType::J(NapiSqlDateTime2::from(_date_time2)))
             }
-            ColumnValues::DateTimeOffset(date_time_offset) => ret_val.push(RowDataType::J(
+            ColumnValues::DateTimeOffset(date_time_offset) => ret_val.push(RowDataType::K(
                 NapiSqlDateTimeOffset::from(date_time_offset),
             )),
             ColumnValues::SmallDateTime(sql_small_date_time) => {
-                ret_val.push(RowDataType::F(NapiSqlDateTime {
+                ret_val.push(RowDataType::G(NapiSqlDateTime {
                     days: sql_small_date_time.days.into(),
                     time: sql_small_date_time.time.into(),
                 }));
             }
             ColumnValues::SmallMoney(sql_small_money) => {
-                ret_val.push(RowDataType::A(sql_small_money.int_val))
+                ret_val.push(RowDataType::B(sql_small_money.int_val))
             }
-            ColumnValues::Money(sql_money) => ret_val.push(RowDataType::K(sql_money.into())),
-            ColumnValues::Bytes(items) => ret_val.push(RowDataType::D(Buffer::from(items))),
-            ColumnValues::Xml(sql_xml) => ret_val.push(RowDataType::D(Buffer::from(sql_xml.bytes))),
-            ColumnValues::Null => ret_val.push(RowDataType::E(Null)),
+            ColumnValues::Money(sql_money) => ret_val.push(RowDataType::L(sql_money.into())),
+            ColumnValues::Bytes(items) => ret_val.push(RowDataType::E(Buffer::from(items))),
+            ColumnValues::Xml(sql_xml) => ret_val.push(RowDataType::E(Buffer::from(sql_xml.bytes))),
+            ColumnValues::Null => ret_val.push(RowDataType::F(Null)),
             ColumnValues::Json(sql_json) => {
-                ret_val.push(RowDataType::D(Buffer::from(sql_json.bytes)))
+                ret_val.push(RowDataType::E(Buffer::from(sql_json.bytes)))
             }
         }
     }
