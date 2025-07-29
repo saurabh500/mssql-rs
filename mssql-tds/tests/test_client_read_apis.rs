@@ -42,6 +42,38 @@ mod client_based_iterators {
     }
 
     #[tokio::test]
+    async fn test_orderby_token_in_query() -> Result<(), Box<dyn std::error::Error>> {
+        let context = create_context();
+
+        let provider = TdsConnectionProvider {};
+        let mut client = provider.create_client(context, None).await?;
+        let query = "SELECT TOP 1 
+            name, 
+            database_id, 
+            create_date 
+            FROM sys.databases 
+            ORDER BY name;";
+
+        client.execute(query.to_string(), None, None).await?;
+        let mut row_count = 0;
+        loop {
+            while client.next_row().await?.is_some() {
+                row_count += 1;
+            }
+
+            if !client.move_to_next().await? {
+                break;
+            }
+        }
+        assert_eq!(
+            row_count, 1,
+            "Expected 3 rows from the multi-query execution"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_incomplete_resultset_iteration() -> Result<(), Box<dyn std::error::Error>> {
         let context = create_context();
 

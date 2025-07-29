@@ -330,35 +330,40 @@ impl TdsClient {
         }
         let parser_context = ParserContext::ColumnMetadata(self.current_metadata.clone().unwrap());
         let mut result: Option<Vec<ColumnValues>> = None;
+        loop {
+            let token = self
+                .transport
+                .receive_token(&parser_context, None, None)
+                .await?;
 
-        let token = self
-            .transport
-            .receive_token(&parser_context, None, None)
-            .await?;
-
-        match token {
-            Tokens::Row(row) | Tokens::NbcRow(row) => {
-                info!("Row Received");
-                result = Some(row.all_values);
-            }
-            Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
-                info!("done while get_next_row: {:?}", done);
-
-                let count = self.count_map.entry(done.cur_cmd).or_insert(0);
-                *count += done.row_count as usize;
-
-                self.current_result_set_has_been_read_till_end = true;
-                if !done.has_more() {
-                    // Token stream is terminated. Save this information.
-                    info!("No more rows for current command: {:?}", done.cur_cmd);
-                    self.execution_context.set_has_open_batch(false);
+            match token {
+                Tokens::Row(row) | Tokens::NbcRow(row) => {
+                    info!("Row Received");
+                    result = Some(row.all_values);
+                    break;
                 }
-            }
-            _ => {
-                unreachable!(
-                    "This method shouldn't be called if we are not in a result set. Make sure to get to the ColMetadata Token before calling this method. {:?}",
-                    token
-                );
+                Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
+                    info!("done while get_next_row: {:?}", done);
+
+                    let count = self.count_map.entry(done.cur_cmd).or_insert(0);
+                    *count += done.row_count as usize;
+
+                    self.current_result_set_has_been_read_till_end = true;
+                    if !done.has_more() {
+                        // Token stream is terminated. Save this information.
+                        info!("No more rows for current command: {:?}", done.cur_cmd);
+                        self.execution_context.set_has_open_batch(false);
+                    }
+                    break;
+                }
+                Tokens::Order(order_token) => {
+                    // Ignore.
+                    info!(?order_token);
+                    continue;
+                }
+                _ => {
+                    unreachable!("Unexpected Token while finding the next row. {:?}", token);
+                }
             }
         }
 
