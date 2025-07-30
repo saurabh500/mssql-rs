@@ -28,5 +28,5 @@
 		}
 	},
 
-	"postCreateCommand": "cargo fetch"
+	"postCreateCommand": "/bin/bash .devcontainer/post-create.sh"
 }
