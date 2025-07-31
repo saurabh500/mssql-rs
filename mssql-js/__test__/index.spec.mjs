@@ -4,6 +4,8 @@
 import test from 'ava';
 
 import { create_connection, JsSqlDataTypes, Request } from '../js/index.js';
+import { TYPES } from '../js/datatypes/types.js';
+import { SqlDataTypes } from '../js/generated/index.js';
 test('connect to sqlserver and fetch multiple result sets', async (t) => {
   // Example TypeScript test with proper typing
   const context = {
@@ -136,7 +138,7 @@ test('execute parameterized query with request class.', async (t) => {
 
     let request = new Request(connection);
 
-    request.input('@input_parameter', JsSqlDataTypes.Int, 3);
+    request.input('@input_parameter', TYPES.Int, 3);
 
     let result = await request.query(query);
 
@@ -167,7 +169,7 @@ test('test strings with request class.', async (t) => {
 
     let request = new Request(connection);
 
-    request.input('@str', JsSqlDataTypes.VarChar, 'test');
+    request.input('@str', TYPES.VarChar, 'test');
 
     let result = await request.query(query);
 
@@ -198,7 +200,7 @@ test('adding @ to the parameter names if needed.', async (t) => {
 
     let request = new Request(connection);
 
-    request.input('input_parameter', JsSqlDataTypes.Int, 3);
+    request.input('input_parameter', TYPES.Int, 3);
 
     let result = await request.query(query);
 

@@ -4,6 +4,7 @@
 import test from 'ava';
 import { createContext, openConnection } from '../../db.mjs';
 import { JsSqlDataTypes, Request } from '../../../js/index.js';
+import { TYPES } from '../../../js/datatypes/types.js';
 
 async function executeScalar(request, query) {
   const result = await request.query(query);
@@ -61,36 +62,18 @@ test(
   genericMacro,
   -456789012345.6789,
   -456789012345.6789,
-  JsSqlDataTypes.Money,
+  TYPES.Money,
 );
 
-test(
-  'test smallmoney somevalue',
-  genericMacro,
-  123,
-  123,
-  JsSqlDataTypes.SmallMoney,
-);
-test(
-  'test smallmoney null',
-  genericMacro,
-  null,
-  null,
-  JsSqlDataTypes.SmallMoney,
-);
-test(
-  'test smallmoney negative',
-  genericMacro,
-  -123,
-  -123,
-  JsSqlDataTypes.SmallMoney,
-);
+test('test smallmoney somevalue', genericMacro, 123, 123, TYPES.SmallMoney);
+test('test smallmoney null', genericMacro, null, null, TYPES.SmallMoney);
+test('test smallmoney negative', genericMacro, -123, -123, TYPES.SmallMoney);
 
 test(
   'test money somevalue',
   genericMacro,
   456789012345.6789,
   456789012345.6789,
-  JsSqlDataTypes.Money,
+  TYPES.Money,
 );
-test('test money null', genericMacro, null, null, JsSqlDataTypes.Money);
+test('test money null', genericMacro, null, null, TYPES.Money);

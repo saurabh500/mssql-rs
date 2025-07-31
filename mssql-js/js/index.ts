@@ -42,7 +42,11 @@ import { fromNapiToJsGuidTransformer } from './transformers/guid';
 import { floatTransformer } from './transformers/float';
 
 import { Request } from './request.js';
-import { Encoding } from './codepages.js';
+import {
+  codepageByLanguageId,
+  codepageBySortId,
+  Encoding,
+} from './codepages.js';
 
 export { Request };
 
@@ -59,6 +63,23 @@ export function create_connection(
 export class SqlJsConnection {
   constructor(private internal_connection: Connection) {
     this.internal_connection = internal_connection;
+  }
+
+  getEncoding(): Encoding {
+    let db_collation = this.internal_connection.getCollation();
+    let encoding: Encoding = 'utf-8';
+    if (db_collation != null) {
+      if (db_collation.isUtf8) {
+        encoding = 'utf-8';
+      } else if (db_collation.sortId !== 0) {
+        encoding = codepageBySortId[db_collation.sortId];
+      } else {
+        encoding = codepageByLanguageId[db_collation.lcidLanguageId];
+      }
+    } else {
+      encoding = 'utf-8';
+    }
+    return encoding;
   }
 
   async execute(query: string, params?: Array<Parameter>): Promise<void> {

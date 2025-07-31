@@ -5,6 +5,7 @@ This document describes how to configure and use tracing in the `mssql-js` libra
 ## Environment Variables
 
 ### `MSSQLJS_TRACE`
+
 - **Type:** `bool` (`true` or `false`)
 - **Default:** `false`
 - **Description:**
@@ -13,6 +14,7 @@ This document describes how to configure and use tracing in the `mssql-js` libra
   - If set to `true`, tracing is enabled and the other tracing environment variables are considered.
 
 ### `MSSQLJS_TRACE_OUTPUTS`
+
 - **Type:** `string` (comma-separated list: `file`, `console`)
 - **Default:** `file`
 - **Description:**
@@ -22,6 +24,7 @@ This document describes how to configure and use tracing in the `mssql-js` libra
   - If neither `file` nor `console` is specified, tracing is not enabled and a warning is printed.
 
 ### `MSSQLJS_TRACE_DIR`
+
 - **Type:** `string` (directory path)
 - **Default:** System temp directory + `/mssql-js` subfolder
 - **Description:**
@@ -31,6 +34,7 @@ This document describes how to configure and use tracing in the `mssql-js` libra
   - **Cross-platform:** Works on both Windows and Unix systems.
 
 ### `MSSQLJS_TRACE_LEVEL`
+
 - **Type:** `string` (log level or filter expression)
 - **Default:** `info`
 - **Description:**
@@ -113,5 +117,6 @@ set MSSQLJS_TRACE_LEVEL=trace
   - Check for warnings about unknown outputs.
 
 ## References
+
 - [tracing crate documentation](https://docs.rs/tracing)
 - [tracing-subscriber EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html)

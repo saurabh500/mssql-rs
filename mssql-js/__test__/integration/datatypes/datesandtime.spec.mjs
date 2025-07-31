@@ -4,6 +4,7 @@
 import test from 'ava';
 import { createContext, openConnection } from '../../db.mjs';
 import { JsSqlDataTypes, Request } from '../../../js/index.js';
+import { TYPES } from '../../../js/datatypes/types.js';
 
 async function executeScalar(request, query) {
   const result = await request.query(query);
@@ -41,7 +42,7 @@ test(
     expected.nanosecondsDelta = 0;
     return expected;
   },
-  JsSqlDataTypes.Time,
+  TYPES.Time,
 );
 
 test(
@@ -53,18 +54,20 @@ test(
     expected.nanosecondsDelta = 0;
     return expected;
   },
-  JsSqlDataTypes.Time,
+  TYPES.Time,
 );
+
+test('test time null ', genericMacro, null, null, TYPES.Time);
 
 test(
   'test date somevalue in UTC',
   genericMacro,
   new Date(Date.UTC(2023, 0, 1, 12, 34, 56)),
   new Date(Date.UTC(2023, 0, 1, 0, 0, 0)),
-  JsSqlDataTypes.Date,
+  TYPES.Date,
 );
 
-test('test date null in UTC', genericMacro, null, null, JsSqlDataTypes.Date);
+test('test date null in UTC', genericMacro, null, null, TYPES.Date);
 
 test(
   'test datetime2 somevalue in UTC',
@@ -75,16 +78,10 @@ test(
     expected.nanosecondsDelta = 0;
     return expected;
   },
-  JsSqlDataTypes.DateTime2,
+  TYPES.DateTime2,
 );
 
-test(
-  'test datetime2 null in UTC',
-  genericMacro,
-  null,
-  null,
-  JsSqlDataTypes.DateTime2,
-);
+test('test datetime2 null in UTC', genericMacro, null, null, TYPES.DateTime2);
 
 test(
   'test DateTimeOffset somevalue in UTC',
@@ -95,7 +92,7 @@ test(
     expected.nanosecondsDelta = 0;
     return expected;
   },
-  JsSqlDataTypes.DateTimeOffset,
+  TYPES.DateTimeOffset,
 );
 
 test(
@@ -103,7 +100,7 @@ test(
   genericMacro,
   null,
   null,
-  JsSqlDataTypes.DateTimeOffset,
+  TYPES.DateTimeOffset,
 );
 
 test(
@@ -111,7 +108,7 @@ test(
   genericMacro,
   new Date(Date.UTC(2023, 0, 1, 12, 34, 56)),
   new Date(Date.UTC(2023, 0, 1, 12, 34, 56)),
-  JsSqlDataTypes.DateTime,
+  TYPES.DateTime,
 );
 
 test(
@@ -119,23 +116,17 @@ test(
   genericMacro,
   new Date(Date.UTC(1800, 0, 1, 12, 34, 56)),
   new Date(Date.UTC(1800, 0, 1, 12, 34, 56)),
-  JsSqlDataTypes.DateTime,
+  TYPES.DateTime,
 );
 
-test(
-  'test DateTime null in UTC',
-  genericMacro,
-  null,
-  null,
-  JsSqlDataTypes.DateTime,
-);
+test('test DateTime null in UTC', genericMacro, null, null, TYPES.DateTime);
 
 test(
   'test SmallDateTime somevalue in UTC',
   genericMacro,
   new Date(Date.UTC(2023, 0, 1, 12, 34, 56)),
   new Date(Date.UTC(2023, 0, 1, 12, 34)),
-  JsSqlDataTypes.SmallDateTime,
+  TYPES.SmallDateTime,
 );
 
 test(
@@ -143,5 +134,5 @@ test(
   genericMacro,
   null,
   null,
-  JsSqlDataTypes.SmallDateTime,
+  TYPES.SmallDateTime,
 );

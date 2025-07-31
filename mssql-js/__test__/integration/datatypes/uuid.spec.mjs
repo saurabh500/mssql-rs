@@ -4,6 +4,7 @@
 import test from 'ava';
 import { createContext, openConnection } from '../../db.mjs';
 import { JsSqlDataTypes, Request } from '../../../js/index.js';
+import { TYPES } from '../../../js/datatypes/types.js';
 
 async function executeScalar(request, query) {
   const result = await request.query(query);
@@ -37,13 +38,7 @@ test(
   genericMacro,
   '550e8400-e29b-41d4-a716-446655440000',
   '550e8400-e29b-41d4-a716-446655440000',
-  JsSqlDataTypes.UniqueIdentifier,
+  TYPES.UniqueIdentifier,
 );
 
-test(
-  'test GUID null ',
-  genericMacro,
-  null,
-  null,
-  JsSqlDataTypes.UniqueIdentifier,
-);
+test('test GUID null ', genericMacro, null, null, TYPES.UniqueIdentifier);

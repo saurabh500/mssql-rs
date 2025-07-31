@@ -5,6 +5,7 @@ import test from 'ava';
 
 import { createContext, openConnection } from '../../db.mjs';
 import { JsSqlDataTypes, Request } from '../../../js/index.js';
+import { TYPES } from '../../../js/datatypes/types.js';
 
 test('test varchar with request class.', async (t) => {
   try {
@@ -14,7 +15,7 @@ test('test varchar with request class.', async (t) => {
 
     let request = new Request(connection);
 
-    request.input('@str', JsSqlDataTypes.VarChar, 'test');
+    request.input('@str', TYPES.VarChar, 'test');
 
     let result = await request.query(query);
 
@@ -36,7 +37,7 @@ test('test nvarchar with request class.', async (t) => {
     let request = new Request(connection);
 
     const emojiString = 'Hello 👋 World 🌍';
-    request.input('@str', JsSqlDataTypes.NVarChar, emojiString);
+    request.input('@str', TYPES.NVarChar, emojiString);
 
     let result = await request.query(query);
 

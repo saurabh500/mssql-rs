@@ -3,6 +3,7 @@
 
 import { JsSqlDataTypes, SqlJsConnection } from '.';
 import { Encoding } from './codepages';
+import { DataType } from './datatypes';
 import { SqlDataTypes, Parameter } from './generated';
 import {
   fromJsToNapiDateTransformer,
@@ -84,21 +85,32 @@ export class Request {
     this.params = [];
   }
 
-  input(varName: string, type: JsSqlParameterTypes, value: unknown) {
+  input(varName: string, type: DataType | (() => DataType), value: unknown) {
     //adds a '@' to a variable name if the use does not put one
     if (!varName.startsWith('@')) {
       varName = '@' + varName;
     }
+    //if the type is a function, call it to get the DataType
+    if (typeof type === 'function') {
+      type = type();
+    }
 
-    // Transform from Js Types to Tds Types.
-    let transformed_value = transformForWrites(type, value);
-
-    //collects the inputed parameters into the global parameters
-    this.params.push({
-      name: varName,
-      dataType: type as unknown as SqlDataTypes,
-      value: transformed_value,
-    });
+    let sqltype: JsSqlParameterTypes;
+    if (typeof type === 'object' && 'sqlType' in type) {
+      sqltype = type.sqlType as JsSqlParameterTypes;
+      let transformed_value = type.transformForNapiWrites(
+        value as unknown as number | string | Date | boolean | null,
+        this.connection.getEncoding(),
+      );
+      //collects the input parameters into the global parameters
+      this.params.push({
+        name: varName,
+        dataType: sqltype as unknown as SqlDataTypes,
+        value: transformed_value,
+      });
+    } else {
+      throw new TypeError('Invalid type provided for input');
+    }
   }
 
   async query(command: string): Promise<IResult> {
@@ -188,121 +200,5 @@ export class Request {
     await this.connection.closeQuery();
 
     return result;
-  }
-}
-function transformForWrites(
-  type: JsSqlDataTypes,
-  row: unknown,
-  encoding?: Encoding,
-) {
-  if (row === undefined || row === null) {
-    return null;
-  }
-  switch (type) {
-    case JsSqlDataTypes.VarBinary:
-    case JsSqlDataTypes.Binary:
-      if (Buffer.isBuffer(row)) return row;
-      throw new TypeError('Expected a Buffer for VarBinary/Binary types');
-
-    case JsSqlDataTypes.NVarChar:
-    case JsSqlDataTypes.NChar:
-      if (row === null || typeof row === 'string') {
-        return nCharNVarCharTdsTransformer(row as string, encoding);
-      } else {
-        throw new TypeError('Expected a string for NVarChar/NChar');
-      }
-    case JsSqlDataTypes.Xml:
-      throw new Error('not implemented');
-    case JsSqlDataTypes.VarChar:
-    case JsSqlDataTypes.Char:
-      // check if the row type is string
-      if (row === null || typeof row === 'string') {
-        return varCharTdsTransformer(row, encoding);
-      } else {
-        throw new TypeError('Expected a string for VarChar/Char types');
-      }
-    case JsSqlDataTypes.Date:
-      if (row instanceof Date) {
-        return fromJsToNapiDateTransformer(row);
-      }
-      throw new TypeError('Expected a number for Date');
-    case JsSqlDataTypes.SmallDateTime:
-      if (row instanceof Date) {
-        return fromJsToNapiSmallDatetimeTransformer(row);
-      }
-      throw new TypeError('Expected a Date for SmallDateTime');
-    case JsSqlDataTypes.DateTime:
-      if (row instanceof Date) {
-        return fromJsToNapiDateTimeTransformer(row);
-      }
-      throw new TypeError('Expected a Date for DateTime');
-    case JsSqlDataTypes.DateTime2:
-      if (row instanceof Date) {
-        return fromJsToNapiDatetime2Transformer(row);
-      } else {
-        throw new TypeError('Expected a Date for DateTime/DateTime2');
-      }
-
-    case JsSqlDataTypes.DateTimeOffset:
-      if (row instanceof Date) {
-        return fromJsToNapiDateTimeOffsetTransformer(row);
-      } else {
-        throw new TypeError('Expected a Date for DateTimeOffset');
-      }
-    case JsSqlDataTypes.Time:
-      if (row instanceof Date) {
-        return fromJsToNapiTimeTransformer(row);
-      } else {
-        throw new TypeError('Expected a Date for Time');
-      }
-    case JsSqlDataTypes.TinyInt:
-    case JsSqlDataTypes.SmallInt:
-    case JsSqlDataTypes.Int:
-    case JsSqlDataTypes.BigInt:
-      if (row === null) return null;
-      if (typeof row === 'bigint') return row;
-      if (typeof row === 'number') return row;
-      if (typeof row === 'string' && row.trim() !== '' && !isNaN(Number(row)))
-        return Number(row);
-      throw new TypeError(
-        'Expected a non-empty string or number for TinyInt/SmallInt/Int/BigInt types',
-      );
-    case JsSqlDataTypes.Bit:
-      if (typeof row === 'boolean') return row;
-      if (typeof row === 'number') return Boolean(row);
-      if (typeof row === 'string') return row === 'true' || row === '1';
-      return null;
-    case JsSqlDataTypes.Decimal:
-    case JsSqlDataTypes.Numeric:
-      if (typeof row === 'number') {
-        // Convert number to NAPI decimal representation
-        return fromJsToNapiDecimalPartTransformer(row);
-      }
-      throw new TypeError(
-        'Expected a number or NapiDecimalParts for Decimal/Numeric types',
-      );
-    case JsSqlDataTypes.SmallMoney:
-      if (typeof row === 'number') {
-        // The native library will do the multiplicaiton by 10000 for us.
-        return fromJsToSmallMoneyTransformer(row);
-      }
-      throw new TypeError('Expected a number for SmallMoney/Money types');
-    case JsSqlDataTypes.Money:
-      if (typeof row === 'number') {
-        // The native library will do the multiplicaiton by 10000 for us.
-        return fromJsToNapiMoneyTransformer(row);
-      }
-      throw new TypeError('Expected a number for SmallMoney/Money types');
-    case JsSqlDataTypes.Float:
-    case JsSqlDataTypes.Real:
-      if (typeof row === 'number') {
-        return { value: row };
-      }
-      throw new TypeError('Expected a number for Float/Real types');
-    case JsSqlDataTypes.UniqueIdentifier:
-      if (typeof row === 'string') return row;
-      throw new TypeError('Expected a string for UniqueIdentifier');
-    default:
-      return row;
   }
 }
