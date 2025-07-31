@@ -5,20 +5,11 @@ import test from 'ava';
 
 import { create_connection, JsSqlDataTypes, Request } from '../js/index.js';
 import { TYPES } from '../js/datatypes/types.js';
-import { SqlDataTypes } from '../js/generated/index.js';
-test('connect to sqlserver and fetch multiple result sets', async (t) => {
-  // Example TypeScript test with proper typing
-  const context = {
-    serverName: process.env.DB_HOST || 'localhost',
-    port: 1433,
-    userName: process.env.DB_USER || 'sa',
-    password: process.env.SQL_PASSWORD,
-    database: 'master',
-    trustServerCertificate: true,
-  };
+import { createContext, openConnection } from './db.mjs';
 
+test('connect to sqlserver and fetch multiple result sets', async (t) => {
   try {
-    const connection = await create_connection(context);
+    const connection = await openConnection(await createContext());
     t.pass('Connection successful');
     // Example of executing a query
 
@@ -48,16 +39,8 @@ test('connect to sqlserver and fetch multiple result sets', async (t) => {
 });
 
 test('query using request.ts', async (t) => {
-  const context = {
-    serverName: process.env.DB_HOST || 'localhost',
-    port: 1433,
-    userName: process.env.DB_USER || 'sa',
-    password: process.env.SQL_PASSWORD,
-    database: 'master',
-    trustServerCertificate: true,
-  };
   try {
-    const connection = await create_connection(context);
+    const connection = await openConnection(await createContext());
 
     const request = new Request(connection);
 
@@ -75,18 +58,8 @@ test('query using request.ts', async (t) => {
 });
 
 test('connect to sqlserver and execute parameterized query.', async (t) => {
-  // Example TypeScript test with proper typing
-  const context = {
-    serverName: process.env.DB_HOST || 'localhost',
-    port: 1433,
-    userName: process.env.DB_USER || 'sa',
-    password: process.env.SQL_PASSWORD,
-    database: 'master',
-    trustServerCertificate: true,
-  };
-
   try {
-    const connection = await create_connection(context);
+    const connection = await openConnection(await createContext());
     t.pass('Connection successful');
     let query = 'select * from sys.columns where object_id > @input_parameter;';
 
@@ -122,17 +95,9 @@ test('connect to sqlserver and execute parameterized query.', async (t) => {
 
 test('execute parameterized query with request class.', async (t) => {
   // Example TypeScript test with proper typing
-  const context = {
-    serverName: process.env.DB_HOST || 'localhost',
-    port: 1433,
-    userName: process.env.DB_USER || 'sa',
-    password: process.env.SQL_PASSWORD,
-    database: 'master',
-    trustServerCertificate: true,
-  };
 
   try {
-    const connection = await create_connection(context);
+    const connection = await openConnection(await createContext());
     t.pass('Connection successful');
     let query = 'select * from sys.columns where object_id > @input_parameter;';
 
@@ -153,17 +118,8 @@ test('execute parameterized query with request class.', async (t) => {
 
 test('test strings with request class.', async (t) => {
   // Example TypeScript test with proper typing
-  const context = {
-    serverName: process.env.DB_HOST || 'localhost',
-    port: 1433,
-    userName: process.env.DB_USER || 'sa',
-    password: process.env.SQL_PASSWORD,
-    database: 'master',
-    trustServerCertificate: true,
-  };
-
   try {
-    const connection = await create_connection(context);
+    const connection = await openConnection(await createContext());
     t.pass('Connection successful');
     let query = 'select @str as string;';
 
@@ -183,18 +139,8 @@ test('test strings with request class.', async (t) => {
 });
 
 test('adding @ to the parameter names if needed.', async (t) => {
-  // Example TypeScript test with proper typing
-  const context = {
-    serverName: process.env.DB_HOST || 'localhost',
-    port: 1433,
-    userName: process.env.DB_USER || 'sa',
-    password: process.env.SQL_PASSWORD,
-    database: 'master',
-    trustServerCertificate: true,
-  };
-
   try {
-    const connection = await create_connection(context);
+    const connection = await openConnection(await createContext());
     t.pass('Connection successful');
     let query = 'select * from sys.columns where object_id > @input_parameter;';
 
@@ -214,15 +160,7 @@ test('adding @ to the parameter names if needed.', async (t) => {
 });
 
 test('decimal and numeric conversion', async (t) => {
-  const context = {
-    serverName: process.env.DB_HOST || 'localhost',
-    port: 1433,
-    userName: process.env.DB_USER || 'sa',
-    password: process.env.SQL_PASSWORD,
-    database: 'master',
-    trustServerCertificate: true,
-  };
-  const connection = await create_connection(context);
+  const connection = await openConnection(await createContext());
   // Test various decimal/numeric values, including large values that require multiple parts
   const testCases = [
     {

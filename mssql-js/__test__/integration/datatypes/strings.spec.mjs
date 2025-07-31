@@ -9,7 +9,7 @@ import { TYPES } from '../../../js/datatypes/types.js';
 
 test('test varchar with request class.', async (t) => {
   try {
-    const connection = await openConnection(createContext());
+    const connection = await openConnection(await createContext());
     t.pass('Connection successful');
     let query = 'select @str as string;';
 
@@ -30,7 +30,7 @@ test('test varchar with request class.', async (t) => {
 
 test('test nvarchar with request class.', async (t) => {
   try {
-    const connection = await openConnection(createContext());
+    const connection = await openConnection(await createContext());
     t.pass('Connection successful');
     let query = 'select @str as string;';
 

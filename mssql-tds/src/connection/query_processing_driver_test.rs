@@ -68,7 +68,15 @@ pub(crate) mod query_processing_driver {
         let context = ClientContext {
             transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            password: env::var("SQL_PASSWORD")
+                .or_else(|_| {
+                    std::fs::read_to_string("/tmp/password")
+                        .map(|s| s.trim().to_string())
+                        .map_err(|_| std::env::VarError::NotPresent)
+                })
+                .expect(
+                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+                ),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: trust_server_certificate(),
@@ -151,7 +159,15 @@ pub(crate) mod query_processing_driver {
         let context = ClientContext {
             transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            password: env::var("SQL_PASSWORD")
+                .or_else(|_| {
+                    std::fs::read_to_string("/tmp/password")
+                        .map(|s| s.trim().to_string())
+                        .map_err(|_| std::env::VarError::NotPresent)
+                })
+                .expect(
+                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+                ),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: trust_server_certificate(),
@@ -746,7 +762,15 @@ pub(crate) mod query_processing_driver {
         let context = ClientContext {
             transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            password: env::var("SQL_PASSWORD")
+                .or_else(|_| {
+                    std::fs::read_to_string("/tmp/password")
+                        .map(|s| s.trim().to_string())
+                        .map_err(|_| std::env::VarError::NotPresent)
+                })
+                .expect(
+                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+                ),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: trust_server_certificate(),
@@ -833,7 +857,15 @@ pub(crate) mod query_processing_driver {
         let context = ClientContext {
             transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            password: env::var("SQL_PASSWORD")
+                .or_else(|_| {
+                    std::fs::read_to_string("/tmp/password")
+                        .map(|s| s.trim().to_string())
+                        .map_err(|_| std::env::VarError::NotPresent)
+                })
+                .expect(
+                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+                ),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: trust_server_certificate(),
@@ -875,7 +907,15 @@ pub(crate) mod query_processing_driver {
         let context = ClientContext {
             transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            password: env::var("SQL_PASSWORD")
+                .or_else(|_| {
+                    std::fs::read_to_string("/tmp/password")
+                        .map(|s| s.trim().to_string())
+                        .map_err(|_| std::env::VarError::NotPresent)
+                })
+                .expect(
+                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+                ),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: trust_server_certificate(),
@@ -902,7 +942,15 @@ pub(crate) mod query_processing_driver {
         let context = ClientContext {
             transport_context: transport,
             user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+            password: env::var("SQL_PASSWORD")
+                .or_else(|_| {
+                    std::fs::read_to_string("/tmp/password")
+                        .map(|s| s.trim().to_string())
+                        .map_err(|_| std::env::VarError::NotPresent)
+                })
+                .expect(
+                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+                ),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: trust_server_certificate(),

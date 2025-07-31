@@ -2,18 +2,10 @@
 // Licensed under the MIT License.
 
 import test from 'ava';
-import { create_connection } from '../js/index.js';
+import { createContext, openConnection } from './db.mjs';
 
 test('bit conversion', async (t) => {
-  const context = {
-    serverName: process.env.DB_HOST || 'localhost',
-    port: 1433,
-    userName: process.env.DB_USER || 'sa',
-    password: process.env.SQL_PASSWORD,
-    database: 'master',
-    trustServerCertificate: true,
-  };
-  const connection = await create_connection(context);
+  const connection = await openConnection(await createContext());
   const testCases = [
     { sql: 'SELECT CAST(1 AS BIT) AS val', expected: true },
     { sql: 'SELECT CAST(0 AS BIT) AS val', expected: false },

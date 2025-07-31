@@ -21,7 +21,7 @@ async function runNumberQueryTest(
   scale,
   transform,
 ) {
-  const connection = await openConnection(createContext());
+  const connection = await openConnection(await createContext());
   try {
     let query = 'select @param;';
     let request = new Request(connection);

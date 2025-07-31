@@ -9,7 +9,7 @@ import { create_connection, Request } from '../../../js/index.js';
 test('querying anonymous columns', async (t) => {
   // Example TypeScript test with proper typing
   try {
-    const connection = await create_connection(createContext());
+    const connection = await create_connection(await createContext());
     t.pass('Connection successful');
     let query = 'select 1, 2;';
 
@@ -34,7 +34,7 @@ test('querying more than 2 anonymous columns', async (t) => {
   // Example TypeScript test with proper typing
 
   try {
-    const connection = await create_connection(createContext());
+    const connection = await create_connection(await createContext());
     t.pass('Connection successful');
     let query = 'select 1, 2, 4, 5;';
 
@@ -63,7 +63,7 @@ test('querying result set with only one anonymous column', async (t) => {
   // Example TypeScript test with proper typing
 
   try {
-    const connection = await create_connection(createContext());
+    const connection = await create_connection(await createContext());
     t.pass('Connection successful');
     let query = 'select 1, 2; select 10;';
 
@@ -88,7 +88,7 @@ test('testing number of columns', async (t) => {
   // Example TypeScript test with proper typing
 
   try {
-    const connection = await create_connection(createContext());
+    const connection = await create_connection(await createContext());
     t.pass('Connection successful');
     let query =
       'select 1, 2, 3, 4, 5; select 10,  name from sys.columns where object_id = 3;';

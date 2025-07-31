@@ -15,7 +15,8 @@ if [ -z "$SQL_PASSWORD" ]; then
   if grep -q "SQL_PASSWORD=" mssql-tds/.env; then
     sed -i "s/^SQL_PASSWORD=.*/SQL_PASSWORD=$SQL_PASSWORD/" mssql-tds/.env
   else
-    echo "SQL_PASSWORD=$SQL_PASSWORD" >> mssql-tds/.env
+    echo "$SQL_PASSWORD" > /tmp/password
+    chmod 600 /tmp/password
   fi
 fi
 

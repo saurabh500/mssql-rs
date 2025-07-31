@@ -22,7 +22,7 @@ async function runNumberQueryTest(
   scale,
   transform,
 ) {
-  const connection = await openConnection(createContext());
+  const connection = await openConnection(await createContext());
   try {
     let query = 'select @param;';
     let request = new Request(connection);
@@ -62,7 +62,7 @@ test('test tinyint somevalue', genericMacro, 123, 123, TYPES.TinyInt);
 test('test tinyint null', genericMacro, null, null, TYPES.TinyInt);
 
 test('test tinyint negative', async (t) => {
-  const connection = await openConnection(createContext());
+  const connection = await openConnection(await createContext());
   try {
     let query = 'select @param;';
     let request = new Request(connection);

@@ -3,7 +3,7 @@
 
 import test from 'ava';
 import { createContext, openConnection } from '../../db.mjs';
-import { JsSqlDataTypes, Request } from '../../../js/index.js';
+import { Request } from '../../../js/index.js';
 import { TYPES } from '../../../js/datatypes/types.js';
 
 async function executeScalar(request, query) {
@@ -13,7 +13,7 @@ async function executeScalar(request, query) {
 }
 
 async function runTest(t, inputValue, expectedValue, sqlType) {
-  const connection = await openConnection(createContext());
+  const connection = await openConnection(await createContext());
   try {
     let query = 'select @param;';
     let request = new Request(connection);

@@ -100,8 +100,6 @@ mod connectivity {
                 host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
                 port: 1433,
             },
-            // user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            // password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,

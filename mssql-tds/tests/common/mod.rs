@@ -101,7 +101,15 @@ pub fn create_context() -> ClientContext {
                 .unwrap_or(1433),
         },
         user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-        password: env::var("SQL_PASSWORD").expect("SQL_PASSWORD environment variable not set"),
+        password: env::var("SQL_PASSWORD")
+            .or_else(|_| {
+                std::fs::read_to_string("/tmp/password")
+                    .map(|s| s.trim().to_string())
+                    .map_err(|_| std::env::VarError::NotPresent)
+            })
+            .expect(
+                "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+            ),
         database: "master".to_string(),
         encryption_options: EncryptionOptions {
             mode: EncryptionSetting::On,

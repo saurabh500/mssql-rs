@@ -2,18 +2,10 @@
 // Licensed under the MIT License.
 
 import test from 'ava';
-import { create_connection } from '../js/index.js';
+import { createContext, openConnection } from './db.mjs';
 
 test('smallint conversion', async (t) => {
-  const context = {
-    serverName: process.env.DB_HOST || 'localhost',
-    port: 1433,
-    userName: process.env.DB_USER || 'sa',
-    password: process.env.SQL_PASSWORD,
-    database: 'master',
-    trustServerCertificate: true,
-  };
-  const connection = await create_connection(context);
+  const connection = await openConnection(await createContext());
   const testCases = [
     { sql: 'SELECT CAST(-32768 AS SMALLINT) AS val', expected: -32768 },
     { sql: 'SELECT CAST(32767 AS SMALLINT) AS val', expected: 32767 },

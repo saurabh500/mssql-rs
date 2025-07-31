@@ -13,7 +13,7 @@ async function executeScalar(request, query) {
 }
 
 async function runTest(t, inputValue, expectedValue, sqlType) {
-  const connection = await openConnection(createContext());
+  const connection = await openConnection(await createContext());
   try {
     let query = 'select @param;';
     let request = new Request(connection);
