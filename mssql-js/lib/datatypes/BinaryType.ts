@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { DataType } from './DataType';
 import { JsSqlDataTypes } from '../.';
 import type { Encoding } from '../codepages';
@@ -15,7 +18,6 @@ export class BinaryType extends DataType {
   }
   transformForNapiWrites(
     value: bigint | number | string | Date | boolean | null,
-    encoding?: Encoding,
   ): unknown {
     this.validate(value);
     if (value === null) return null; // Handle null case

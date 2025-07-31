@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import test from 'ava';
-import { fromJsToNapiDecimalPartTransformer } from '../../js/transformers/decimal.js';
+import { fromJsToNapiDecimalPartTransformer } from '../../dist/transformers/decimal.js';
 
 test('fromJsToNapiDecimalPartTransformer converts number to NapiDecimalParts', (t) => {
   const input = 32.456;

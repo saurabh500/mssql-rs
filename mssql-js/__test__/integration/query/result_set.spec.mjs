@@ -4,7 +4,7 @@ import test from 'ava';
 
 import { createContext } from '../../db.mjs';
 
-import { create_connection, Request } from '../../../js/index.js';
+import { create_connection, Request } from '../../../dist/index.js';
 
 test('querying anonymous columns', async (t) => {
   // Example TypeScript test with proper typing

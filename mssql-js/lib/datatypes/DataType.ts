@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { JsSqlDataTypes } from '../.';
 import type { Encoding } from '../codepages';
 

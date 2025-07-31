@@ -3,8 +3,8 @@
 
 import test from 'ava';
 import { createContext, openConnection } from '../../db.mjs';
-import { Request } from '../../../js/index.js';
-import { TYPES } from '../../../js/datatypes/types.js';
+import { JsSqlDataTypes, Request } from '../../../dist/index.js';
+import { TYPES } from '../../../dist/datatypes/types.js';
 
 async function executeScalar(request, query) {
   const result = await request.query(query);

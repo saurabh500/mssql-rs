@@ -6,10 +6,10 @@ import prettierPlugin from 'eslint-plugin-prettier';
 export default [
   {
     ignores: [
-      'js/generated/**',
-      'js/codepages.js',
-      'js/index.js',
-      'js/transformers/*.js',
+      'lib/generated/**',
+      'lib/codepages.js',
+      'lib/index.js',
+      'lib/transformers/*.js',
     ],
   },
   js.configs.recommended,

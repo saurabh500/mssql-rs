@@ -198,4 +198,4 @@ Cargo.lock
 
 junit.xml
 
-js/generated/*
+lib/generated/index.d.ts

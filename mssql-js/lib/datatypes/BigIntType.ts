@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { DataType } from './DataType';
 import { JsSqlDataTypes } from '../.';
 import type { Encoding } from '../codepages';
@@ -11,7 +14,6 @@ export class BigIntType extends DataType {
   }
   transformForNapiWrites(
     row: number | string | Date | boolean | null,
-    _encoding?: Encoding,
   ): unknown {
     if (row === null) return null;
     if (typeof row === 'bigint') return row;

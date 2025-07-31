@@ -128,7 +128,7 @@ steps:
       yarn install
       yarn build
       echo "Generated files:"
-      ls js/generated
+      ls lib/generated
       echo "Check for formatting"
       yarn format:check
       echo "Compiling Typescript files"

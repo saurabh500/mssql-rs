@@ -10,9 +10,9 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "outDir": "./js",
+    "outDir": "./dist",
     "types": ["node"]
   },
-  "include": ["src/**/*", "js/generated/index.d.ts", "js/**/*.ts"],
-  "exclude": ["node_modules", "target", "js/dist"]
+  "include": ["src/**/*", "dist/generated/index.d.ts", "lib/**/*.ts"],
+  "exclude": ["node_modules", "target", "lib/dist"]
 }

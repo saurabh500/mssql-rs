@@ -2,26 +2,8 @@
 // Licensed under the MIT License.
 
 import { JsSqlDataTypes, SqlJsConnection } from '.';
-import { Encoding } from './codepages';
 import { DataType } from './datatypes';
 import { SqlDataTypes, Parameter } from './generated';
-import {
-  fromJsToNapiDateTransformer,
-  fromJsToNapiDatetime2Transformer,
-  fromJsToNapiDateTimeOffsetTransformer,
-  fromJsToNapiTimeTransformer,
-  fromJsToNapiDateTimeTransformer,
-  fromJsToNapiSmallDateTimeTransformer as fromJsToNapiSmallDatetimeTransformer,
-} from './transformers/datetime';
-import { fromJsToNapiDecimalPartTransformer } from './transformers/decimal';
-import {
-  fromJsToNapiMoneyTransformer,
-  fromJsToSmallMoneyTransformer,
-} from './transformers/money';
-import {
-  nCharNVarCharTdsTransformer,
-  varCharTdsTransformer,
-} from './transformers/string';
 
 type ColumnValue = number | string | boolean | Buffer | null | Date | bigint;
 

@@ -1,12 +1,16 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { DataType } from './DataType';
 import { JsSqlDataTypes } from '../.';
+import type { Encoding } from '../codepages';
 
-export class BigCharType extends DataType {
+export class BigVarBinaryType extends DataType {
   constructor() {
-    super(JsSqlDataTypes.BigChar);
+    super(JsSqlDataTypes.BigVarBinary);
   }
   validate(value: bigint | number | string | Date | boolean | null): boolean {
-    return typeof value === 'string';
+    return value instanceof Uint8Array || value === null;
   }
   transformForNapiWrites(
     value: bigint | number | string | Date | boolean | null,

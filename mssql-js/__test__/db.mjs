@@ -1,8 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { create_connection } from '../js/index.js';
-import fs from 'fs';
+import { create_connection } from '../dist/index.js';
 
 export async function openConnection(context) {
   const connection = await create_connection(context);

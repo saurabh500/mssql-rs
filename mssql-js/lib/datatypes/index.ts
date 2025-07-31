@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 export * from './DataType';
 export * from './IntType';
 export * from './VarCharType';

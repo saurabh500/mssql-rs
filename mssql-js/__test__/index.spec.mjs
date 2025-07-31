@@ -3,8 +3,8 @@
 
 import test from 'ava';
 
-import { create_connection, JsSqlDataTypes, Request } from '../js/index.js';
-import { TYPES } from '../js/datatypes/types.js';
+import { JsSqlDataTypes, Request } from '../dist/index.js';
+import { TYPES } from '../dist/datatypes/types.js';
 import { createContext, openConnection } from './db.mjs';
 
 test('connect to sqlserver and fetch multiple result sets', async (t) => {

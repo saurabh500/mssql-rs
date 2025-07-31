@@ -1,16 +1,19 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { DataType } from './DataType';
 import { JsSqlDataTypes } from '../.';
 
-export class XmlType extends DataType {
+export class BigBinaryType extends DataType {
   constructor() {
-    super(JsSqlDataTypes.Xml);
+    super(JsSqlDataTypes.BigBinary);
   }
   validate(value: bigint | number | string | Date | boolean | null): boolean {
-    return typeof value === 'string';
+    return value instanceof Uint8Array || value === null;
   }
   transformForNapiWrites(
     value: bigint | number | string | Date | boolean | null,
   ): unknown {
-    throw new Error('not implemented');
+    return value;
   }
 }

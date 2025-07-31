@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { DataType } from './DataType';
 import { JsSqlDataTypes } from '../.';
 import type { Encoding } from '../codepages';
@@ -11,7 +14,6 @@ export class BitType extends DataType {
   }
   transformForNapiWrites(
     value: bigint | number | string | Date | boolean | null,
-    _encoding?: Encoding,
   ): unknown {
     if (value === null) return null;
     if (typeof value === 'boolean') return value;

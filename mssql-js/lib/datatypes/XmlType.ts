@@ -1,16 +1,16 @@
 import { DataType } from './DataType';
 import { JsSqlDataTypes } from '../.';
 
-export class BigBinaryType extends DataType {
+export class XmlType extends DataType {
   constructor() {
-    super(JsSqlDataTypes.BigBinary);
+    super(JsSqlDataTypes.Xml);
   }
   validate(value: bigint | number | string | Date | boolean | null): boolean {
-    return value instanceof Uint8Array || value === null;
+    return typeof value === 'string';
   }
   transformForNapiWrites(
-    value: bigint | number | string | Date | boolean | null,
+    _value: bigint | number | string | Date | boolean | null,
   ): unknown {
-    return value;
+    throw new Error('not implemented');
   }
 }
