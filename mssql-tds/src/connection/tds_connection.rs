@@ -11,6 +11,7 @@ use crate::error::Error::UsageError;
 use crate::handler::handler_factory::NegotiatedSettings;
 use crate::message::attention::AttentionRequest;
 use crate::message::batch::SqlBatch;
+use crate::message::login::EnvChangeProperties;
 use crate::message::messages::Request;
 use crate::message::parameters::rpc_parameters::{
     RpcParameter, StatusFlags, build_parameter_list_string,
@@ -25,7 +26,7 @@ use crate::token::tokens::{
     DoneStatus, EnvChangeContainer, EnvChangeToken, EnvChangeTokenSubType, Tokens,
 };
 use std::time::{Duration, Instant};
-use tracing::{Level, event, info};
+use tracing::info;
 
 pub struct TdsConnection {
     pub(crate) transport: Box<NetworkTransport>,
@@ -41,10 +42,13 @@ impl TdsConnection {
         transport: Box<NetworkTransport>,
         negotiated_settings: NegotiatedSettings,
     ) -> Self {
+        // Copy over the negotiated settings which can also being in the changing execution context.
+        let mut execution_context = ExecutionContext::new();
+        execution_context.change_properties.database = Some(negotiated_settings.database.clone());
         TdsConnection {
             transport,
             negotiated_settings,
-            execution_context: ExecutionContext::new(),
+            execution_context,
         }
     }
 
@@ -477,6 +481,7 @@ pub(crate) struct ExecutionContext {
     outstanding_requests: u32,
     has_open_batch: bool,
     has_open_result_set: bool,
+    change_properties: EnvChangeProperties,
 }
 
 impl ExecutionContext {
@@ -486,6 +491,7 @@ impl ExecutionContext {
             outstanding_requests: 1,
             has_open_batch: false,
             has_open_result_set: false,
+            change_properties: EnvChangeProperties::default(),
         }
     }
 
@@ -518,38 +524,68 @@ impl ExecutionContext {
         change_token: &EnvChangeToken,
     ) -> TdsResult<()> {
         let sub_type = change_token.sub_type;
-
-        match change_token.change_type {
-            EnvChangeContainer::UInt64(u64_change) => match sub_type {
-                EnvChangeTokenSubType::BeginTransaction
-                | EnvChangeTokenSubType::CommitTransaction
-                | EnvChangeTokenSubType::RollbackTransaction
-                | EnvChangeTokenSubType::EnlistDtcTransaction
-                | EnvChangeTokenSubType::DefectTransaction => {
+        let change_type = &change_token.change_type;
+        match &sub_type {
+            EnvChangeTokenSubType::BeginTransaction
+            | EnvChangeTokenSubType::CommitTransaction
+            | EnvChangeTokenSubType::RollbackTransaction
+            | EnvChangeTokenSubType::EnlistDtcTransaction
+            | EnvChangeTokenSubType::DefectTransaction => {
+                if let EnvChangeContainer::UInt64(u64_change) = change_type {
                     self.transaction_descriptor = *u64_change.new_value();
                     Ok(())
+                } else {
+                    Err(crate::error::Error::ProtocolError(format!(
+                        "Expected UInt64 change container, but got: {change_token:?}",
+                    )))
                 }
-                _ => {
-                    event!(
-                        Level::ERROR,
-                        "Unknown change property type: {:?}",
-                        change_token.change_type
-                    );
-                    Err(crate::error::Error::ProtocolError(
-                        "Unknown change property type".to_string(),
-                    ))
-                }
-            },
-            _ => {
-                event!(
-                    Level::ERROR,
-                    "Unknown change property type: {:?}",
-                    change_token.change_type
-                );
-                Err(crate::error::Error::ProtocolError(
-                    "Unknown change property type".to_string(),
-                ))
             }
+            EnvChangeTokenSubType::Database => {
+                if let EnvChangeContainer::String(string_change) = change_type {
+                    info!("Database change detected: {}", string_change.new_value());
+                    self.change_properties.database = Some(string_change.new_value().clone());
+                    Ok(())
+                } else {
+                    Err(crate::error::Error::ProtocolError(format!(
+                        "Expected String change container, but got: {change_token:?}",
+                    )))
+                }
+            }
+            EnvChangeTokenSubType::Language => {
+                if let EnvChangeContainer::String(string_change) = change_type {
+                    self.change_properties.language =
+                        Option::from(string_change.new_value().clone());
+                    Ok(())
+                } else {
+                    Err(crate::error::Error::ProtocolError(format!(
+                        "Expected String change container, but got: {change_token:?}",
+                    )))
+                }
+            }
+            EnvChangeTokenSubType::SqlCollation => {
+                if let EnvChangeContainer::SqlCollation(collation_change) = change_type {
+                    info!("Collation change detected: {:?}", collation_change);
+                    self.change_properties.database_collation = *collation_change.new_value();
+                    Ok(())
+                } else {
+                    Err(crate::error::Error::ProtocolError(format!(
+                        "Expected Collation change container, but got: {change_token:?}",
+                    )))
+                }
+            }
+            EnvChangeTokenSubType::PacketSize => Err(crate::error::Error::ProtocolError(
+                "packet_size change unexpected".to_string(),
+            )),
+            EnvChangeTokenSubType::CharacterSet => todo!(),
+            EnvChangeTokenSubType::UnicodeDataSortingLocalId => todo!(),
+            EnvChangeTokenSubType::UnicodeDataSortingComparisonFlags => todo!(),
+            EnvChangeTokenSubType::DatabaseMirroringPartner => todo!(),
+            EnvChangeTokenSubType::PromoteTransaction => todo!(),
+            EnvChangeTokenSubType::TransactionManagerAddress => todo!(),
+            EnvChangeTokenSubType::TransactionEnded => todo!(),
+            EnvChangeTokenSubType::ResetConnection => todo!(),
+            EnvChangeTokenSubType::UserInstanceName => todo!(),
+            EnvChangeTokenSubType::Routing => todo!(),
         }
     }
 }

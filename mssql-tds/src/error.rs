@@ -47,4 +47,7 @@ pub enum Error {
 
     #[error("Usage Error: {0}")]
     UsageError(String),
+
+    #[error("Unexpected Implementation Error: {0}")]
+    ImplementationError(String),
 }

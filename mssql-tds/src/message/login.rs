@@ -32,7 +32,7 @@ pub(crate) struct RoutingInfo {
     pub server: String,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub(crate) struct EnvChangeProperties {
     pub database_collation: Option<SqlCollation>,
     pub packet_size: i32,

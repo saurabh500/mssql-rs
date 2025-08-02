@@ -142,4 +142,24 @@ mod client_based_iterators {
         );
         Ok(())
     }
+
+    // This test will fail in Azure since DB creation from TSQL as well as USE statements are not allowed.
+    #[tokio::test]
+    async fn test_use_database_statement() -> Result<(), Box<dyn std::error::Error>> {
+        let context = create_context();
+
+        let provider = TdsConnectionProvider {};
+        let mut client = provider.create_client(context, None).await?;
+        let create_database_query = "IF DB_ID('TestDB') IS NULL CREATE DATABASE TestDB";
+
+        client
+            .execute(create_database_query.to_string(), None, None)
+            .await?;
+        let use_database_query = "USE TestDB";
+        client
+            .execute(use_database_query.to_string(), None, None)
+            .await?;
+
+        Ok(())
+    }
 }

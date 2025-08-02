@@ -312,6 +312,10 @@ impl TdsClient {
                         line_number: Some(error_token.line_number as i32),
                     });
                 }
+                Tokens::Info(info_token) => {
+                    info!(?info_token);
+                    continue;
+                }
                 _ => {
                     info!("move_to_column_metadata: {:?}", token);
                     return Err(UsageError(format!(

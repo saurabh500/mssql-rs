@@ -181,9 +181,8 @@ where
                 let old_value = reader.read_u8_varbyte().await?;
                 let old_descriptor = match old_value.len() {
                     0 => Ok(0u64),
-                    _ => Err(Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Invalid old transaction descriptor",
+                    _ => Err(crate::error::Error::ProtocolError(
+                        "Invalid old transaction descriptor".to_string(),
                     )),
                 }?;
                 EnvChangeContainer::from((old_descriptor, new_descriptor))
@@ -192,7 +191,11 @@ where
             EnvChangeTokenSubType::PromoteTransaction => todo!(),
             EnvChangeTokenSubType::TransactionManagerAddress => todo!(),
             EnvChangeTokenSubType::TransactionEnded => todo!(),
-            EnvChangeTokenSubType::ResetConnection => todo!(),
+            EnvChangeTokenSubType::ResetConnection => {
+                let new_value = reader.read_u8_varbyte().await?;
+                let old_value = reader.read_u8_varbyte().await?;
+                EnvChangeContainer::from((old_value, new_value))
+            }
             EnvChangeTokenSubType::UserInstanceName => todo!(),
             EnvChangeTokenSubType::Routing => {
                 let _length = reader.read_uint16().await?;
