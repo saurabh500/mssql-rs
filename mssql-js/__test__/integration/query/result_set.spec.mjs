@@ -6,6 +6,25 @@ import { createContext } from '../../db.mjs';
 
 import { create_connection, Request } from '../../../dist/index.js';
 
+test('testing use keyword', async(t) => {
+  try{
+    const connection = await create_connection(await createContext());
+    let create = new Request(connection);
+    await create.query("IF DB_ID('demo') IS NULL CREATE DATABASE demo");
+    
+    let use = new Request(connection);
+    await use.query("USE demo");
+    
+    let check = new Request(connection);
+    let currentDatabase =  await check.query('SELECT DB_NAME()');
+    t.assert(currentDatabase.IRecordSet[0][''] === 'demo');
+    t.pass('Database created');
+  }catch(err){
+    t.log('Query error: ', err);
+    t.fail('Use keyword should succeed');
+  }
+})
+
 test('querying anonymous columns', async (t) => {
   // Example TypeScript test with proper typing
   try {
