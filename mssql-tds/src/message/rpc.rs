@@ -25,6 +25,7 @@ pub(crate) const PROC_ID_SWITCH: u16 = 0xffff;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ProcOptions {
+    None = 0x00,
     WithRecompile = 0x01,
     NoMetadata = 0x02,
     ReuseMetadata = 0x04,
@@ -53,7 +54,7 @@ impl<'a> SqlRpc<'a> {
             positional_parameters,
             named_parameters,
             db_collation,
-            proc_options: ProcOptions::NoMetadata,
+            proc_options: ProcOptions::None,
         }
     }
 

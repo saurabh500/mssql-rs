@@ -181,6 +181,7 @@ mod client_based_iterators {
             @paramOut int output
          AS
          BEGIN
+            select 1
            set @paramOut = @paramIn
          END";
         client
@@ -221,7 +222,15 @@ mod client_based_iterators {
                 row_count, 1,
                 "Expected 1 row from the stored procedure execution with output parameter"
             );
+        } else {
+            panic!("Expected a result set from stored procedure execution, but got None");
         }
+
+        // Move once more till we read the return values.
+        while binding.move_to_next().await? {
+            // Continue to next result set if available
+        }
+
         let output_param = binding.get_return_values();
 
         assert!(output_param.len() == 1);

@@ -184,7 +184,7 @@ impl TdsClient {
     }
 
     /// Executes a stored procedure with the given name and parameters.
-    #[instrument(skip(self), level = "info")]
+    #[instrument(skip(self, positional_parameters, named_parameters), level = "info")]
     pub async fn execute_stored_procedure(
         &mut self,
         stored_procedure_name: String,
