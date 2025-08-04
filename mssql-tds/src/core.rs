@@ -111,7 +111,7 @@ impl Version {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct EncryptionOptions {
     pub mode: EncryptionSetting,
     pub trust_server_certificate: bool,
@@ -134,7 +134,7 @@ impl Default for EncryptionOptions {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum EncryptionSetting {
     PreferOff, // Don't use encryption if the server allows this or doesn't support encryption.
     On,        // Use encryption after prelogin.
@@ -144,7 +144,7 @@ pub enum EncryptionSetting {
     Strict, // Encrypt the whole stream, including prelogin.
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum NegotiatedEncryptionSetting {
     Strict,
     LoginOnly,

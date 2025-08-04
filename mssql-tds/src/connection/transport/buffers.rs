@@ -5,6 +5,7 @@ use crate::connection::transport::network_transport::PRE_NEGOTIATED_PACKET_SIZE;
 use crate::core::CancelHandle;
 use crate::message::messages::PacketType;
 use crate::read_write::packet_writer::PacketWriter;
+use std::fmt::Debug;
 use std::io::Cursor;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::time::Instant;
@@ -81,6 +82,16 @@ impl TdsReadBuffer {
 
     pub(crate) fn get_slice(&self) -> &[u8] {
         &self.working_buffer[self.buffer_position..]
+    }
+}
+
+impl Debug for TdsReadBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TdsReadBuffer")
+            .field("buffer_position", &self.buffer_position)
+            .field("buffer_length", &self.buffer_length)
+            .field("max_packet_size", &self.max_packet_size)
+            .finish()
     }
 }
 

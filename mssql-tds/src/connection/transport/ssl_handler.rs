@@ -18,6 +18,7 @@ use crate::core::{EncryptionOptions, TdsResult};
 #[cfg(target_os = "macos")]
 use std::io::{ErrorKind, Write};
 
+#[derive(Debug)]
 pub(crate) struct SslHandler {
     pub(crate) server_host_name: String,
     pub(crate) encryption_options: EncryptionOptions,
@@ -446,6 +447,7 @@ impl<S: Stream> Stream for TlsOverTdsStream<S> {
 
 // Specialized StreamRecoverer which returns Tds7OverTlsStreams when executing the TLS handshake.
 // This only occurs in the second prelogin message after negotiating the encryption mode.
+#[derive(Debug)]
 pub(crate) struct Tds7StreamRecoverer<S: StreamRecoverer> {
     base_stream_recoverer: S,
     is_executing_tls_handshake: bool,

@@ -37,7 +37,7 @@ where
     }
 }
 
-#[derive(Clone, Hash, Eq, PartialEq)]
+#[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub enum TdsAuthenticationMethod {
     Password,
     SSPI, // Integrated Authentication with AD.

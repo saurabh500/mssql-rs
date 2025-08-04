@@ -34,7 +34,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{self, TcpStream};
 use tokio::time::timeout;
-use tracing::{event, info, trace};
+use tracing::{debug, event, info, trace};
 
 pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
 
@@ -185,7 +185,7 @@ pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync {
     fn tls_handshake_completed(&mut self);
 }
 
-pub(crate) trait StreamRecoverer: Send + Sync {
+pub(crate) trait StreamRecoverer: Send + Sync + std::fmt::Debug {
     fn recover_base_stream(&self) -> Box<dyn Stream>;
     fn tls_handshake_starting(&mut self);
     fn tls_handshake_completed(&mut self);
@@ -196,6 +196,7 @@ impl Stream for TcpStream {
     fn tls_handshake_completed(&mut self) {}
 }
 
+#[derive(Debug)]
 struct TcpStreamRecoverer {
     pub stream: Box<std::net::TcpStream>,
 }
@@ -212,6 +213,7 @@ impl StreamRecoverer for TcpStreamRecoverer {
     fn tls_handshake_completed(&mut self) {}
 }
 
+#[derive(Debug)]
 pub(crate) struct NetworkTransport {
     encryption: Option<NegotiatedEncryptionSetting>,
     packet_size: u32,
@@ -408,6 +410,10 @@ impl NetworkTransport {
         // The first byte of the token is the token type.
         let token_type_byte = self.read_byte().await?;
         let token_type = TokenType::from(token_type_byte);
+        debug!(
+            "Received token type: {:?} ({})",
+            token_type, token_type_byte
+        );
 
         // We should always have a parser for the token type.
         // If we don't, then we have a bug in the code.
@@ -814,7 +820,7 @@ pub(crate) mod tests {
     /// A mock SslHandler that simply returns the same stream, no real TLS.
     pub(crate) struct MockSslHandler;
 
-    /// A mock StreamRecoverer that always returns the stored DuplexStream.
+    #[derive(Debug)]
     pub(crate) struct MockStreamRecoverer {}
 
     impl Stream for DuplexStream {

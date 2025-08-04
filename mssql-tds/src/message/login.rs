@@ -16,6 +16,7 @@ use crate::token::tokens::{
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::fmt::Debug;
 
 use super::features::fedauth::FedAuthFeature;
 use super::features::utf8::Utf8Feature;
@@ -76,7 +77,7 @@ impl From<u8> for FeatureExtension {
 }
 
 #[async_trait]
-pub(crate) trait Feature: Send + Sync {
+pub(crate) trait Feature: Send + Sync + Debug {
     fn feature_identifier(&self) -> FeatureExtension;
     fn is_requested(&self) -> bool;
     fn data_length(&self) -> i32;

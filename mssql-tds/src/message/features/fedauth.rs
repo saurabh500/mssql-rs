@@ -19,7 +19,7 @@ use crate::message::login::{Feature, FeatureExtension};
 /// * `tds_authentication_method` - The method of TDS authentication being used.
 /// * `access_token_bytes` - An optional vector of bytes representing the access token.
 /// * `prelogin_has_fedauth_response` - A boolean indicating if the pre-login response includes federated authentication.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct FedAuthFeature {
     acknowledged: bool,
     tds_authentication_method: TdsAuthenticationMethod,
