@@ -26,7 +26,7 @@ use crate::token::tokens::{
     DoneStatus, EnvChangeContainer, EnvChangeToken, EnvChangeTokenSubType, Tokens,
 };
 use std::time::{Duration, Instant};
-use tracing::info;
+use tracing::{info, instrument};
 
 pub struct TdsConnection {
     pub(crate) transport: Box<NetworkTransport>,
@@ -503,6 +503,7 @@ impl ExecutionContext {
         self.outstanding_requests
     }
 
+    #[instrument(skip(self))]
     pub fn has_open_batch(&self) -> bool {
         self.has_open_batch
     }
@@ -511,10 +512,12 @@ impl ExecutionContext {
         self.has_open_result_set
     }
 
+    #[instrument(skip(self))]
     pub(crate) fn set_has_open_batch(&mut self, has_open_batch: bool) {
         self.has_open_batch = has_open_batch;
     }
 
+    #[instrument(skip(self))]
     pub(crate) fn set_has_open_result_set(&mut self, has_open_result_set: bool) {
         self.has_open_result_set = has_open_result_set;
     }

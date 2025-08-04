@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 pub type TdsResult<T> = Result<T, Error>;
 
+#[derive(Debug)]
 pub struct CancelHandle {
     pub(crate) cancel_token: CancellationToken,
 }

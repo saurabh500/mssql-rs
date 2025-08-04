@@ -77,6 +77,7 @@ impl HandlerFactory {
 }
 
 // The settings that can be negotiated during and after the login process as well.
+#[derive(Debug)]
 pub(crate) struct NegotiatedSettings {
     pub session_settings: SessionSettings,
     pub database_collation: SqlCollation,
@@ -122,6 +123,7 @@ impl NegotiatedSettings {
 }
 
 // The settings of the session that are negotiated during the login process. They dont change after login.
+#[derive(Debug)]
 pub(crate) struct SessionSettings {
     pub packet_size: u32,
     pub user_name: String,

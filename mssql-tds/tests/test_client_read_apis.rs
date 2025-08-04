@@ -6,8 +6,12 @@ mod common;
 
 mod client_based_iterators {
     use crate::common::{create_context, init_tracing};
+    use futures::lock::Mutex;
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
+    use mssql_tds::datatypes::sqltypes::SqlType;
+    use mssql_tds::message::parameters::rpc_parameters::{RpcParameter, StatusFlags};
+    use std::sync::Arc;
 
     #[ctor::ctor]
     fn init() {
@@ -159,6 +163,68 @@ mod client_based_iterators {
         client
             .execute(use_database_query.to_string(), None, None)
             .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_stored_proc_with_query_and_output() -> Result<(), Box<dyn std::error::Error>> {
+        let context = create_context();
+
+        let provider = TdsConnectionProvider {};
+        let client = provider.create_client(context, None).await?;
+        let client = Arc::new(Mutex::new(client));
+
+        // Create a stored procedure with an output parameter
+        let create_proc = "CREATE PROCEDURE #test_proc        
+             @paramIn int,
+            @paramOut int output
+         AS
+         BEGIN
+           set @paramOut = @paramIn
+         END";
+        client
+            .lock()
+            .await
+            .execute(create_proc.to_string(), None, None)
+            .await?;
+        client.lock().await.close_query().await?;
+
+        let proc_name = "#test_proc".to_string();
+        let named_parameters = vec![
+            RpcParameter::new(
+                Some("@paramIn".to_string()),
+                StatusFlags::NONE,
+                SqlType::Int(Some(42)),
+            ),
+            RpcParameter::new(
+                Some("@paramOut".to_string()),
+                StatusFlags::BY_REF_VALUE,
+                SqlType::Int(None),
+            ),
+        ];
+        client
+            .lock()
+            .await
+            .execute_stored_procedure(proc_name, None, Some(named_parameters), None, None)
+            .await?;
+        let mut binding = client.lock().await;
+        let result_set = binding.get_current_resultset();
+        if let Some(result_set) = result_set {
+            let _ = result_set.get_metadata();
+            let mut row_count = 0;
+
+            while (result_set.next_row().await?).is_some() {
+                row_count += 1;
+            }
+            assert_eq!(
+                row_count, 1,
+                "Expected 1 row from the stored procedure execution with output parameter"
+            );
+        }
+        let output_param = binding.get_return_values();
+
+        assert!(output_param.len() == 1);
 
         Ok(())
     }

@@ -39,6 +39,7 @@ use crate::{
     query::metadata::ColumnMetadata,
 };
 
+#[derive(Debug)]
 pub struct TdsClient {
     pub(crate) transport: Box<NetworkTransport>,
     pub(crate) negotiated_settings: NegotiatedSettings,
@@ -86,6 +87,7 @@ impl TdsClient {
     }
 
     /// Executes a SQL command (batch) against the server.
+    #[instrument(skip(self), level = "info")]
     pub async fn execute(
         &mut self,
         sql_command: String,
@@ -118,6 +120,7 @@ impl TdsClient {
 
     // Executes a stored procedure with the given proc_id and parameters.
     // The parameters can be either positional or named.
+    #[instrument(skip(self), level = "info")]
     pub async fn execute_sp_executesql(
         &mut self,
         sql: String,
@@ -181,6 +184,7 @@ impl TdsClient {
     }
 
     /// Executes a stored procedure with the given name and parameters.
+    #[instrument(skip(self), level = "info")]
     pub async fn execute_stored_procedure(
         &mut self,
         stored_procedure_name: String,
@@ -194,6 +198,7 @@ impl TdsClient {
                 ALREADY_EXECUTING_ERROR.to_string(),
             ));
         };
+        self.return_values.clear();
         self.transport.reset_reader();
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -222,6 +227,7 @@ impl TdsClient {
         Ok(())
     }
 
+    #[instrument(skip(self), level = "info")]
     async fn drain_rows(&mut self) -> TdsResult<()> {
         if self.maybe_has_unread_rows() {
             // Drain the current result set.
@@ -329,7 +335,7 @@ impl TdsClient {
 
     /// This functions returns to the next row in the result set.
     /// If there are no more rows, it returns None.
-    #[instrument(skip(self), level = "debug", name = "get_next_row")]
+    #[instrument(skip(self), level = "info")]
     pub(crate) async fn get_next_row(&mut self) -> TdsResult<Option<Vec<ColumnValues>>> {
         if self.current_metadata.is_none() {
             return Err(UsageError(
@@ -369,6 +375,11 @@ impl TdsClient {
                     info!(?order_token);
                     continue;
                 }
+                Tokens::ReturnValue(return_value_token) => {
+                    let return_value = return_value_token.into();
+                    self.return_values.push(return_value);
+                    continue;
+                }
                 _ => {
                     unreachable!("Unexpected Token while finding the next row. {:?}", token);
                 }
@@ -379,10 +390,11 @@ impl TdsClient {
     }
 
     /// Gets the return values collected so far.
-    pub fn get_return_values(&self) -> &Vec<ReturnValue> {
-        &self.return_values
+    pub fn get_return_values(&self) -> Vec<ReturnValue> {
+        self.return_values.clone()
     }
 
+    #[instrument(skip(self), level = "info")]
     pub async fn close_query(&mut self) -> TdsResult<()> {
         if !self.execution_context.has_open_batch() {
             return Ok(());
@@ -398,11 +410,13 @@ impl TdsClient {
         Ok(())
     }
 
+    #[instrument(skip(self), level = "info")]
     pub async fn close_connection(&mut self) -> TdsResult<()> {
         self.transport.close_transport().await?;
         Ok(())
     }
 
+    #[instrument(skip(self), level = "info")]
     pub async fn begin_transaction(
         &mut self,
         isolation_level: TransactionIsolationLevel,
@@ -427,6 +441,7 @@ impl TdsClient {
         Ok(())
     }
 
+    #[instrument(skip(self), level = "info")]
     pub async fn commit_transaction(&mut self) -> TdsResult<()> {
         if self.execution_context.has_open_batch() {
             return Err(UsageError(
@@ -449,6 +464,7 @@ impl TdsClient {
         Ok(())
     }
 
+    #[instrument(skip(self), level = "info")]
     pub async fn rollback_transaction(&mut self) -> TdsResult<()> {
         if self.execution_context.has_open_batch() {
             return Err(UsageError(
@@ -471,6 +487,7 @@ impl TdsClient {
         Ok(())
     }
 
+    #[instrument(skip(self), level = "info")]
     pub(crate) async fn consume_transaction_response(&mut self) -> TdsResult<()> {
         loop {
             let token = self
@@ -479,7 +496,7 @@ impl TdsClient {
                 .await?;
             match token {
                 Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
-                    info!("done while get_next_row: {:?}", done);
+                    info!("done while consume_transaction_response: {:?}", done);
 
                     let count = self.count_map.entry(done.cur_cmd).or_insert(0);
                     *count += done.row_count as usize;
@@ -518,6 +535,7 @@ impl ResultSet for TdsClient {
         &self.current_metadata.as_ref().unwrap().columns
     }
 
+    #[instrument(skip(self), level = "info")]
     async fn next_row(&mut self) -> TdsResult<Option<Vec<ColumnValues>>> {
         if self.maybe_has_unread_rows() {
             // If there are rows available, fetch the next row.
@@ -531,6 +549,7 @@ impl ResultSet for TdsClient {
         !self.current_result_set_has_been_read_till_end
     }
 
+    #[instrument(skip(self), level = "info")]
     async fn close(&mut self) -> TdsResult<()> {
         self.close_query().await
     }
@@ -546,7 +565,7 @@ impl ResultSetClient for TdsClient {
         }
     }
 
-    #[instrument(skip(self), level = "debug", name = "move_to_next")]
+    #[instrument(skip(self), level = "info")]
     async fn move_to_next(&mut self) -> TdsResult<bool> {
         if !self.execution_context.has_open_batch() {
             return Ok(false);
