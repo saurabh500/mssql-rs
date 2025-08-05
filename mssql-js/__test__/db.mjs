@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 import { create_connection } from '../dist/index.js';
+import fs from 'fs';
 
 export async function openConnection(context) {
   const connection = await create_connection(context);
@@ -31,7 +32,7 @@ export async function getPassword() {
       password = password.trim();
     } catch (_err) {
       throw new Error(
-        'SQL_PASSWORD environment variable not set and /tmp/password file not found',
+        `SQL_PASSWORD environment variable not set and /tmp/password file not found: ${_err}`,
       );
     }
   }

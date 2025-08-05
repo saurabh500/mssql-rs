@@ -43,20 +43,20 @@ pub enum SqlType {
     Date(Option<SqlDate>),
 
     /// Represents a Varchar with a specifiied length.
-    NVarchar(Option<SqlString>, u32),
+    NVarchar(Option<SqlString>, u16),
 
     /// Represents a Varchar with MAX length.
     NVarcharMax(Option<SqlString>),
 
-    Varchar(Option<SqlString>, u32),
+    Varchar(Option<SqlString>, u16),
     VarcharMax(Option<SqlString>),
 
-    VarBinary(Option<Vec<u8>>, u32),
+    VarBinary(Option<Vec<u8>>, u16),
     VarBinaryMax(Option<Vec<u8>>),
 
-    Binary(Option<Vec<u8>>, u32),
-    Char(Option<SqlString>, u32),
-    NChar(Option<SqlString>, u32),
+    Binary(Option<Vec<u8>>, u16),
+    Char(Option<SqlString>, u16),
+    NChar(Option<SqlString>, u16),
 
     Text(Option<SqlString>),
     NText(Option<SqlString>),
@@ -76,7 +76,7 @@ type NullableTdsType = TdsDataType;
 pub(crate) const VAR_TDS_MAX_LENGTH: u16 = 8000u16;
 
 // The length of a NULL value in TDS is 65535 bytes for variable length types.
-pub(crate) const VAR_NULL_LENGTH: u16 = 65535u16;
+pub(crate) const MAX_U16_LENGTH: u16 = 65535u16;
 
 // The length of a NULL value in TDS is 0 bytes.
 pub(crate) const NULL_LENGTH: u8 = 0u8;
@@ -187,27 +187,29 @@ impl SqlType {
             }
             SqlType::DateTime(datetime) => self.serialize_datetime(packet_writer, datetime).await?,
             SqlType::Date(sqldate) => self.serialize_date(packet_writer, sqldate).await?,
-            SqlType::NVarchar(sql_string, _) => {
-                self.serialize_nvarchar(packet_writer, db_collation, sql_string)
+            SqlType::NVarchar(sql_string, param_length) => {
+                self.serialize_nvarchar(packet_writer, db_collation, sql_string, *param_length)
                     .await?
             }
             SqlType::NVarcharMax(sql_string) => {
-                self.serialize_nvarchar(packet_writer, db_collation, sql_string)
+                self.serialize_nvarchar(packet_writer, db_collation, sql_string, MAX_U16_LENGTH)
                     .await?
             }
-            SqlType::Varchar(sql_string, _) => {
-                self.serialize_nvarchar(packet_writer, db_collation, sql_string)
+            SqlType::Varchar(sql_string, param_len) => {
+                self.serialize_nvarchar(packet_writer, db_collation, sql_string, *param_len)
                     .await?
             }
             SqlType::VarcharMax(sql_string) => {
-                self.serialize_nvarchar(packet_writer, db_collation, sql_string)
+                self.serialize_nvarchar(packet_writer, db_collation, sql_string, MAX_U16_LENGTH)
                     .await?
             }
-            SqlType::VarBinary(binary_data, _) => {
-                self.serialize_binary(packet_writer, binary_data).await?
+            SqlType::VarBinary(binary_data, param_len) => {
+                self.serialize_binary(packet_writer, binary_data, *param_len)
+                    .await?
             }
             SqlType::VarBinaryMax(binary_data) => {
-                self.serialize_binary(packet_writer, binary_data).await?
+                self.serialize_binary(packet_writer, binary_data, MAX_U16_LENGTH)
+                    .await?
             }
             SqlType::Xml(sql_xml) => self.serialize_xml(packet_writer, sql_xml).await?,
             SqlType::Uuid(uuid) => self.serialize_uuid(packet_writer, uuid).await?,
@@ -427,12 +429,24 @@ impl SqlType {
         Ok(())
     }
 
+    // Serializes the string payload.
+    // The param length is sent as the metadata. If param length is greater than 8000, it is clamped to 65535.
+    // If the string is None, it sends a NULL value.
+    // If the bytes in string are less than or equal to 8000, it sends the bytes directly.
+    // If the bytes in string are greater than 8000, it sends the bytes as a PLP (Partial Length Packet).
     async fn serialize_nvarchar(
         &self,
         packet_writer: &mut PacketWriter<'_>,
         db_collation: &SqlCollation,
         sql_string: &Option<SqlString>,
+        param_len: u16,
     ) -> TdsResult<()> {
+        // Clamp param_len to 65535 if > 8000
+        let param_len = if param_len > VAR_TDS_MAX_LENGTH {
+            MAX_U16_LENGTH
+        } else {
+            param_len
+        };
         let optional_string = match sql_string {
             Some(string) => Some(string),
             None => None,
@@ -440,17 +454,16 @@ impl SqlType {
         let nullable_type: NullableTdsType = self.get_nullable_type();
         packet_writer.write_byte_async(nullable_type as u8).await?;
 
+        packet_writer.write_u16_async(param_len).await?;
+        packet_writer.write_u32_async(db_collation.info).await?;
+        packet_writer.write_byte_async(db_collation.sort_id).await?;
+
         match optional_string {
             Some(string) => {
-                let should_send_as_plp = string.bytes.len() > VAR_TDS_MAX_LENGTH as usize;
+                let should_send_as_plp = (string.bytes.len() > VAR_TDS_MAX_LENGTH as usize)
+                    || (param_len == MAX_U16_LENGTH);
                 if !should_send_as_plp {
                     // Write the length for the metadata.
-                    // TODO: Take this from the actual metadata in the Varchar/Nvarchar variant.
-                    packet_writer
-                        .write_i16_async(string.bytes.len() as i16)
-                        .await?;
-                    packet_writer.write_u32_async(db_collation.info).await?;
-                    packet_writer.write_byte_async(db_collation.sort_id).await?;
                     // Write the length of the actual data.
                     packet_writer
                         .write_i16_async(string.bytes.len() as i16)
@@ -458,11 +471,6 @@ impl SqlType {
                     // Write the data.
                     packet_writer.write_async(&string.bytes).await?;
                 } else {
-                    // Write FFFF indicating that data is being sent as PLP.
-                    packet_writer.write_u16_async(MAX_SHORT_DATA_LENGTH).await?;
-                    packet_writer.write_u32_async(db_collation.info).await?;
-                    packet_writer.write_byte_async(db_collation.sort_id).await?;
-
                     // Write the PLP length.
                     packet_writer
                         .write_u64_async(string.bytes.len() as u64)
@@ -481,10 +489,6 @@ impl SqlType {
                 }
             }
             None => {
-                // TODO: Honor the metadata length here.
-                packet_writer.write_u16_async(VAR_NULL_LENGTH).await?;
-                packet_writer.write_u32_async(db_collation.info).await?;
-                packet_writer.write_byte_async(db_collation.sort_id).await?;
                 // Write the NULL length.
                 packet_writer.write_u64_async(PLP_NULL).await?;
             }
@@ -496,28 +500,32 @@ impl SqlType {
         &self,
         packet_writer: &mut PacketWriter<'_>,
         binary_data: &Option<Vec<u8>>,
+        param_len: u16,
     ) -> TdsResult<()> {
+        // Clamp param_len to 65535 if > 8000
+        let param_len = if param_len > VAR_TDS_MAX_LENGTH {
+            u16::MAX
+        } else {
+            param_len
+        };
         let nullable_type: NullableTdsType = self.get_nullable_type();
         packet_writer.write_byte_async(nullable_type as u8).await?;
+        packet_writer.write_u16_async(param_len).await?;
+
         let optional_binary = match binary_data {
             Some(binary) => Some(binary),
             None => None,
         };
         match optional_binary {
             Some(data) => {
-                let should_send_as_plp = data.len() > VAR_TDS_MAX_LENGTH as usize;
+                let should_send_as_plp =
+                    data.len() > VAR_TDS_MAX_LENGTH as usize || param_len == u16::MAX;
                 if !should_send_as_plp {
-                    // Write the length for the metadata.
-                    packet_writer.write_i16_async(data.len() as i16).await?;
-
                     // Write the length of the actual data.
                     packet_writer.write_i16_async(data.len() as i16).await?;
                     // Write the data.
                     packet_writer.write_async(data).await?;
                 } else {
-                    // Write FFFF indicating that data is being sent as PLP.
-                    packet_writer.write_u16_async(MAX_SHORT_DATA_LENGTH).await?;
-
                     // Write the PLP length.
                     packet_writer.write_u64_async(data.len() as u64).await?;
 
@@ -530,10 +538,7 @@ impl SqlType {
                 }
             }
             None => {
-                // Write 2 len to signify that the actual data length is going to be 2 bytes.
-                packet_writer.write_i16_async(2).await?;
-                // Write 0 data length to signify that the data is NULL.
-                packet_writer.write_u16_async(VAR_NULL_LENGTH).await?;
+                packet_writer.write_u64_async(PLP_NULL).await?;
             }
         }
         Ok(())
@@ -1433,7 +1438,7 @@ mod binary_tests {
     use crate::{
         datatypes::{
             sqldatatypes::TdsDataType,
-            sqltypes::{MAX_SHORT_DATA_LENGTH, PLP_TERMINATOR_CHUNK_LEN, SqlType, VAR_NULL_LENGTH},
+            sqltypes::{PLP_TERMINATOR_CHUNK_LEN, SqlType},
         },
         message::messages::PacketType,
         read_write::{
@@ -1446,10 +1451,9 @@ mod binary_tests {
     async fn test_write_small_binary() {
         let payload: Vec<u8> = (0..10).collect();
         // Doesn't matter for serialization, but we need a length.
-        let len = payload.len() / 2;
         let byte_len = payload.len() as u32;
         let val = Some(payload.clone());
-        let bit = SqlType::VarBinary(val, len as u32);
+        let bit = SqlType::VarBinary(val, byte_len as u16);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::default();
 
@@ -1462,7 +1466,7 @@ mod binary_tests {
 
         let copied_bytes = payload.clone();
         let val = Some(payload);
-        bit.serialize_binary(&mut packet_writer, &val)
+        bit.serialize_binary(&mut packet_writer, &val, byte_len as u16)
             .await
             .unwrap();
         packet_writer.finalize().await.unwrap();
@@ -1471,7 +1475,7 @@ mod binary_tests {
         let mut test_cursor = Cursor::new(payload);
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
         assert_eq!(test_cursor.get_u8(), TdsDataType::BigVarBinary as u8); // Valdate tds type
-        assert_eq!(test_cursor.get_i16_le(), byte_len as i16);
+        assert_eq!(test_cursor.get_u16_le(), byte_len as u16);
 
         assert_eq!(test_cursor.get_i16_le(), byte_len as i16);
         let mut written_bytes = vec![0u8; byte_len as usize];
@@ -1483,10 +1487,9 @@ mod binary_tests {
     async fn test_write_large_binary() {
         let payload: Vec<u8> = vec![0xAB; 9000];
         // Doesn't matter for serialization, but we need a length.
-        let len = payload.len() / 2;
         let byte_len = payload.len() as u32;
         let val = Some(payload.clone());
-        let bit = SqlType::VarBinary(val, len as u32);
+        let bit = SqlType::VarBinary(val, byte_len as u16);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::default();
 
@@ -1499,7 +1502,7 @@ mod binary_tests {
 
         let copied_bytes = payload.clone();
         let val = Some(payload);
-        bit.serialize_binary(&mut packet_writer, &val)
+        bit.serialize_binary(&mut packet_writer, &val, byte_len as u16)
             .await
             .unwrap();
         packet_writer.finalize().await.unwrap();
@@ -1517,7 +1520,7 @@ mod binary_tests {
         let mut test_cursor = Cursor::new(reassembled_packet);
 
         assert_eq!(test_cursor.get_u8(), TdsDataType::BigVarBinary as u8); // Valdate tds type
-        assert_eq!(test_cursor.get_u16_le(), MAX_SHORT_DATA_LENGTH);
+        assert_eq!(test_cursor.get_u16_le(), u16::MAX);
 
         // The PLP length is the total length of the data.
         assert_eq!(test_cursor.get_u64_le(), byte_len as u64);
@@ -1548,7 +1551,7 @@ mod binary_tests {
         );
         let val = None;
 
-        bit.serialize_binary(&mut packet_writer, &val)
+        bit.serialize_binary(&mut packet_writer, &val, 100)
             .await
             .unwrap();
         packet_writer.finalize().await.unwrap();
@@ -1557,8 +1560,8 @@ mod binary_tests {
         let mut test_cursor = Cursor::new(payload);
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
         assert_eq!(test_cursor.get_u8(), TdsDataType::BigVarBinary as u8); // Valdate tds type
-        assert_eq!(test_cursor.get_i16_le(), 2i16); // Size of type. 2 bytes when NULL.
-        assert_eq!(test_cursor.get_i16_le(), VAR_NULL_LENGTH as i16);
+        assert_eq!(test_cursor.get_u16_le(), 100); // Size of type. 2 bytes when NULL.
+        assert_eq!(test_cursor.get_u64_le(), u64::MAX);
     }
 }
 
@@ -1572,9 +1575,7 @@ mod nvarchar_tests {
         datatypes::{
             sql_string::SqlString,
             sqldatatypes::TdsDataType,
-            sqltypes::{
-                MAX_SHORT_DATA_LENGTH, PLP_NULL, PLP_TERMINATOR_CHUNK_LEN, SqlType, VAR_NULL_LENGTH,
-            },
+            sqltypes::{PLP_NULL, PLP_TERMINATOR_CHUNK_LEN, SqlType},
         },
         message::messages::PacketType,
         read_write::{
@@ -1592,7 +1593,7 @@ mod nvarchar_tests {
         let len = sql_string.bytes.len() / 2;
         let byte_len = sql_string.bytes.len() as u32;
         let val = Some(sql_string);
-        let bit = SqlType::NVarchar(val, len as u32);
+        let bit = SqlType::NVarchar(val, len as u16);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::default();
 
@@ -1607,7 +1608,7 @@ mod nvarchar_tests {
         let sql_string = SqlString::from_utf8_string(payload.to_string());
         let copied_bytes = sql_string.bytes.clone();
         let val = Some(sql_string);
-        bit.serialize_nvarchar(&mut packet_writer, &collation, &val)
+        bit.serialize_nvarchar(&mut packet_writer, &collation, &val, len as u16)
             .await
             .unwrap();
         packet_writer.finalize().await.unwrap();
@@ -1616,10 +1617,10 @@ mod nvarchar_tests {
         let mut test_cursor = Cursor::new(payload);
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
         assert_eq!(test_cursor.get_u8(), TdsDataType::NVarChar as u8); // Valdate tds type
-        assert_eq!(test_cursor.get_i16_le(), byte_len as i16);
+        assert_eq!(test_cursor.get_u16_le(), len as u16);
         let _ignore_collation_info = test_cursor.get_u32();
         let _ignore_collation_sortid = test_cursor.get_u8();
-        assert_eq!(test_cursor.get_i16_le(), byte_len as i16);
+        assert_eq!(test_cursor.get_u16_le(), byte_len as u16);
         let mut written_bytes = vec![0u8; byte_len as usize];
         test_cursor.copy_to_slice(&mut written_bytes);
         assert_eq!(written_bytes, copied_bytes); // size for Some Data
@@ -1633,7 +1634,7 @@ mod nvarchar_tests {
         let len = sql_string.bytes.len() / 2;
         let byte_len = sql_string.bytes.len() as u32;
         let val = Some(sql_string);
-        let bit = SqlType::NVarchar(val, len as u32);
+        let bit = SqlType::NVarchar(val, len as u16);
 
         let mut mock_reader_writer = MockNetworkReaderWriter::default();
 
@@ -1648,7 +1649,7 @@ mod nvarchar_tests {
         let sql_string = SqlString::from_utf8_string(payload.to_string());
         let copied_bytes = sql_string.bytes.clone();
         let val = Some(sql_string);
-        bit.serialize_nvarchar(&mut packet_writer, &collation, &val)
+        bit.serialize_nvarchar(&mut packet_writer, &collation, &val, len as u16)
             .await
             .unwrap();
         packet_writer.finalize().await.unwrap();
@@ -1666,7 +1667,9 @@ mod nvarchar_tests {
         let mut test_cursor = Cursor::new(reassembled_packet);
 
         assert_eq!(test_cursor.get_u8(), TdsDataType::NVarChar as u8); // Valdate tds type
-        assert_eq!(test_cursor.get_u16_le(), MAX_SHORT_DATA_LENGTH);
+
+        // Metadata length > 8000 is changed to u16::MAX.
+        assert_eq!(test_cursor.get_u16_le(), u16::MAX);
         let _ignore_collation_info = test_cursor.get_u32();
         let _ignore_collation_sortid = test_cursor.get_u8();
 
@@ -1698,9 +1701,9 @@ mod nvarchar_tests {
             None,
         );
         let collation = SqlCollation::default();
-
+        let size = u16::MAX;
         let val = None;
-        bit.serialize_nvarchar(&mut packet_writer, &collation, &val)
+        bit.serialize_nvarchar(&mut packet_writer, &collation, &val, size)
             .await
             .unwrap();
         packet_writer.finalize().await.unwrap();
@@ -1709,7 +1712,7 @@ mod nvarchar_tests {
         let mut test_cursor = Cursor::new(payload);
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
         assert_eq!(test_cursor.get_u8(), TdsDataType::NVarChar as u8); // Valdate tds type
-        assert_eq!(test_cursor.get_u16_le(), VAR_NULL_LENGTH); // Size of type. 2 bytes when NULL.
+        assert_eq!(test_cursor.get_u16_le(), u16::MAX); // Size of type. 2 bytes when NULL.
         let _ignore_collation_info = test_cursor.get_u32();
         let _ignore_collation_sortid = test_cursor.get_u8();
         assert_eq!(test_cursor.get_u64_le(), PLP_NULL);
