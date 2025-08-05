@@ -293,8 +293,8 @@ impl PreloginHandler<'_> {
         let response = PreloginResponse {};
 
         // TODO: Convert panics to Error objects.
-        let response_model = &response.deserialize(reader_writer).await;
-        if request_model.mars_enabled && !response_model.mars_enabled.unwrap() {
+        let response_model = &response.deserialize(reader_writer).await?;
+        if request_model.mars_enabled && !response_model.mars_enabled.unwrap_or(false) {
             panic!("Server does not support MARS.")
         }
 

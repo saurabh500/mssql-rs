@@ -167,7 +167,7 @@ impl PreloginResponse {
     pub(crate) async fn deserialize<T: TdsPacketReader>(
         &self,
         packet_reader: &mut T,
-    ) -> PreloginResponseModel {
+    ) -> TdsResult<PreloginResponseModel> {
         struct OptionContext {
             option: OptionType,
             length: usize,
@@ -175,14 +175,14 @@ impl PreloginResponse {
         let mut contexts = VecDeque::new();
         packet_reader.reset_reader();
         loop {
-            let token = packet_reader.read_byte().await.unwrap();
+            let token = packet_reader.read_byte().await?;
             if token == 0xFF {
                 break;
             }
 
             let option = OptionType::from(token);
-            let _ = packet_reader.read_int16_big_endian().await; // offset.
-            let length = packet_reader.read_int16_big_endian().await.unwrap();
+            let _ = packet_reader.read_int16_big_endian().await?; // offset.
+            let length = packet_reader.read_int16_big_endian().await?;
 
             // Record the length and option type for later deserialization of the value.
             contexts.push_back(OptionContext {
@@ -212,28 +212,25 @@ impl PreloginResponse {
                     result.sql_server_version = SQLServerVersion::from(major);
                 }
                 OptionType::Encryption => {
-                    result.encryption =
-                        EncryptionType::from(packet_reader.read_byte().await.unwrap());
+                    result.encryption = EncryptionType::from(packet_reader.read_byte().await?);
                     // encryption type.
                 }
                 OptionType::InstOpt => {
-                    result.dbinstance_valid =
-                        Option::from(packet_reader.read_byte().await.unwrap() == 0);
+                    result.dbinstance_valid = Option::from(packet_reader.read_byte().await? == 0);
                 }
                 OptionType::Mars => {
-                    result.mars_enabled =
-                        Option::from(packet_reader.read_byte().await.unwrap() == 1);
+                    result.mars_enabled = Option::from(packet_reader.read_byte().await? == 1);
                 }
                 OptionType::FedAuthRequired => {
-                    result.federated_auth_supported = packet_reader.read_byte().await.unwrap() == 1;
+                    result.federated_auth_supported = packet_reader.read_byte().await? == 1;
                 }
                 _ => {
                     // Todo: Logging that this is being skipped.
-                    packet_reader.skip_bytes(context.length).await.unwrap();
+                    packet_reader.skip_bytes(context.length).await?;
                 }
             };
         }
-        result
+        Ok(result)
     }
 }
 
@@ -522,7 +519,7 @@ pub(crate) mod tests {
                 .returning(move || Ok(b));
         }
 
-        let response_model = block_on(response.deserialize(&mut mocked_packet_reader));
+        let response_model = block_on(response.deserialize(&mut mocked_packet_reader)).unwrap();
 
         // Compare the guid, which is auto-generated.
         assert_eq!(response_model.mars_enabled, Option::from(true));
