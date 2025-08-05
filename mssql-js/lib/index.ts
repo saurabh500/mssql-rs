@@ -13,6 +13,7 @@ import {
   NapiSqlMoney,
   Parameter,
   NapiF64,
+  OutputParams,
 } from './generated/index.js';
 import { connect } from './generated/index.js';
 
@@ -90,6 +91,13 @@ export class SqlJsConnection {
     }
   }
 
+  async executeProc(
+    storedProcName: string,
+    namedParams: Array<Parameter>,
+  ): Promise<void> {
+    return this.internal_connection.executeProc(storedProcName, namedParams);
+  }
+
   async nextResultSet() {
     return this.internal_connection.nextResultSet();
   }
@@ -102,34 +110,6 @@ export class SqlJsConnection {
     return this.internal_connection.getMetadata();
   }
 
-  async nextRow(): Promise<Array<Row>> {
-    let metadata = await this.internal_connection.getMetadata();
-
-    if (!metadata) {
-      return [];
-    }
-    let next_row = await this.internal_connection.nextRowInResultset();
-    if (!next_row) {
-      if (!(await this.internal_connection.nextResultSet())) {
-        return [];
-      } else {
-        metadata = await this.internal_connection.getMetadata();
-        if (!metadata) {
-          return [];
-        }
-        next_row = await this.internal_connection.nextRowInResultset();
-      }
-    }
-    let items: Array<Row> = [];
-    if (next_row) {
-      next_row.forEach((rowVal, index) => {
-        let transformed = this.transform(metadata[index], rowVal);
-        items.push(transformed);
-      });
-    }
-    return items;
-  }
-
   async close(): Promise<void> {
     return this.internal_connection.close();
   }
@@ -138,6 +118,11 @@ export class SqlJsConnection {
     return this.internal_connection.closeQuery();
   }
 
+  async getReturnValues(): Promise<Array<OutputParams> | null> {
+    return this.internal_connection.getReturnValues();
+  }
+
+  // Transforms the NAPI types to JS types based on the metadata.
   transform(
     metadata: Metadata,
     row:

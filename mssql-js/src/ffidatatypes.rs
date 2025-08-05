@@ -14,7 +14,7 @@ use mssql_tds::{
         sqldatatypes::TdsDataType,
         sqltypes::SqlType,
     },
-    query::metadata::ColumnMetadata,
+    query::{metadata::ColumnMetadata, result::ReturnValue},
     token::tokens::SqlCollation,
 };
 use napi::{
@@ -146,6 +146,7 @@ impl TryFrom<TdsDataType> for SqlDataTypes {
 }
 
 #[napi(object)]
+#[derive(Debug)]
 pub struct NapiSqlMoney {
     pub lsb_part: i32, // LSB
     pub msb_part: i32, // MSB - Only populated for Money, 0 for SmallMoney
@@ -170,6 +171,7 @@ impl From<NapiSqlMoney> for SqlMoney {
 }
 
 #[napi(object)]
+#[derive(Debug)]
 pub struct NapiDecimalParts {
     pub is_positive: bool,
     pub scale: u8,
@@ -195,6 +197,25 @@ impl From<NapiDecimalParts> for DecimalParts {
             scale: napi_decimal_parts.scale,
             precision: napi_decimal_parts.precision,
             int_parts: napi_decimal_parts.int_parts,
+        }
+    }
+}
+
+#[napi(object)]
+pub struct OutputParams {
+    pub ordinal: u16,
+    pub name: String,
+    pub value: RowDataType,
+    pub metadata: Metadata,
+}
+
+impl From<ReturnValue> for OutputParams {
+    fn from(return_value: ReturnValue) -> Self {
+        OutputParams {
+            ordinal: return_value.param_ordinal,
+            name: return_value.param_name,
+            value: transform_col(return_value.value),
+            metadata: Metadata::from(return_value.column_metadata.as_ref()),
         }
     }
 }
@@ -284,6 +305,14 @@ pub struct Parameter {
     pub value: RowDataType,
     // Applicable to Varchar, NVarChar, VarBinary, NVarBinary, and similar types
     pub length: Option<u32>,
+    pub direction: ParameterDirection,
+}
+
+#[napi]
+#[derive(Debug)]
+pub enum ParameterDirection {
+    Input,
+    Output,
 }
 
 /// Values are converted from Parameter to SqlType to be sent over the wire.
@@ -513,7 +542,7 @@ fn get_null_sql_type(param: &Parameter) -> Result<SqlType, Error> {
         SqlDataTypes::Text => Ok(SqlType::Text(None)),
         SqlDataTypes::Guid => Ok(SqlType::Uuid(None)),
         SqlDataTypes::VarBinary => Ok(SqlType::VarBinary(None, 0)),
-        SqlDataTypes::VarChar => Ok(SqlType::Varchar(None, 0)),
+        SqlDataTypes::VarChar => Ok(SqlType::VarcharMax(None)),
         SqlDataTypes::Date => Ok(SqlType::Date(None)),
         SqlDataTypes::Time => Ok(SqlType::Time(None)),
         SqlDataTypes::DateTime2 => Ok(SqlType::DateTime2(None)),
@@ -542,57 +571,43 @@ fn get_null_sql_type(param: &Parameter) -> Result<SqlType, Error> {
 pub(crate) fn transform_row(row: Vec<ColumnValues>) -> Vec<RowDataType> {
     let mut ret_val: Vec<RowDataType> = Vec::with_capacity(row.len());
     for col in row {
-        match col {
-            ColumnValues::Int(v) => ret_val.push(RowDataType::B(v)),
-            ColumnValues::Uuid(uuid) => ret_val.push(RowDataType::N(uuid.to_string())),
-            ColumnValues::Bit(v) => ret_val.push(RowDataType::D(v)),
-            ColumnValues::BigInt(v) => ret_val.push(RowDataType::C(v.into())),
-            ColumnValues::TinyInt(v) => ret_val.push(RowDataType::H(v.into())),
-            ColumnValues::SmallInt(v) => ret_val.push(RowDataType::B(v.into())),
-            ColumnValues::Real(v) => ret_val.push(RowDataType::A(v.into())),
-            ColumnValues::Float(v) => ret_val.push(RowDataType::A(v.into())),
-            ColumnValues::Decimal(decimal_parts) => {
-                ret_val.push(RowDataType::M(decimal_parts.into()));
-            }
-            ColumnValues::Numeric(decimal_parts) => {
-                ret_val.push(RowDataType::M(decimal_parts.into()));
-            }
-            ColumnValues::String(sql_string) => {
-                ret_val.push(RowDataType::E(Buffer::from(sql_string.bytes)))
-            }
-            ColumnValues::DateTime(sql_date_time) => {
-                ret_val.push(RowDataType::G(NapiSqlDateTime {
-                    days: sql_date_time.days,
-                    time: sql_date_time.time,
-                }));
-            }
-            ColumnValues::Date(sql_date) => {
-                ret_val.push(RowDataType::H(sql_date.get_days()));
-            }
-            ColumnValues::Time(_time) => ret_val.push(RowDataType::I(NapiSqlTime::from(_time))),
-            ColumnValues::DateTime2(_date_time2) => {
-                ret_val.push(RowDataType::J(NapiSqlDateTime2::from(_date_time2)))
-            }
-            ColumnValues::DateTimeOffset(date_time_offset) => ret_val.push(RowDataType::K(
-                NapiSqlDateTimeOffset::from(date_time_offset),
-            )),
-            ColumnValues::SmallDateTime(sql_small_date_time) => {
-                ret_val.push(RowDataType::G(NapiSqlDateTime {
-                    days: sql_small_date_time.days.into(),
-                    time: sql_small_date_time.time.into(),
-                }));
-            }
-            ColumnValues::SmallMoney(sql_small_money) => {
-                ret_val.push(RowDataType::B(sql_small_money.int_val))
-            }
-            ColumnValues::Money(sql_money) => ret_val.push(RowDataType::L(sql_money.into())),
-            ColumnValues::Bytes(items) => ret_val.push(RowDataType::E(Buffer::from(items))),
-            ColumnValues::Xml(sql_xml) => ret_val.push(RowDataType::E(Buffer::from(sql_xml.bytes))),
-            ColumnValues::Null => ret_val.push(RowDataType::F(Null)),
-            ColumnValues::Json(sql_json) => {
-                ret_val.push(RowDataType::E(Buffer::from(sql_json.bytes)))
-            }
-        }
+        ret_val.push(transform_col(col));
     }
     ret_val
+}
+
+pub fn transform_col(col: ColumnValues) -> RowDataType {
+    match col {
+        ColumnValues::Int(v) => RowDataType::B(v),
+        ColumnValues::Uuid(uuid) => RowDataType::N(uuid.to_string()),
+        ColumnValues::Bit(v) => RowDataType::D(v),
+        ColumnValues::BigInt(v) => RowDataType::C(v.into()),
+        ColumnValues::TinyInt(v) => RowDataType::H(v.into()),
+        ColumnValues::SmallInt(v) => RowDataType::B(v.into()),
+        ColumnValues::Real(v) => RowDataType::A(v.into()),
+        ColumnValues::Float(v) => RowDataType::A(v.into()),
+        ColumnValues::Decimal(decimal_parts) => RowDataType::M(decimal_parts.into()),
+        ColumnValues::Numeric(decimal_parts) => RowDataType::M(decimal_parts.into()),
+        ColumnValues::String(sql_string) => RowDataType::E(Buffer::from(sql_string.bytes)),
+        ColumnValues::DateTime(sql_date_time) => RowDataType::G(NapiSqlDateTime {
+            days: sql_date_time.days,
+            time: sql_date_time.time,
+        }),
+        ColumnValues::Date(sql_date) => RowDataType::H(sql_date.get_days()),
+        ColumnValues::Time(_time) => RowDataType::I(NapiSqlTime::from(_time)),
+        ColumnValues::DateTime2(_date_time2) => RowDataType::J(NapiSqlDateTime2::from(_date_time2)),
+        ColumnValues::DateTimeOffset(date_time_offset) => {
+            RowDataType::K(NapiSqlDateTimeOffset::from(date_time_offset))
+        }
+        ColumnValues::SmallDateTime(sql_small_date_time) => RowDataType::G(NapiSqlDateTime {
+            days: sql_small_date_time.days.into(),
+            time: sql_small_date_time.time.into(),
+        }),
+        ColumnValues::SmallMoney(sql_small_money) => RowDataType::B(sql_small_money.int_val),
+        ColumnValues::Money(sql_money) => RowDataType::L(sql_money.into()),
+        ColumnValues::Bytes(items) => RowDataType::E(Buffer::from(items)),
+        ColumnValues::Xml(sql_xml) => RowDataType::E(Buffer::from(sql_xml.bytes)),
+        ColumnValues::Null => RowDataType::F(Null),
+        ColumnValues::Json(sql_json) => RowDataType::E(Buffer::from(sql_json.bytes)),
+    }
 }

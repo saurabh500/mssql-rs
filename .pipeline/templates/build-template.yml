@@ -133,6 +133,7 @@ steps:
       yarn format:check
       echo "Compiling Typescript files"
       yarn buildapi 
+      echo "Run Tests"
       yarn testci > junit.xml 
     displayName: Build/Test JS Integration
     env:

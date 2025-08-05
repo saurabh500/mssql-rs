@@ -445,6 +445,7 @@ impl SqlType {
                 let should_send_as_plp = string.bytes.len() > VAR_TDS_MAX_LENGTH as usize;
                 if !should_send_as_plp {
                     // Write the length for the metadata.
+                    // TODO: Take this from the actual metadata in the Varchar/Nvarchar variant.
                     packet_writer
                         .write_i16_async(string.bytes.len() as i16)
                         .await?;
@@ -480,12 +481,12 @@ impl SqlType {
                 }
             }
             None => {
-                // Write 2 len to signify that the actual data length is going to be 2 bytes.
-                packet_writer.write_i16_async(2).await?;
+                // TODO: Honor the metadata length here.
+                packet_writer.write_u16_async(VAR_NULL_LENGTH).await?;
                 packet_writer.write_u32_async(db_collation.info).await?;
                 packet_writer.write_byte_async(db_collation.sort_id).await?;
-                // Write 0 data length to signify that the data is NULL.
-                packet_writer.write_u16_async(VAR_NULL_LENGTH).await?;
+                // Write the NULL length.
+                packet_writer.write_u64_async(PLP_NULL).await?;
             }
         }
         Ok(())
@@ -1571,7 +1572,9 @@ mod nvarchar_tests {
         datatypes::{
             sql_string::SqlString,
             sqldatatypes::TdsDataType,
-            sqltypes::{MAX_SHORT_DATA_LENGTH, PLP_TERMINATOR_CHUNK_LEN, SqlType, VAR_NULL_LENGTH},
+            sqltypes::{
+                MAX_SHORT_DATA_LENGTH, PLP_NULL, PLP_TERMINATOR_CHUNK_LEN, SqlType, VAR_NULL_LENGTH,
+            },
         },
         message::messages::PacketType,
         read_write::{
@@ -1706,10 +1709,10 @@ mod nvarchar_tests {
         let mut test_cursor = Cursor::new(payload);
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
         assert_eq!(test_cursor.get_u8(), TdsDataType::NVarChar as u8); // Valdate tds type
-        assert_eq!(test_cursor.get_i16_le(), 2i16); // Size of type. 2 bytes when NULL.
+        assert_eq!(test_cursor.get_u16_le(), VAR_NULL_LENGTH); // Size of type. 2 bytes when NULL.
         let _ignore_collation_info = test_cursor.get_u32();
         let _ignore_collation_sortid = test_cursor.get_u8();
-        assert_eq!(test_cursor.get_i16_le(), VAR_NULL_LENGTH as i16);
+        assert_eq!(test_cursor.get_u64_le(), PLP_NULL);
     }
 }
 

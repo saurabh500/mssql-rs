@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use mssql_tds::{
     connection::tds_client::{ResultSet, ResultSetClient, TdsClient},
@@ -12,13 +12,15 @@ use mssql_tds::{
 };
 use napi::bindgen_prelude::{BigInt, Buffer, Either14, Null};
 use tokio::sync::Mutex;
+use tracing::instrument;
 
 use crate::{
     datatypes::datetime::{
         NapiF64, NapiSqlDateTime, NapiSqlDateTime2, NapiSqlDateTimeOffset, NapiSqlTime,
     },
     ffidatatypes::{
-        CollationMetadata, Metadata, NapiDecimalParts, NapiSqlMoney, Parameter, transform_row,
+        CollationMetadata, Metadata, NapiDecimalParts, NapiSqlMoney, OutputParams, Parameter,
+        ParameterDirection, transform_row,
     },
 };
 
@@ -45,6 +47,12 @@ pub(crate) type RowDataType = Either14<
 pub struct Connection {
     pub(crate) tds_client: Arc<Mutex<TdsClient>>,
     pub(crate) collation: Option<CollationMetadata>,
+}
+
+impl Debug for Connection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connection").finish()
+    }
 }
 
 #[napi]
@@ -107,9 +115,55 @@ impl Connection {
         }
     }
 
+    /// Executes a stored procedure with named parameters.
+    /// The execution executes and positions the client to the first result set.
+    #[napi]
+    pub async fn execute_proc(
+        &self,
+        stored_proc_name: String,
+        named_params: Vec<Parameter>,
+    ) -> napi::Result<()> {
+        let mut client = self.tds_client.lock().await;
+
+        let named_params: Result<Vec<RpcParameter>, napi::Error> = named_params
+            .into_iter()
+            .map(|p| {
+                let options = match &p.direction {
+                    ParameterDirection::Input => StatusFlags::NONE,
+                    ParameterDirection::Output => StatusFlags::BY_REF_VALUE,
+                };
+                let param_name = p.name.clone();
+                let param_value = match p.try_into() {
+                    Ok(value) => value,
+                    Err(e) => {
+                        return Err(napi::Error::from_reason(format!(
+                            "Parameter conversion failed: {e}"
+                        )));
+                    }
+                };
+                Ok(RpcParameter::new(Some(param_name), options, param_value))
+            })
+            .collect();
+
+        let named_params = named_params?;
+
+        let result = client
+            .execute_stored_procedure(stored_proc_name, None, Some(named_params), None, None)
+            .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(napi::Error::from_reason(format!(
+                "Failed to execute stored proc: {e}"
+            ))),
+        }
+    }
+
     // We dont use RowDataType directly as the return type. The binding generation cannot generate aliases for Rust Types,
     // or replace them. Hence to have compilable typings, its necessary that Either* is directly used in the return type.
     #[napi]
+    #[instrument]
+    #[allow(clippy::type_complexity)]
     pub async fn next_row_in_resultset(
         &self,
     ) -> napi::Result<
@@ -157,6 +211,7 @@ impl Connection {
     }
 
     #[napi]
+    #[instrument]
     pub async fn get_metadata(&self) -> napi::Result<Option<Vec<Metadata>>> {
         let mut client = self.tds_client.lock().await;
         let result_set = client.get_current_resultset();
@@ -172,6 +227,7 @@ impl Connection {
     }
 
     #[napi]
+    #[instrument]
     pub async fn next_result_set(&self) -> napi::Result<bool> {
         let mut client = self.tds_client.lock().await;
         let result = client.move_to_next().await;
@@ -181,6 +237,16 @@ impl Connection {
                 "Failed to get next result set: {e}"
             ))),
         }
+    }
+
+    #[napi]
+    #[instrument]
+    pub async fn get_return_values(&self) -> napi::Result<Option<Vec<OutputParams>>> {
+        let client = self.tds_client.lock().await;
+        let return_values = client.get_return_values();
+        let output_params: Vec<OutputParams> =
+            return_values.into_iter().map(OutputParams::from).collect();
+        Ok(Some(output_params))
     }
 
     #[napi]

@@ -3,32 +3,45 @@
 
 import { JsSqlDataTypes, SqlJsConnection } from '.';
 import { DataType } from './datatypes';
-import { SqlDataTypes, Parameter } from './generated';
+import {
+  SqlDataTypes,
+  Parameter,
+  NapiDecimalParts,
+  NapiSqlMoney,
+  NapiSqlDateTime2,
+  NapiSqlDateTime,
+  NapiSqlTime,
+  NapiSqlDateTimeOffset,
+  NapiF64,
+} from './generated';
 
 type ColumnValue = number | string | boolean | Buffer | null | Date | bigint;
 
 // makes a row interface that assigns a key string to a value
-interface RecordSetRow {
+export interface RecordSetRow {
   [key: string]: ColumnValue | Array<ColumnValue>;
 }
 
 // interface to group together column metadata
-interface Column {
+export interface Column {
   index: number;
   name: string;
   type: SqlDataTypes | undefined;
 }
 
 // creates an array of record set rows with columns and row count properties
-interface RecordSet extends Array<RecordSetRow> {
+export interface RecordSet extends Array<RecordSetRow> {
   columns: Column[];
   rowCount: number;
 }
 
-interface IResult {
+export interface IResult {
   IRecordSets: RecordSet[];
   IRecordSet: RecordSet | null;
   rowCount: number;
+  output: {
+    [key: string]: number | string | boolean | Buffer | null | Date | bigint;
+  };
 }
 
 //data types that are able to be parameterized
@@ -89,20 +102,90 @@ export class Request {
         name: varName,
         dataType: sqltype as unknown as SqlDataTypes,
         value: transformed_value,
+        direction: 0,
       });
     } else {
       throw new TypeError('Invalid type provided for input');
     }
   }
 
+  output(varName: string, type: DataType | (() => DataType), value: unknown) {
+    //adds a '@' to a variable name if the use does not put one
+    if (!varName.startsWith('@')) {
+      varName = '@' + varName;
+    }
+    //if the type is a function, call it to get the DataType
+    if (typeof type === 'function') {
+      type = type();
+    }
+
+    let sqltype: JsSqlParameterTypes;
+    if (typeof type === 'object' && 'sqlType' in type) {
+      sqltype = type.sqlType as JsSqlParameterTypes;
+      if (value === undefined) {
+        value = null; // default to null if no value is provided
+      }
+      let transformed_value = type.transformForNapiWrites(
+        value as unknown as number | string | Date | boolean | null,
+        this.connection.getEncoding(),
+      );
+      //collects the input parameters into the global parameters
+      this.params.push({
+        name: varName,
+        dataType: sqltype as unknown as SqlDataTypes,
+        value: transformed_value,
+        direction: 1,
+      });
+    } else {
+      throw new TypeError(
+        'Invalid type provided for output. Expected a DataType object.',
+      );
+    }
+  }
+
   async query(command: string): Promise<IResult> {
     //will correctly run regardless if there are parameters or not
     await this.connection.execute(command, this.params);
+    let result: IResult = await this.createResult();
 
+    await this.connection.closeQuery();
+
+    return result;
+  }
+
+  async execute(storedProcName: string): Promise<IResult> {
+    //will correctly run regardless if there are parameters or not
+    await this.connection.executeProc(storedProcName, this.params);
+
+    let result: IResult = await this.createResult();
+
+    let returnValues = await this.connection.getReturnValues();
+    if (returnValues) {
+      result.output = {};
+      returnValues.forEach((rv) => {
+        let paramName = rv.name;
+        let paramValue = rv.value;
+        if (paramName.charAt(0) === '@') {
+          paramName = paramName.slice(1);
+        }
+
+        let transformedVal = this.connection.transform(rv.metadata, paramValue);
+        result.output[paramName] = transformedVal.rowVal;
+      });
+    }
+    await this.connection.closeQuery();
+
+    return result;
+  }
+
+  // Create the result object by processing all rows from the executed commands.
+  // This iterates over all the result sets and creates the recordsets.
+  private async createResult() {
     let result: IResult = {
       IRecordSets: [],
       IRecordSet: null,
       rowCount: 0,
+      output: {},
     };
 
     // Process all rows from the executed commands
@@ -154,6 +237,7 @@ export class Request {
               currentRow[''].push(transformed.rowVal);
               anonymousColumns++; //only increments the count for anonymous columns after the first
             }
+
             //creates an array only if there are more than 1 anonymous column values
             else {
               currentRow[''] = [currentRow[''], transformed.rowVal];
@@ -178,9 +262,6 @@ export class Request {
 
     result.IRecordSet =
       result.IRecordSets.length > 0 ? result.IRecordSets[0] : null;
-
-    await this.connection.closeQuery();
-
     return result;
   }
 }

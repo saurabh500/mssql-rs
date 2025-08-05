@@ -66,10 +66,10 @@ impl SqlString {
 
 impl Debug for SqlString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let EncodingType::LcidBased(_) = self.encoding_type {
-            write!(f, "{:?}", self.bytes)
-        } else {
-            write!(f, "{:?}", self.to_utf8_string())
+        match self.encoding_type {
+            EncodingType::LcidBased(_) => write!(f, "{:?}", self.bytes),
+            EncodingType::DelayedSet => write!(f, "DelayedSet encoded: {:?}", self.bytes.len()),
+            _ => write!(f, "{:?}", self.to_utf8_string()),
         }
     }
 }

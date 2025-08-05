@@ -120,7 +120,7 @@ impl TdsClient {
 
     // Executes a stored procedure with the given proc_id and parameters.
     // The parameters can be either positional or named.
-    #[instrument(skip(self), level = "info")]
+    #[instrument(skip(self, named_params), level = "info")]
     pub async fn execute_sp_executesql(
         &mut self,
         sql: String,

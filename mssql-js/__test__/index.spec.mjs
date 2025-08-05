@@ -3,9 +3,9 @@
 
 import test from 'ava';
 
-import { JsSqlDataTypes, Request } from '../dist/index.js';
+import { JsSqlDataTypes, Request, SqlJsConnection } from '../dist/index.js';
 import { TYPES } from '../dist/datatypes/types.js';
-import { createContext, openConnection } from './db.mjs';
+import { createContext, nextRow, openConnection } from './db.mjs';
 
 test('connect to sqlserver and fetch multiple result sets', async (t) => {
   try {
@@ -21,7 +21,7 @@ test('connect to sqlserver and fetch multiple result sets', async (t) => {
     let row = undefined;
     let row_count = 0;
     while (true) {
-      row = await connection.nextRow();
+      row = await nextRow(connection);
       if (row && row.length > 0) {
         row_count++;
       } else {
@@ -68,6 +68,7 @@ test('connect to sqlserver and execute parameterized query.', async (t) => {
         name: '@input_parameter',
         dataType: JsSqlDataTypes.Int,
         value: 3,
+        direction: 0,
       },
     ];
 
@@ -76,7 +77,7 @@ test('connect to sqlserver and execute parameterized query.', async (t) => {
     let row = undefined;
     let row_count = 0;
     while (true) {
-      row = await connection.nextRow();
+      row = await nextRow(connection);
       if (row && row.length > 0) {
         row_count++;
       } else {
@@ -184,7 +185,7 @@ test('decimal and numeric conversion', async (t) => {
   ];
   for (const { sql, expected } of testCases) {
     await connection.execute(sql);
-    const rows = await connection.nextRow();
+    const rows = await nextRow(connection);
     t.truthy(rows && rows.length > 0, `Should return a row for: ${sql}`);
     const val = rows[0].rowVal;
     if (typeof expected === 'bigint') {

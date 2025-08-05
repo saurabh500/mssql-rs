@@ -37,3 +37,31 @@ export async function getPassword() {
   }
   return password;
 }
+
+export async function nextRow(connection) {
+  let metadata = await connection.internal_connection.getMetadata();
+
+  if (!metadata) {
+    return [];
+  }
+  let next_row = await connection.internal_connection.nextRowInResultset();
+  if (!next_row) {
+    if (!(await connection.internal_connection.nextResultSet())) {
+      return [];
+    } else {
+      metadata = await connection.internal_connection.getMetadata();
+      if (!metadata) {
+        return [];
+      }
+      next_row = await connection.internal_connection.nextRowInResultset();
+    }
+  }
+  let items = [];
+  if (next_row) {
+    next_row.forEach((rowVal, index) => {
+      let transformed = connection.transform(metadata[index], rowVal);
+      items.push(transformed);
+    });
+  }
+  return items;
+}

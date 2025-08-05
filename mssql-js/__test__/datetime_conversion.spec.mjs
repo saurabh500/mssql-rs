@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import test from 'ava';
-import { createContext, openConnection } from './db.mjs';
+import { createContext, nextRow, openConnection } from './db.mjs';
 
 test('datetime conversion', async (t) => {
   const connection = await openConnection(await createContext());
@@ -90,7 +90,7 @@ test('datetime conversion', async (t) => {
   ];
   for (const { sql, expected } of testCases) {
     await connection.execute(sql);
-    const rows = await connection.nextRow();
+    const rows = await nextRow(connection);
     t.truthy(rows && rows.length > 0, `Should return a row for: ${sql}`);
     const val = rows[0].rowVal;
     if (expected == null) {

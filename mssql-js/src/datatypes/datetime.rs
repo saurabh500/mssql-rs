@@ -9,6 +9,7 @@ use mssql_tds::datatypes::column_values::{
 use napi::{Error, bindgen_prelude::BigInt};
 
 #[napi(object)]
+#[derive(Debug)]
 pub struct NapiF64 {
     pub value: f64,
 }
@@ -36,6 +37,7 @@ impl Deref for NapiF64 {
 }
 
 #[napi(object)]
+#[derive(Debug)]
 pub struct NapiSqlDateTime {
     pub days: i32,
     pub time: u32,
@@ -75,6 +77,7 @@ impl TryFrom<NapiSqlDateTime> for SqlSmallDateTime {
 }
 
 #[napi(object)]
+#[derive(Debug)]
 pub struct NapiSqlTime {
     pub time_nanoseconds: BigInt,
     pub scale: u8,
@@ -90,6 +93,7 @@ impl From<SqlTime> for NapiSqlTime {
 }
 
 #[napi(object)]
+#[derive(Debug)]
 pub struct NapiSqlDateTime2 {
     pub days: u32,
     pub time: NapiSqlTime,
@@ -117,6 +121,7 @@ impl TryFrom<NapiSqlDateTime2> for SqlDateTime2 {
 }
 
 #[napi(object)]
+#[derive(Debug)]
 pub struct NapiSqlDateTimeOffset {
     pub datetime2: NapiSqlDateTime2,
     pub offset: i16,
