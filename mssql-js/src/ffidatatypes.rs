@@ -439,6 +439,13 @@ impl TryFrom<Parameter> for SqlType {
                         )))),
                     }
                 }
+                SqlDataTypes::BigVarBinary => {
+                    let bytes: Vec<u8> = buffer.to_vec();
+                    match param.length {
+                        Some(len) => Ok(SqlType::VarBinary(Some(bytes), len.try_into().unwrap())),
+                        None => Ok(SqlType::VarBinaryMax(Some(bytes))),
+                    }
+                }
                 _ => todo!("Buffer subtype not implemeted"),
             },
             RowDataType::F(_) => get_null_sql_type(&param),
@@ -568,11 +575,11 @@ fn get_null_sql_type(param: &Parameter) -> Result<SqlType, Error> {
         SqlDataTypes::SsVariant => Err(Error::from_reason("SSVariant conversion not implemented")),
         SqlDataTypes::NText => Ok(SqlType::NText(None)),
         SqlDataTypes::FltN => Ok(SqlType::Float(None)),
-        SqlDataTypes::BigVarBinary => Ok(SqlType::VarBinary(None, 0)),
+        SqlDataTypes::BigVarBinary => Ok(SqlType::VarBinaryMax(None)),
         SqlDataTypes::BigVarChar => Ok(SqlType::Varchar(None, 0)),
         SqlDataTypes::BigBinary => Ok(SqlType::Binary(None, 0)),
         SqlDataTypes::BigChar => Ok(SqlType::Char(None, 0)),
-        SqlDataTypes::NVarChar => Ok(SqlType::NVarchar(None, 1)),
+        SqlDataTypes::NVarChar => Ok(SqlType::NVarcharMax(None)),
         SqlDataTypes::NChar => Ok(SqlType::NChar(None, 0)),
         SqlDataTypes::Udt => Err(Error::from_reason("Udt conversion not implemented")),
         SqlDataTypes::Xml => Ok(SqlType::Xml(None)),

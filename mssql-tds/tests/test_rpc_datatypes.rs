@@ -35,6 +35,7 @@ mod rpc_datatypes {
         let bigint_value = 30;
         let bit_value = true;
         let varbinary_value = vec![1, 2, 3, 4];
+        let binary_value = vec![1, 2, 3, 4];
         let float_value = 10.14;
         let real_value = 3.144567;
         let xml_value = "<root>Test</root>".to_string();
@@ -61,7 +62,22 @@ mod rpc_datatypes {
             ),
             ("bigint", SqlType::BigInt(Some(bigint_value))),
             ("bit", SqlType::Bit(Some(bit_value))),
-            ("varbinary", SqlType::VarBinary(Some(varbinary_value), 100)),
+            (
+                "varbinary",
+                SqlType::VarBinary(Some(varbinary_value.clone()), 100),
+            ),
+            (
+                "varbinarymax",
+                SqlType::VarBinaryMax(Some(varbinary_value.clone())),
+            ),
+            (
+                "binary",
+                SqlType::Binary(Some(binary_value.clone()), binary_value.len() as u16),
+            ),
+            (
+                "binary8000",
+                SqlType::Binary(Some(binary_value.clone()), binary_value.len() as u16),
+            ),
             ("float", SqlType::Float(Some(float_value))),
             ("real", SqlType::Real(Some(real_value))),
             ("xml", SqlType::Xml(Some(xml_value.clone().into()))),
@@ -103,6 +119,7 @@ mod rpc_datatypes {
         ];
 
         let query = generate_select_statement(&columns);
+
         let col_count = columns.len();
         let mut named_parameters = Vec::new();
         for column in columns.into_iter() {
@@ -126,7 +143,7 @@ mod rpc_datatypes {
         }
 
         assert_eq!(first_row_columns.len(), col_count);
-        for column in first_row_columns.iter() {
+        for (i, column) in first_row_columns.iter().enumerate() {
             match &column {
                 ColumnValues::Int(value) => {
                     assert_eq!(*value, int_value);
@@ -144,7 +161,12 @@ mod rpc_datatypes {
                     assert_eq!(*value, bit_value);
                 }
                 ColumnValues::Bytes(value) => {
-                    assert_eq!(value, &vec![1, 2, 3, 4]);
+                    let col_name = metadata[i].column_name.clone();
+                    assert_eq!(
+                        value,
+                        &vec![1, 2, 3, 4],
+                        "Binary value mismatch for column {i} {column:?} {col_name}"
+                    );
                 }
                 ColumnValues::Float(value) => {
                     assert_eq!(*value, float_value);
@@ -189,6 +211,8 @@ mod rpc_datatypes {
     async fn test_sp_execute_null_for_data_types() {
         let columns = vec![
             ("nvarchar", SqlType::NVarchar(None, 100)),
+            ("varbinary", SqlType::VarBinary(None, 100)),
+            ("varbinarymax", SqlType::VarBinaryMax(None)),
             ("int", SqlType::Int(None)),
             ("tinyint", SqlType::TinyInt(None)),
             ("bigint", SqlType::BigInt(None)),
@@ -203,6 +227,7 @@ mod rpc_datatypes {
             ("guid", SqlType::Uuid(None)),
             ("decimal", SqlType::Decimal(None)),
             ("smallmoney", SqlType::SmallMoney(None)),
+            ("binary8000", SqlType::Binary(None, 8000)),
             ("money", SqlType::Money(None)),
         ];
 
@@ -307,7 +332,7 @@ mod rpc_datatypes {
         let mut select_statement = String::from("SELECT\n");
 
         for (i, column) in columns.iter().enumerate() {
-            select_statement.push_str(&format!("    @{} AS {}", column.0, column.0));
+            select_statement.push_str(&format!("    @{} AS {} ", column.0, column.0));
             if i < columns.len() - 1 {
                 select_statement.push_str(",\n");
             }

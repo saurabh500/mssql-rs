@@ -61,7 +61,7 @@ impl RpcParameter {
                 "MAX".to_string()
             }
             SqlType::Varchar(_, len) | SqlType::VarBinary(_, len) | SqlType::NVarchar(_, len) => {
-                // The user may have specified an incorrect length.
+                // The user may have specified an large length length.
                 // But we will send it across without tampering and let the server handle it.
                 // We want to send the length as a string based on the intention of API usage, so
                 // that the intention of the user is translated. The same params will also be used by server
@@ -74,6 +74,10 @@ impl RpcParameter {
                 } else {
                     len.to_string()
                 }
+            }
+            SqlType::Binary(_, len) => {
+                // For binary types, we need to send the length.
+                len.to_string()
             }
             SqlType::Time(time) => {
                 // For time, we need to send the scale as the length.

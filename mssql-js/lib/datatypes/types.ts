@@ -14,7 +14,6 @@ import { FloatType } from './FloatType';
 import { NTextType } from './NTextType';
 import { SmallMoneyType } from './SmallMoneyType';
 import { BigIntType } from './BigIntType';
-import { BigVarBinaryType } from './BigVarBinaryType';
 import { BigVarCharType } from './BigVarCharType';
 import { BigBinaryType } from './BigBinaryType';
 import { BigCharType } from './BigCharType';
@@ -50,9 +49,9 @@ export const TYPES = {
   NText: new NTextType(),
   SmallMoney: new SmallMoneyType(),
   BigInt: new BigIntType(),
-  BigVarBinary: new BigVarBinaryType(),
+
   BigVarChar: new BigVarCharType(),
-  BigBinary: new BigBinaryType(),
+
   BigChar: new BigCharType(),
   Udt: new UdtType(),
   Xml: new XmlType(),

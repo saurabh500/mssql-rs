@@ -63,9 +63,9 @@ test('varCharTransformer', (t) => {
 
 // --- Binary test ---
 test('binaryTransformer', (t) => {
-  const transformer = tdsToJsTransformers[JsSqlDataTypes.VarBinary];
+  const transformer = tdsToJsTransformers[JsSqlDataTypes.BigVarBinary];
   const buf = mockBuffer([1, 2, 3]);
-  const result = transformer(mockMetadata(JsSqlDataTypes.VarBinary), buf);
+  const result = transformer(mockMetadata(JsSqlDataTypes.BigVarBinary), buf);
   t.deepEqual(result, buf);
 });
 

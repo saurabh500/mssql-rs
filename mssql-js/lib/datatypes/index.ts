@@ -18,7 +18,6 @@ export * from './FloatType';
 export * from './NTextType';
 export * from './SmallMoneyType';
 export * from './BigIntType';
-export * from './BigVarBinaryType';
 export * from './BigVarCharType';
 export * from './BigBinaryType';
 export * from './BigCharType';

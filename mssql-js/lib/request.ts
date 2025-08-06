@@ -46,13 +46,11 @@ export interface IResult {
 
 //data types that are able to be parameterized
 export type JsSqlParameterTypes =
-  | JsSqlDataTypes.VarBinary
   | JsSqlDataTypes.VarChar
   | JsSqlDataTypes.Date
   | JsSqlDataTypes.Time
   | JsSqlDataTypes.DateTime2
   | JsSqlDataTypes.DateTimeOffset
-  | JsSqlDataTypes.Binary
   | JsSqlDataTypes.Char
   | JsSqlDataTypes.TinyInt
   | JsSqlDataTypes.Bit

@@ -124,7 +124,7 @@ impl SqlType {
             SqlType::NVarcharMax(_) => TdsDataType::NVarChar,
             SqlType::Varchar(_, _) => TdsDataType::BigVarChar,
             SqlType::VarcharMax(_) => TdsDataType::BigVarChar,
-            SqlType::VarBinaryMax(_) => todo!(),
+            SqlType::VarBinaryMax(_) => TdsDataType::BigVarBinary,
             SqlType::Xml(_) => TdsDataType::Xml,
             SqlType::Uuid(_) => TdsDataType::Guid,
             SqlType::Money(_) => TdsDataType::MoneyN,
@@ -162,8 +162,10 @@ impl SqlType {
                 self.serialize_decimalparts(packet_writer, decimal_parts)
                     .await?
             }
-
-            SqlType::Binary(_items, _) => todo!(),
+            SqlType::Binary(_items, param_length) => {
+                self.serialize_binary(packet_writer, _items, *param_length)
+                    .await?;
+            }
             SqlType::Char(_sql_string, _) => todo!(),
             SqlType::NChar(_sql_string, _) => todo!(),
             SqlType::Text(_sql_string) => todo!(),
@@ -590,6 +592,7 @@ impl SqlType {
         binary_data: &Option<Vec<u8>>,
         param_len: u16,
     ) -> TdsResult<()> {
+        // TODO: Should we validate the length here ?
         // Clamp param_len to 65535 if > 8000
         let param_len = if param_len > VAR_TDS_MAX_LENGTH {
             u16::MAX
@@ -626,7 +629,11 @@ impl SqlType {
                 }
             }
             None => {
-                packet_writer.write_u64_async(PLP_NULL).await?;
+                match param_len {
+                    // For max length, we send a PLP NULL, for all other values, we send a NULL length which is u16::MAX.
+                    u16::MAX => packet_writer.write_u64_async(PLP_NULL).await?,
+                    _ => packet_writer.write_u16_async(u16::MAX).await?,
+                };
             }
         }
         Ok(())
@@ -1649,7 +1656,7 @@ mod binary_tests {
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
         assert_eq!(test_cursor.get_u8(), TdsDataType::BigVarBinary as u8); // Valdate tds type
         assert_eq!(test_cursor.get_u16_le(), 100); // Size of type. 2 bytes when NULL.
-        assert_eq!(test_cursor.get_u64_le(), u64::MAX);
+        assert_eq!(test_cursor.get_u16_le(), u16::MAX);
     }
 }
 

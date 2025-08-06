@@ -9,7 +9,7 @@ export class BinaryType extends DataType {
   static readonly maxLength = 8000;
 
   constructor(length: number) {
-    super(JsSqlDataTypes.Binary);
+    super(JsSqlDataTypes.BigBinary);
     if (!(length >= 1 && length <= BinaryType.maxLength)) {
       throw new RangeError(
         `BinaryType length must be between 1 and ${BinaryType.maxLength}. Received: ${length}`,
