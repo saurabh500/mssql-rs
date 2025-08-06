@@ -3,7 +3,7 @@
 
 import test from 'ava';
 
-import { JsSqlDataTypes, Request, SqlJsConnection } from '../dist/index.js';
+import { JsSqlDataTypes, Request } from '../dist/index.js';
 import { TYPES } from '../dist/datatypes/types.js';
 import { createContext, nextRow, openConnection } from './db.mjs';
 

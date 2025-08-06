@@ -3,7 +3,7 @@
 
 import test from 'ava';
 import { createContext, openConnection } from '../../db.mjs';
-import { JsSqlDataTypes, Request } from '../../../dist/index.js';
+import { Request } from '../../../dist/index.js';
 import { TYPES } from '../../../dist/datatypes/types.js';
 
 async function executeScalar(request, query) {

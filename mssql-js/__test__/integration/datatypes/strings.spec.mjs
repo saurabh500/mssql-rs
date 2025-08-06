@@ -4,7 +4,7 @@
 import test from 'ava';
 
 import { createContext, openConnection } from '../../db.mjs';
-import { JsSqlDataTypes, Request } from '../../../dist/index.js';
+import { Request } from '../../../dist/index.js';
 import { TYPES } from '../../../dist/datatypes/types.js';
 
 test('test varchar with request class.', async (t) => {
