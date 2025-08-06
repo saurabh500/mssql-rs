@@ -23,7 +23,7 @@ export const fromNapiToJsSmallDateTimeTransformer = (
 ): Date | null => {
   if (!row) return null;
   const { days, time } = row;
-  return new Date(1900, 0, 1 + days, 0, time);
+  return new Date(Date.UTC(1900, 0, 1 + days, 0, time));
 };
 
 export const fromNapiToJsDateTimeTransformer = (

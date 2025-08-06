@@ -88,6 +88,7 @@ test('datetime conversion', async (t) => {
       expected: null,
     },
   ];
+
   for (const { sql, expected } of testCases) {
     await connection.execute(sql);
     const rows = await nextRow(connection);

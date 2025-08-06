@@ -415,17 +415,29 @@ impl TryFrom<Parameter> for SqlType {
             RowDataType::E(buffer) => match param.data_type {
                 SqlDataTypes::VarChar => {
                     let bytes: Vec<u8> = buffer.to_vec();
-                    Ok(SqlType::VarcharMax(Some(SqlString::new(
-                        bytes,
-                        EncodingType::DelayedSet,
-                    ))))
+                    match param.length {
+                        Some(len) => Ok(SqlType::Varchar(
+                            Some(SqlString::new(bytes, EncodingType::DelayedSet)),
+                            len.try_into().unwrap(),
+                        )),
+                        None => Ok(SqlType::VarcharMax(Some(SqlString::new(
+                            bytes,
+                            EncodingType::DelayedSet,
+                        )))),
+                    }
                 }
                 SqlDataTypes::NVarChar => {
                     let bytes: Vec<u8> = buffer.to_vec();
-                    Ok(SqlType::NVarcharMax(Some(SqlString::new(
-                        bytes,
-                        EncodingType::DelayedSet,
-                    ))))
+                    match param.length {
+                        Some(len) => Ok(SqlType::NVarchar(
+                            Some(SqlString::new(bytes, EncodingType::DelayedSet)),
+                            len.try_into().unwrap(),
+                        )),
+                        None => Ok(SqlType::NVarcharMax(Some(SqlString::new(
+                            bytes,
+                            EncodingType::DelayedSet,
+                        )))),
+                    }
                 }
                 _ => todo!("Buffer subtype not implemeted"),
             },
@@ -560,7 +572,7 @@ fn get_null_sql_type(param: &Parameter) -> Result<SqlType, Error> {
         SqlDataTypes::BigVarChar => Ok(SqlType::Varchar(None, 0)),
         SqlDataTypes::BigBinary => Ok(SqlType::Binary(None, 0)),
         SqlDataTypes::BigChar => Ok(SqlType::Char(None, 0)),
-        SqlDataTypes::NVarChar => Ok(SqlType::NVarchar(None, 0)),
+        SqlDataTypes::NVarChar => Ok(SqlType::NVarchar(None, 1)),
         SqlDataTypes::NChar => Ok(SqlType::NChar(None, 0)),
         SqlDataTypes::Udt => Err(Error::from_reason("Udt conversion not implemented")),
         SqlDataTypes::Xml => Ok(SqlType::Xml(None)),

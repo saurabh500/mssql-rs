@@ -185,6 +185,60 @@ mod rpc_datatypes {
         }
     }
 
+    #[tokio::test]
+    async fn test_sp_execute_null_for_data_types() {
+        let columns = vec![
+            ("nvarchar", SqlType::NVarchar(None, 100)),
+            ("int", SqlType::Int(None)),
+            ("tinyint", SqlType::TinyInt(None)),
+            ("bigint", SqlType::BigInt(None)),
+            ("bit", SqlType::Bit(None)),
+            ("float", SqlType::Float(None)),
+            ("real", SqlType::Real(None)),
+            ("xml", SqlType::Xml(None)),
+            ("varchar", SqlType::VarcharMax(None)),
+            ("date", SqlType::Date(None)),
+            ("datetime", SqlType::DateTime(None)),
+            ("datetime2", SqlType::DateTime2(None)),
+            ("guid", SqlType::Uuid(None)),
+            ("decimal", SqlType::Decimal(None)),
+            ("smallmoney", SqlType::SmallMoney(None)),
+            ("money", SqlType::Money(None)),
+        ];
+
+        let query = generate_select_statement(&columns);
+
+        let col_count = columns.len();
+        let mut named_parameters = Vec::new();
+        for column in columns.into_iter() {
+            let param =
+                RpcParameter::new(Some(format!("@{}", column.0)), StatusFlags::NONE, column.1);
+            named_parameters.push(param);
+        }
+
+        let context = create_context();
+        let mut connection = begin_connection(context).await;
+
+        let batch_result = connection
+            .execute_sp_executesql(query.to_string(), named_parameters, None, None)
+            .await
+            .unwrap();
+
+        let (_, first_row_columns) = get_first_row(batch_result).await.unwrap();
+
+        assert_eq!(first_row_columns.len(), col_count);
+        for column in first_row_columns.iter() {
+            match &column {
+                ColumnValues::Null => {
+                    // Expecting null values for all columns
+                }
+                _ => {
+                    panic!("Expected null values, but got: {column:?}");
+                }
+            }
+        }
+    }
+
     // This test exists so that it can exclusively be skipped or run for SQL servers which support the
     // new capability.
     #[allow(clippy::single_match)]

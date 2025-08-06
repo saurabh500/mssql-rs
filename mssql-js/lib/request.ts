@@ -97,12 +97,14 @@ export class Request {
         value as unknown as number | string | Date | boolean | null,
         this.connection.getEncoding(),
       );
+
       //collects the input parameters into the global parameters
       this.params.push({
         name: varName,
         dataType: sqltype as unknown as SqlDataTypes,
         value: transformed_value,
         direction: 0,
+        length: typeof type.length === 'function' ? type.length() : undefined,
       });
     } else {
       throw new TypeError('Invalid type provided for input');

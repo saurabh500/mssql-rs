@@ -196,11 +196,11 @@ impl SqlType {
                     .await?
             }
             SqlType::Varchar(sql_string, param_len) => {
-                self.serialize_nvarchar(packet_writer, db_collation, sql_string, *param_len)
+                self.serialize_string(packet_writer, db_collation, sql_string, *param_len)
                     .await?
             }
             SqlType::VarcharMax(sql_string) => {
-                self.serialize_nvarchar(packet_writer, db_collation, sql_string, MAX_U16_LENGTH)
+                self.serialize_string(packet_writer, db_collation, sql_string, MAX_U16_LENGTH)
                     .await?
             }
             SqlType::VarBinary(binary_data, param_len) => {
@@ -434,24 +434,36 @@ impl SqlType {
     // If the string is None, it sends a NULL value.
     // If the bytes in string are less than or equal to 8000, it sends the bytes directly.
     // If the bytes in string are greater than 8000, it sends the bytes as a PLP (Partial Length Packet).
-    async fn serialize_nvarchar(
+    async fn serialize_string(
         &self,
         packet_writer: &mut PacketWriter<'_>,
         db_collation: &SqlCollation,
         sql_string: &Option<SqlString>,
         param_len: u16,
     ) -> TdsResult<()> {
-        // Clamp param_len to 65535 if > 8000
-        let param_len = if param_len > VAR_TDS_MAX_LENGTH {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+
+        let max_size = match nullable_type {
+            NullableTdsType::NVarChar => 4000,
+            NullableTdsType::BigVarChar => 8000,
+            _ => {
+                return Err(Error::ImplementationError(
+                    "Incorrect invocation of serialize_string for non-string type".to_owned(),
+                ));
+            } // For other types, we use the max size of 65535.
+        };
+        // Clamp param_len to 65535 if > maxSize
+        let param_len = if param_len > max_size {
             MAX_U16_LENGTH
         } else {
             param_len
         };
+
         let optional_string = match sql_string {
             Some(string) => Some(string),
             None => None,
         };
-        let nullable_type: NullableTdsType = self.get_nullable_type();
+
         packet_writer.write_byte_async(nullable_type as u8).await?;
 
         packet_writer.write_u16_async(param_len).await?;
@@ -491,6 +503,82 @@ impl SqlType {
             None => {
                 // Write the NULL length.
                 packet_writer.write_u64_async(PLP_NULL).await?;
+            }
+        }
+        Ok(())
+    }
+
+    // Serializes the string payload.
+    // The param length is sent as the metadata. If param length is greater than 8000, it is clamped to 65535.
+    // If the string is None, it sends a NULL value.
+    // If the bytes in string are less than or equal to 8000, it sends the bytes directly.
+    // If the bytes in string are greater than 8000, it sends the bytes as a PLP (Partial Length Packet).
+    async fn serialize_nvarchar(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        db_collation: &SqlCollation,
+        sql_string: &Option<SqlString>,
+        param_len: u16,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+
+        // MAX size for Nvarchar parameter is 4000 characters.
+        let max_size = 4000;
+        // Clamp param_len to 65535 if > maxSize
+        let param_len = if param_len > max_size {
+            MAX_U16_LENGTH
+        } else {
+            // NVarchar length takes 2 bytes per character, so we need to multiply by 2.
+            param_len * 2
+        };
+
+        let optional_string = match sql_string {
+            Some(string) => Some(string),
+            None => None,
+        };
+
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+
+        packet_writer.write_u16_async(param_len).await?;
+        packet_writer.write_u32_async(db_collation.info).await?;
+        packet_writer.write_byte_async(db_collation.sort_id).await?;
+
+        match optional_string {
+            Some(string) => {
+                let should_send_as_plp = (string.bytes.len() > VAR_TDS_MAX_LENGTH as usize)
+                    || (param_len == MAX_U16_LENGTH);
+                if !should_send_as_plp {
+                    // Write the length for the metadata.
+                    // Write the length of the actual data.
+                    packet_writer
+                        .write_i16_async(string.bytes.len() as i16)
+                        .await?;
+                    // Write the data.
+                    packet_writer.write_async(&string.bytes).await?;
+                } else {
+                    // Write the PLP length.
+                    packet_writer
+                        .write_u64_async(string.bytes.len() as u64)
+                        .await?;
+
+                    // Write the data chunk length, which is the same as PLP length.
+                    packet_writer
+                        .write_u32_async(string.bytes.len() as u32)
+                        .await?;
+                    packet_writer.write_async(&string.bytes).await?;
+
+                    // Write a zero-length PLP chunk terminator to signal the end of the PLP stream.
+                    packet_writer
+                        .write_u32_async(PLP_TERMINATOR_CHUNK_LEN)
+                        .await?;
+                }
+            }
+            None => {
+                match param_len {
+                    // For max length, we send a PLP NULL, for all other values, we send a NULL length which is u16::MAX.
+                    u16::MAX => packet_writer.write_u64_async(PLP_NULL).await?,
+                    _ => packet_writer.write_u16_async(u16::MAX).await?,
+                };
             }
         }
         Ok(())
@@ -1608,7 +1696,7 @@ mod nvarchar_tests {
         let sql_string = SqlString::from_utf8_string(payload.to_string());
         let copied_bytes = sql_string.bytes.clone();
         let val = Some(sql_string);
-        bit.serialize_nvarchar(&mut packet_writer, &collation, &val, len as u16)
+        bit.serialize_string(&mut packet_writer, &collation, &val, len as u16)
             .await
             .unwrap();
         packet_writer.finalize().await.unwrap();
@@ -1649,7 +1737,7 @@ mod nvarchar_tests {
         let sql_string = SqlString::from_utf8_string(payload.to_string());
         let copied_bytes = sql_string.bytes.clone();
         let val = Some(sql_string);
-        bit.serialize_nvarchar(&mut packet_writer, &collation, &val, len as u16)
+        bit.serialize_string(&mut packet_writer, &collation, &val, len as u16)
             .await
             .unwrap();
         packet_writer.finalize().await.unwrap();
@@ -1703,7 +1791,7 @@ mod nvarchar_tests {
         let collation = SqlCollation::default();
         let size = u16::MAX;
         let val = None;
-        bit.serialize_nvarchar(&mut packet_writer, &collation, &val, size)
+        bit.serialize_string(&mut packet_writer, &collation, &val, size)
             .await
             .unwrap();
         packet_writer.finalize().await.unwrap();

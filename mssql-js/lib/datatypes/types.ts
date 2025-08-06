@@ -54,10 +54,13 @@ export const TYPES = {
   BigVarChar: new BigVarCharType(),
   BigBinary: new BigBinaryType(),
   BigChar: new BigCharType(),
-  NVarChar: new NVarCharType(),
   Udt: new UdtType(),
   Xml: new XmlType(),
   Json: new JsonType(),
+
+  NVarChar(length: number): NVarCharType {
+    return new NVarCharType(length);
+  },
 
   // Parameterized types
   VarBinary(length: number): VarBinaryType {

@@ -66,7 +66,14 @@ impl RpcParameter {
                 // We want to send the length as a string based on the intention of API usage, so
                 // that the intention of the user is translated. The same params will also be used by server
                 // for prepared statements. Hence we shouldn't try to be intelligent here.
-                len.to_string()
+                if (*len > 8000
+                    && matches!(value, SqlType::Varchar(_, _) | SqlType::VarBinary(_, _)))
+                    || (*len > 4000 && matches!(value, SqlType::NVarchar(_, _)))
+                {
+                    "MAX".to_string()
+                } else {
+                    len.to_string()
+                }
             }
             SqlType::Time(time) => {
                 // For time, we need to send the scale as the length.

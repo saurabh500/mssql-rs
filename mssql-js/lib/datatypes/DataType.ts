@@ -13,4 +13,8 @@ export abstract class DataType {
     value: bigint | number | string | Date | boolean | null,
     encoding?: Encoding,
   ): unknown;
+
+  length?(): number | undefined {
+    return undefined; // Default implementation, can be overridden
+  }
 }
