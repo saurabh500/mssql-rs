@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { create_connection } from '../dist/index.js';
+import { create_connection, SqlJsConnection } from '../dist/index.js';
 import fs from 'fs';
 
 export async function openConnection(context) {
@@ -60,7 +60,7 @@ export async function nextRow(connection) {
   let items = [];
   if (next_row) {
     next_row.forEach((rowVal, index) => {
-      let transformed = connection.transform(metadata[index], rowVal);
+      let transformed = SqlJsConnection.transform(metadata[index], rowVal);
       items.push(transformed);
     });
   }

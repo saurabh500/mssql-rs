@@ -169,7 +169,7 @@ export class Request {
           paramName = paramName.slice(1);
         }
 
-        let transformedVal = this.connection.transform(rv.metadata, paramValue);
+        let transformedVal = SqlJsConnection.transform(rv.metadata, paramValue);
         result.output[paramName] = transformedVal.rowVal;
       });
     }
@@ -212,7 +212,7 @@ export class Request {
           if (index >= metadata.length) {
             throw new Error(`Index ${index} out of bounds for metadata array`);
           }
-          let transformed = this.connection.transform(metadata[index], rowVal);
+          let transformed = SqlJsConnection.transform(metadata[index], rowVal);
           //avoids adding the same columns
           if (currentRecordSet.columns.length + anonymousColumns <= index) {
             let column = {

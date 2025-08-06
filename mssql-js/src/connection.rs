@@ -276,10 +276,13 @@ impl Connection {
     #[napi]
     pub async fn begin_transaction(
         &self,
-        isolation_level: SqlTransactionIsolationLevel,
+        isolation_level: NapiIsolationLevel,
+        savepoint_name: Option<String>,
     ) -> napi::Result<()> {
         let mut client = self.tds_client.lock().await;
-        let result = client.begin_transaction(isolation_level.into()).await;
+        let result = client
+            .begin_transaction(isolation_level.into(), savepoint_name)
+            .await;
         match result {
             Ok(_) => Ok(()),
             Err(e) => Err(napi::Error::from_reason(format!(
@@ -287,11 +290,47 @@ impl Connection {
             ))),
         }
     }
+
+    #[napi]
+    pub async fn commit_transaction(&self) -> napi::Result<()> {
+        let mut client = self.tds_client.lock().await;
+        let result = client.commit_transaction().await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(napi::Error::from_reason(format!(
+                "Failed to commit transaction: {e}"
+            ))),
+        }
+    }
+
+    #[napi]
+    pub async fn rollback_transaction(&self, name: Option<String>) -> napi::Result<()> {
+        let mut client = self.tds_client.lock().await;
+        let result = client.rollback_transaction(name).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(napi::Error::from_reason(format!(
+                "Failed to rollback transaction: {e}"
+            ))),
+        }
+    }
+
+    #[napi]
+    pub async fn save_transaction(&self, savepoint_name: String) -> napi::Result<()> {
+        let mut client = self.tds_client.lock().await;
+        let result = client.save_transaction(savepoint_name).await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(napi::Error::from_reason(format!(
+                "Failed to save transaction: {e}"
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 #[napi]
-pub enum SqlTransactionIsolationLevel {
+pub enum NapiIsolationLevel {
     NoChange = 0x00,
     ReadUncommitted = 0x01,
     ReadCommitted = 0x02,
@@ -300,19 +339,15 @@ pub enum SqlTransactionIsolationLevel {
     Snapshot = 0x05,
 }
 
-impl From<SqlTransactionIsolationLevel> for TransactionIsolationLevel {
-    fn from(level: SqlTransactionIsolationLevel) -> Self {
+impl From<NapiIsolationLevel> for TransactionIsolationLevel {
+    fn from(level: NapiIsolationLevel) -> Self {
         match level {
-            SqlTransactionIsolationLevel::NoChange => TransactionIsolationLevel::NoChange,
-            SqlTransactionIsolationLevel::ReadUncommitted => {
-                TransactionIsolationLevel::ReadUncommitted
-            }
-            SqlTransactionIsolationLevel::ReadCommitted => TransactionIsolationLevel::ReadCommitted,
-            SqlTransactionIsolationLevel::RepeatableRead => {
-                TransactionIsolationLevel::RepeatableRead
-            }
-            SqlTransactionIsolationLevel::Serializable => TransactionIsolationLevel::Serializable,
-            SqlTransactionIsolationLevel::Snapshot => TransactionIsolationLevel::Snapshot,
+            NapiIsolationLevel::NoChange => TransactionIsolationLevel::NoChange,
+            NapiIsolationLevel::ReadUncommitted => TransactionIsolationLevel::ReadUncommitted,
+            NapiIsolationLevel::ReadCommitted => TransactionIsolationLevel::ReadCommitted,
+            NapiIsolationLevel::RepeatableRead => TransactionIsolationLevel::RepeatableRead,
+            NapiIsolationLevel::Serializable => TransactionIsolationLevel::Serializable,
+            NapiIsolationLevel::Snapshot => TransactionIsolationLevel::Snapshot,
         }
     }
 }

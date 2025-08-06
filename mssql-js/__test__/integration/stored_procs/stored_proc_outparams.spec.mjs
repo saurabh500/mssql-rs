@@ -42,7 +42,10 @@ test('Get output parameters int from stored procedure', async (t) => {
       Object.keys(result.output).length > 0,
       'Expected output dictionary to have at least one key',
     );
-    t.assert(result.output.hasOwnProperty('paramOut'), 'Expected output to have key paramOut');
+    t.assert(
+      result.output.hasOwnProperty('paramOut'),
+      'Expected output to have key paramOut',
+    );
     t.assert(
       result.output.paramOut === inputoutputvalue,
       `Expected output parameter to match input value, got ${result.output.paramOut}`,
@@ -54,8 +57,6 @@ test('Get output parameters int from stored procedure', async (t) => {
     t.fail('Connection should succeed');
   }
 });
-
-
 
 test('Get output parameters varchar from stored procedure', async (t) => {
   try {
@@ -91,7 +92,10 @@ test('Get output parameters varchar from stored procedure', async (t) => {
       Object.keys(result.output).length > 0,
       'Expected output dictionary to have at least one key',
     );
-    t.assert(result.output.hasOwnProperty('paramOut'), 'Expected output to have key paramOut');
+    t.assert(
+      result.output.hasOwnProperty('paramOut'),
+      'Expected output to have key paramOut',
+    );
     t.assert(
       result.output.paramOut === inputoutputvalue,
       `Expected output parameter to match input value, got ${result.output.paramOut}`,

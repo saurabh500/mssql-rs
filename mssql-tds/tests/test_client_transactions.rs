@@ -21,7 +21,7 @@ mod client_based_iterators {
         let provider = TdsConnectionProvider {};
         let mut client = provider.create_client(context, None).await?;
         client
-            .begin_transaction(TransactionIsolationLevel::ReadCommitted)
+            .begin_transaction(TransactionIsolationLevel::ReadCommitted, None)
             .await?;
 
         client.commit_transaction().await?;

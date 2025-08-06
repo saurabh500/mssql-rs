@@ -161,7 +161,7 @@ impl Request for TransactionManagementRequest {
                 if payload.is_empty() {
                     Err(crate::error::Error::from(Error::new(
                         std::io::ErrorKind::InvalidInput,
-                        "Savepoint name must be non-empty.",
+                        "Saving a transaction without a savepoint name. Savepoint name must be non-empty.",
                     )))?
                 }
                 packet_writer

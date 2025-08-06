@@ -420,6 +420,7 @@ impl TdsClient {
     pub async fn begin_transaction(
         &mut self,
         isolation_level: TransactionIsolationLevel,
+        name: Option<String>,
     ) -> TdsResult<()> {
         if self.execution_context.has_open_batch() {
             return Err(UsageError(
@@ -428,10 +429,30 @@ impl TdsClient {
         }
         let transaction_params = TransactionManagementType::Begin(CreateTxnParams {
             level: isolation_level,
-            name: None,
+            name,
         });
         let transaction =
             TransactionManagementRequest::new(transaction_params, &self.execution_context);
+        let mut packet_writer =
+            transaction.create_packet_writer(self.transport.as_writer(), None, None);
+        transaction.serialize(&mut packet_writer).await?;
+
+        self.consume_transaction_response().await?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self), level = "info")]
+    pub async fn save_transaction(&mut self, name: String) -> TdsResult<()> {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(
+                "Cannot save transaction while another batch is executing.".to_string(),
+            ));
+        }
+        let transaction = TransactionManagementRequest::new(
+            TransactionManagementType::Save(name),
+            &self.execution_context,
+        );
         let mut packet_writer =
             transaction.create_packet_writer(self.transport.as_writer(), None, None);
         transaction.serialize(&mut packet_writer).await?;
@@ -465,7 +486,7 @@ impl TdsClient {
     }
 
     #[instrument(skip(self), level = "info")]
-    pub async fn rollback_transaction(&mut self) -> TdsResult<()> {
+    pub async fn rollback_transaction(&mut self, name: Option<String>) -> TdsResult<()> {
         if self.execution_context.has_open_batch() {
             return Err(UsageError(
                 "Cannot rollback transaction while another batch is executing.".to_string(),
@@ -473,7 +494,7 @@ impl TdsClient {
         }
         let transaction = TransactionManagementRequest::new(
             TransactionManagementType::Rollback {
-                name: None,
+                name,
                 create_txn_params: None,
             },
             &self.execution_context,

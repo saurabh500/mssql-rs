@@ -14,6 +14,7 @@ import {
   Parameter,
   NapiF64,
   OutputParams,
+  NapiIsolationLevel,
 } from './generated/index.js';
 import { connect } from './generated/index.js';
 
@@ -50,6 +51,7 @@ import {
 } from './codepages.js';
 
 export { Request };
+export { Transaction, IsolationLevel } from './transactions.js';
 
 export type { JsClientContext, Connection, Metadata };
 
@@ -61,9 +63,45 @@ export function create_connection(
   );
 }
 
+import { IsolationLevel } from './transactions.js';
+
 export class SqlJsConnection {
   constructor(private internal_connection: Connection) {
     this.internal_connection = internal_connection;
+  }
+
+  /**
+   * Begins a transaction with an optional isolation level and name.
+   */
+  async beginTransaction(
+    isolationLevel: IsolationLevel = IsolationLevel.ReadCommitted,
+    name?: string,
+  ): Promise<void> {
+    return this.internal_connection.beginTransaction(
+      isolationLevel as unknown as NapiIsolationLevel,
+      name,
+    );
+  }
+
+  /**
+   * Commits the current transaction.
+   */
+  async commitTransaction(): Promise<void> {
+    return this.internal_connection.commitTransaction();
+  }
+
+  /**
+   * Rolls back the current transaction or to a savepoint if a name is provided.
+   */
+  async rollbackTransaction(name?: string): Promise<void> {
+    return this.internal_connection.rollbackTransaction(name);
+  }
+
+  /**
+   * Creates a savepoint with the given name in the current transaction.
+   */
+  async saveTransaction(name: string): Promise<void> {
+    return this.internal_connection.saveTransaction(name);
   }
 
   getEncoding(): Encoding {
@@ -123,7 +161,7 @@ export class SqlJsConnection {
   }
 
   // Transforms the NAPI types to JS types based on the metadata.
-  transform(
+  static transform(
     metadata: Metadata,
     row:
       | number
