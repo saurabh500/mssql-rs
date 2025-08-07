@@ -161,3 +161,60 @@ test('test float somevalue', genericMacro, 123.45, 123.45, TYPES.Float);
 test('test float null', genericMacro, null, null, TYPES.Float);
 
 test('test float negative', genericMacro, -123.45, -123.45, TYPES.Float);
+
+test(
+  'test real 3.1222',
+  genericMacro,
+  3.1222,
+  '3.1222',
+  TYPES.Real,
+  undefined,
+  undefined,
+  (value) => {
+    return value.toFixed(4);
+  },
+);
+
+test('test float 3.1222', genericMacro, 3.1222, 3.1222, TYPES.Float);
+
+test(
+  'test real 2.71828',
+  genericMacro,
+  2.71828,
+  '2.71828',
+  TYPES.Real,
+  undefined,
+  undefined,
+  (value) => {
+    return value.toFixed(5);
+  },
+);
+
+test(
+  'test real 3.141592',
+  genericMacro,
+  3.141592,
+  '3.141592',
+  TYPES.Real,
+  null,
+  null,
+  (value) => {
+    return value.toFixed(6);
+  },
+);
+
+test(
+  'test float 3.14159265358979',
+  genericMacro,
+  3.14159265358979,
+  3.14159265358979,
+  TYPES.Float,
+);
+
+test(
+  'test float 2.71828182845905',
+  genericMacro,
+  2.71828182845905,
+  2.71828182845905,
+  TYPES.Float,
+);

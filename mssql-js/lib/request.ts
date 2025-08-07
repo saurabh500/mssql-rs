@@ -3,17 +3,7 @@
 
 import { JsSqlDataTypes, SqlJsConnection } from '.';
 import { DataType } from './datatypes';
-import {
-  SqlDataTypes,
-  Parameter,
-  NapiDecimalParts,
-  NapiSqlMoney,
-  NapiSqlDateTime2,
-  NapiSqlDateTime,
-  NapiSqlTime,
-  NapiSqlDateTimeOffset,
-  NapiF64,
-} from './generated';
+import { SqlDataTypes, Parameter } from './generated';
 
 type ColumnValue = number | string | boolean | Buffer | null | Date | bigint;
 

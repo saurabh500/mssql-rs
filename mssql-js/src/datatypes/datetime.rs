@@ -1,39 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::ops::Deref;
-
 use mssql_tds::datatypes::column_values::{
     SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlSmallDateTime, SqlTime,
 };
 use napi::{Error, bindgen_prelude::BigInt};
 
+// DO NOT use
 #[napi(object)]
 #[derive(Debug)]
 pub struct NapiF64 {
-    pub value: f64,
-}
-
-impl From<f64> for NapiF64 {
-    fn from(value: f64) -> Self {
-        NapiF64 { value }
-    }
-}
-
-impl From<f32> for NapiF64 {
-    fn from(value: f32) -> Self {
-        NapiF64 {
-            value: value as f64,
-        }
-    }
-}
-
-impl Deref for NapiF64 {
-    type Target = f64;
-
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
+    pub value: Vec<u8>,
 }
 
 #[napi(object)]

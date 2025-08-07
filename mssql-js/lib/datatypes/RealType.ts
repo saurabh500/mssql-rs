@@ -15,7 +15,9 @@ export class RealType extends DataType {
   ): unknown {
     if (value === null) return null;
     if (typeof value === 'number') {
-      return { value: value };
+      const buffer = Buffer.alloc(4);
+      buffer.writeFloatLE(value, 0);
+      return buffer;
     }
     throw new TypeError('Expected a number for Real types');
   }

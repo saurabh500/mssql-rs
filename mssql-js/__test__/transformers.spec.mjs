@@ -112,5 +112,13 @@ test('guidTransformer', (t) => {
 // --- Float test ---
 test('floatTransformer', (t) => {
   const transformer = tdsToJsTransformers[JsSqlDataTypes.Float];
-  t.is(transformer(mockMetadata(JsSqlDataTypes.Float), { value: 3.14 }), 3.14);
+  const floatBuffer = Buffer.alloc(4);
+  floatBuffer.writeFloatLE(3.14, 0);
+  let transformedValue = transformer(
+    mockMetadata(JsSqlDataTypes.Float),
+    floatBuffer,
+  );
+  const compareBuffer = Buffer.alloc(4);
+  compareBuffer.writeFloatLE(transformedValue, 0);
+  t.deepEqual(compareBuffer, floatBuffer);
 });

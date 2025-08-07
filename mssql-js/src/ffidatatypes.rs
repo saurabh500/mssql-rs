@@ -319,22 +319,10 @@ pub enum ParameterDirection {
 impl TryFrom<Parameter> for SqlType {
     fn try_from(param: Parameter) -> Result<SqlType, Error> {
         match param.value {
-            RowDataType::A(f64val) => match param.data_type {
-                SqlDataTypes::Flt4 => {
-                    if *f64val < f32::MIN as f64 || *f64val > f32::MAX as f64 {
-                        return Err(Error::from_reason(format!(
-                            "Value {:?} out of range for F32",
-                            *f64val
-                        )));
-                    }
-                    Ok(SqlType::Real(Some(*f64val as f32)))
-                }
-                SqlDataTypes::Flt8 => Ok(SqlType::Float(Some(*f64val))),
-                _ => Err(Error::from_reason(format!(
-                    "Invalid data_type for RowDataType::A: {:?}. Only Flt4 and Flt8 are allowed.",
-                    param.data_type
-                ))),
-            },
+            RowDataType::A(_) => Err(Error::from_reason(format!(
+                "Napi F64 is deprecated. Use Buffers for real / float, received datatype {:?}",
+                param.data_type
+            ))),
             RowDataType::B(v) => {
                 if !matches!(
                     param.data_type,
@@ -412,42 +400,67 @@ impl TryFrom<Parameter> for SqlType {
                 }
                 Ok(SqlType::Bit(Some(bit_val)))
             }
-            RowDataType::E(buffer) => match param.data_type {
-                SqlDataTypes::VarChar => {
-                    let bytes: Vec<u8> = buffer.to_vec();
-                    match param.length {
-                        Some(len) => Ok(SqlType::Varchar(
-                            Some(SqlString::new(bytes, EncodingType::DelayedSet)),
-                            len.try_into().unwrap(),
-                        )),
-                        None => Ok(SqlType::VarcharMax(Some(SqlString::new(
-                            bytes,
-                            EncodingType::DelayedSet,
-                        )))),
+            RowDataType::E(buffer) => {
+                match param.data_type {
+                    SqlDataTypes::VarChar => {
+                        let bytes: Vec<u8> = buffer.to_vec();
+                        match param.length {
+                            Some(len) => Ok(SqlType::Varchar(
+                                Some(SqlString::new(bytes, EncodingType::DelayedSet)),
+                                len.try_into().unwrap(),
+                            )),
+                            None => Ok(SqlType::VarcharMax(Some(SqlString::new(
+                                bytes,
+                                EncodingType::DelayedSet,
+                            )))),
+                        }
                     }
-                }
-                SqlDataTypes::NVarChar => {
-                    let bytes: Vec<u8> = buffer.to_vec();
-                    match param.length {
-                        Some(len) => Ok(SqlType::NVarchar(
-                            Some(SqlString::new(bytes, EncodingType::DelayedSet)),
-                            len.try_into().unwrap(),
-                        )),
-                        None => Ok(SqlType::NVarcharMax(Some(SqlString::new(
-                            bytes,
-                            EncodingType::DelayedSet,
-                        )))),
+                    SqlDataTypes::NVarChar => {
+                        let bytes: Vec<u8> = buffer.to_vec();
+                        match param.length {
+                            Some(len) => Ok(SqlType::NVarchar(
+                                Some(SqlString::new(bytes, EncodingType::DelayedSet)),
+                                len.try_into().unwrap(),
+                            )),
+                            None => Ok(SqlType::NVarcharMax(Some(SqlString::new(
+                                bytes,
+                                EncodingType::DelayedSet,
+                            )))),
+                        }
                     }
-                }
-                SqlDataTypes::BigVarBinary => {
-                    let bytes: Vec<u8> = buffer.to_vec();
-                    match param.length {
-                        Some(len) => Ok(SqlType::VarBinary(Some(bytes), len.try_into().unwrap())),
-                        None => Ok(SqlType::VarBinaryMax(Some(bytes))),
+                    SqlDataTypes::BigVarBinary => {
+                        let bytes: Vec<u8> = buffer.to_vec();
+                        match param.length {
+                            Some(len) => {
+                                Ok(SqlType::VarBinary(Some(bytes), len.try_into().unwrap()))
+                            }
+                            None => Ok(SqlType::VarBinaryMax(Some(bytes))),
+                        }
                     }
+                    SqlDataTypes::Flt4 => {
+                        let real_value = f32::from_le_bytes(buffer.to_vec().as_slice().try_into().map_err(|_| {
+                        Error::from_reason(format!(
+                            "Failed to convert Vec<u8> to [u8; 4] for Flt4 (f32), got {} bytes",
+                            buffer.len()
+                        ))
+                    })?);
+                        Ok(SqlType::Real(Some(real_value)))
+                    }
+                    SqlDataTypes::Flt8 => {
+                        let float_value = f64::from_le_bytes(buffer.to_vec().as_slice().try_into().map_err(|_| {
+                        Error::from_reason(format!(
+                            "Failed to convert Vec<u8> to [u8; 8] for Flt8 (f64), got {} bytes",
+                            buffer.len()
+                        ))
+                    })?);
+                        Ok(SqlType::Float(Some(float_value)))
+                    }
+                    _ => todo!(
+                        "Buffer subtype not implemeted for data_type: {:?}",
+                        param.data_type
+                    ),
                 }
-                _ => todo!("Buffer subtype not implemeted"),
-            },
+            }
             RowDataType::F(_) => get_null_sql_type(&param),
             RowDataType::G(napi_sql_date_time) => match param.data_type {
                 SqlDataTypes::DateTime => {
@@ -603,8 +616,8 @@ pub fn transform_col(col: ColumnValues) -> RowDataType {
         ColumnValues::BigInt(v) => RowDataType::C(v.into()),
         ColumnValues::TinyInt(v) => RowDataType::H(v.into()),
         ColumnValues::SmallInt(v) => RowDataType::B(v.into()),
-        ColumnValues::Real(v) => RowDataType::A(v.into()),
-        ColumnValues::Float(v) => RowDataType::A(v.into()),
+        ColumnValues::Real(real) => RowDataType::E(Buffer::from(real.to_le_bytes().as_slice())),
+        ColumnValues::Float(float) => RowDataType::E(Buffer::from(float.to_le_bytes().as_slice())),
         ColumnValues::Decimal(decimal_parts) => RowDataType::M(decimal_parts.into()),
         ColumnValues::Numeric(decimal_parts) => RowDataType::M(decimal_parts.into()),
         ColumnValues::String(sql_string) => RowDataType::E(Buffer::from(sql_string.bytes)),

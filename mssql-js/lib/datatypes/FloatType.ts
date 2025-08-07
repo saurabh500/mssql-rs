@@ -16,7 +16,9 @@ export class FloatType extends DataType {
   ): unknown {
     if (value === null) return null;
     if (typeof value === 'number') {
-      return { value: value };
+      const buffer = Buffer.alloc(8);
+      buffer.writeDoubleLE(value, 0);
+      return buffer;
     }
     throw new TypeError('Expected a number for Float/Real types');
   }
