@@ -12,6 +12,3 @@ pub mod message;
 pub mod query;
 pub mod read_write;
 pub mod token;
-
-#[cfg(feature = "cli")]
-pub mod cli;

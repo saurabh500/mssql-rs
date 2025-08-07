@@ -5,6 +5,8 @@ use std::io::Error;
 
 use clap::Parser;
 use futures::StreamExt;
+use mssql_tds::core::EncryptionOptions;
+use mssql_tds::core::EncryptionSetting;
 use rustyline::Helper;
 use rustyline::Result as RustylineResult;
 use rustyline::completion::{Completer, Pair};
@@ -13,8 +15,15 @@ use rustyline::hint::Hinter;
 use rustyline::validate::{ValidationContext, ValidationResult, Validator};
 use rustyline::{CompletionType, Config, Editor, error::ReadlineError};
 
-use crate::connection::tds_connection::TdsConnection;
-use crate::core::TdsResult;
+use mssql_tds::connection::tds_connection::TdsConnection;
+use mssql_tds::core::TdsResult;
+
+#[tokio::main]
+async fn main() {
+    if let Err(e) = main_cli().await {
+        eprintln!("Application error: {e}");
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -105,10 +114,10 @@ impl Session {
         while let Some(result) = result_stream.next().await {
             let result_type = result.unwrap();
             match result_type {
-                crate::query::result::QueryResultType::DmlResult(update) => {
+                mssql_tds::query::result::QueryResultType::DmlResult(update) => {
                     println!("Rows updated {update}");
                 }
-                crate::query::result::QueryResultType::ResultSet(result_set) => {
+                mssql_tds::query::result::QueryResultType::ResultSet(result_set) => {
                     let mut row_stream = result_set.into_row_stream()?;
 
                     while let Some(some_row) = row_stream.next().await {
@@ -125,22 +134,8 @@ impl Session {
     }
 }
 
-#[cfg(feature = "cli")]
 pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
-    // let args = Args::parse();
-    // println!("{:?}", args);
-    // let _config_file = args.config_file_path;
-
-    // Create the Rustyline configuration
-
-    // let subscriber = FmtSubscriber::builder()
-    //     .with_max_level(Level::DEBUG)
-    //     .finish();
-    // tracing::subscriber::set_global_default(subscriber).expect("Setting default subscriber failed");
-    // use tracing::Level;
-    // use tracing_subscriber::FmtSubscriber;
-
-    use crate::{
+    use mssql_tds::{
         connection::client_context::{ClientContext, TransportContext},
         connection_provider::tds_connection_provider::TdsConnectionProvider,
     };
@@ -154,15 +149,20 @@ pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
 
     let context = ClientContext {
         transport_context: TransportContext::Tcp {
-            host: "saurabhsingh.database.windows.net".to_string(),
+            host: "localhost".to_string(),
             port: 1433,
         },
-        user_name: "saurabh".to_string(),
+        user_name: "sa".to_string(),
         password: std::fs::read_to_string("/tmp/password")
             .expect("Failed to read password file")
             .trim()
             .to_string(),
-        database: "drivers".to_string(),
+        database: "master".to_string(),
+        encryption_options: EncryptionOptions {
+            mode: EncryptionSetting::On,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
+        },
         ..Default::default()
     };
     let provider = TdsConnectionProvider {};
