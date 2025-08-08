@@ -7,4 +7,4 @@ pub mod tds_connection;
 pub mod transport;
 
 #[cfg(test)]
-mod query_processing_driver_test;
+pub mod query_processing_driver_test;

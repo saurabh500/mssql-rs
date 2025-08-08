@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) mod query_processing_driver {
+pub mod query_processing_driver {
     use crate::connection::tds_client::{ResultSet, ResultSetClient};
     use crate::core::EncryptionOptions;
 
@@ -12,6 +12,7 @@ pub(crate) mod query_processing_driver {
     use crate::message::headers::{TdsHeaders, TransactionDescriptorHeader, write_headers};
     use crate::message::messages::PacketType;
 
+    use crate::read_write::packet_reader::TdsPacketReader;
     use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
     use crate::read_write::token_stream::TdsTokenStreamReader;
     use crate::{
@@ -40,6 +41,46 @@ pub(crate) mod query_processing_driver {
     use tracing_subscriber::FmtSubscriber;
     use uuid::Uuid;
 
+    /// Helper to consolidate ClientContext creation for tests
+    fn create_client_context_from_env(
+        database: Option<String>,
+        packet_size: Option<i16>,
+    ) -> ClientContext {
+        let transport = TransportContext::Tcp {
+            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
+            port: env::var("DB_PORT")
+                .expect("DB_PORT environment variable not set")
+                .parse::<u16>()
+                .expect("DB_PORT must be a valid u16"),
+        };
+        let mut context = ClientContext {
+            transport_context: transport,
+            user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
+            password: env::var("SQL_PASSWORD")
+                .or_else(|_| {
+                    std::fs::read_to_string("/tmp/password")
+                        .map(|s| s.trim().to_string())
+                        .map_err(|_| std::env::VarError::NotPresent)
+                })
+                .expect(
+                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+                ),
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: trust_server_certificate(),
+                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            },
+            ..Default::default()
+        };
+        if let Some(db) = database {
+            context.database = db;
+        }
+        if let Some(ps) = packet_size {
+            context.packet_size = ps;
+        }
+        context
+    }
+
     #[tokio::test]
     async fn test_stored_proc_execution_no_panic() {
         dotenv().ok();
@@ -58,33 +99,7 @@ pub(crate) mod query_processing_driver {
             // Setup the TDS connection.
         }
 
-        let transport = TransportContext::Tcp {
-            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
-            port: env::var("DB_PORT")
-                .expect("DB_PORT environment variable not set")
-                .parse::<u16>()
-                .expect("DB_PORT must be a valid u16"),
-        };
-        let context = ClientContext {
-            transport_context: transport,
-            user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            password: env::var("SQL_PASSWORD")
-                .or_else(|_| {
-                    std::fs::read_to_string("/tmp/password")
-                        .map(|s| s.trim().to_string())
-                        .map_err(|_| std::env::VarError::NotPresent)
-                })
-                .expect(
-                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
-                ),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::On,
-                trust_server_certificate: trust_server_certificate(),
-                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
-            },
-            // database: "drivers".to_string(),
-            ..Default::default()
-        };
+        let context = create_client_context_from_env(None, None);
 
         let mut connection = create_connection(context).await.unwrap();
 
@@ -149,33 +164,7 @@ pub(crate) mod query_processing_driver {
             // Setup the TDS connection.
         }
 
-        let transport = TransportContext::Tcp {
-            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
-            port: env::var("DB_PORT")
-                .expect("DB_PORT environment variable not set")
-                .parse::<u16>()
-                .expect("DB_PORT must be a valid u16"),
-        };
-        let context = ClientContext {
-            transport_context: transport,
-            user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            password: env::var("SQL_PASSWORD")
-                .or_else(|_| {
-                    std::fs::read_to_string("/tmp/password")
-                        .map(|s| s.trim().to_string())
-                        .map_err(|_| std::env::VarError::NotPresent)
-                })
-                .expect(
-                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
-                ),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::On,
-                trust_server_certificate: trust_server_certificate(),
-                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
-            },
-            // database: "drivers".to_string(),
-            ..Default::default()
-        };
+        let context = create_client_context_from_env(None, None);
 
         let mut connection = create_connection(context).await.unwrap();
         let query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
@@ -751,35 +740,7 @@ pub(crate) mod query_processing_driver {
             // Setup the TDS connection.
         }
 
-        let transport = TransportContext::Tcp {
-            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
-            port: env::var("DB_PORT")
-                .expect("DB_PORT environment variable not set")
-                .parse::<u16>()
-                .expect("DB_PORT must be a valid u16"),
-        };
-
-        let context = ClientContext {
-            transport_context: transport,
-            user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            password: env::var("SQL_PASSWORD")
-                .or_else(|_| {
-                    std::fs::read_to_string("/tmp/password")
-                        .map(|s| s.trim().to_string())
-                        .map_err(|_| std::env::VarError::NotPresent)
-                })
-                .expect(
-                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
-                ),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::On,
-                trust_server_certificate: trust_server_certificate(),
-                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
-            },
-            //      database: "drivers".to_string(),
-            packet_size: 512, // Minimal packet size for testing.
-            ..Default::default()
-        };
+        let context = create_client_context_from_env(None, Some(512));
 
         // Dummy request implementation which sends out a SqlBatch split into multiple packets
         // with delays in between.
@@ -846,34 +807,7 @@ pub(crate) mod query_processing_driver {
 
     pub async fn execute_test_query_with_client(query: &str) -> TdsResult<()> {
         dotenv().ok();
-
-        let transport = TransportContext::Tcp {
-            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
-            port: env::var("DB_PORT")
-                .expect("DB_PORT environment variable not set")
-                .parse::<u16>()
-                .expect("DB_PORT must be a valid u16"),
-        };
-        let context = ClientContext {
-            transport_context: transport,
-            user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            password: env::var("SQL_PASSWORD")
-                .or_else(|_| {
-                    std::fs::read_to_string("/tmp/password")
-                        .map(|s| s.trim().to_string())
-                        .map_err(|_| std::env::VarError::NotPresent)
-                })
-                .expect(
-                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
-                ),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::On,
-                trust_server_certificate: trust_server_certificate(),
-                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
-            },
-            // database: "drivers".to_string(),
-            ..Default::default()
-        };
+        let context = create_client_context_from_env(None, None);
         let provider = TdsConnectionProvider {};
         let tds_client = provider.create_client(context, None).await;
         let is_err = tds_client.is_err();
@@ -896,36 +830,8 @@ pub(crate) mod query_processing_driver {
 
     pub async fn execute_test_query(query: &str) -> TdsResult<()> {
         dotenv().ok();
-
-        let transport = TransportContext::Tcp {
-            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
-            port: env::var("DB_PORT")
-                .expect("DB_PORT environment variable not set")
-                .parse::<u16>()
-                .expect("DB_PORT must be a valid u16"),
-        };
-        let context = ClientContext {
-            transport_context: transport,
-            user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-            password: env::var("SQL_PASSWORD")
-                .or_else(|_| {
-                    std::fs::read_to_string("/tmp/password")
-                        .map(|s| s.trim().to_string())
-                        .map_err(|_| std::env::VarError::NotPresent)
-                })
-                .expect(
-                    "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
-                ),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::On,
-                trust_server_certificate: trust_server_certificate(),
-                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
-            },
-            // database: "drivers".to_string(),
-            ..Default::default()
-        };
+        let context = create_client_context_from_env(None, None);
         let mut connection = create_connection(context).await.unwrap();
-
         submit_sql_batch(&mut connection, query.to_string(), true).await
     }
 
@@ -986,6 +892,9 @@ pub(crate) mod query_processing_driver {
 
         let mut parser_context = ParserContext::default();
         let mut _row_count = 0;
+
+        tds_connection.transport.reset_reader();
+
         loop {
             let token = tds_connection
                 .transport
