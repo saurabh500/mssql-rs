@@ -2,8 +2,7 @@
 // Licensed under the MIT License.
 
 import { DataType } from './DataType';
-import { JsSqlDataTypes } from '../.';
-import type { Encoding } from '../codepages';
+import { JsSqlDataTypes } from './enums';
 
 export class BigIntType extends DataType {
   constructor() {

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { JsSqlDataTypes } from '../.';
+import { JsSqlDataTypes } from './enums';
 import type { Encoding } from '../codepages';
 
 export abstract class DataType {

@@ -1,5 +1,5 @@
 import { DataType } from './DataType';
-import { JsSqlDataTypes } from '../.';
+import { JsSqlDataTypes } from './enums';
 import { fromJsToNapiDecimalPartTransformer } from '../transformers/decimal';
 
 export class NumericType extends DataType {

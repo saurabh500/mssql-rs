@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { ImageType } from './ImageType';
 import { TextType } from './TextType';
 import { UniqueIdentifierType } from './UniqueIdentifierType';
@@ -15,7 +18,6 @@ import { NTextType } from './NTextType';
 import { SmallMoneyType } from './SmallMoneyType';
 import { BigIntType } from './BigIntType';
 import { BigVarCharType } from './BigVarCharType';
-import { BigBinaryType } from './BigBinaryType';
 import { BigCharType } from './BigCharType';
 import { NVarCharType } from './NVarCharType';
 import { UdtType } from './UdtType';
@@ -31,6 +33,34 @@ import { CharType } from './CharType';
 import { DecimalType } from './DecimalType';
 import { NumericType } from './NumericType';
 import { NCharType } from './NCharType';
+
+// --- Transformers ---
+import { fromNapiToJsDecimalTransformer } from '../transformers/decimal';
+import {
+  fromNapiToJsSmallDateTimeTransformer,
+  fromNapiToJsDateTimeTransformer,
+  fromNapiToJsDateTransformer,
+  fromNapiToJsDatetime2Transformer,
+  fromNapiToJsDateTimeOffsetTransformer,
+  fromNapiToJsTimeTransformer,
+} from '../transformers/datetime';
+import {
+  nCharNVarCharTransformer,
+  varCharTdsTransformer,
+  varCharTransformer,
+} from '../transformers/string';
+import { fromNapiToJsBinaryTransformer } from '../transformers/binary';
+import { fromNapiToJsBitTransformer } from '../transformers/bit';
+import {
+  fromNapiToJsIntTransformer,
+  fromNapiToJsBigintTransformer,
+} from '../transformers/int';
+import { moneyTransformer, smallMoneyTransformer } from '../transformers/money';
+import { fromNapiToJsGuidTransformer } from '../transformers/guid';
+import { floatTransformer } from '../transformers/float';
+import { Encoding } from '../codepages.js';
+import { Metadata } from '../generated';
+import { JsSqlDataTypes } from './enums';
 
 export const TYPES = {
   Image: new ImageType(),
@@ -92,4 +122,51 @@ export const TYPES = {
   NChar(length: number): NCharType {
     return new NCharType(length);
   },
+};
+
+export interface TdsToJsTransformer {
+  (metadata: Metadata, row: any): any;
+}
+
+export interface JsToTdsTransformer {
+  (row: any, encoding?: Encoding): any;
+}
+
+export const tdsToJsTransformers: Partial<
+  Record<JsSqlDataTypes, TdsToJsTransformer>
+> = {
+  [JsSqlDataTypes.Decimal]: fromNapiToJsDecimalTransformer,
+  [JsSqlDataTypes.Numeric]: fromNapiToJsDecimalTransformer,
+  [JsSqlDataTypes.SmallDateTime]: fromNapiToJsSmallDateTimeTransformer,
+  [JsSqlDataTypes.DateTime]: fromNapiToJsDateTimeTransformer,
+  [JsSqlDataTypes.Date]: fromNapiToJsDateTransformer,
+  [JsSqlDataTypes.DateTime2]: fromNapiToJsDatetime2Transformer,
+  [JsSqlDataTypes.DateTimeOffset]: fromNapiToJsDateTimeOffsetTransformer,
+  [JsSqlDataTypes.Time]: fromNapiToJsTimeTransformer,
+  [JsSqlDataTypes.NChar]: nCharNVarCharTransformer,
+  [JsSqlDataTypes.NVarChar]: nCharNVarCharTransformer,
+  [JsSqlDataTypes.VarChar]: varCharTransformer,
+  [JsSqlDataTypes.Char]: varCharTransformer,
+  [JsSqlDataTypes.BigVarChar]: varCharTransformer,
+  [JsSqlDataTypes.BigChar]: varCharTransformer,
+  [JsSqlDataTypes.BigVarBinary]: fromNapiToJsBinaryTransformer,
+  [JsSqlDataTypes.BigBinary]: fromNapiToJsBinaryTransformer,
+  [JsSqlDataTypes.Image]: fromNapiToJsBinaryTransformer,
+  [JsSqlDataTypes.Bit]: fromNapiToJsBitTransformer,
+  [JsSqlDataTypes.TinyInt]: fromNapiToJsIntTransformer,
+  [JsSqlDataTypes.SmallInt]: fromNapiToJsIntTransformer,
+  [JsSqlDataTypes.Int]: fromNapiToJsIntTransformer,
+  [JsSqlDataTypes.BigInt]: fromNapiToJsBigintTransformer,
+  [JsSqlDataTypes.Money]: moneyTransformer,
+  [JsSqlDataTypes.SmallMoney]: smallMoneyTransformer,
+  [JsSqlDataTypes.UniqueIdentifier]: fromNapiToJsGuidTransformer,
+  [JsSqlDataTypes.Real]: floatTransformer,
+  [JsSqlDataTypes.Float]: floatTransformer,
+  [JsSqlDataTypes.FltN]: floatTransformer,
+};
+
+export const jsToTdstransformers: Partial<
+  Record<JsSqlDataTypes, JsToTdsTransformer>
+> = {
+  [JsSqlDataTypes.VarChar]: varCharTdsTransformer,
 };

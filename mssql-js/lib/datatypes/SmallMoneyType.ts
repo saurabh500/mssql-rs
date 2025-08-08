@@ -1,5 +1,5 @@
 import { DataType } from './DataType';
-import { JsSqlDataTypes } from '../.';
+import { JsSqlDataTypes } from './enums';
 import type { Encoding } from '../codepages';
 import { fromJsToSmallMoneyTransformer } from '../transformers/money';
 

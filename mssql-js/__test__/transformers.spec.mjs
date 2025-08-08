@@ -2,7 +2,8 @@
 // Licensed under the MIT License.
 
 import test from 'ava';
-import { JsSqlDataTypes, tdsToJsTransformers } from '../dist/index.js';
+import { tdsToJsTransformers } from '../dist/datatypes/types.js';
+import { JsSqlDataTypes } from '../dist/datatypes/enums.js';
 
 // Mocks for Metadata and Buffer
 const mockMetadata = (dataType, encoding = undefined) => ({

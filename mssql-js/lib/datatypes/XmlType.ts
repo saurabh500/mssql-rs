@@ -1,5 +1,5 @@
 import { DataType } from './DataType';
-import { JsSqlDataTypes } from '../.';
+import { JsSqlDataTypes } from './enums';
 
 export class XmlType extends DataType {
   constructor() {

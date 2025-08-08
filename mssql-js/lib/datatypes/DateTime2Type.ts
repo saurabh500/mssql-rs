@@ -2,9 +2,9 @@
 // Licensed under the MIT License.
 
 import { DataType } from './DataType';
-import { JsSqlDataTypes } from '../.';
 import type { Encoding } from '../codepages';
 import { fromJsToNapiDatetime2Transformer } from '../transformers/datetime';
+import { JsSqlDataTypes } from './enums';
 
 export class DateTime2Type extends DataType {
   constructor(public scale: number) {

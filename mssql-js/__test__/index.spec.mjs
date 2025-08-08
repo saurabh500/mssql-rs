@@ -3,9 +3,10 @@
 
 import test from 'ava';
 
-import { JsSqlDataTypes, Request } from '../dist/index.js';
+import { Request } from '../dist/index.js';
 import { TYPES } from '../dist/datatypes/types.js';
 import { createContext, nextRow, openConnection } from './db.mjs';
+import { JsSqlDataTypes } from '../dist/datatypes/enums.js';
 
 test('connect to sqlserver and fetch multiple result sets', async (t) => {
   try {

@@ -1,8 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { JsSqlDataTypes, SqlJsConnection } from '.';
+import { SqlJsConnection } from '.';
 import { DataType } from './datatypes';
+import { JsSqlDataTypes } from './datatypes/enums';
 import { SqlDataTypes, Parameter } from './generated';
 
 type ColumnValue = number | string | boolean | Buffer | null | Date | bigint;

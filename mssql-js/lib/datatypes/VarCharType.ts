@@ -1,5 +1,5 @@
 import { DataType } from './DataType';
-import { JsSqlDataTypes } from '../.';
+import { JsSqlDataTypes } from './enums';
 import { varCharTdsTransformer } from '../transformers/string';
 import { Encoding } from '../codepages';
 

@@ -1,5 +1,5 @@
 import { DataType } from './DataType';
-import { JsSqlDataTypes } from '../.';
+import { JsSqlDataTypes } from './enums';
 import { fromJsToNapiSmallDateTimeTransformer } from '../transformers/datetime';
 
 export class SmallDateTimeType extends DataType {

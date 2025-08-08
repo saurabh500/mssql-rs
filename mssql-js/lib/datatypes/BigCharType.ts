@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { DataType } from './DataType';
-import { JsSqlDataTypes } from '../.';
+import { JsSqlDataTypes } from './enums';
 
 export class BigCharType extends DataType {
   constructor() {
