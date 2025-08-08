@@ -85,7 +85,7 @@ test('test bigint null', genericMacro, null, null, TYPES.BigInt);
 test('test bigint negative', genericMacro, -123, -123n, TYPES.BigInt);
 
 test(
-  'test decimal negative',
+  'test decimal negative, default precision and scale',
   genericMacro,
   -123.45,
   // Default scale is 0 and precision is 18
@@ -94,12 +94,44 @@ test(
 );
 
 test(
+  'test decimal negative, custom precision and scale',
+  genericMacro,
+  -123.45,
+  -123.45,
+  TYPES.Decimal(30, 2),
+);
+
+test(
+  'test decimal negative, custom precision and scale for truncating',
+  genericMacro,
+  -123.4532872387,
+  -123.45,
+  TYPES.Decimal(30, 2),
+);
+
+test(
   'test decimal positive',
   genericMacro,
   12323123123.45,
-  // Default scale is 0 and precision is 18
+  // Default scale is 0 and precision is 38
   12323123123,
   TYPES.Decimal,
+);
+
+test(
+  'test numeric negative, custom precision and scale',
+  genericMacro,
+  -123.45,
+  -123.45,
+  TYPES.Numeric(30, 2),
+);
+
+test(
+  'test numeric negative, custom precision and scale for truncating',
+  genericMacro,
+  -123.4532872387,
+  -123.45,
+  TYPES.Numeric(30, 2),
 );
 
 test('test decimal null', genericMacro, null, null, TYPES.Decimal);
@@ -116,12 +148,20 @@ test(
 );
 
 test(
-  'test numeric positive',
+  'test numeric positive,',
   genericMacro,
   12323123123.45,
   // Default scale is 0 and precision is 18
   12323123123,
-  TYPES.Decimal,
+  TYPES.Numeric,
+);
+
+test(
+  'test numeric positive, custom precision and scale for truncating',
+  genericMacro,
+  123.4532872387,
+  123.45,
+  TYPES.Numeric(30, 2),
 );
 
 test('test smallint somevalue', genericMacro, 123, 123, TYPES.SmallInt);
