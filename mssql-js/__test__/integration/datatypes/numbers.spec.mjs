@@ -57,6 +57,10 @@ const genericMacro = async (
   );
 };
 
+test('test bit true', genericMacro, true, true, TYPES.Bit);
+test('test bit false', genericMacro, false, false, TYPES.Bit);
+test('test bit null', genericMacro, null, null, TYPES.Bit);
+
 test('test tinyint somevalue', genericMacro, 123, 123, TYPES.TinyInt);
 test('test tinyint null', genericMacro, null, null, TYPES.TinyInt);
 
