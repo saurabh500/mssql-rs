@@ -1003,7 +1003,7 @@ impl SqlType {
 // this is documented, we will use this map.
 fn get_scale_based_length(time: &SqlTime) -> TdsResult<u8> {
     let scale_based_byte_length: u8 = match time.scale {
-        1 | 2 => 0x03,
+        0..=2 => 0x03,
         3 | 4 => 0x04,
         5..=7 => 0x05,
         _ => {

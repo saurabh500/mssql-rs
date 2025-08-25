@@ -46,6 +46,96 @@ test(
 );
 
 test(
+  'test time somevalue in UTC scale 1, rounded up',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 999)),
+  () => {
+    let expected = new Date(Date.UTC(1970, 0, 1, 12, 34, 57, 0));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.Time(2),
+);
+
+
+test(
+  'test time somevalue in UTC scale 1, right value',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(1970, 0, 1, 12, 34, 56, 210));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.Time(2),
+);
+
+
+test(
+  'test time somevalue in UTC scale 1, scale 3',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(1970, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.Time(3),
+);
+
+
+test(
+  'test time somevalue in UTC scale 1, scale 4',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(1970, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.Time(4),
+);
+
+
+test(
+  'test time somevalue in UTC scale 1, scale 5',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(1970, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.Time(5),
+);
+
+
+test(
+  'test time somevalue in UTC scale 1, scale 7',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(1970, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.Time(7),
+);
+
+
+test(
+  'test time somevalue in UTC scale 1, scale 0',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(1970, 0, 1, 12, 34, 56, 0));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.Time(0),
+);
+
+test(
   'test time somevalue ',
   genericMacro,
   new Date(2023, 0, 1, 12, 34, 56),
