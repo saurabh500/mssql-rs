@@ -1,4 +1,4 @@
-## How to run 
+## How to run
 
 This perf / benchmark can be run with `node query.mjs`
 

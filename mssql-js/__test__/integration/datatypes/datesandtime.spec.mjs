@@ -57,7 +57,6 @@ test(
   TYPES.Time(2),
 );
 
-
 test(
   'test time somevalue in UTC scale 1, right value',
   genericMacro,
@@ -69,7 +68,6 @@ test(
   },
   TYPES.Time(2),
 );
-
 
 test(
   'test time somevalue in UTC scale 1, scale 3',
@@ -83,7 +81,6 @@ test(
   TYPES.Time(3),
 );
 
-
 test(
   'test time somevalue in UTC scale 1, scale 4',
   genericMacro,
@@ -95,7 +92,6 @@ test(
   },
   TYPES.Time(4),
 );
-
 
 test(
   'test time somevalue in UTC scale 1, scale 5',
@@ -109,7 +105,6 @@ test(
   TYPES.Time(5),
 );
 
-
 test(
   'test time somevalue in UTC scale 1, scale 7',
   genericMacro,
@@ -121,7 +116,6 @@ test(
   },
   TYPES.Time(7),
 );
-
 
 test(
   'test time somevalue in UTC scale 1, scale 0',
@@ -160,6 +154,102 @@ test(
 test('test date null in UTC', genericMacro, null, null, TYPES.Date);
 
 test(
+  'test datetime2 somevalue in UTC, scale 1',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 200));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTime2(1),
+);
+
+test(
+  'test datetime2 somevalue in UTC, scale 2',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 210));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTime2(2),
+);
+
+test(
+  'test datetime2 somevalue in UTC, scale 3',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTime2(3),
+);
+
+test(
+  'test datetime2 somevalue in UTC, scale 4',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTime2(4),
+);
+
+test(
+  'test datetime2 somevalue in UTC, scale 5',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTime2(5),
+);
+
+test(
+  'test datetime2 somevalue in UTC, scale 6',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTime2(6),
+);
+
+test(
+  'test datetime2 somevalue in UTC, scale 7',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTime2(7),
+);
+
+test(
+  'test datetime2 somevalue in UTC, scale 0',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTime2(0),
+);
+
+test(
   'test datetime2 somevalue in UTC',
   genericMacro,
   new Date(Date.UTC(2023, 0, 1, 12, 34, 56)),
@@ -183,6 +273,102 @@ test(
     return expected;
   },
   TYPES.DateTimeOffset,
+);
+
+test(
+  'test DateTimeOffset somevalue in UTC, scale 1',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 200));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTimeOffset(1),
+);
+
+test(
+  'test DateTimeOffset somevalue in UTC, scale 2',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 210));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTimeOffset(2),
+);
+
+test(
+  'test DateTimeOffset somevalue in UTC, scale 3',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTimeOffset(3),
+);
+
+test(
+  'test DateTimeOffset somevalue in UTC, scale 4',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTimeOffset(4),
+);
+
+test(
+  'test DateTimeOffset somevalue in UTC, scale 5',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTimeOffset(5),
+);
+
+test(
+  'test DateTimeOffset somevalue in UTC, scale 6',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTimeOffset(6),
+);
+
+test(
+  'test DateTimeOffset somevalue in UTC, scale 7',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56, 212));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTimeOffset(7),
+);
+
+test(
+  'test DateTimeOffset somevalue in UTC, scale 0',
+  genericMacro,
+  new Date(Date.UTC(2023, 0, 1, 12, 34, 56)),
+  () => {
+    let expected = new Date(Date.UTC(2023, 0, 1, 12, 34, 56));
+    expected.nanosecondsDelta = 0;
+    return expected;
+  },
+  TYPES.DateTimeOffset(0),
 );
 
 test(

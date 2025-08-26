@@ -23,9 +23,11 @@ export class DateTimeOffsetType extends DataType {
   }
   transformForNapiWrites(
     value: bigint | number | string | Date | boolean | null,
-    _encoding?: Encoding,
   ): unknown {
     this.validate(value);
-    return fromJsToNapiDateTimeOffsetTransformer(value as Date | null);
+    return fromJsToNapiDateTimeOffsetTransformer(
+      value as Date | null,
+      this.scale,
+    );
   }
 }

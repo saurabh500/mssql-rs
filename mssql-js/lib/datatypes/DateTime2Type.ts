@@ -23,9 +23,8 @@ export class DateTime2Type extends DataType {
   }
   transformForNapiWrites(
     value: bigint | number | string | Date | boolean | null,
-    _encoding?: Encoding,
   ): unknown {
     this.validate(value);
-    return fromJsToNapiDatetime2Transformer(value as Date | null);
+    return fromJsToNapiDatetime2Transformer(value as Date | null, this.scale);
   }
 }
