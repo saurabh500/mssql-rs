@@ -28,6 +28,100 @@ test('test varchar with request class.', async (t) => {
   }
 });
 
+test('test varchar size with request class.', async (t) => {
+  try {
+    const connection = await openConnection(await createContext());
+    t.pass('Connection successful');
+    let query = 'select @str as string;';
+
+    let request = new Request(connection);
+
+    request.input('@str', TYPES.VarChar(5), 'tests');
+
+    let result = await request.query(query);
+
+    t.assert(result.rowCount === 1, 'Expected to fetch exactly 1 row');
+    t.assert(result.IRecordSet[0].string === 'tests', "Expected to get the input string");
+    await connection.close();
+    t.pass('Query executed successfully');
+  } catch (error) {
+    t.log('Connection failed:', error);
+    t.fail('Connection should succeed');
+  }
+});
+
+test('test varchar size with smaller data with request class.', async (t) => {
+  try {
+    const connection = await openConnection(await createContext());
+    t.pass('Connection successful');
+    let query = 'select @str as string;';
+
+    let request = new Request(connection);
+
+    request.input('@str', TYPES.VarChar(5), 'hi');
+
+    let result = await request.query(query);
+
+    t.assert(result.rowCount === 1, 'Expected to fetch exactly 1 row');
+    t.assert(result.IRecordSet[0].string === 'hi', "Expected to get the input string");
+    await connection.close();
+    t.pass('Query executed successfully');
+  } catch (error) {
+    t.log('Connection failed:', error);
+    t.fail('Connection should succeed');
+  }
+});
+
+test('test varchar size with larger data with request class.', async (t) => {
+  try {
+    const connection = await openConnection(await createContext());
+    t.pass('Connection successful');
+    let query = 'select @str as string;';
+
+    let request = new Request(connection);
+
+    request.input('@str', TYPES.VarChar(5), 'hello world');
+
+    //expect the query to throw an error 
+    await t.throwsAsync(request.query(query));
+    await connection.close();
+    t.pass('Query correctly failed');
+  } catch (error) {
+    t.log('Connection failed:', error);
+    t.fail('Connection should succeed');
+  }
+});
+
+test('varchar with various sizes.', async (t) => {
+  // Test with different sizes
+  const sizes = [1, 10, 100, 1000, 4000];
+  for (const size of sizes) {
+    try {
+      let connection = await openConnection(await createContext());
+      let query = 'select @str as string;';
+      let request = new Request(connection);
+      const inputString = 'a'.repeat(size);
+      request.input('@str', TYPES.VarChar(size), inputString);
+      let result = await request.query(query);
+      t.assert(
+        result.rowCount === 1,
+        `Expected to fetch exactly 1 row for size ${size}`,
+      );
+      let firstRowDictionary = Object.values(result.IRecordSet)[0];
+      t.is(
+        firstRowDictionary.string,
+        inputString,
+        `Expected string to match for size ${size}`,
+      );
+      await connection.close();
+    } catch (error) {
+      t.log(`Connection failed for size ${size}:`, error);
+      t.fail(`Connection should succeed for size ${size}`);
+    }
+    t.pass('All NVarChar size tests passed successfully');
+  }
+});
+
 test('test nvarchar with request class.', async (t) => {
   try {
     const connection = await openConnection(await createContext());
