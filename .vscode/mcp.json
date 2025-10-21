@@ -5,8 +5,8 @@
 			"type": "http",
 			"headers": {
 				"x-mcp-ec-organization": "sqlclientdrivers",
-				"x-mcp-ec-project": "SqlDevX",
-				"x-mcp-ec-repository": "RustPrototype",
+				"x-mcp-ec-project": "mssql-rs",
+				"x-mcp-ec-repository": "mssql-tds",
 				"x-mcp-ec-branch": "main"
 			}
 		}
