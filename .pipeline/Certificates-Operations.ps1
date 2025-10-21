@@ -34,7 +34,7 @@ function New-And-Install-Certificates($instanceName) {
 
     Set-Acl -Path $path -AclObject $permissions
 
-    $registryPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL16.$instanceName\MSSQLServer\SuperSocketNetLib"
+    $registryPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL17.$instanceName\MSSQLServer\SuperSocketNetLib"
 
     Set-ItemProperty -Path $registryPath -Name "Certificate" -Value $thumbprint
 
