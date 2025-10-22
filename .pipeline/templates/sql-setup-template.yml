@@ -34,6 +34,26 @@ steps:
     env:
       SQL_PASSWORD: $(SQL_PASSWORD)
 
+  - task: PowerShell@2
+    displayName: 'Enable SQL Browser service and network protocols'
+    inputs:
+      targetType: 'inline'
+      script: |
+        # Check and enable SQL Browser service if not running
+        $browserService = Get-Service -Name 'SQLBrowser' -ErrorAction SilentlyContinue
+        if ($browserService) {
+          if ($browserService.Status -ne 'Running') {
+            echo "SQL Browser service is not running. Enabling and starting it..."
+            Set-Service -Name 'SQLBrowser' -StartupType Automatic
+            Start-Service -Name 'SQLBrowser'
+            echo "SQL Browser service started successfully"
+          } else {
+            echo "SQL Browser service is already running"
+          }
+        } else {
+          echo "SQL Browser service not found on this system"
+        }
+
 
 - ${{ if eq(parameters.buildTarget, 'Linux') }}:
   - task: DockerInstaller@0
