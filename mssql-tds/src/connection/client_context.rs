@@ -218,9 +218,8 @@ impl TransportContext {
     pub fn get_server_name(&self) -> &String {
         match self {
             TransportContext::Tcp { host, .. } => host,
-            TransportContext::NamedPipe { pipe_name } => pipe_name,
             _ => {
-                unimplemented!("Transport server name not available");
+                unimplemented!("Transport is not TCP");
             }
         }
     }
