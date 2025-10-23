@@ -121,13 +121,14 @@ pub(crate) async fn create_transport(
         #[cfg(windows)]
         TransportContext::NamedPipe { pipe_name } => {
             info!("Connecting to Named Pipe: {}", pipe_name);
-            
+
             // Create a Named Pipe client
             use tokio::net::windows::named_pipe::ClientOptions;
             let pipe_client = ClientOptions::new().open(pipe_name)?;
-            
+
             info!("Connected to Named Pipe: {}", pipe_name);
-            return create_named_pipe_transport(pipe_client, encryption_options, encryption_mode).await;
+            return create_named_pipe_transport(pipe_client, encryption_options, encryption_mode)
+                .await;
         }
         #[cfg(not(windows))]
         TransportContext::NamedPipe { .. } => {
@@ -162,9 +163,7 @@ pub(crate) async fn create_transport(
                 server_host_name: transport_context.get_server_name().to_string(),
                 encryption_options,
             };
-            let encrypted_stream = ssl_handler
-                .enable_ssl_async(Box::new(stream))
-                .await?;
+            let encrypted_stream = ssl_handler.enable_ssl_async(Box::new(stream)).await?;
 
             Ok(Box::new(NetworkTransport::new(
                 encrypted_stream,
@@ -184,7 +183,7 @@ async fn create_named_pipe_transport(
 ) -> TdsResult<Box<NetworkTransport>> {
     // Named Pipes support TLS encryption
     let base_stream: Box<dyn Stream> = Box::new(pipe_client);
-    
+
     // For Named Pipes, we'll use the pipe name as the server hostname for TLS
     // In practice, Named Pipes are local connections, so TLS validation may need special handling
     Ok(Box::new(NetworkTransport::new(
@@ -290,7 +289,11 @@ impl NetworkReader for NetworkTransport {
 #[async_trait]
 impl NetworkWriter for NetworkTransport {
     async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
-        self.stream.as_mut().expect("Stream not available").write_all(data).await?;
+        self.stream
+            .as_mut()
+            .expect("Stream not available")
+            .write_all(data)
+            .await?;
         Ok(())
     }
 
@@ -333,7 +336,11 @@ impl NetworkTransport {
     }
 
     pub(crate) async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
-        self.stream.as_mut().expect("Stream not available").write_all(data).await?;
+        self.stream
+            .as_mut()
+            .expect("Stream not available")
+            .write_all(data)
+            .await?;
         Ok(())
     }
 
@@ -349,7 +356,12 @@ impl NetworkTransport {
         if buffer.is_empty() {
             unreachable!("Buffer length must be greater than 0");
         }
-        let bytes_read = self.stream.as_mut().expect("Stream not available").read(buffer).await?;
+        let bytes_read = self
+            .stream
+            .as_mut()
+            .expect("Stream not available")
+            .read(buffer)
+            .await?;
         if bytes_read == 0 {
             Err(crate::error::Error::from(std::io::Error::from(
                 UnexpectedEof,
@@ -362,7 +374,7 @@ impl NetworkTransport {
     async fn enable_ssl_internal(&mut self) -> TdsResult<()> {
         // Take ownership of the stream temporarily
         let base_stream = self.stream.take().expect("Stream already taken");
-        
+
         // For TDS 7.4, wrap the stream in TlsOverTdsStream before TLS handshake
         // This is required because TLS packets must be framed within TDS packets during the handshake
         let base_stream = if self.use_tds74_tls_wrapping {
@@ -370,11 +382,11 @@ impl NetworkTransport {
         } else {
             base_stream
         };
-        
+
         // Perform TLS handshake (consumes base_stream, returns TlsStream)
         // enable_ssl_async will call tls_handshake_starting and tls_handshake_completed internally
         let encrypted_stream = self.ssl_handler.enable_ssl_async(base_stream).await?;
-        
+
         // Put back the encrypted stream
         self.stream = Some(encrypted_stream);
         Ok(())
@@ -383,7 +395,7 @@ impl NetworkTransport {
     async fn disable_ssl_internal(&mut self) {
         // Take the current stream (which should be encrypted)
         let _encrypted_stream = self.stream.take().expect("Stream not available");
-        
+
         // For disable_ssl, we would need to extract the base stream from the TLS wrapper
         // This is not currently supported in the architecture, so this is a placeholder
         // In practice, disabling SSL mid-connection is rare

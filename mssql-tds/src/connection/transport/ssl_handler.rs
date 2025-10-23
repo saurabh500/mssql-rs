@@ -65,7 +65,11 @@ impl SslHandler {
         match encrypted_stream {
             Ok(mut stream) => {
                 // Call tls_handshake_completed on the underlying stream through the TlsStream wrapper
-                stream.get_mut().get_mut().get_mut().tls_handshake_completed();
+                stream
+                    .get_mut()
+                    .get_mut()
+                    .get_mut()
+                    .tls_handshake_completed();
                 Ok(Box::new(stream))
             }
             Err(e) => Err(crate::error::Error::TlsError(e)),
@@ -136,9 +140,10 @@ impl ActiveWriteState {
                 // At least one byte from the payload was written.
                 payload_written -= self.header_bytes_remaining;
                 self.header_bytes_remaining = 0;
-                
+
                 // Ensure we don't write more payload than the current packet can hold
-                let actual_payload_written = std::cmp::min(payload_written, self.current_packet_bytes_remaining);
+                let actual_payload_written =
+                    std::cmp::min(payload_written, self.current_packet_bytes_remaining);
                 self.current_packet_bytes_remaining -= actual_payload_written;
                 self.payload_bytes_remaining -= actual_payload_written;
                 self.last_payload_written = actual_payload_written;
@@ -586,4 +591,3 @@ impl AsyncWrite for BufferedTdsStream {
         }
     }
 }
-
