@@ -1,11 +1,26 @@
+# Generate and Install SSL Certificates for SQL Server
+# This script creates self-signed certificates for SQL Server TLS encryption
+
 param (
-    $InstanceName = "MSSQLSERVER"
+    [string]$InstanceName = "MSSQLSERVER"
 )
 
-function Copy-To-Root-Store($cert) {    
-    $certPath = "MyRootCA.cer"
-    Export-Certificate -Cert $cert -FilePath $certPath -Type CERT
-    Import-Certificate -FilePath $certPath -CertStoreLocation "Cert:\LocalMachine\Root"
+Write-Host "=== SQL Server Certificate Generation ===" -ForegroundColor Cyan
+Write-Host "Instance: $InstanceName" -ForegroundColor Yellow
+
+function Copy-To-Root-Store($cert) {
+    Write-Host "Installing certificate to trusted root store..." -ForegroundColor Yellow
+    try {
+        $certPath = "MyRootCA.cer"
+        Export-Certificate -Cert $cert -FilePath $certPath -Type CERT | Out-Null
+        Import-Certificate -FilePath $certPath -CertStoreLocation "Cert:\LocalMachine\Root" | Out-Null
+        Write-Host "✅ Certificate installed to trusted root store" -ForegroundColor Green
+        
+        # Clean up temporary file
+        Remove-Item -Path $certPath -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Error "Failed to install certificate to root store: $($_.Exception.Message)"
+    }
 }
 
 function New-And-Install-Certificates($instanceName) {
