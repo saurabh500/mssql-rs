@@ -1,0 +1,25 @@
+[package]
+name = "mssql-tds-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mssql-tds = { path = ".." }
+tokio = { version = "1.45.1", features = ["full"] }
+arbitrary = { version = "1.3", features = ["derive"] }
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_done_token"
+path = "fuzz_targets/fuzz_done_token.rs"
+test = false
+doc = false
+bench = false
