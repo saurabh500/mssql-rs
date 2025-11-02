@@ -12,9 +12,9 @@ steps:
   - task: PowerShell@2
     displayName: 'Generate Certificate for TLS encryption '
     inputs:
-      targetType: 'inline'
-      script: |
-        .pipeline/Certificates-Operations.ps1 -instanceName "MSSQLSERVER"
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/Generate-SqlCertificates.ps1'
+      arguments: '-InstanceName "MSSQLSERVER"'
 
   - task: PowerShell@2
     displayName: 'Setup users in SQL server, restart service and check version'
@@ -34,6 +34,19 @@ steps:
     env:
       SQL_PASSWORD: $(SQL_PASSWORD)
 
+  - task: PowerShell@2
+    displayName: 'Enable SQL Browser service'
+    inputs:
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/Enable-SqlBrowser.ps1'
+      arguments: '-ServiceName "SQLBrowser"'
+
+  - task: PowerShell@2
+    displayName: 'Enable Named Pipes and Shared Memory protocols'
+    inputs:
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/Enable-SqlProtocols.ps1'
+      arguments: '-InstanceName "MSSQLSERVER" -SqlVersion "MSSQL17" -RestartService $true'
 
 - ${{ if eq(parameters.buildTarget, 'Linux') }}:
   - task: DockerInstaller@0
