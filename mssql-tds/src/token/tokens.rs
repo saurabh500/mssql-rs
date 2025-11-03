@@ -74,7 +74,29 @@ pub trait Token {
 }
 
 #[derive(Debug)]
+#[cfg(not(fuzzing))]
 pub(crate) enum Tokens {
+    Done(DoneToken),
+    DoneInProc(DoneToken),
+    DoneProc(DoneToken),
+    EnvChange(EnvChangeToken),
+    Error(ErrorToken),
+    Info(InfoToken),
+    LoginAck(LoginAckToken),
+    FeatureExtAck(FeatureExtAckToken),
+    FedAuthInfo(FedAuthInfoToken),
+    Sspi(SspiToken),
+    Row(RowToken),
+    ColMetadata(ColMetadataToken),
+    NbcRow(RowToken),
+    Order(OrderToken),
+    ReturnStatus(ReturnStatusToken),
+    ReturnValue(ReturnValueToken),
+}
+
+#[derive(Debug)]
+#[cfg(fuzzing)]
+pub enum Tokens {
     Done(DoneToken),
     DoneInProc(DoneToken),
     DoneProc(DoneToken),

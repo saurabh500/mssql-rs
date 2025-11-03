@@ -40,6 +40,7 @@ use crate::{
 };
 
 #[async_trait]
+#[cfg(not(fuzzing))]
 pub(crate) trait TokenParser<T>
 where
     T: TdsPacketReader + Send + Sync,
@@ -47,8 +48,24 @@ where
     async fn parse(&self, reader: &mut T, context: &ParserContext) -> TdsResult<Tokens>;
 }
 
+#[async_trait]
+#[cfg(fuzzing)]
+pub trait TokenParser<T>
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, context: &ParserContext) -> TdsResult<Tokens>;
+}
+
 #[derive(Debug, Default)]
+#[cfg(not(fuzzing))]
 pub(crate) struct EnvChangeTokenParser {
+    // fields omitted
+}
+
+#[derive(Debug, Default)]
+#[cfg(fuzzing)]
+pub struct EnvChangeTokenParser {
     // fields omitted
 }
 
@@ -273,7 +290,13 @@ where
     }
 }
 
+#[cfg(not(fuzzing))]
 pub(crate) struct DoneTokenParser {
+    // fields omitted
+}
+
+#[cfg(fuzzing)]
+pub struct DoneTokenParser {
     // fields omitted
 }
 

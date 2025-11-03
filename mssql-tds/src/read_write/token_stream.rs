@@ -45,7 +45,15 @@ where
 /// The consumer of the TokenStreamReader is supposed to set/reset this context.
 /// Incorrectly managing this context, can lead to bad context being used for subsequent operations.
 #[derive(Debug)]
+#[cfg(not(fuzzing))]
 pub(crate) enum ParserContext {
+    ColumnMetadata(ColMetadataToken),
+    None(()),
+}
+
+#[derive(Debug)]
+#[cfg(fuzzing)]
+pub enum ParserContext {
     ColumnMetadata(ColMetadataToken),
     None(()),
 }

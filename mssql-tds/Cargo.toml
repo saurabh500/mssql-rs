@@ -3,6 +3,9 @@ name = "mssql-tds"
 version = "0.1.0"
 edition = "2024"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
 [dependencies]
 async-trait = "0.1.88"
 tokio = { version = "1.45.1", features = ["full"] }
