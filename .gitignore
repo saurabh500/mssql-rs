@@ -50,3 +50,9 @@ Pipfile.lock
 openssl.cnf
 
 node_modules/
+
+# Fuzzing artifacts
+**/fuzz/artifacts/
+**/fuzz/corpus/
+**/fuzz/coverage/
+crash-*

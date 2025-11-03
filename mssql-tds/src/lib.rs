@@ -17,7 +17,10 @@ pub mod token;
 #[cfg(fuzzing)]
 pub mod fuzz_support {
     pub use crate::read_write::packet_reader::TdsPacketReader;
-    pub use crate::read_write::token_stream::ParserContext;
-    pub use crate::token::parsers::{DoneTokenParser, TokenParser};
+    pub use crate::read_write::token_stream::{
+        GenericTokenParserRegistry, ParserContext, TdsTokenStreamReader, TokenParserRegistry,
+        TokenStreamReader,
+    };
+    pub use crate::token::parsers::{DoneTokenParser, EnvChangeTokenParser, TokenParser};
     pub use crate::token::tokens::Tokens;
 }

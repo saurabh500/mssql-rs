@@ -21,6 +21,7 @@ use tokio::time::timeout;
 use tracing::event;
 
 #[async_trait]
+#[cfg(not(fuzzing))]
 pub(crate) trait TdsTokenStreamReader {
     async fn receive_token(
         &mut self,
@@ -30,6 +31,18 @@ pub(crate) trait TdsTokenStreamReader {
     ) -> TdsResult<Tokens>;
 }
 
+#[async_trait]
+#[cfg(fuzzing)]
+pub trait TdsTokenStreamReader {
+    async fn receive_token(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<Tokens>;
+}
+
+#[cfg(not(fuzzing))]
 pub(crate) struct TokenStreamReader<T, R>
 where
     T: TdsPacketReader + Send + Sync,
@@ -37,6 +50,16 @@ where
 {
     pub(crate) packet_reader: T,
     pub(crate) parser_registry: Box<R>,
+}
+
+#[cfg(fuzzing)]
+pub struct TokenStreamReader<T, R>
+where
+    T: TdsPacketReader + Send + Sync,
+    R: TokenParserRegistry + Send + Sync,
+{
+    pub packet_reader: T,
+    pub parser_registry: Box<R>,
 }
 
 /// `ParserContext` is used to add additional context, which can be leveraged by the token parsers.
@@ -69,7 +92,16 @@ where
     T: TdsPacketReader + Send + Sync,
     R: TokenParserRegistry + Send + Sync,
 {
+    #[cfg(not(fuzzing))]
     pub(crate) fn new(packet_reader: T, parser_registry: Box<R>) -> TokenStreamReader<T, R> {
+        TokenStreamReader {
+            packet_reader,
+            parser_registry,
+        }
+    }
+
+    #[cfg(fuzzing)]
+    pub fn new(packet_reader: T, parser_registry: Box<R>) -> TokenStreamReader<T, R> {
         TokenStreamReader {
             packet_reader,
             parser_registry,
@@ -188,12 +220,25 @@ where
         token_result
     }
 }
+#[cfg(not(fuzzing))]
 pub(crate) trait TokenParserRegistry: Send + Sync {
     fn has_parser(&self, token_type: &TokenType) -> bool;
     fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers>;
 }
 
+#[cfg(fuzzing)]
+pub trait TokenParserRegistry: Send + Sync {
+    fn has_parser(&self, token_type: &TokenType) -> bool;
+    fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers>;
+}
+
+#[cfg(not(fuzzing))]
 pub(crate) struct GenericTokenParserRegistry {
+    parsers: HashMap<TokenType, TokenParsers>,
+}
+
+#[cfg(fuzzing)]
+pub struct GenericTokenParserRegistry {
     parsers: HashMap<TokenType, TokenParsers>,
 }
 
