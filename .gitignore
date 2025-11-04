@@ -56,3 +56,6 @@ node_modules/
 **/fuzz/corpus/
 **/fuzz/coverage/
 crash-*
+
+# Generated PowerPoint presentations
+*.pptx
