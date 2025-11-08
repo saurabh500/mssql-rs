@@ -129,7 +129,7 @@ pub(crate) async fn create_transport(
     // TcpStreams.
 
     match tds_version {
-        TdsVersion::V7_4 => {
+        TdsVersion::V7_4 | TdsVersion::Unknown(_) => {
             let stream_recoverer = Tds7StreamRecoverer::new(TcpStreamRecoverer {
                 stream: Box::new(std_stream),
             });
@@ -409,7 +409,7 @@ impl NetworkTransport {
         // Read the token type so that we can get the right parser for this token.
         // The first byte of the token is the token type.
         let token_type_byte = self.read_byte().await?;
-        let token_type = TokenType::from(token_type_byte);
+        let token_type: TokenType = token_type_byte.try_into()?;
         debug!(
             "Received token type: {:?} ({})",
             token_type, token_type_byte

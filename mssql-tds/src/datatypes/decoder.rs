@@ -837,7 +837,7 @@ where
     let mut collation_bytes = vec![0u8; 5];
     reader.read_bytes(&mut collation_bytes).await?;
     let _max_length = reader.read_uint16().await? as usize;
-    let collation = SqlCollation::new(&collation_bytes);
+    let collation: SqlCollation = collation_bytes.as_slice().try_into()?;
     let mut buffer = vec![0u8; data_length as usize];
     reader.read_bytes(&mut buffer).await?;
     let encoding = if matches!(tds_type, TdsDataType::NVarChar | TdsDataType::NChar) {

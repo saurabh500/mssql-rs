@@ -146,7 +146,7 @@ impl Feature for FedAuthFeature {
 
     async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()> {
         packet_writer
-            .write_byte_async(self.feature_identifier() as u8)
+            .write_byte_async(self.feature_identifier().as_u8())
             .await?;
         packet_writer
             .write_i32_async(self.get_payload_length())

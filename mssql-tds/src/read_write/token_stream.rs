@@ -112,15 +112,15 @@ where
         // Read the token type so that we can get the right parser for this token.
         // The first byte of the token is the token type.
         let token_type_byte = self.packet_reader.read_byte().await?;
-        let token_type = TokenType::from(token_type_byte);
+        let token_type: crate::token::tokens::TokenType = token_type_byte.try_into()?;
 
         // We should always have a parser for the token type.
-        // If we don't, then we have a bug in the code.
+        // If we don't, then this is an unsupported token type.
         if !self.parser_registry.has_parser(&token_type) {
-            unreachable!(
-                "No parser implemented for token type: {:?}. This is an internal implementation error.",
+            return Err(crate::error::Error::ProtocolError(format!(
+                "No parser implemented for token type: {:?}. This token type is not supported yet.",
                 token_type
-            );
+            )));
         }
 
         let parser = self
