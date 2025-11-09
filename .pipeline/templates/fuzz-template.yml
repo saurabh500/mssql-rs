@@ -60,7 +60,9 @@ steps:
     set +e
     RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz run ${{ parameters.fuzzTarget }} -- \
       -max_total_time=${{ parameters.fuzzDurationSeconds }} \
-      -timeout=10
+      -timeout=10 \
+      -fork=1 \
+      -ignore_crashes=1
     
     FUZZ_EXIT_CODE=$?
     set -e

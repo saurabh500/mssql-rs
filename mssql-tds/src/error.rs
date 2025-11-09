@@ -50,4 +50,7 @@ pub enum Error {
 
     #[error("Unexpected Implementation Error: {0}")]
     ImplementationError(String),
+
+    #[error("Unimplemented Feature: {feature} - {context}")]
+    UnimplementedFeature { feature: String, context: String },
 }
