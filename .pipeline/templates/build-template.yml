@@ -121,9 +121,11 @@ steps:
     TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
 
 - ${{ if eq(parameters.enableJsBuild, true) }}:
-  - script: |
+  - bash: |
       export DB_USER=sa
-      . $HOME/.bashrc
+      if [ -f "$HOME/.bashrc" ]; then
+        . $HOME/.bashrc
+      fi
       export FNM_PATH="$HOME/.local/share/fnm"
       export PATH="$FNM_PATH:$PATH"
       eval "`fnm env`"
@@ -143,9 +145,11 @@ steps:
       RUST_BACKTRACE: full
 
 - ${{ if eq(parameters.enableJsTest, true) }}:
-  - script: |
+  - bash: |
       export DB_USER=sa
-      . $HOME/.bashrc
+      if [ -f "$HOME/.bashrc" ]; then
+        . $HOME/.bashrc
+      fi
       export FNM_PATH="$HOME/.local/share/fnm"
       export PATH="$FNM_PATH:$PATH"
       eval "`fnm env`"
