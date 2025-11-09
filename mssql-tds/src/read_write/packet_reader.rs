@@ -10,7 +10,6 @@ use crate::core::TdsResult;
 use crate::message::attention::AttentionRequest;
 use crate::message::messages::Request;
 use crate::read_write::reader_writer::NetworkReaderWriter;
-use core::panic;
 use std::{
     cmp::min,
     io::{Error, ErrorKind},
@@ -192,9 +191,13 @@ impl<'a> PacketReader<'a> {
         Ok(bytes_read_from_transport)
     }
 
-    fn consume_bytes(&mut self, byte_count: usize) {
+    fn consume_bytes(&mut self, byte_count: usize) -> TdsResult<()> {
         if byte_count > (self.buffer_length - self.buffer_position) {
-            panic!("Not enough data to consume");
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Buffer underflow: attempted to consume {} bytes but only {} available",
+                byte_count,
+                self.buffer_length - self.buffer_position
+            )));
         }
 
         self.buffer_position += byte_count;
@@ -202,6 +205,7 @@ impl<'a> PacketReader<'a> {
             self.buffer_length = 0;
             self.buffer_position = 0;
         }
+        Ok(())
     }
 
     /// Skips a specified number of bytes in the packet stream.
@@ -221,7 +225,7 @@ impl<'a> PacketReader<'a> {
 
             if to_read > 0 {
                 length_to_read -= to_read;
-                self.consume_bytes(to_read);
+                self.consume_bytes(to_read)?;
             }
         }
         Ok(())
@@ -249,7 +253,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result: u8 = self.working_buffer[self.buffer_position];
-        self.consume_bytes(1);
+        self.consume_bytes(1)?;
         Ok(result)
     }
 
@@ -258,7 +262,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = BigEndian::read_i16(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(2);
+        self.consume_bytes(2)?;
         Ok(result)
     }
 
@@ -267,7 +271,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = BigEndian::read_i32(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(4);
+        self.consume_bytes(4)?;
         Ok(result)
     }
 
@@ -276,7 +280,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = BigEndian::read_i64(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(8);
+        self.consume_bytes(8)?;
         Ok(result)
     }
 
@@ -286,7 +290,7 @@ impl TdsPacketReader for PacketReader<'_> {
         }
 
         let result = LittleEndian::read_uint(&self.working_buffer[self.buffer_position..], 5);
-        self.consume_bytes(5);
+        self.consume_bytes(5)?;
         Ok(result)
     }
 
@@ -295,7 +299,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = LittleEndian::read_f32(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(4);
+        self.consume_bytes(4)?;
         Ok(result)
     }
 
@@ -304,7 +308,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = LittleEndian::read_f64(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(8);
+        self.consume_bytes(8)?;
         Ok(result)
     }
 
@@ -313,7 +317,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = LittleEndian::read_i16(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(2);
+        self.consume_bytes(2)?;
         Ok(result)
     }
 
@@ -322,7 +326,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = LittleEndian::read_u16(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(2);
+        self.consume_bytes(2)?;
         Ok(result)
     }
 
@@ -331,7 +335,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = LittleEndian::read_i24(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(3);
+        self.consume_bytes(3)?;
         Ok(result)
     }
 
@@ -340,7 +344,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = LittleEndian::read_u24(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(3);
+        self.consume_bytes(3)?;
         Ok(result)
     }
 
@@ -349,7 +353,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = LittleEndian::read_i32(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(4);
+        self.consume_bytes(4)?;
         Ok(result)
     }
 
@@ -358,7 +362,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = LittleEndian::read_u32(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(4);
+        self.consume_bytes(4)?;
         Ok(result)
     }
 
@@ -367,7 +371,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = LittleEndian::read_i64(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(8);
+        self.consume_bytes(8)?;
         Ok(result)
     }
 
@@ -376,7 +380,7 @@ impl TdsPacketReader for PacketReader<'_> {
             self.read_tds_packet().await?;
         }
         let result = LittleEndian::read_u64(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(8);
+        self.consume_bytes(8)?;
         Ok(result)
     }
 
@@ -402,7 +406,7 @@ impl TdsPacketReader for PacketReader<'_> {
                 length_to_read -= to_read;
                 total_read += to_read;
 
-                self.consume_bytes(to_read);
+                self.consume_bytes(to_read)?;
             }
         }
         Ok(total_read)
@@ -486,7 +490,7 @@ impl TdsPacketReader for PacketReader<'_> {
 
             if to_read > 0 {
                 length_to_read -= to_read;
-                self.consume_bytes(to_read);
+                self.consume_bytes(to_read)?;
             }
         }
         Ok(())
