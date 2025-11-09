@@ -269,13 +269,12 @@ mod connectivity {
         let context = create_context();
         let workstation_id = context.workstation_id.clone();
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(context, None).await;
-        let mut connection = connection_result.unwrap();
+        let mut client = provider.create_client(context, None).await.unwrap();
         let command =
             "select host_name from sys.dm_exec_sessions where client_interface_name = 'TdsX'"
                 .to_string();
-        let result = connection.execute(command, None, None).await.unwrap();
-        let col_hostname = get_scalar_value(result).await.unwrap();
+        client.execute(command, None, None).await.unwrap();
+        let col_hostname = get_scalar_value(&mut client).await.unwrap();
         if let Some(column_value) = col_hostname {
             match column_value {
                 ColumnValues::String(value) => {
@@ -293,11 +292,10 @@ mod connectivity {
         let mut context = create_context();
         context.application_intent = ApplicationIntent::ReadOnly;
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(context, None).await;
-        let mut connection = connection_result.unwrap();
+        let mut client = provider.create_client(context, None).await.unwrap();
         let command = "select 1".to_string();
-        let result = connection.execute(command, None, None).await.unwrap();
-        let col_hostname = get_scalar_value(result).await.unwrap();
+        client.execute(command, None, None).await.unwrap();
+        let col_hostname = get_scalar_value(&mut client).await.unwrap();
         if let Some(column_value) = col_hostname {
             match column_value {
                 ColumnValues::Int(value) => {
