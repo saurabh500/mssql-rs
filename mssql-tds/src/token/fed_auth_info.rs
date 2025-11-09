@@ -3,10 +3,20 @@
 
 use crate::token::tokens::{Token, TokenType};
 
-#[repr(u8)]
 pub enum FedAuthInfoId {
-    SPN = 0x02,
-    STSUrl = 0x01,
+    SPN,
+    STSUrl,
+    Unknown(u8),
+}
+
+impl FedAuthInfoId {
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            FedAuthInfoId::SPN => 0x02,
+            FedAuthInfoId::STSUrl => 0x01,
+            FedAuthInfoId::Unknown(v) => *v,
+        }
+    }
 }
 
 impl From<u8> for FedAuthInfoId {
@@ -14,7 +24,10 @@ impl From<u8> for FedAuthInfoId {
         match v {
             0x02 => FedAuthInfoId::SPN,
             0x01 => FedAuthInfoId::STSUrl,
-            _ => panic!("Unknown FedAuthInfoId: {v}"),
+            _ => {
+                tracing::warn!("Unknown FedAuthInfoId: 0x{:02X}", v);
+                FedAuthInfoId::Unknown(v)
+            }
         }
     }
 }

@@ -21,6 +21,7 @@ use tokio::time::timeout;
 use tracing::event;
 
 #[async_trait]
+#[cfg(not(fuzzing))]
 pub(crate) trait TdsTokenStreamReader {
     async fn receive_token(
         &mut self,
@@ -30,6 +31,18 @@ pub(crate) trait TdsTokenStreamReader {
     ) -> TdsResult<Tokens>;
 }
 
+#[async_trait]
+#[cfg(fuzzing)]
+pub trait TdsTokenStreamReader {
+    async fn receive_token(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<Tokens>;
+}
+
+#[cfg(not(fuzzing))]
 pub(crate) struct TokenStreamReader<T, R>
 where
     T: TdsPacketReader + Send + Sync,
@@ -39,13 +52,31 @@ where
     pub(crate) parser_registry: Box<R>,
 }
 
+#[cfg(fuzzing)]
+pub struct TokenStreamReader<T, R>
+where
+    T: TdsPacketReader + Send + Sync,
+    R: TokenParserRegistry + Send + Sync,
+{
+    pub packet_reader: T,
+    pub parser_registry: Box<R>,
+}
+
 /// `ParserContext` is used to add additional context, which can be leveraged by the token parsers.
 /// One of the usecase is passing the metadata for the columns, to the row parser and to the
 /// NBC row token parser.
 /// The consumer of the TokenStreamReader is supposed to set/reset this context.
 /// Incorrectly managing this context, can lead to bad context being used for subsequent operations.
 #[derive(Debug)]
+#[cfg(not(fuzzing))]
 pub(crate) enum ParserContext {
+    ColumnMetadata(ColMetadataToken),
+    None(()),
+}
+
+#[derive(Debug)]
+#[cfg(fuzzing)]
+pub enum ParserContext {
     ColumnMetadata(ColMetadataToken),
     None(()),
 }
@@ -61,7 +92,16 @@ where
     T: TdsPacketReader + Send + Sync,
     R: TokenParserRegistry + Send + Sync,
 {
+    #[cfg(not(fuzzing))]
     pub(crate) fn new(packet_reader: T, parser_registry: Box<R>) -> TokenStreamReader<T, R> {
+        TokenStreamReader {
+            packet_reader,
+            parser_registry,
+        }
+    }
+
+    #[cfg(fuzzing)]
+    pub fn new(packet_reader: T, parser_registry: Box<R>) -> TokenStreamReader<T, R> {
         TokenStreamReader {
             packet_reader,
             parser_registry,
@@ -72,15 +112,14 @@ where
         // Read the token type so that we can get the right parser for this token.
         // The first byte of the token is the token type.
         let token_type_byte = self.packet_reader.read_byte().await?;
-        let token_type = TokenType::from(token_type_byte);
+        let token_type: crate::token::tokens::TokenType = token_type_byte.try_into()?;
 
         // We should always have a parser for the token type.
-        // If we don't, then we have a bug in the code.
+        // If we don't, then this is an unsupported token type.
         if !self.parser_registry.has_parser(&token_type) {
-            unreachable!(
-                "No parser implemented for token type: {:?}. This is an internal implementation error.",
-                token_type
-            );
+            return Err(crate::error::Error::ProtocolError(format!(
+                "No parser implemented for token type: {token_type:?}. This token type is not supported yet."
+            )));
         }
 
         let parser = self
@@ -180,12 +219,25 @@ where
         token_result
     }
 }
+#[cfg(not(fuzzing))]
 pub(crate) trait TokenParserRegistry: Send + Sync {
     fn has_parser(&self, token_type: &TokenType) -> bool;
     fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers>;
 }
 
+#[cfg(fuzzing)]
+pub trait TokenParserRegistry: Send + Sync {
+    fn has_parser(&self, token_type: &TokenType) -> bool;
+    fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers>;
+}
+
+#[cfg(not(fuzzing))]
 pub(crate) struct GenericTokenParserRegistry {
+    parsers: HashMap<TokenType, TokenParsers>,
+}
+
+#[cfg(fuzzing)]
+pub struct GenericTokenParserRegistry {
     parsers: HashMap<TokenType, TokenParsers>,
 }
 

@@ -7,6 +7,11 @@ use async_trait::async_trait;
 use byteorder::{ByteOrder, LittleEndian};
 use tracing::{debug, error, event, trace};
 
+/// Maximum allowed size for Feature Extension acknowledgment data.
+/// This prevents out-of-memory attacks from malicious packets.
+/// 1KB is sufficient for legitimate Feature Extension acknowledgment data.
+const MAX_ALLOWED_FE_DATA_IN_BYTES: usize = 1024; // 1 KB
+
 use super::{
     fed_auth_info::FedAuthInfoToken,
     tokenitems::ReturnValueStatus,
@@ -38,8 +43,8 @@ use crate::{
         },
     },
 };
-
 #[async_trait]
+#[cfg(not(fuzzing))]
 pub(crate) trait TokenParser<T>
 where
     T: TdsPacketReader + Send + Sync,
@@ -47,8 +52,24 @@ where
     async fn parse(&self, reader: &mut T, context: &ParserContext) -> TdsResult<Tokens>;
 }
 
+#[async_trait]
+#[cfg(fuzzing)]
+pub trait TokenParser<T>
+where
+    T: TdsPacketReader + Send + Sync,
+{
+    async fn parse(&self, reader: &mut T, context: &ParserContext) -> TdsResult<Tokens>;
+}
+
 #[derive(Debug, Default)]
+#[cfg(not(fuzzing))]
 pub(crate) struct EnvChangeTokenParser {
+    // fields omitted
+}
+
+#[derive(Debug, Default)]
+#[cfg(fuzzing)]
+pub struct EnvChangeTokenParser {
     // fields omitted
 }
 
@@ -60,7 +81,7 @@ where
     async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         let _token_length = reader.read_uint16().await?;
         let sub_type = reader.read_byte().await?;
-        let token_sub_type = EnvChangeTokenSubType::from(sub_type);
+        let token_sub_type: EnvChangeTokenSubType = sub_type.try_into()?;
         event!(
             tracing::Level::DEBUG,
             "Parsing {:?} token with type and subtype {:?}",
@@ -100,13 +121,13 @@ where
             EnvChangeTokenSubType::SqlCollation => {
                 let new_bytes = reader.read_u8_varbyte().await?;
                 let old_bytes = reader.read_u8_varbyte().await?;
-                let old_collation = match old_bytes.len() {
-                    5 => Some(SqlCollation::new(&old_bytes)),
+                let old_collation: Option<SqlCollation> = match old_bytes.len() {
+                    5 => old_bytes.as_slice().try_into().ok(),
                     _ => None,
                 };
 
-                let new_collation = match new_bytes.len() {
-                    5 => Some(SqlCollation::new(&new_bytes)),
+                let new_collation: Option<SqlCollation> = match new_bytes.len() {
+                    5 => new_bytes.as_slice().try_into().ok(),
                     _ => None,
                 };
                 EnvChangeContainer::from((old_collation, new_collation))
@@ -205,7 +226,7 @@ where
                 let routing_info = Some(RoutingInfo {
                     protocol,
                     port,
-                    server: server.unwrap(),
+                    server: server.unwrap_or_default(),
                 });
 
                 let mut old_routing_info: Option<RoutingInfo> = None;
@@ -219,10 +240,16 @@ where
                     old_routing_info = Some(RoutingInfo {
                         protocol: old_protocol,
                         port: old_port,
-                        server: old_server.unwrap(),
+                        server: old_server.unwrap_or_default(),
                     });
                 }
                 EnvChangeContainer::from((old_routing_info, routing_info))
+            }
+            EnvChangeTokenSubType::Unknown(_value) => {
+                // For unknown environment change subtypes, try to read as generic string change
+                let new_value = reader.read_varchar_u8_length().await?;
+                let old_value = reader.read_varchar_u8_length().await?;
+                EnvChangeContainer::from((old_value, new_value))
             }
         };
         Ok(Tokens::from(EnvChangeToken {
@@ -250,7 +277,7 @@ where
         );
         let _length = reader.read_uint16().await?;
         let interface_type = reader.read_byte().await?;
-        let interface = SqlInterfaceType::from(interface_type);
+        let interface: SqlInterfaceType = interface_type.try_into()?;
 
         let tds_version = reader.read_int32_big_endian().await?;
 
@@ -273,7 +300,13 @@ where
     }
 }
 
+#[cfg(not(fuzzing))]
 pub(crate) struct DoneTokenParser {
+    // fields omitted
+}
+
+#[cfg(fuzzing)]
+pub struct DoneTokenParser {
     // fields omitted
 }
 
@@ -286,7 +319,8 @@ where
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
-        let current_command = CurrentCommand::try_from(current_command_value).unwrap();
+        let current_command =
+            CurrentCommand::try_from(current_command_value).unwrap_or(CurrentCommand::None);
         let row_count = reader.read_uint64().await?;
 
         Ok(Tokens::Done(DoneToken {
@@ -311,7 +345,8 @@ where
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
-        let current_command = CurrentCommand::try_from(current_command_value).unwrap();
+        let current_command =
+            CurrentCommand::try_from(current_command_value).unwrap_or(CurrentCommand::None);
         let row_count = reader.read_uint64().await?;
 
         Ok(Tokens::DoneInProc(DoneToken {
@@ -336,7 +371,8 @@ where
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
-        let current_command = CurrentCommand::try_from(current_command_value).unwrap();
+        let current_command =
+            CurrentCommand::try_from(current_command_value).unwrap_or(CurrentCommand::None);
         let row_count = reader.read_uint64().await?;
 
         Ok(Tokens::DoneProc(DoneToken {
@@ -373,7 +409,7 @@ where
             number,
             state,
             severity,
-            message: message.unwrap(),
+            message: message.unwrap_or_default(),
             server_name,
             proc_name,
             line_number,
@@ -401,7 +437,7 @@ where
         let state = reader.read_byte().await?;
         let severity = reader.read_byte().await?;
 
-        let message = reader.read_varchar_u16_length().await?.unwrap();
+        let message = reader.read_varchar_u16_length().await?.unwrap_or_default();
         error!("Error message: {:?}", message);
         let server_name = reader.read_varchar_u8_length().await?;
         let proc_name = reader.read_varchar_u8_length().await?;
@@ -439,6 +475,14 @@ where
         let options_count = reader.read_uint32().await?;
         let data_left = length - size_of::<u32>() as i32;
 
+        // Validate data_left to prevent capacity overflow attacks
+        const MAX_TOKEN_DATA_SIZE: i32 = 1024 * 1024; // 1MB reasonable limit
+        if !(0..=MAX_TOKEN_DATA_SIZE).contains(&data_left) {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Invalid FedAuthInfo token data size: {data_left} bytes (length: {length}, options_count: {options_count}). Must be between 0 and {MAX_TOKEN_DATA_SIZE} bytes."
+            )));
+        }
+
         let mut token_data: Vec<u8> = vec![0; data_left as usize];
         reader.read_bytes(&mut token_data[0..]).await?;
 
@@ -447,24 +491,50 @@ where
         for i in 0..options_count {
             let current_options_offset = i * Self::FEDAUTH_OPTIONS_SIZE;
             let option_id = token_data[current_options_offset as usize];
-            let option_data_length = u32::from_le_bytes(
-                token_data
-                    [(current_options_offset + 1) as usize..(current_options_offset + 5) as usize]
-                    .try_into()
-                    .unwrap(),
-            );
-            let mut option_data_offset = u32::from_le_bytes(
-                token_data
-                    [(current_options_offset + 5) as usize..(current_options_offset + 9) as usize]
-                    .try_into()
-                    .unwrap(),
-            );
+
+            // Validate slice bounds before conversion
+            let length_slice = token_data
+                .get((current_options_offset + 1) as usize..(current_options_offset + 5) as usize)
+                .ok_or_else(|| {
+                    Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "FedAuth option data length out of bounds",
+                    )
+                })?;
+            let option_data_length = u32::from_le_bytes(length_slice.try_into().map_err(|_| {
+                Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid FedAuth option data length",
+                )
+            })?);
+
+            let offset_slice = token_data
+                .get((current_options_offset + 5) as usize..(current_options_offset + 9) as usize)
+                .ok_or_else(|| {
+                    Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "FedAuth option offset out of bounds",
+                    )
+                })?;
+            let mut option_data_offset =
+                u32::from_le_bytes(offset_slice.try_into().map_err(|_| {
+                    Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid FedAuth option offset",
+                    )
+                })?);
 
             option_data_offset -= size_of::<u32>() as u32;
             let string_bytes: &[u8] = token_data
-                [option_data_offset as usize..(option_data_offset + option_data_length) as usize]
-                .try_into()
-                .unwrap();
+                .get(
+                    option_data_offset as usize..(option_data_offset + option_data_length) as usize,
+                )
+                .ok_or_else(|| {
+                    Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "FedAuth string data out of bounds",
+                    )
+                })?;
             let u16_slice: Vec<u16> = string_bytes
                 .chunks_exact(2)
                 .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
@@ -485,6 +555,13 @@ where
                 }
                 FedAuthInfoId::SPN => {
                     spn = value;
+                }
+                FedAuthInfoId::Unknown(id) => {
+                    tracing::debug!(
+                        "Ignoring unknown FedAuthInfoId: 0x{:02X} with value: {}",
+                        id,
+                        value
+                    );
                 }
             }
         }
@@ -510,6 +587,14 @@ where
                 break;
             }
             let data_length = reader.read_uint32().await?;
+
+            // Validate allocation size to prevent OOM attacks
+            if data_length as usize > MAX_ALLOWED_FE_DATA_IN_BYTES {
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "FeatureExtAck data length too large: {data_length} bytes (max: {MAX_ALLOWED_FE_DATA_IN_BYTES} bytes). Possible DoS attack."
+                )));
+            }
+
             let mut feature_data_buffer = vec![0; data_length as usize];
 
             if data_length > 0 {
@@ -598,7 +683,7 @@ where
                             } else if part_count == 2 {
                                 mpt.schema_name = part_name;
                             } else if part_count == 1 {
-                                mpt.table_name = part_name.unwrap();
+                                mpt.table_name = part_name.unwrap_or_default();
                             }
                             part_count -= 1;
                         }
@@ -619,7 +704,9 @@ where
                 multi_part_name,
             };
             if col_metadata.is_encrypted() {
-                unimplemented!("Column encryption is not yet supported");
+                return Err(crate::error::Error::ProtocolError(
+                    "Column encryption is not yet supported".to_string(),
+                ));
             }
 
             column_metadata.push(col_metadata);
@@ -657,7 +744,6 @@ impl<D: SqlTypeDecode + Default + Send + Sync, P: TdsPacketReader + Send + Sync>
                 metadata
             }
             _ => {
-                debug_assert!(false, "Expected ColumnMetadata in context");
                 return Err(crate::error::Error::from(Error::new(
                     std::io::ErrorKind::InvalidData,
                     "Expected ColumnMetadata in context",
@@ -761,9 +847,12 @@ impl<T: SqlTypeDecode + Sync, P: TdsPacketReader + Send + Sync> TokenParser<P>
     async fn parse(&self, reader: &mut P, _context: &ParserContext) -> TdsResult<Tokens> {
         let param_ordinal = reader.read_uint16().await?;
         let param_name_length = reader.read_byte().await?;
-        let param_name = reader
-            .read_unicode_with_byte_length((param_name_length * 2) as usize)
-            .await?;
+        let byte_length = (param_name_length as usize).checked_mul(2).ok_or_else(|| {
+            crate::error::Error::ProtocolError(format!(
+                "Parameter name length overflow: {param_name_length}"
+            ))
+        })?;
+        let param_name = reader.read_unicode_with_byte_length(byte_length).await?;
         let status_byte = reader.read_byte().await?;
         let status = ReturnValueStatus::from(status_byte);
         let user_type = reader.read_uint32().await?;
@@ -803,7 +892,6 @@ impl<T: SqlTypeDecode + Sync, P: TdsPacketReader + Send + Sync> TokenParser<P>
                 metadata
             }
             _ => {
-                debug_assert!(false, "Expected ColumnMetadata in context");
                 return Err(crate::error::Error::from(Error::new(
                     std::io::ErrorKind::InvalidData,
                     "Expected ColumnMetadata in context",
@@ -863,10 +951,10 @@ pub(crate) mod tests {
         // Option Length
         builder.append_i32(0xcc);
         builder.append_u32(2); // Option Count.
-        builder.append_byte(FedAuthInfoId::SPN as u8);
+        builder.append_byte(FedAuthInfoId::SPN.as_u8());
         builder.append_u32(0x3a);
         builder.append_u32(0x16);
-        builder.append_byte(FedAuthInfoId::STSUrl as u8);
+        builder.append_byte(FedAuthInfoId::STSUrl.as_u8());
         builder.append_u32(0x7c);
         builder.append_u32(0x50);
 
@@ -898,6 +986,93 @@ pub(crate) mod tests {
         } else {
             panic!("Expected FedAuthInfoToken");
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_feature_ext_ack_oom_prevention() -> TdsResult<()> {
+        use crate::message::login::FeatureExtension;
+        use crate::token::parsers::FeatureExtAckTokenParser;
+
+        // Test case 1: Extremely large allocation attempt (Bug #20)
+        let mut builder = TestPacketBuilder::new(PacketType::TabularResult);
+        builder.append_byte(TokenType::FeatureExtAck as u8);
+
+        // Feature identifier (not terminator)
+        builder.append_byte(FeatureExtension::Json.as_u8());
+
+        // Malicious length: 2.7GB (0xA1A22DAE in little-endian)
+        builder.append_u32(0xA1A22DAE);
+
+        let mut reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
+        let mut reader = PacketReader::new(&mut reader_writer);
+        let parser = FeatureExtAckTokenParser::default();
+
+        // Skip the token type byte
+        reader.read_byte().await?;
+
+        // Should return error, not OOM
+        let result = parser.parse(&mut reader, &ParserContext::default()).await;
+        assert!(result.is_err());
+
+        if let Err(e) = result {
+            let error_msg = format!("{e:?}");
+            assert!(error_msg.contains("too large") || error_msg.contains("DoS"));
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_feature_ext_ack_max_allocation_boundary() -> TdsResult<()> {
+        use crate::message::login::FeatureExtension;
+        use crate::token::parsers::FeatureExtAckTokenParser;
+
+        // Test case 2: Just over the boundary (should fail)
+        let mut builder = TestPacketBuilder::new(PacketType::TabularResult);
+        builder.append_byte(TokenType::FeatureExtAck as u8);
+
+        builder.append_byte(FeatureExtension::Json.as_u8());
+        // 1KB + 1 byte (should fail)
+        builder.append_u32(1025_u32);
+
+        let mut reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
+        let mut reader = PacketReader::new(&mut reader_writer);
+        let parser = FeatureExtAckTokenParser::default();
+
+        reader.read_byte().await?;
+
+        let result = parser.parse(&mut reader, &ParserContext::default()).await;
+        assert!(result.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_feature_ext_ack_valid_small_allocation() -> TdsResult<()> {
+        use crate::message::login::FeatureExtension;
+        use crate::token::parsers::FeatureExtAckTokenParser;
+
+        // Test case 3: Valid small allocation (should succeed)
+        let mut builder = TestPacketBuilder::new(PacketType::TabularResult);
+        builder.append_byte(TokenType::FeatureExtAck as u8);
+
+        builder.append_byte(FeatureExtension::Json.as_u8());
+        builder.append_u32(4); // 4 bytes
+        builder.append_u32(0x12345678); // Some data
+
+        // Terminator
+        builder.append_byte(FeatureExtension::Terminator.as_u8());
+
+        let mut reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
+        let mut reader = PacketReader::new(&mut reader_writer);
+        let parser = FeatureExtAckTokenParser::default();
+
+        reader.read_byte().await?;
+
+        let result = parser.parse(&mut reader, &ParserContext::default()).await;
+        assert!(result.is_ok());
 
         Ok(())
     }

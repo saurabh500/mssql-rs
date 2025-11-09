@@ -499,7 +499,7 @@ where
                     if collation_bytes.is_empty() {
                         None
                     } else {
-                        Some(SqlCollation::new(&collation_bytes))
+                        collation_bytes.as_slice().try_into().ok()
                     }
                 };
 
@@ -539,8 +539,9 @@ where
                 }
             }
             ty => {
-                println!("Unsupported TDS type: {ty:?}");
-                unimplemented!("Unsupported TDS type encountered. Cannot retrieve it's type info");
+                return Err(Error::ProtocolError(format!(
+                    "Unsupported TDS type for TypeInfo::read(): {ty:?}. This type is not yet implemented."
+                )));
             }
         };
 

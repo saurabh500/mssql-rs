@@ -1,0 +1,9 @@
+# Fuzz testing artifacts
+artifacts/
+corpus/
+coverage/
+target/
+
+# Fuzzing build files
+*.profdata
+*.profraw

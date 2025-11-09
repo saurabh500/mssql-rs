@@ -10,14 +10,27 @@ use crate::token::tokens::{Token, TokenType};
 pub enum SqlInterfaceType {
     Default = 0,
     TSql = 1,
+    Unknown(u8),
 }
 
-impl From<u8> for SqlInterfaceType {
-    fn from(value: u8) -> Self {
-        match value {
+impl TryFrom<u8> for SqlInterfaceType {
+    type Error = crate::error::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Ok(match value {
             0 => SqlInterfaceType::Default,
             1 => SqlInterfaceType::TSql,
-            _ => panic!("Invalid value for SqlInterfaceType"),
+            unknown => SqlInterfaceType::Unknown(unknown),
+        })
+    }
+}
+
+impl SqlInterfaceType {
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            SqlInterfaceType::Default => 0,
+            SqlInterfaceType::TSql => 1,
+            SqlInterfaceType::Unknown(val) => *val,
         }
     }
 }
@@ -33,5 +46,40 @@ pub struct LoginAckToken {
 impl Token for LoginAckToken {
     fn token_type(&self) -> TokenType {
         TokenType::LoginAck
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sql_interface_type_try_from() {
+        // Test valid values
+        assert!(matches!(
+            SqlInterfaceType::try_from(0).unwrap(),
+            SqlInterfaceType::Default
+        ));
+        assert!(matches!(
+            SqlInterfaceType::try_from(1).unwrap(),
+            SqlInterfaceType::TSql
+        ));
+
+        // Test invalid values (should not panic, should return Unknown)
+        assert!(matches!(
+            SqlInterfaceType::try_from(173).unwrap(),
+            SqlInterfaceType::Unknown(173)
+        ));
+        assert!(matches!(
+            SqlInterfaceType::try_from(255).unwrap(),
+            SqlInterfaceType::Unknown(255)
+        ));
+    }
+
+    #[test]
+    fn test_sql_interface_type_as_u8() {
+        assert_eq!(SqlInterfaceType::Default.as_u8(), 0);
+        assert_eq!(SqlInterfaceType::TSql.as_u8(), 1);
+        assert_eq!(SqlInterfaceType::Unknown(173).as_u8(), 173);
     }
 }

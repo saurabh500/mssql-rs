@@ -12,3 +12,15 @@ pub mod message;
 pub mod query;
 pub mod read_write;
 pub mod token;
+
+// Expose internal APIs for fuzzing
+#[cfg(fuzzing)]
+pub mod fuzz_support {
+    pub use crate::read_write::packet_reader::TdsPacketReader;
+    pub use crate::read_write::token_stream::{
+        GenericTokenParserRegistry, ParserContext, TdsTokenStreamReader, TokenParserRegistry,
+        TokenStreamReader,
+    };
+    pub use crate::token::parsers::{DoneTokenParser, EnvChangeTokenParser, TokenParser};
+    pub use crate::token::tokens::Tokens;
+}

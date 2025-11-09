@@ -589,6 +589,11 @@ impl ExecutionContext {
             EnvChangeTokenSubType::ResetConnection => todo!(),
             EnvChangeTokenSubType::UserInstanceName => todo!(),
             EnvChangeTokenSubType::Routing => todo!(),
+            EnvChangeTokenSubType::Unknown(value) => {
+                // Log unknown environment change subtypes but don't fail
+                info!("Unknown environment change subtype: {}", value);
+                Ok(())
+            }
         }
     }
 }
