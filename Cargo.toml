@@ -3,6 +3,9 @@ resolver = "2"
 members = [ 
     "mssql-tds", "mssql-js"
 , "mssql-tds-cli"]
+# Only build mssql-tds and mssql-tds-cli by default
+# mssql-js is a Node.js addon and should be built via npm/yarn
+default-members = ["mssql-tds", "mssql-tds-cli"]
 
 [profile.release]
 lto = true
