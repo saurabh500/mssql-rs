@@ -42,7 +42,8 @@ use crate::{
             EnvChangeTokenSubType, InfoToken, OrderToken, SqlCollation, TokenType,
         },
     },
-};#[async_trait]
+};
+#[async_trait]
 #[cfg(not(fuzzing))]
 pub(crate) trait TokenParser<T>
 where
@@ -318,7 +319,8 @@ where
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
-        let current_command = CurrentCommand::try_from(current_command_value).unwrap_or(CurrentCommand::None);
+        let current_command =
+            CurrentCommand::try_from(current_command_value).unwrap_or(CurrentCommand::None);
         let row_count = reader.read_uint64().await?;
 
         Ok(Tokens::Done(DoneToken {
@@ -343,7 +345,8 @@ where
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
-        let current_command = CurrentCommand::try_from(current_command_value).unwrap_or(CurrentCommand::None);
+        let current_command =
+            CurrentCommand::try_from(current_command_value).unwrap_or(CurrentCommand::None);
         let row_count = reader.read_uint64().await?;
 
         Ok(Tokens::DoneInProc(DoneToken {
@@ -368,7 +371,8 @@ where
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
         let current_command_value = reader.read_uint16().await?;
-        let current_command = CurrentCommand::try_from(current_command_value).unwrap_or(CurrentCommand::None);
+        let current_command =
+            CurrentCommand::try_from(current_command_value).unwrap_or(CurrentCommand::None);
         let row_count = reader.read_uint64().await?;
 
         Ok(Tokens::DoneProc(DoneToken {
@@ -488,30 +492,50 @@ where
         for i in 0..options_count {
             let current_options_offset = i * Self::FEDAUTH_OPTIONS_SIZE;
             let option_id = token_data[current_options_offset as usize];
-            
+
             // Validate slice bounds before conversion
             let length_slice = token_data
                 .get((current_options_offset + 1) as usize..(current_options_offset + 5) as usize)
-                .ok_or_else(|| Error::new(std::io::ErrorKind::InvalidData, "FedAuth option data length out of bounds"))?;
-            let option_data_length = u32::from_le_bytes(
-                length_slice.try_into().map_err(|_| {
-                    Error::new(std::io::ErrorKind::InvalidData, "Invalid FedAuth option data length")
-                })?,
-            );
-            
+                .ok_or_else(|| {
+                    Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "FedAuth option data length out of bounds",
+                    )
+                })?;
+            let option_data_length = u32::from_le_bytes(length_slice.try_into().map_err(|_| {
+                Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Invalid FedAuth option data length",
+                )
+            })?);
+
             let offset_slice = token_data
                 .get((current_options_offset + 5) as usize..(current_options_offset + 9) as usize)
-                .ok_or_else(|| Error::new(std::io::ErrorKind::InvalidData, "FedAuth option offset out of bounds"))?;
-            let mut option_data_offset = u32::from_le_bytes(
-                offset_slice.try_into().map_err(|_| {
-                    Error::new(std::io::ErrorKind::InvalidData, "Invalid FedAuth option offset")
-                })?,
-            );
+                .ok_or_else(|| {
+                    Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "FedAuth option offset out of bounds",
+                    )
+                })?;
+            let mut option_data_offset =
+                u32::from_le_bytes(offset_slice.try_into().map_err(|_| {
+                    Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Invalid FedAuth option offset",
+                    )
+                })?);
 
             option_data_offset -= size_of::<u32>() as u32;
             let string_bytes: &[u8] = token_data
-                .get(option_data_offset as usize..(option_data_offset + option_data_length) as usize)
-                .ok_or_else(|| Error::new(std::io::ErrorKind::InvalidData, "FedAuth string data out of bounds"))?;
+                .get(
+                    option_data_offset as usize..(option_data_offset + option_data_length) as usize,
+                )
+                .ok_or_else(|| {
+                    Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "FedAuth string data out of bounds",
+                    )
+                })?;
             let u16_slice: Vec<u16> = string_bytes
                 .chunks_exact(2)
                 .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
@@ -534,7 +558,11 @@ where
                     spn = value;
                 }
                 FedAuthInfoId::Unknown(id) => {
-                    tracing::debug!("Ignoring unknown FedAuthInfoId: 0x{:02X} with value: {}", id, value);
+                    tracing::debug!(
+                        "Ignoring unknown FedAuthInfoId: 0x{:02X} with value: {}",
+                        id,
+                        value
+                    );
                 }
             }
         }
@@ -560,7 +588,7 @@ where
                 break;
             }
             let data_length = reader.read_uint32().await?;
-            
+
             // Validate allocation size to prevent OOM attacks
             if data_length as usize > MAX_ALLOWED_FE_DATA_IN_BYTES {
                 return Err(crate::error::Error::ProtocolError(format!(
@@ -568,7 +596,7 @@ where
                     data_length, MAX_ALLOWED_FE_DATA_IN_BYTES
                 )));
             }
-            
+
             let mut feature_data_buffer = vec![0; data_length as usize];
 
             if data_length > 0 {
@@ -821,14 +849,12 @@ impl<T: SqlTypeDecode + Sync, P: TdsPacketReader + Send + Sync> TokenParser<P>
     async fn parse(&self, reader: &mut P, _context: &ParserContext) -> TdsResult<Tokens> {
         let param_ordinal = reader.read_uint16().await?;
         let param_name_length = reader.read_byte().await?;
-        let byte_length = (param_name_length as usize)
-            .checked_mul(2)
-            .ok_or_else(|| {
-                crate::error::Error::ProtocolError(format!(
-                    "Parameter name length overflow: {}",
-                    param_name_length
-                ))
-            })?;
+        let byte_length = (param_name_length as usize).checked_mul(2).ok_or_else(|| {
+            crate::error::Error::ProtocolError(format!(
+                "Parameter name length overflow: {}",
+                param_name_length
+            ))
+        })?;
         let param_name = reader.read_unicode_with_byte_length(byte_length).await?;
         let status_byte = reader.read_byte().await?;
         let status = ReturnValueStatus::from(status_byte);
@@ -969,88 +995,88 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_feature_ext_ack_oom_prevention() -> TdsResult<()> {
-        use crate::token::parsers::FeatureExtAckTokenParser;
         use crate::message::login::FeatureExtension;
-        
+        use crate::token::parsers::FeatureExtAckTokenParser;
+
         // Test case 1: Extremely large allocation attempt (Bug #20)
         let mut builder = TestPacketBuilder::new(PacketType::TabularResult);
         builder.append_byte(TokenType::FeatureExtAck as u8);
-        
+
         // Feature identifier (not terminator)
         builder.append_byte(FeatureExtension::Json.as_u8());
-        
+
         // Malicious length: 2.7GB (0xA1A22DAE in little-endian)
         builder.append_u32(0xA1A22DAE);
-        
+
         let mut reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
         let mut reader = PacketReader::new(&mut reader_writer);
         let parser = FeatureExtAckTokenParser::default();
-        
+
         // Skip the token type byte
         reader.read_byte().await?;
-        
+
         // Should return error, not OOM
         let result = parser.parse(&mut reader, &ParserContext::default()).await;
         assert!(result.is_err());
-        
+
         if let Err(e) = result {
             let error_msg = format!("{:?}", e);
             assert!(error_msg.contains("too large") || error_msg.contains("DoS"));
         }
-        
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_feature_ext_ack_max_allocation_boundary() -> TdsResult<()> {
-        use crate::token::parsers::FeatureExtAckTokenParser;
         use crate::message::login::FeatureExtension;
-        
+        use crate::token::parsers::FeatureExtAckTokenParser;
+
         // Test case 2: Just over the boundary (should fail)
         let mut builder = TestPacketBuilder::new(PacketType::TabularResult);
         builder.append_byte(TokenType::FeatureExtAck as u8);
-        
+
         builder.append_byte(FeatureExtension::Json.as_u8());
         // 1KB + 1 byte (should fail)
         builder.append_u32(1025_u32);
-        
+
         let mut reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
         let mut reader = PacketReader::new(&mut reader_writer);
         let parser = FeatureExtAckTokenParser::default();
-        
+
         reader.read_byte().await?;
-        
+
         let result = parser.parse(&mut reader, &ParserContext::default()).await;
         assert!(result.is_err());
-        
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_feature_ext_ack_valid_small_allocation() -> TdsResult<()> {
-        use crate::token::parsers::FeatureExtAckTokenParser;
         use crate::message::login::FeatureExtension;
-        
+        use crate::token::parsers::FeatureExtAckTokenParser;
+
         // Test case 3: Valid small allocation (should succeed)
         let mut builder = TestPacketBuilder::new(PacketType::TabularResult);
         builder.append_byte(TokenType::FeatureExtAck as u8);
-        
+
         builder.append_byte(FeatureExtension::Json.as_u8());
         builder.append_u32(4); // 4 bytes
         builder.append_u32(0x12345678); // Some data
-        
+
         // Terminator
         builder.append_byte(FeatureExtension::Terminator.as_u8());
-        
+
         let mut reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
         let mut reader = PacketReader::new(&mut reader_writer);
         let parser = FeatureExtAckTokenParser::default();
-        
+
         reader.read_byte().await?;
-        
+
         let result = parser.parse(&mut reader, &ParserContext::default()).await;
         assert!(result.is_ok());
-        
+
         Ok(())
     }
 }

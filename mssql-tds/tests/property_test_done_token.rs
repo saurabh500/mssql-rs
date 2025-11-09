@@ -16,27 +16,40 @@ fn test_done_token_no_panic_on_arbitrary_bytes() {
         // All ones
         [0xFFu8; 12],
         // Alternating pattern
-        [0xAAu8, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55],
+        [
+            0xAAu8, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55,
+        ],
         // Valid FINAL + SELECT + 0 rows
-        [0x00, 0x00, 0xc1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        [
+            0x00, 0x00, 0xc1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
         // Valid MORE + INSERT + 1 row
-        [0x01, 0x00, 0xc3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        [
+            0x01, 0x00, 0xc3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
         // Valid ERROR + UPDATE + 100 rows
-        [0x02, 0x00, 0xc5, 0x00, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        [
+            0x02, 0x00, 0xc5, 0x00, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
         // All flags set + unknown command + max rows
-        [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+        [
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        ],
         // IN_XACT + COUNT + DELETE + 1000 rows
-        [0x14, 0x00, 0xc4, 0x00, 0xe8, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        [
+            0x14, 0x00, 0xc4, 0x00, 0xe8, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
     ];
 
     for (i, bytes) in test_cases.iter().enumerate() {
         // This should not panic
-        let result = std::panic::catch_unwind(|| {
-            validate_done_token_bytes(bytes)
-        });
-        
+        let result = std::panic::catch_unwind(|| validate_done_token_bytes(bytes));
+
         if result.is_err() {
-            panic!("DoneToken validation panicked on test case {}: {:?}", i, bytes);
+            panic!(
+                "DoneToken validation panicked on test case {}: {:?}",
+                i, bytes
+            );
         }
     }
 }
@@ -67,13 +80,18 @@ fn test_done_token_all_flag_combinations() {
             (status >> 8) as u8,
             0xc1, // SELECT command
             0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 0 rows
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00, // 0 rows
         ];
-        
-        let result = std::panic::catch_unwind(|| {
-            validate_done_token_bytes(&bytes)
-        });
-        
+
+        let result = std::panic::catch_unwind(|| validate_done_token_bytes(&bytes));
+
         assert!(result.is_ok(), "Panicked on status flags: 0x{:04X}", status);
     }
 }
@@ -94,16 +112,22 @@ fn test_done_token_command_values() {
 
     for command in commands {
         let bytes = [
-            0x00, 0x00, // FINAL status
+            0x00,
+            0x00, // FINAL status
             command as u8,
             (command >> 8) as u8,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 0 rows
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00, // 0 rows
         ];
-        
-        let result = std::panic::catch_unwind(|| {
-            validate_done_token_bytes(&bytes)
-        });
-        
+
+        let result = std::panic::catch_unwind(|| validate_done_token_bytes(&bytes));
+
         assert!(result.is_ok(), "Panicked on command: 0x{:04X}", command);
     }
 }
@@ -124,8 +148,10 @@ fn test_done_token_row_count_boundaries() {
 
     for row_count in row_counts {
         let bytes = [
-            0x10, 0x00, // COUNT flag
-            0xc1, 0x00, // SELECT command
+            0x10,
+            0x00, // COUNT flag
+            0xc1,
+            0x00, // SELECT command
             (row_count & 0xFF) as u8,
             ((row_count >> 8) & 0xFF) as u8,
             ((row_count >> 16) & 0xFF) as u8,
@@ -135,11 +161,9 @@ fn test_done_token_row_count_boundaries() {
             ((row_count >> 48) & 0xFF) as u8,
             ((row_count >> 56) & 0xFF) as u8,
         ];
-        
-        let result = std::panic::catch_unwind(|| {
-            validate_done_token_bytes(&bytes)
-        });
-        
+
+        let result = std::panic::catch_unwind(|| validate_done_token_bytes(&bytes));
+
         assert!(result.is_ok(), "Panicked on row_count: {}", row_count);
     }
 }
@@ -149,20 +173,18 @@ fn test_done_token_row_count_boundaries() {
 fn test_done_token_random_patterns() {
     // Simple pseudo-random generator (LCG)
     let mut seed = 12345u64;
-    
+
     for _ in 0..1000 {
         let mut bytes = [0u8; 12];
-        
+
         // Generate 12 random bytes
         for byte in bytes.iter_mut() {
             seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
             *byte = (seed / 65536) as u8;
         }
-        
-        let result = std::panic::catch_unwind(|| {
-            validate_done_token_bytes(&bytes)
-        });
-        
+
+        let result = std::panic::catch_unwind(|| validate_done_token_bytes(&bytes));
+
         assert!(result.is_ok(), "Panicked on random bytes: {:?}", bytes);
     }
 }
@@ -174,8 +196,7 @@ fn validate_done_token_bytes(data: &[u8; 12]) {
     let status = u16::from_le_bytes([data[0], data[1]]);
     let current_command = u16::from_le_bytes([data[2], data[3]]);
     let row_count = u64::from_le_bytes([
-        data[4], data[5], data[6], data[7],
-        data[8], data[9], data[10], data[11],
+        data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11],
     ]);
 
     // Validate status flags (bitflags should handle any combination)

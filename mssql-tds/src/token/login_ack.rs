@@ -56,12 +56,24 @@ mod tests {
     #[test]
     fn test_sql_interface_type_try_from() {
         // Test valid values
-        assert!(matches!(SqlInterfaceType::try_from(0).unwrap(), SqlInterfaceType::Default));
-        assert!(matches!(SqlInterfaceType::try_from(1).unwrap(), SqlInterfaceType::TSql));
+        assert!(matches!(
+            SqlInterfaceType::try_from(0).unwrap(),
+            SqlInterfaceType::Default
+        ));
+        assert!(matches!(
+            SqlInterfaceType::try_from(1).unwrap(),
+            SqlInterfaceType::TSql
+        ));
 
         // Test invalid values (should not panic, should return Unknown)
-        assert!(matches!(SqlInterfaceType::try_from(173).unwrap(), SqlInterfaceType::Unknown(173)));
-        assert!(matches!(SqlInterfaceType::try_from(255).unwrap(), SqlInterfaceType::Unknown(255)));
+        assert!(matches!(
+            SqlInterfaceType::try_from(173).unwrap(),
+            SqlInterfaceType::Unknown(173)
+        ));
+        assert!(matches!(
+            SqlInterfaceType::try_from(255).unwrap(),
+            SqlInterfaceType::Unknown(255)
+        ));
     }
 
     #[test]

@@ -16,7 +16,10 @@ impl From<i32> for TdsVersion {
             0x74000004 => TdsVersion::V7_4,
             0x08000000 => TdsVersion::V8_0,
             _ => {
-                tracing::warn!("Unknown TDS version value: 0x{:08X}, defaulting to TDS 7.4", value);
+                tracing::warn!(
+                    "Unknown TDS version value: 0x{:08X}, defaulting to TDS 7.4",
+                    value
+                );
                 TdsVersion::Unknown(value)
             }
         }

@@ -324,7 +324,10 @@ impl TryFrom<&[u8]> for SqlCollation {
         if collation_bytes.len() != 5 {
             return Err(Error::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Invalid collation length: {} (expected 5)", collation_bytes.len()),
+                format!(
+                    "Invalid collation length: {} (expected 5)",
+                    collation_bytes.len()
+                ),
             )));
         }
 
@@ -339,7 +342,7 @@ impl TryFrom<&[u8]> for SqlCollation {
         let lcid_language_id = (info & 0x000FFFFF) as i32; // Lower 16 bits.
         let col_flags = ((info >> 20) & 0xFF) as u8; // Next 8 bits
         let sort_id = collation_bytes[4];
-        
+
         Ok(SqlCollation {
             info,
             lcid_language_id,
@@ -1012,12 +1015,24 @@ mod env_change_tests {
     #[test]
     fn test_env_change_token_subtype_try_from() {
         // Test valid values
-        assert!(matches!(EnvChangeTokenSubType::try_from(1).unwrap(), EnvChangeTokenSubType::Database));
-        assert!(matches!(EnvChangeTokenSubType::try_from(20).unwrap(), EnvChangeTokenSubType::Routing));
+        assert!(matches!(
+            EnvChangeTokenSubType::try_from(1).unwrap(),
+            EnvChangeTokenSubType::Database
+        ));
+        assert!(matches!(
+            EnvChangeTokenSubType::try_from(20).unwrap(),
+            EnvChangeTokenSubType::Routing
+        ));
 
         // Test invalid values (should not panic, should return Unknown)
-        assert!(matches!(EnvChangeTokenSubType::try_from(30).unwrap(), EnvChangeTokenSubType::Unknown(30)));
-        assert!(matches!(EnvChangeTokenSubType::try_from(255).unwrap(), EnvChangeTokenSubType::Unknown(255)));
+        assert!(matches!(
+            EnvChangeTokenSubType::try_from(30).unwrap(),
+            EnvChangeTokenSubType::Unknown(30)
+        ));
+        assert!(matches!(
+            EnvChangeTokenSubType::try_from(255).unwrap(),
+            EnvChangeTokenSubType::Unknown(255)
+        ));
     }
 
     #[test]
