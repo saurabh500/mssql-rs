@@ -185,7 +185,7 @@ impl<'a, 'b> SessionHandler<'a, 'b> {
         self.validate_login_result(&login_result)?;
 
         let negotiated_settings =
-            self.infer_negotiated_settings(&pre_login_result, &mut login_result);
+            self.infer_negotiated_settings(&pre_login_result, &mut login_result)?;
         reader_writer.notify_session_setting_change(&negotiated_settings.session_settings);
         Ok(negotiated_settings)
     }
@@ -216,7 +216,7 @@ impl<'a, 'b> SessionHandler<'a, 'b> {
         &self,
         prelogin_result: &PreloginResult,
         login_result: &mut LoginResult,
-    ) -> NegotiatedSettings {
+    ) -> TdsResult<NegotiatedSettings> {
         let change_props = &login_result.change_properties;
         let packet_size = change_props.packet_size as u32;
         let session_settings = SessionSettings::new(
@@ -229,21 +229,29 @@ impl<'a, 'b> SessionHandler<'a, 'b> {
 
         let database_collation = match change_props.database_collation {
             Some(ref collation) => *collation,
-            None => unreachable!("Database collation shouldn't be empty after login."),
+            None => {
+                return Err(Error::ProtocolError(
+                    "Database collation missing after login. Server must send database collation in EnvChange token.".to_string()
+                ));
+            }
         };
 
         let database = match change_props.database {
             Some(ref db) => db.clone(),
-            None => unreachable!("Database shouldn't be empty after login."),
+            None => {
+                return Err(Error::ProtocolError(
+                    "Database name missing after login. Server must send database name in EnvChange token.".to_string()
+                ));
+            }
         };
 
-        NegotiatedSettings::new(
+        Ok(NegotiatedSettings::new(
             session_settings,
             database_collation,
             "".to_string(),
             database,
             change_props.char_set.clone(),
-        )
+        ))
     }
 
     async fn get_login_result<T: TdsTokenStreamReader + NetworkReaderWriter>(
@@ -292,10 +300,11 @@ impl PreloginHandler<'_> {
         // Return result (which contains data model).
         let response = PreloginResponse {};
 
-        // TODO: Convert panics to Error objects.
         let response_model = &response.deserialize(reader_writer).await?;
         if request_model.mars_enabled && !response_model.mars_enabled.unwrap_or(false) {
-            panic!("Server does not support MARS.")
+            return Err(Error::ProtocolError(
+                "Server does not support MARS (Multiple Active Result Sets)".to_string(),
+            ));
         }
 
         if !response_model.dbinstance_valid.unwrap() {
@@ -323,21 +332,23 @@ impl PreloginHandler<'_> {
                         is_fed_auth_supported: response_model.federated_auth_supported,
                     })
                 } else {
-                    // For other user encryption settings, the server would have
-                    assert!(request_model.encryption_setting == EncryptionSetting::Required);
-                    panic!("Server disallowed encryption but client requires it.");
+                    Err(Error::ProtocolError(format!(
+                        "Server disallowed encryption but client requires it (client: {:?}, server: Off)",
+                        request_model.encryption_setting
+                    )))
                 }
             }
             EncryptionType::NotSupported => {
-                if request_model.encryption_setting != EncryptionSetting::PreferOff {
+                if request_model.encryption_setting == EncryptionSetting::PreferOff {
                     Ok(PreloginResult {
-                        encryption_setting: NegotiatedEncryptionSetting::Mandatory,
+                        encryption_setting: NegotiatedEncryptionSetting::NoEncryption,
                         is_fed_auth_supported: response_model.federated_auth_supported,
                     })
                 } else {
-                    // For other user encryption settings, the server would have
-                    assert!(request_model.encryption_setting == EncryptionSetting::Required);
-                    panic!("Server does not support encryption but client requires it.");
+                    Err(Error::ProtocolError(format!(
+                        "Server does not support encryption but client requires it (client: {:?}, server: NotSupported)",
+                        request_model.encryption_setting
+                    )))
                 }
             }
             _ => Ok(PreloginResult {
@@ -387,9 +398,9 @@ impl LoginHandler<'_> {
             let fed_auth_info = match &login_response.fed_auth_info {
                 Some(fed_auth_info) => fed_auth_info,
                 None => {
-                    unreachable!(
-                        "Federated authentication info should be present, if the status is WaitingForFedAuth."
-                    );
+                    return Err(Error::ProtocolError(
+                        "Login response status is WaitingForFedAuth but no fed_auth_info present. Protocol error.".to_string()
+                    ));
                 }
             };
             let context = &self.factory.context;

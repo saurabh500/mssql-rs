@@ -173,7 +173,12 @@ impl FeaturesRequest {
                 }
             }
             None => {
-                unreachable!("Feature not found in the features request.");
+                event!(
+                    Level::WARN,
+                    "Feature {:?} not found in the features request",
+                    _feature_extension
+                );
+                None
             }
         }
     }
@@ -186,7 +191,11 @@ impl FeaturesRequest {
                 f.deserialize(_data);
             }
             None => {
-                unreachable!("Feature not found in the features request.");
+                event!(
+                    Level::WARN,
+                    "Feature {:?} not found in the features request when setting acknowledged",
+                    _feature_extension
+                );
             }
         }
     }
@@ -521,7 +530,13 @@ impl LoginResponse {
                             );
                         }
                         Tokens::Sspi(_t) => {
-                            todo!()
+                            event!(
+                                Level::ERROR,
+                                "SSPI authentication token received but not yet implemented"
+                            );
+                            return Err(crate::error::Error::ProtocolError(
+                                "SSPI authentication is not yet implemented".to_string(),
+                            ));
                         }
                         _ => {
                             event!(

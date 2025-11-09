@@ -18,10 +18,11 @@ use uuid::Uuid;
 
 #[derive(PartialEq)]
 pub enum EncryptionType {
-    Off = 0x00,
-    On = 0x01,
-    NotSupported = 0x02,
-    Required = 0x03,
+    Off,
+    On,
+    NotSupported,
+    Required,
+    Unknown(u8),
 }
 
 impl std::convert::From<u8> for EncryptionType {
@@ -31,7 +32,19 @@ impl std::convert::From<u8> for EncryptionType {
             0x01 => EncryptionType::On,
             0x02 => EncryptionType::NotSupported,
             0x03 => EncryptionType::Required,
-            _ => panic!("unknown encryption type {v}"),
+            _ => EncryptionType::Unknown(v),
+        }
+    }
+}
+
+impl EncryptionType {
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            EncryptionType::Off => 0x00,
+            EncryptionType::On => 0x01,
+            EncryptionType::NotSupported => 0x02,
+            EncryptionType::Required => 0x03,
+            EncryptionType::Unknown(v) => *v,
         }
     }
 }
@@ -47,15 +60,16 @@ pub enum MarsType {
 }
 
 pub enum OptionType {
-    Version = 0x00,
-    Encryption = 0x01,
-    InstOpt = 0x02,
-    ThreadId = 0x03,
-    Mars = 0x04,
-    TraceId = 0x05,
-    FedAuthRequired = 0x06,
-    Nonce = 0x07,
-    Terminator = 0xff,
+    Version,
+    Encryption,
+    InstOpt,
+    ThreadId,
+    Mars,
+    TraceId,
+    FedAuthRequired,
+    Nonce,
+    Terminator,
+    Unknown(u8),
 }
 
 impl std::convert::From<u8> for OptionType {
@@ -70,9 +84,24 @@ impl std::convert::From<u8> for OptionType {
             0x06 => OptionType::FedAuthRequired,
             0x07 => OptionType::Nonce,
             0xff => OptionType::Terminator,
-            _ => {
-                panic!("invalid option type {v:x}");
-            }
+            _ => OptionType::Unknown(v),
+        }
+    }
+}
+
+impl OptionType {
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            OptionType::Version => 0x00,
+            OptionType::Encryption => 0x01,
+            OptionType::InstOpt => 0x02,
+            OptionType::ThreadId => 0x03,
+            OptionType::Mars => 0x04,
+            OptionType::TraceId => 0x05,
+            OptionType::FedAuthRequired => 0x06,
+            OptionType::Nonce => 0x07,
+            OptionType::Terminator => 0xff,
+            OptionType::Unknown(v) => *v,
         }
     }
 }
@@ -312,23 +341,23 @@ impl<'a, 'n> Serializer<'a, 'n> {
         match self.model.encryption_setting {
             EncryptionSetting::PreferOff => {
                 self.payload_writer
-                    .write_byte_async(EncryptionType::Off as u8)
+                    .write_byte_async(EncryptionType::Off.to_u8())
                     .await
             }
             EncryptionSetting::On => {
                 self.payload_writer
-                    .write_byte_async(EncryptionType::On as u8)
+                    .write_byte_async(EncryptionType::On.to_u8())
                     .await
             }
             EncryptionSetting::Required => {
                 self.payload_writer
-                    .write_byte_async(EncryptionType::Required as u8)
+                    .write_byte_async(EncryptionType::Required.to_u8())
                     .await
             }
             _ => {
                 // This includes Strict, which the server ignores because it is always on in TDS 8.
                 self.payload_writer
-                    .write_byte_async(EncryptionType::NotSupported as u8)
+                    .write_byte_async(EncryptionType::NotSupported.to_u8())
                     .await
             }
         }
@@ -379,14 +408,14 @@ impl<'a, 'n> Serializer<'a, 'n> {
 
     async fn write_terminator(&mut self) -> TdsResult<()> {
         self.payload_writer
-            .write_byte_async(OptionType::Terminator as u8)
+            .write_byte_async(OptionType::Terminator.to_u8())
             .await?;
         self.content_next_offset += 1;
         Ok(())
     }
 
     async fn write_option_metadata(&mut self, option: OptionType, length: u16) -> TdsResult<()> {
-        self.payload_writer.write_byte_async(option as u8).await?;
+        self.payload_writer.write_byte_async(option.to_u8()).await?;
         self.payload_writer
             .write_i16_be_async(self.content_next_offset as i16)
             .await?;
@@ -472,11 +501,11 @@ pub(crate) mod tests {
         // Just validate that the version was serialized correctly to start with.
 
         // Validate a few headers.
-        assert_eq!(cursor.read_u8().unwrap(), OptionType::Version as u8);
+        assert_eq!(cursor.read_u8().unwrap(), OptionType::Version.to_u8());
         assert_eq!(cursor.read_i16::<BigEndian>().unwrap(), 36); // Initial content_next_offset.
         assert_eq!(cursor.read_i16::<BigEndian>().unwrap(), 6);
 
-        assert_eq!(cursor.read_u8().unwrap(), OptionType::Encryption as u8);
+        assert_eq!(cursor.read_u8().unwrap(), OptionType::Encryption.to_u8());
         assert_eq!(cursor.read_i16::<BigEndian>().unwrap(), 42); // Add the length of the previous header to the content_next_offset.
         assert_eq!(cursor.read_i16::<BigEndian>().unwrap(), 1);
     }
@@ -486,8 +515,8 @@ pub(crate) mod tests {
         let response = PreloginResponse {};
         let mut mocked_packet_reader = MockTestPacketReader::new();
         let byte_data = vec![
-            OptionType::Version as u8, // OptionType::Version
-            OptionType::Mars as u8,
+            OptionType::Version.to_u8(), // OptionType::Version
+            OptionType::Mars.to_u8(),
             0xFF, // terminator
             15,
             2, // Version
