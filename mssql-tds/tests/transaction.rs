@@ -19,31 +19,31 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(context).await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SET IMPLICIT_TRANSACTIONS ON".to_string(),
             &expected,
         )
         .await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "CREATE TABLE #dummy_int(col int)".to_string(),
             &expected,
         )
         .await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "INSERT INTO #dummy_int VALUES(1)".to_string(),
             &[ExpectedQueryResultType::Update(1)],
         )
         .await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "ROLLBACK transaction".to_string(),
             &expected,
         )
         .await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "CREATE TABLE #dummy_int(col int)".to_string(),
             &expected,
         )
@@ -56,31 +56,27 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(context).await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SET IMPLICIT_TRANSACTIONS ON".to_string(),
             &expected,
         )
         .await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "CREATE TABLE #dummy_int2(col int)".to_string(),
             &expected,
         )
         .await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "INSERT INTO #dummy_int2 VALUES(1)".to_string(),
             &[ExpectedQueryResultType::Update(1)],
         )
         .await;
+        run_query_and_check_results(&mut connection, "COMMIT transaction".to_string(), &expected)
+            .await;
         run_query_and_check_results(
-            connection.as_mut(),
-            "COMMIT transaction".to_string(),
-            &expected,
-        )
-        .await;
-        run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SELECT * FROM #dummy_int2".to_string(),
             &[ExpectedQueryResultType::Result(1)],
         )
@@ -93,31 +89,31 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(context).await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SET IMPLICIT_TRANSACTIONS ON".to_string(),
             &expected,
         )
         .await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "CREATE TABLE #dummy_int2(col int)".to_string(),
             &expected,
         )
         .await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "INSERT INTO #dummy_int2 VALUES(1)".to_string(),
             &[ExpectedQueryResultType::Update(1)],
         )
         .await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SET IMPLICIT_TRANSACTIONS OFF".to_string(),
             &expected,
         )
         .await;
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SELECT * FROM #dummy_int2".to_string(),
             &[ExpectedQueryResultType::Result(1)],
         )
@@ -129,113 +125,72 @@ mod transactions {
         let expected = [ExpectedQueryResultType::Result(1)];
         let context = create_context();
         let mut connection = begin_connection(context).await;
-        let begin_result = connection
-            .send_transaction(TransactionManagementType::GetDtcAddress, None, None)
-            .await;
 
-        validate_results(begin_result.unwrap(), &expected).await;
+        connection.get_dtc_address().await.unwrap();
+        validate_results(&mut connection, &expected).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_begin_named_rollback() {
-        let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
         let mut connection = begin_connection(context).await;
-        let begin_result = connection
-            .send_transaction(
-                TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: Some("test01".to_string()),
-                }),
-                None,
-                None,
+
+        // Begin transaction with name
+        connection
+            .begin_transaction(
+                TransactionIsolationLevel::ReadCommitted,
+                Some("test01".to_string()),
             )
-            .await;
+            .await
+            .unwrap();
 
-        validate_results(begin_result.unwrap(), &expected).await;
-
-        let rollback_result = connection
-            .send_transaction(
-                TransactionManagementType::Rollback {
-                    name: Some("test01".to_string()),
-                    create_txn_params: None,
-                },
-                None,
-                None,
-            )
-            .await;
-
-        validate_results(rollback_result.unwrap(), &expected).await;
+        // Rollback transaction with name
+        connection
+            .rollback_transaction(Some("test01".to_string()), None)
+            .await
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_begin_unnamed_rollback() {
-        let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
         let mut connection = begin_connection(context).await;
-        let begin_result = connection
-            .send_transaction(
-                TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: None,
-                }),
-                None,
-                None,
-            )
-            .await;
 
-        validate_results(begin_result.unwrap(), &expected).await;
+        // Begin transaction without name
+        connection
+            .begin_transaction(TransactionIsolationLevel::ReadCommitted, None)
+            .await
+            .unwrap();
 
-        let rollback_result = connection
-            .send_transaction(
-                TransactionManagementType::Rollback {
-                    name: None,
-                    create_txn_params: None,
-                },
-                None,
-                None,
-            )
-            .await;
-
-        validate_results(rollback_result.unwrap(), &expected).await;
+        // Rollback transaction without name
+        connection.rollback_transaction(None, None).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_begin_named_no_rollback() {
-        let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
         let mut connection = begin_connection(context).await;
-        let begin_result = connection
-            .send_transaction(
-                TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: Some("test01".to_string()),
-                }),
-                None,
-                None,
-            )
-            .await;
 
-        validate_results(begin_result.unwrap(), &expected).await;
+        // Begin transaction with name (no rollback)
+        connection
+            .begin_transaction(
+                TransactionIsolationLevel::ReadCommitted,
+                Some("test01".to_string()),
+            )
+            .await
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_begin_unnamed_no_rollback() {
-        let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
         let mut connection = begin_connection(context).await;
-        let begin_result = connection
-            .send_transaction(
-                TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: None,
-                }),
-                None,
-                None,
-            )
-            .await;
 
-        validate_results(begin_result.unwrap(), &expected).await;
+        // Begin transaction without name (no rollback)
+        connection
+            .begin_transaction(TransactionIsolationLevel::ReadCommitted, None)
+            .await
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -243,42 +198,32 @@ mod transactions {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
         let mut connection = begin_connection(context).await;
-        let begin_result = connection
-            .send_transaction(
-                TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: Some("test02".to_string()),
-                }),
-                None,
-                None,
-            )
-            .await;
 
-        validate_results(begin_result.unwrap(), &expected).await;
+        // Begin transaction with name
+        connection
+            .begin_transaction(
+                TransactionIsolationLevel::ReadCommitted,
+                Some("test02".to_string()),
+            )
+            .await
+            .unwrap();
 
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "CREATE TABLE #dummy_int2(col int)".to_string(),
             &expected,
         )
         .await;
 
-        let commit_result = connection
-            .send_transaction(
-                TransactionManagementType::Commit {
-                    name: Some("test02".to_string()),
-                    create_txn_params: None,
-                },
-                None,
-                None,
-            )
-            .await;
-
-        validate_results(commit_result.unwrap(), &expected).await;
+        // Commit transaction with name, no new transaction
+        connection
+            .commit_transaction(Some("test02".to_string()), None)
+            .await
+            .unwrap();
 
         // Ensure table is still there.
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SELECT * FROM #dummy_int2".to_string(),
             &[ExpectedQueryResultType::Result(0)],
         )
@@ -290,63 +235,48 @@ mod transactions {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
         let mut connection = begin_connection(context).await;
-        let begin_result = connection
-            .send_transaction(
-                TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: Some("test03".to_string()),
-                }),
-                None,
-                None,
-            )
-            .await;
 
-        validate_results(begin_result.unwrap(), &expected).await;
+        // Begin transaction with name "test03"
+        connection
+            .begin_transaction(
+                TransactionIsolationLevel::ReadCommitted,
+                Some("test03".to_string()),
+            )
+            .await
+            .unwrap();
 
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "CREATE TABLE #dummy_int2(col int)".to_string(),
             &expected,
         )
         .await;
 
-        let commit_result = connection
-            .send_transaction(
-                TransactionManagementType::Commit {
-                    name: Some("test03".to_string()),
-                    create_txn_params: Some(CreateTxnParams {
-                        level: TransactionIsolationLevel::NoChange,
-                        name: Some("test04".to_string()),
-                    }),
-                },
-                None,
-                None,
+        // Commit transaction "test03" and start new transaction "test04"
+        connection
+            .commit_transaction(
+                Some("test03".to_string()),
+                Some(CreateTxnParams {
+                    level: TransactionIsolationLevel::NoChange,
+                    name: Some("test04".to_string()),
+                }),
             )
-            .await;
-
-        validate_results(commit_result.unwrap(), &expected).await;
+            .await
+            .unwrap();
 
         // Ensure table is still there.
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SELECT * FROM #dummy_int2".to_string(),
             &[ExpectedQueryResultType::Result(0)],
         )
         .await;
 
-        // Commit the new transaction
-        let commit_result = connection
-            .send_transaction(
-                TransactionManagementType::Commit {
-                    name: Some("test04".to_string()),
-                    create_txn_params: None,
-                },
-                None,
-                None,
-            )
-            .await;
-
-        validate_results(commit_result.unwrap(), &expected).await;
+        // Commit the new transaction "test04"
+        connection
+            .commit_transaction(Some("test04".to_string()), None)
+            .await
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -369,7 +299,7 @@ mod transactions {
         validate_results(begin_result.unwrap(), &expected).await;
 
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "CREATE TABLE #dummy_int2(col int)".to_string(),
             &expected,
         )
@@ -393,7 +323,7 @@ mod transactions {
 
         // Ensure table is still there.
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SELECT * FROM #dummy_int2".to_string(),
             &[ExpectedQueryResultType::Result(0)],
         )
@@ -436,7 +366,7 @@ mod transactions {
             validate_results(begin_result.unwrap(), &expected).await;
 
             run_query_and_check_results(
-                connection.as_mut(),
+                &mut connection,
                 "CREATE TABLE #dummy_int2(col int)".to_string(),
                 &expected,
             )
@@ -460,7 +390,7 @@ mod transactions {
 
             // Ensure table is still there.
             run_query_and_check_results(
-                connection.as_mut(),
+                &mut connection,
                 "SELECT * FROM #dummy_int2".to_string(),
                 &[ExpectedQueryResultType::Result(0)],
             )
@@ -485,7 +415,7 @@ mod transactions {
             }
 
             run_query_and_check_results(
-                connection.as_mut(),
+                &mut connection,
                 "DROP TABLE #dummy_int2".to_string(),
                 &expected,
             )
@@ -512,7 +442,7 @@ mod transactions {
         validate_results(begin_result.unwrap(), &expected).await;
 
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "CREATE TABLE #dummy_int2(col int)".to_string(),
             &expected,
         )
@@ -537,7 +467,7 @@ mod transactions {
 
         // Drop the test table so that we can rollback and check that it is still there.
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "DROP TABLE #dummy_int2".to_string(),
             &expected,
         )
@@ -558,7 +488,7 @@ mod transactions {
 
         // Ensure table is still there.
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SELECT * FROM #dummy_int2".to_string(),
             &[ExpectedQueryResultType::Result(0)],
         )
@@ -584,7 +514,7 @@ mod transactions {
         validate_results(begin_result.unwrap(), &expected).await;
 
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "CREATE TABLE #dummy_int2(col int)".to_string(),
             &expected,
         )
@@ -609,7 +539,7 @@ mod transactions {
 
         // Drop the test table so that we can rollback and check that it is still there.
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "DROP TABLE #dummy_int2".to_string(),
             &expected,
         )
@@ -633,7 +563,7 @@ mod transactions {
 
         // Ensure table is still there.
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SELECT * FROM #dummy_int2".to_string(),
             &[ExpectedQueryResultType::Result(0)],
         )
@@ -673,7 +603,7 @@ mod transactions {
         validate_results(begin_result.unwrap(), &expected).await;
 
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "CREATE TABLE #dummy_int2(col int)".to_string(),
             &expected,
         )
@@ -698,7 +628,7 @@ mod transactions {
 
         // Drop the test table so that we can rollback and check that it is still there.
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "DROP TABLE #dummy_int2".to_string(),
             &expected,
         )
@@ -722,7 +652,7 @@ mod transactions {
 
         // Ensure table is still there.
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SELECT * FROM #dummy_int2".to_string(),
             &[ExpectedQueryResultType::Result(0)],
         )
@@ -762,7 +692,7 @@ mod transactions {
         validate_results(begin_result.unwrap(), &expected).await;
 
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "CREATE TABLE #dummy_int2(col int)".to_string(),
             &expected,
         )
@@ -781,7 +711,7 @@ mod transactions {
 
         // Drop the test table so that we can rollback and check that it is still there.
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "DROP TABLE #dummy_int2".to_string(),
             &expected,
         )
@@ -803,7 +733,7 @@ mod transactions {
 
         // Ensure table is still there.
         run_query_and_check_results(
-            connection.as_mut(),
+            &mut connection,
             "SELECT * FROM #dummy_int2".to_string(),
             &[ExpectedQueryResultType::Result(0)],
         )

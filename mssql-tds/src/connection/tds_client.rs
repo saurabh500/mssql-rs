@@ -525,7 +525,11 @@ impl TdsClient {
     }
 
     #[instrument(skip(self), level = "info")]
-    pub async fn commit_transaction(&mut self) -> TdsResult<()> {
+    pub async fn commit_transaction(
+        &mut self,
+        name: Option<String>,
+        create_txn_params: Option<CreateTxnParams>,
+    ) -> TdsResult<()> {
         if self.execution_context.has_open_batch() {
             return Err(UsageError(
                 "Cannot commit transaction while another batch is executing.".to_string(),
@@ -533,8 +537,8 @@ impl TdsClient {
         }
         let transaction = TransactionManagementRequest::new(
             TransactionManagementType::Commit {
-                name: None,
-                create_txn_params: None,
+                name,
+                create_txn_params,
             },
             &self.execution_context,
         );
@@ -548,7 +552,11 @@ impl TdsClient {
     }
 
     #[instrument(skip(self), level = "info")]
-    pub async fn rollback_transaction(&mut self, name: Option<String>) -> TdsResult<()> {
+    pub async fn rollback_transaction(
+        &mut self,
+        name: Option<String>,
+        create_txn_params: Option<CreateTxnParams>,
+    ) -> TdsResult<()> {
         if self.execution_context.has_open_batch() {
             return Err(UsageError(
                 "Cannot rollback transaction while another batch is executing.".to_string(),
@@ -557,7 +565,7 @@ impl TdsClient {
         let transaction = TransactionManagementRequest::new(
             TransactionManagementType::Rollback {
                 name,
-                create_txn_params: None,
+                create_txn_params,
             },
             &self.execution_context,
         );
@@ -566,6 +574,34 @@ impl TdsClient {
         transaction.serialize(&mut packet_writer).await?;
 
         self.consume_transaction_response().await?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self), level = "info")]
+    pub async fn get_dtc_address(&mut self) -> TdsResult<()> {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(
+                "Cannot get DTC address while another batch is executing.".to_string(),
+            ));
+        }
+        let transaction = TransactionManagementRequest::new(
+            TransactionManagementType::GetDtcAddress,
+            &self.execution_context,
+        );
+        let mut packet_writer =
+            transaction.create_packet_writer(self.transport.as_writer(), None, None);
+        transaction.serialize(&mut packet_writer).await?;
+
+        // GetDtcAddress returns a result set, unlike other transaction commands
+        // Set up execution state for result iteration (similar to execute())
+        let metadata = self.move_to_column_metadata().await?;
+        if metadata.is_none() {
+            self.execution_context.set_has_open_batch(false);
+        } else {
+            self.current_metadata = metadata;
+            self.execution_context.set_has_open_batch(true);
+        }
 
         Ok(())
     }

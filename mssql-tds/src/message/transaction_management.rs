@@ -10,6 +10,7 @@ use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
 use async_trait::async_trait;
 use std::io::Error;
 
+#[derive(Debug, Clone)]
 pub struct CreateTxnParams {
     pub level: TransactionIsolationLevel,
     pub name: Option<String>,
