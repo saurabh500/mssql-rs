@@ -10,7 +10,7 @@
 #[test]
 fn test_done_token_no_panic_on_arbitrary_bytes() {
     // Test a variety of byte patterns
-    let test_cases = vec![
+    let test_cases = [
         // All zeros
         [0u8; 12],
         // All ones
@@ -47,8 +47,7 @@ fn test_done_token_no_panic_on_arbitrary_bytes() {
 
         if result.is_err() {
             panic!(
-                "DoneToken validation panicked on test case {}: {:?}",
-                i, bytes
+                "DoneToken validation panicked on test case {i}: {bytes:?}"
             );
         }
     }
@@ -92,7 +91,7 @@ fn test_done_token_all_flag_combinations() {
 
         let result = std::panic::catch_unwind(|| validate_done_token_bytes(&bytes));
 
-        assert!(result.is_ok(), "Panicked on status flags: 0x{:04X}", status);
+        assert!(result.is_ok(), "Panicked on status flags: 0x{status:04X}");
     }
 }
 
@@ -128,7 +127,7 @@ fn test_done_token_command_values() {
 
         let result = std::panic::catch_unwind(|| validate_done_token_bytes(&bytes));
 
-        assert!(result.is_ok(), "Panicked on command: 0x{:04X}", command);
+        assert!(result.is_ok(), "Panicked on command: 0x{command:04X}");
     }
 }
 
@@ -164,7 +163,7 @@ fn test_done_token_row_count_boundaries() {
 
         let result = std::panic::catch_unwind(|| validate_done_token_bytes(&bytes));
 
-        assert!(result.is_ok(), "Panicked on row_count: {}", row_count);
+        assert!(result.is_ok(), "Panicked on row_count: {row_count}");
     }
 }
 
@@ -185,7 +184,7 @@ fn test_done_token_random_patterns() {
 
         let result = std::panic::catch_unwind(|| validate_done_token_bytes(&bytes));
 
-        assert!(result.is_ok(), "Panicked on random bytes: {:?}", bytes);
+        assert!(result.is_ok(), "Panicked on random bytes: {bytes:?}");
     }
 }
 

@@ -540,8 +540,7 @@ where
             }
             ty => {
                 return Err(Error::ProtocolError(format!(
-                    "Unsupported TDS type for TypeInfo::read(): {:?}. This type is not yet implemented.",
-                    ty
+                    "Unsupported TDS type for TypeInfo::read(): {ty:?}. This type is not yet implemented."
                 )));
             }
         };

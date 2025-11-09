@@ -477,10 +477,9 @@ where
 
         // Validate data_left to prevent capacity overflow attacks
         const MAX_TOKEN_DATA_SIZE: i32 = 1024 * 1024; // 1MB reasonable limit
-        if data_left < 0 || data_left > MAX_TOKEN_DATA_SIZE {
+        if !(0..=MAX_TOKEN_DATA_SIZE).contains(&data_left) {
             return Err(crate::error::Error::ProtocolError(format!(
-                "Invalid FedAuthInfo token data size: {} bytes (length: {}, options_count: {}). Must be between 0 and {} bytes.",
-                data_left, length, options_count, MAX_TOKEN_DATA_SIZE
+                "Invalid FedAuthInfo token data size: {data_left} bytes (length: {length}, options_count: {options_count}). Must be between 0 and {MAX_TOKEN_DATA_SIZE} bytes."
             )));
         }
 
@@ -592,8 +591,7 @@ where
             // Validate allocation size to prevent OOM attacks
             if data_length as usize > MAX_ALLOWED_FE_DATA_IN_BYTES {
                 return Err(crate::error::Error::ProtocolError(format!(
-                    "FeatureExtAck data length too large: {} bytes (max: {} bytes). Possible DoS attack.",
-                    data_length, MAX_ALLOWED_FE_DATA_IN_BYTES
+                    "FeatureExtAck data length too large: {data_length} bytes (max: {MAX_ALLOWED_FE_DATA_IN_BYTES} bytes). Possible DoS attack."
                 )));
             }
 
@@ -851,8 +849,7 @@ impl<T: SqlTypeDecode + Sync, P: TdsPacketReader + Send + Sync> TokenParser<P>
         let param_name_length = reader.read_byte().await?;
         let byte_length = (param_name_length as usize).checked_mul(2).ok_or_else(|| {
             crate::error::Error::ProtocolError(format!(
-                "Parameter name length overflow: {}",
-                param_name_length
+                "Parameter name length overflow: {param_name_length}"
             ))
         })?;
         let param_name = reader.read_unicode_with_byte_length(byte_length).await?;
@@ -1020,7 +1017,7 @@ pub(crate) mod tests {
         assert!(result.is_err());
 
         if let Err(e) = result {
-            let error_msg = format!("{:?}", e);
+            let error_msg = format!("{e:?}");
             assert!(error_msg.contains("too large") || error_msg.contains("DoS"));
         }
 

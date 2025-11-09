@@ -118,8 +118,7 @@ where
         // If we don't, then this is an unsupported token type.
         if !self.parser_registry.has_parser(&token_type) {
             return Err(crate::error::Error::ProtocolError(format!(
-                "No parser implemented for token type: {:?}. This token type is not supported yet.",
-                token_type
+                "No parser implemented for token type: {token_type:?}. This token type is not supported yet."
             )));
         }
 

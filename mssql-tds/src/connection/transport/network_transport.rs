@@ -129,7 +129,7 @@ pub(crate) async fn create_transport(
     // TcpStreams.
 
     match tds_version {
-        TdsVersion::V7_4 | TdsVersion::Unknown(_) => {
+        TdsVersion::V7_4 => {
             let stream_recoverer = Tds7StreamRecoverer::new(TcpStreamRecoverer {
                 stream: Box::new(std_stream),
             });
@@ -169,6 +169,11 @@ pub(crate) async fn create_transport(
                 Box::new(stream_recoverer),
                 PRE_NEGOTIATED_PACKET_SIZE,
                 encryption_mode,
+            )))
+        }
+        TdsVersion::Unknown(version_value) => {
+            Err(crate::error::Error::ProtocolError(format!(
+                "Unsupported TDS version: 0x{version_value:08X}. Only TDS 7.4 and TDS 8.0 are supported."
             )))
         }
     }
