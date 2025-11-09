@@ -285,18 +285,14 @@ mod transactions {
         let context = create_context();
         let mut connection = begin_connection(context).await;
 
-        let begin_result = connection
-            .send_transaction(
-                TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: Some("test05".to_string()),
-                }),
-                None,
-                None,
+        // Begin transaction with name "test05"
+        connection
+            .begin_transaction(
+                TransactionIsolationLevel::ReadCommitted,
+                Some("test05".to_string()),
             )
-            .await;
-
-        validate_results(begin_result.unwrap(), &expected).await;
+            .await
+            .unwrap();
 
         run_query_and_check_results(
             &mut connection,
@@ -305,21 +301,17 @@ mod transactions {
         )
         .await;
 
-        let commit_result = connection
-            .send_transaction(
-                TransactionManagementType::Commit {
-                    name: Some("test05".to_string()),
-                    create_txn_params: Some(CreateTxnParams {
-                        level: TransactionIsolationLevel::NoChange,
-                        name: None,
-                    }),
-                },
-                None,
-                None,
+        // Commit transaction "test05" and start new unnamed transaction
+        connection
+            .commit_transaction(
+                Some("test05".to_string()),
+                Some(CreateTxnParams {
+                    level: TransactionIsolationLevel::NoChange,
+                    name: None,
+                }),
             )
-            .await;
-
-        validate_results(commit_result.unwrap(), &expected).await;
+            .await
+            .unwrap();
 
         // Ensure table is still there.
         run_query_and_check_results(
@@ -330,18 +322,7 @@ mod transactions {
         .await;
 
         // Commit the new unnamed transaction
-        let commit_result = connection
-            .send_transaction(
-                TransactionManagementType::Commit {
-                    name: None,
-                    create_txn_params: None,
-                },
-                None,
-                None,
-            )
-            .await;
-
-        validate_results(commit_result.unwrap(), &expected).await;
+        connection.commit_transaction(None, None).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -352,18 +333,14 @@ mod transactions {
 
         let mut counter = 0;
         loop {
-            let begin_result = connection
-                .send_transaction(
-                    TransactionManagementType::Begin(CreateTxnParams {
-                        level: TransactionIsolationLevel::ReadCommitted,
-                        name: Some("test05".to_string()),
-                    }),
-                    None,
-                    None,
+            // Begin transaction with name "test05"
+            connection
+                .begin_transaction(
+                    TransactionIsolationLevel::ReadCommitted,
+                    Some("test05".to_string()),
                 )
-                .await;
-
-            validate_results(begin_result.unwrap(), &expected).await;
+                .await
+                .unwrap();
 
             run_query_and_check_results(
                 &mut connection,
@@ -372,21 +349,17 @@ mod transactions {
             )
             .await;
 
-            let commit_result = connection
-                .send_transaction(
-                    TransactionManagementType::Commit {
-                        name: Some("test05".to_string()),
-                        create_txn_params: Some(CreateTxnParams {
-                            level: TransactionIsolationLevel::NoChange,
-                            name: None,
-                        }),
-                    },
-                    None,
-                    None,
+            // Commit transaction "test05" and start new unnamed transaction
+            connection
+                .commit_transaction(
+                    Some("test05".to_string()),
+                    Some(CreateTxnParams {
+                        level: TransactionIsolationLevel::NoChange,
+                        name: None,
+                    }),
                 )
-                .await;
-
-            validate_results(commit_result.unwrap(), &expected).await;
+                .await
+                .unwrap();
 
             // Ensure table is still there.
             run_query_and_check_results(
@@ -397,18 +370,8 @@ mod transactions {
             .await;
 
             // Commit the new unnamed transaction
-            let commit_result = connection
-                .send_transaction(
-                    TransactionManagementType::Commit {
-                        name: None,
-                        create_txn_params: None,
-                    },
-                    None,
-                    None,
-                )
-                .await;
+            connection.commit_transaction(None, None).await.unwrap();
 
-            validate_results(commit_result.unwrap(), &expected).await;
             counter += 1;
             if counter == 10 {
                 break;
@@ -428,18 +391,15 @@ mod transactions {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
         let mut connection = begin_connection(context).await;
-        let begin_result = connection
-            .send_transaction(
-                TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: Some("test06".to_string()),
-                }),
-                None,
-                None,
-            )
-            .await;
 
-        validate_results(begin_result.unwrap(), &expected).await;
+        // Begin transaction with name "test06"
+        connection
+            .begin_transaction(
+                TransactionIsolationLevel::ReadCommitted,
+                Some("test06".to_string()),
+            )
+            .await
+            .unwrap();
 
         run_query_and_check_results(
             &mut connection,
@@ -448,22 +408,17 @@ mod transactions {
         )
         .await;
 
-        // Commit the creation of the table and start a new transaction with a new name.
-        let commit_result = connection
-            .send_transaction(
-                TransactionManagementType::Commit {
-                    name: Some("test06".to_string()),
-                    create_txn_params: Some(CreateTxnParams {
-                        level: TransactionIsolationLevel::NoChange,
-                        name: Some("test07".to_string()),
-                    }),
-                },
-                None,
-                None,
+        // Commit the creation of the table and start a new transaction "test07"
+        connection
+            .commit_transaction(
+                Some("test06".to_string()),
+                Some(CreateTxnParams {
+                    level: TransactionIsolationLevel::NoChange,
+                    name: Some("test07".to_string()),
+                }),
             )
-            .await;
-
-        validate_results(commit_result.unwrap(), &expected).await;
+            .await
+            .unwrap();
 
         // Drop the test table so that we can rollback and check that it is still there.
         run_query_and_check_results(
@@ -473,18 +428,11 @@ mod transactions {
         )
         .await;
 
-        let rollback_result = connection
-            .send_transaction(
-                TransactionManagementType::Rollback {
-                    name: Some("test07".to_string()),
-                    create_txn_params: None,
-                },
-                None,
-                None,
-            )
-            .await;
-
-        validate_results(rollback_result.unwrap(), &expected).await;
+        // Rollback transaction "test07"
+        connection
+            .rollback_transaction(Some("test07".to_string()), None)
+            .await
+            .unwrap();
 
         // Ensure table is still there.
         run_query_and_check_results(
@@ -500,18 +448,15 @@ mod transactions {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
         let mut connection = begin_connection(context).await;
-        let begin_result = connection
-            .send_transaction(
-                TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: Some("test08".to_string()),
-                }),
-                None,
-                None,
-            )
-            .await;
 
-        validate_results(begin_result.unwrap(), &expected).await;
+        // Begin transaction with name "test08"
+        connection
+            .begin_transaction(
+                TransactionIsolationLevel::ReadCommitted,
+                Some("test08".to_string()),
+            )
+            .await
+            .unwrap();
 
         run_query_and_check_results(
             &mut connection,
@@ -520,22 +465,17 @@ mod transactions {
         )
         .await;
 
-        // Commit the creation of the table and start a new transaction with a new name.
-        let commit_result = connection
-            .send_transaction(
-                TransactionManagementType::Commit {
-                    name: Some("test08".to_string()),
-                    create_txn_params: Some(CreateTxnParams {
-                        level: TransactionIsolationLevel::NoChange,
-                        name: Some("test09".to_string()),
-                    }),
-                },
-                None,
-                None,
+        // Commit transaction "test08" and start new transaction "test09"
+        connection
+            .commit_transaction(
+                Some("test08".to_string()),
+                Some(CreateTxnParams {
+                    level: TransactionIsolationLevel::NoChange,
+                    name: Some("test09".to_string()),
+                }),
             )
-            .await;
-
-        validate_results(commit_result.unwrap(), &expected).await;
+            .await
+            .unwrap();
 
         // Drop the test table so that we can rollback and check that it is still there.
         run_query_and_check_results(
@@ -545,21 +485,17 @@ mod transactions {
         )
         .await;
 
-        let rollback_result = connection
-            .send_transaction(
-                TransactionManagementType::Rollback {
-                    name: Some("test09".to_string()),
-                    create_txn_params: Some(CreateTxnParams {
-                        level: TransactionIsolationLevel::NoChange,
-                        name: Some("test10".to_string()),
-                    }),
-                },
-                None,
-                None,
+        // Rollback transaction "test09" and start new transaction "test10"
+        connection
+            .rollback_transaction(
+                Some("test09".to_string()),
+                Some(CreateTxnParams {
+                    level: TransactionIsolationLevel::NoChange,
+                    name: Some("test10".to_string()),
+                }),
             )
-            .await;
-
-        validate_results(rollback_result.unwrap(), &expected).await;
+            .await
+            .unwrap();
 
         // Ensure table is still there.
         run_query_and_check_results(
@@ -569,19 +505,11 @@ mod transactions {
         )
         .await;
 
-        // Commit the new named transaction
-        let commit_result = connection
-            .send_transaction(
-                TransactionManagementType::Commit {
-                    name: Some("test10".to_string()),
-                    create_txn_params: None,
-                },
-                None,
-                None,
-            )
-            .await;
-
-        validate_results(commit_result.unwrap(), &expected).await;
+        // Commit the new transaction "test10"
+        connection
+            .commit_transaction(Some("test10".to_string()), None)
+            .await
+            .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -589,18 +517,15 @@ mod transactions {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
         let mut connection = begin_connection(context).await;
-        let begin_result = connection
-            .send_transaction(
-                TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: Some("test11".to_string()),
-                }),
-                None,
-                None,
-            )
-            .await;
 
-        validate_results(begin_result.unwrap(), &expected).await;
+        // Begin transaction with name "test11"
+        connection
+            .begin_transaction(
+                TransactionIsolationLevel::ReadCommitted,
+                Some("test11".to_string()),
+            )
+            .await
+            .unwrap();
 
         run_query_and_check_results(
             &mut connection,
@@ -609,22 +534,17 @@ mod transactions {
         )
         .await;
 
-        // Commit the creation of the table and start a new transaction with a new name.
-        let commit_result = connection
-            .send_transaction(
-                TransactionManagementType::Commit {
-                    name: Some("test11".to_string()),
-                    create_txn_params: Some(CreateTxnParams {
-                        level: TransactionIsolationLevel::NoChange,
-                        name: Some("test12".to_string()),
-                    }),
-                },
-                None,
-                None,
+        // Commit transaction "test11" and start new transaction "test12"
+        connection
+            .commit_transaction(
+                Some("test11".to_string()),
+                Some(CreateTxnParams {
+                    level: TransactionIsolationLevel::NoChange,
+                    name: Some("test12".to_string()),
+                }),
             )
-            .await;
-
-        validate_results(commit_result.unwrap(), &expected).await;
+            .await
+            .unwrap();
 
         // Drop the test table so that we can rollback and check that it is still there.
         run_query_and_check_results(
@@ -634,21 +554,17 @@ mod transactions {
         )
         .await;
 
-        let rollback_result = connection
-            .send_transaction(
-                TransactionManagementType::Rollback {
-                    name: Some("test12".to_string()),
-                    create_txn_params: Some(CreateTxnParams {
-                        level: TransactionIsolationLevel::NoChange,
-                        name: None,
-                    }),
-                },
-                None,
-                None,
+        // Rollback transaction "test12" and start new unnamed transaction
+        connection
+            .rollback_transaction(
+                Some("test12".to_string()),
+                Some(CreateTxnParams {
+                    level: TransactionIsolationLevel::NoChange,
+                    name: None,
+                }),
             )
-            .await;
-
-        validate_results(rollback_result.unwrap(), &expected).await;
+            .await
+            .unwrap();
 
         // Ensure table is still there.
         run_query_and_check_results(
@@ -659,18 +575,7 @@ mod transactions {
         .await;
 
         // Commit the new unnamed transaction
-        let commit_result = connection
-            .send_transaction(
-                TransactionManagementType::Commit {
-                    name: None,
-                    create_txn_params: None,
-                },
-                None,
-                None,
-            )
-            .await;
-
-        validate_results(commit_result.unwrap(), &expected).await;
+        connection.commit_transaction(None, None).await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -678,18 +583,15 @@ mod transactions {
         let expected = [ExpectedQueryResultType::Update(0)];
         let context = create_context();
         let mut connection = begin_connection(context).await;
-        let begin_result = connection
-            .send_transaction(
-                TransactionManagementType::Begin(CreateTxnParams {
-                    level: TransactionIsolationLevel::ReadCommitted,
-                    name: Some("test13".to_string()),
-                }),
-                None,
-                None,
-            )
-            .await;
 
-        validate_results(begin_result.unwrap(), &expected).await;
+        // Begin transaction with name "test13"
+        connection
+            .begin_transaction(
+                TransactionIsolationLevel::ReadCommitted,
+                Some("test13".to_string()),
+            )
+            .await
+            .unwrap();
 
         run_query_and_check_results(
             &mut connection,
@@ -698,16 +600,11 @@ mod transactions {
         )
         .await;
 
-        // Create a savepoint where this table exists.
-        let save_result = connection
-            .send_transaction(
-                TransactionManagementType::Save("test14".to_string()),
-                None,
-                None,
-            )
-            .await;
-
-        validate_results(save_result.unwrap(), &expected).await;
+        // Create a savepoint where this table exists
+        connection
+            .save_transaction("test14".to_string())
+            .await
+            .unwrap();
 
         // Drop the test table so that we can rollback and check that it is still there.
         run_query_and_check_results(
@@ -717,19 +614,11 @@ mod transactions {
         )
         .await;
 
-        // Rollback to the savepoint
-        let rollback_result = connection
-            .send_transaction(
-                TransactionManagementType::Rollback {
-                    name: Some("test14".to_string()),
-                    create_txn_params: None,
-                },
-                None,
-                None,
-            )
-            .await;
-
-        validate_results(rollback_result.unwrap(), &expected).await;
+        // Rollback to the savepoint "test14"
+        connection
+            .rollback_transaction(Some("test14".to_string()), None)
+            .await
+            .unwrap();
 
         // Ensure table is still there.
         run_query_and_check_results(
