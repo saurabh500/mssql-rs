@@ -51,6 +51,23 @@ steps:
       scripts/install-rustup.sh
     displayName: "Install MacOS dependencies"
 
+  - script: |
+      # Install fnm (Fast Node Manager)
+      curl -fsSL https://fnm.vercel.app/install | bash
+      # This is a workaround for the fact that the PATH variable is not updated in the same shell.
+      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/share/fnm:$PATH"
+      export FNM_PATH="$HOME/.local/share/fnm"
+      export PATH="$FNM_PATH:$PATH"
+      eval "`fnm env`"
+      # Install Node.js 20
+      fnm install 20
+      fnm use 20
+      # Install yarn globally
+      npm install --global yarn
+      # Enable corepack for yarn v4 support
+      corepack enable
+    displayName: "Install JS dependencies for MacOS"
+
 - ${{ if eq(parameters.osType, 'Windows') }}:
   - script: |
       python --version
