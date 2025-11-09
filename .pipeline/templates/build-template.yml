@@ -26,6 +26,11 @@ parameters:
   type: boolean
   default: false
 
+- name: enableJsTest
+  displayName: Enable JS Test
+  type: boolean
+  default: false
+
 steps:
 - script: cargo fetch
   displayName: Fetch Crates
@@ -116,9 +121,11 @@ steps:
     TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
 
 - ${{ if eq(parameters.enableJsBuild, true) }}:
-  - script: |
+  - bash: |
       export DB_USER=sa
-      . $HOME/.bashrc
+      if [ -f "$HOME/.bashrc" ]; then
+        . $HOME/.bashrc
+      fi
       export FNM_PATH="$HOME/.local/share/fnm"
       export PATH="$FNM_PATH:$PATH"
       eval "`fnm env`"
@@ -133,9 +140,25 @@ steps:
       yarn format:check
       echo "Compiling Typescript files"
       yarn buildapi 
+    displayName: Build JS Integration
+    env:
+      RUST_BACKTRACE: full
+
+- ${{ if eq(parameters.enableJsTest, true) }}:
+  - bash: |
+      export DB_USER=sa
+      if [ -f "$HOME/.bashrc" ]; then
+        . $HOME/.bashrc
+      fi
+      export FNM_PATH="$HOME/.local/share/fnm"
+      export PATH="$FNM_PATH:$PATH"
+      eval "`fnm env`"
+      fnm use 20
+      cd mssql-js 
       echo "Run Tests"
       yarn testci > junit.xml 
-    displayName: Build/Test JS Integration
+    displayName: Test JS Integration
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
     env:
       SQL_PASSWORD: $(SQL_PASSWORD)
       RUST_BACKTRACE: full
