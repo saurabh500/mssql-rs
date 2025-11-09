@@ -38,6 +38,7 @@ use crate::{
     core::{CancelHandle, TdsResult},
     query::metadata::ColumnMetadata,
 };
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct TdsClient {
@@ -51,6 +52,12 @@ pub struct TdsClient {
 
     return_values: Vec<ReturnValue>,
     current_result_set_has_been_read_till_end: bool,
+
+    /// The remaining request timeout for operations. This is updated after each token read.
+    remaining_request_timeout: Option<Duration>,
+
+    /// The cancel handle for this client. Used to cancel operations.
+    cancel_handle: Option<CancelHandle>,
 }
 
 impl TdsClient {
@@ -67,6 +74,8 @@ impl TdsClient {
             count_map: HashMap::new(),
             return_values: Vec::new(),
             current_result_set_has_been_read_till_end: false,
+            remaining_request_timeout: None,
+            cancel_handle: None,
         }
     }
 
@@ -86,6 +95,18 @@ impl TdsClient {
         &self.execution_context
     }
 
+    /// Updates the remaining timeout by subtracting the elapsed time.
+    fn update_remaining_timeout(&mut self, start: Instant) {
+        self.remaining_request_timeout = self.remaining_request_timeout.map(|t| {
+            let elapsed = start.elapsed();
+            if elapsed > t {
+                Duration::ZERO
+            } else {
+                t.saturating_sub(elapsed)
+            }
+        });
+    }
+
     /// Executes a SQL command (batch) against the server.
     #[instrument(skip(self), level = "info")]
     pub async fn execute(
@@ -99,9 +120,13 @@ impl TdsClient {
                 ALREADY_EXECUTING_ERROR.to_string(),
             ));
         };
+
+        // Store timeout and cancel handle for this operation
+        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
+
         self.transport.reset_reader();
         let batch = SqlBatch::new(sql_command, &self.execution_context);
-        // let start = Instant::now();
         let mut packet_writer =
             batch.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
         batch.serialize(&mut packet_writer).await?;
@@ -131,6 +156,10 @@ impl TdsClient {
         if self.execution_context.has_open_batch() {
             return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
         };
+
+        // Store timeout and cancel handle for this operation
+        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         let database_collation = self.negotiated_settings.database_collation;
 
@@ -198,6 +227,11 @@ impl TdsClient {
                 ALREADY_EXECUTING_ERROR.to_string(),
             ));
         };
+
+        // Store timeout and cancel handle for this operation
+        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
+
         self.return_values.clear();
         self.transport.reset_reader();
         let database_collation = self.negotiated_settings.database_collation;
@@ -240,10 +274,17 @@ impl TdsClient {
 
     async fn drain_stream(&mut self) -> TdsResult<()> {
         loop {
+            let start = Instant::now();
             let token = self
                 .transport
-                .receive_token(&ParserContext::None(()), None, None)
+                .receive_token(
+                    &ParserContext::None(()),
+                    self.remaining_request_timeout,
+                    self.cancel_handle.as_ref(),
+                )
                 .await?;
+            self.update_remaining_timeout(start);
+
             match token {
                 Tokens::Done(done) | Tokens::DoneProc(done) | Tokens::DoneInProc(done) => {
                     info!(?done);
@@ -268,11 +309,17 @@ impl TdsClient {
         let parser_context = ParserContext::None(());
         let mut col_metadata: Option<ColMetadataToken> = None;
 
-        while let Ok(token) = self
-            .transport
-            .receive_token(&parser_context, None, None)
-            .await
-        {
+        loop {
+            let start = Instant::now();
+            let token = self
+                .transport
+                .receive_token(
+                    &parser_context,
+                    self.remaining_request_timeout,
+                    self.cancel_handle.as_ref(),
+                )
+                .await?;
+            self.update_remaining_timeout(start);
             match token {
                 Tokens::ColMetadata(md) => {
                     info!(?md);
@@ -345,10 +392,16 @@ impl TdsClient {
         let parser_context = ParserContext::ColumnMetadata(self.current_metadata.clone().unwrap());
         let mut result: Option<Vec<ColumnValues>> = None;
         loop {
+            let start = Instant::now();
             let token = self
                 .transport
-                .receive_token(&parser_context, None, None)
+                .receive_token(
+                    &parser_context,
+                    self.remaining_request_timeout,
+                    self.cancel_handle.as_ref(),
+                )
                 .await?;
+            self.update_remaining_timeout(start);
 
             match token {
                 Tokens::Row(row) | Tokens::NbcRow(row) => {
@@ -373,6 +426,13 @@ impl TdsClient {
                 Tokens::Order(order_token) => {
                     // Ignore.
                     info!(?order_token);
+                    continue;
+                }
+                Tokens::EnvChange(env_change) => {
+                    // Handle environment changes during row iteration
+                    info!(?env_change);
+                    self.execution_context
+                        .capture_change_property(&env_change)?;
                     continue;
                 }
                 Tokens::ReturnValue(return_value_token) => {
@@ -403,9 +463,11 @@ impl TdsClient {
         while self.move_to_next().await? {}
         info!("No more rows to consume.");
 
-        // Reset the current metadata and return values.
+        // Reset the current metadata, return values, and timeout/cancel state.
         self.current_metadata = None;
         self.return_values.clear();
+        self.remaining_request_timeout = None;
+        self.cancel_handle = None;
         self.execution_context.set_has_open_batch(false);
         Ok(())
     }
@@ -511,10 +573,17 @@ impl TdsClient {
     #[instrument(skip(self), level = "info")]
     pub(crate) async fn consume_transaction_response(&mut self) -> TdsResult<()> {
         loop {
+            let start = Instant::now();
             let token = self
                 .transport
-                .receive_token(&ParserContext::None(()), None, None)
+                .receive_token(
+                    &ParserContext::None(()),
+                    self.remaining_request_timeout,
+                    self.cancel_handle.as_ref(),
+                )
                 .await?;
+            self.update_remaining_timeout(start);
+
             match token {
                 Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
                     info!("done while consume_transaction_response: {:?}", done);
