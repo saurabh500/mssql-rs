@@ -171,11 +171,9 @@ pub(crate) async fn create_transport(
                 encryption_mode,
             )))
         }
-        TdsVersion::Unknown(version_value) => {
-            Err(crate::error::Error::ProtocolError(format!(
-                "Unsupported TDS version: 0x{version_value:08X}. Only TDS 7.4 and TDS 8.0 are supported."
-            )))
-        }
+        TdsVersion::Unknown(version_value) => Err(crate::error::Error::ProtocolError(format!(
+            "Unsupported TDS version: 0x{version_value:08X}. Only TDS 7.4 and TDS 8.0 are supported."
+        ))),
     }
 }
 
