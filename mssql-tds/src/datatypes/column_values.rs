@@ -237,3 +237,231 @@ impl SqlDate {
         self.days_since_01_01_0001
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sql_xml_from_string() {
+        let xml_str = "<root><item>test</item></root>".to_string();
+        let xml = SqlXml::from(xml_str.clone());
+        assert_eq!(xml.as_string(), xml_str);
+    }
+
+    #[test]
+    fn test_sql_xml_has_bom() {
+        let xml_with_bom = SqlXml {
+            bytes: vec![0xFF, 0xFE, 0x3C, 0x00],
+        };
+        assert!(xml_with_bom.has_bom());
+
+        let xml_without_bom = SqlXml {
+            bytes: vec![0x3C, 0x00],
+        };
+        assert!(!xml_without_bom.has_bom());
+    }
+
+    #[test]
+    fn test_sql_xml_empty() {
+        let xml = SqlXml { bytes: Vec::new() };
+        assert!(!xml.has_bom());
+    }
+
+    #[test]
+    fn test_sql_time_get_scale() {
+        let time = SqlTime {
+            time_nanoseconds: 123456789,
+            scale: 5,
+        };
+        assert_eq!(time.get_scale(), 5);
+    }
+
+    #[test]
+    fn test_sql_datetime2_creation() {
+        let time = SqlTime {
+            time_nanoseconds: 1000000,
+            scale: 7,
+        };
+        let datetime2 = SqlDateTime2 {
+            days: 18000,
+            time: time.clone(),
+        };
+        assert_eq!(datetime2.days, 18000);
+        assert_eq!(datetime2.time.scale, 7);
+    }
+
+    #[test]
+    fn test_sql_datetimeoffset_creation() {
+        let time = SqlTime {
+            time_nanoseconds: 5000000,
+            scale: 7,
+        };
+        let datetime2 = SqlDateTime2 { days: 20000, time };
+        let dto = SqlDateTimeOffset {
+            datetime2,
+            offset: -300,
+        };
+        assert_eq!(dto.offset, -300);
+        assert_eq!(dto.datetime2.days, 20000);
+    }
+
+    #[test]
+    fn test_sql_small_money_from_i32() {
+        let money = SqlSmallMoney::from(100000);
+        assert_eq!(money.int_val, 100000);
+    }
+
+    #[test]
+    fn test_sql_money_from_i32() {
+        let money = SqlMoney::from(100000);
+        assert_eq!(money.lsb_part, 100000);
+        assert_eq!(money.msb_part, 0);
+    }
+
+    #[test]
+    fn test_sql_money_from_tuple() {
+        let money = SqlMoney::from((100000, 50000));
+        assert_eq!(money.lsb_part, 100000);
+        assert_eq!(money.msb_part, 50000);
+    }
+
+    #[test]
+    fn test_sql_money_to_f64() {
+        let money = SqlMoney::from(100000);
+        let value: TdsResult<f64> = (&money).into();
+        assert!(value.is_ok());
+        assert_eq!(value.unwrap(), 10.0);
+    }
+
+    #[test]
+    fn test_sql_money_to_f32() {
+        let money = SqlMoney::from(50000);
+        let value: TdsResult<f32> = (&money).into();
+        assert!(value.is_ok());
+        assert_eq!(value.unwrap(), 5.0);
+    }
+
+    #[test]
+    fn test_sql_small_datetime_creation() {
+        let sdt = SqlSmallDateTime {
+            days: 365,
+            time: 720,
+        };
+        assert_eq!(sdt.days, 365);
+        assert_eq!(sdt.time, 720);
+    }
+
+    #[test]
+    fn test_sql_datetime_creation() {
+        let dt = SqlDateTime {
+            days: 365,
+            time: 12345,
+        };
+        assert_eq!(dt.days, 365);
+        assert_eq!(dt.time, 12345);
+    }
+
+    #[test]
+    fn test_sql_date_create_valid() {
+        let result = SqlDate::create(100000);
+        assert!(result.is_ok());
+        let date = result.unwrap();
+        assert_eq!(date.get_days(), 100000);
+    }
+
+    #[test]
+    fn test_sql_date_create_max_valid() {
+        let result = SqlDate::create(0xFFFFFF);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_sql_date_create_invalid() {
+        let result = SqlDate::create(0x1000000);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sql_date_unchecked_create() {
+        let date = SqlDate::unchecked_create(200000);
+        assert_eq!(date.get_days(), 200000);
+    }
+
+    #[test]
+    fn test_column_values_tinyint() {
+        let val = ColumnValues::TinyInt(255);
+        assert!(matches!(val, ColumnValues::TinyInt(255)));
+    }
+
+    #[test]
+    fn test_column_values_smallint() {
+        let val = ColumnValues::SmallInt(-1000);
+        assert!(matches!(val, ColumnValues::SmallInt(-1000)));
+    }
+
+    #[test]
+    fn test_column_values_int() {
+        let val = ColumnValues::Int(123456);
+        assert!(matches!(val, ColumnValues::Int(123456)));
+    }
+
+    #[test]
+    fn test_column_values_bigint() {
+        let val = ColumnValues::BigInt(9223372036854775807);
+        assert!(matches!(val, ColumnValues::BigInt(_)));
+    }
+
+    #[test]
+    fn test_column_values_real() {
+        let val = ColumnValues::Real(3.14);
+        assert!(matches!(val, ColumnValues::Real(_)));
+    }
+
+    #[test]
+    fn test_column_values_float() {
+        let val = ColumnValues::Float(3.14159);
+        assert!(matches!(val, ColumnValues::Float(_)));
+    }
+
+    #[test]
+    fn test_column_values_bit() {
+        let val = ColumnValues::Bit(true);
+        assert!(matches!(val, ColumnValues::Bit(true)));
+    }
+
+    #[test]
+    fn test_column_values_null() {
+        let val = ColumnValues::Null;
+        assert!(matches!(val, ColumnValues::Null));
+    }
+
+    #[test]
+    fn test_column_values_bytes() {
+        let val = ColumnValues::Bytes(vec![1, 2, 3, 4]);
+        assert!(matches!(val, ColumnValues::Bytes(_)));
+    }
+
+    #[test]
+    fn test_column_values_uuid() {
+        let uuid = Uuid::nil();
+        let val = ColumnValues::Uuid(uuid);
+        assert!(matches!(val, ColumnValues::Uuid(_)));
+    }
+
+    #[test]
+    fn test_column_values_clone() {
+        let val = ColumnValues::Int(42);
+        let cloned = val.clone();
+        assert_eq!(val, cloned);
+    }
+
+    #[test]
+    fn test_sql_xml_clone() {
+        let xml = SqlXml {
+            bytes: vec![0x3C, 0x00, 0x3E, 0x00],
+        };
+        let cloned = xml.clone();
+        assert_eq!(xml, cloned);
+    }
+}
