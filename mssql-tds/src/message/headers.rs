@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use async_trait::async_trait;
 
 use crate::{
-    connection::tds_connection::ExecutionContext,
+    connection::execution_context::ExecutionContext,
     core::TdsResult,
     read_write::packet_writer::{PacketWriter, TdsPacketWriter},
 };

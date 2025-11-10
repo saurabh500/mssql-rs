@@ -4,7 +4,7 @@
 use std::io::Error;
 
 use clap::Parser;
-use futures::StreamExt;
+
 use mssql_tds::core::EncryptionOptions;
 use mssql_tds::core::EncryptionSetting;
 use rustyline::Helper;
@@ -15,7 +15,7 @@ use rustyline::hint::Hinter;
 use rustyline::validate::{ValidationContext, ValidationResult, Validator};
 use rustyline::{CompletionType, Config, Editor, error::ReadlineError};
 
-use mssql_tds::connection::tds_connection::TdsConnection;
+use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
 use mssql_tds::core::TdsResult;
 
 #[tokio::main]
@@ -84,7 +84,7 @@ impl Validator for MyHelper {
 }
 
 struct Session {
-    connection: Option<Box<TdsConnection>>,
+    connection: Option<Box<TdsClient>>,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -94,8 +94,8 @@ impl Default for Session {
     }
 }
 
-impl From<Box<TdsConnection>> for Session {
-    fn from(connection: Box<TdsConnection>) -> Self {
+impl From<Box<TdsClient>> for Session {
+    fn from(connection: Box<TdsClient>) -> Self {
         Self {
             connection: Some(connection),
         }
@@ -109,25 +109,37 @@ impl Session {
             "No active connection",
         ))?;
 
-        let batch_results = connection.execute(sql_command, None, None).await?;
-        let mut result_stream = batch_results.stream_results();
-        while let Some(result) = result_stream.next().await {
-            let result_type = result.unwrap();
-            match result_type {
-                mssql_tds::query::result::QueryResultType::DmlResult(update) => {
-                    println!("Rows updated {update}");
-                }
-                mssql_tds::query::result::QueryResultType::ResultSet(result_set) => {
-                    let mut row_stream = result_set.into_row_stream()?;
+        // Execute the SQL batch
+        connection.execute(sql_command, None, None).await?;
 
-                    while let Some(some_row) = row_stream.next().await {
-                        let mut row = some_row?;
-                        while let Some(cell) = row.next().await {
-                            print!("{:?} | ", cell.unwrap());
-                        }
-                        println!();
+        // Iterate through all result sets
+        loop {
+            // Check if there's a current result set
+            if let Some(resultset) = connection.get_current_resultset() {
+                // Read all rows from this result set
+                let mut row_count = 0;
+                while let Some(row) = resultset.next_row().await? {
+                    row_count += 1;
+                    // Print each column value
+                    for value in row.iter() {
+                        print!("{:?} | ", value);
                     }
+                    println!();
                 }
+
+                if row_count == 0 {
+                    println!("(0 rows affected)");
+                } else {
+                    println!("({} rows affected)", row_count);
+                }
+            } else {
+                // No result set means DML operation
+                println!("Command completed successfully");
+            }
+
+            // Try to move to the next result set
+            if !connection.move_to_next().await? {
+                break; // No more result sets
             }
         }
         Ok(())
@@ -166,7 +178,7 @@ pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
     let provider = TdsConnectionProvider {};
-    let connection_result = provider.create_connection(context, None).await;
+    let connection_result = provider.create_client(context, None).await;
     let mut session = match connection_result {
         Ok(_connection) => {
             println!("Successfully connected");

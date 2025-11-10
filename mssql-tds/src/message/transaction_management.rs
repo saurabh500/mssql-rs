@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::connection::tds_connection::ExecutionContext;
+use crate::connection::execution_context::ExecutionContext;
 use crate::core::TdsResult;
 use crate::message::headers::{TdsHeaders, TransactionDescriptorHeader, write_headers};
 use crate::message::messages::PacketType::TransactionManager;

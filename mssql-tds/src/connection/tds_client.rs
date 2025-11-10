@@ -18,7 +18,7 @@ use crate::query::result::ReturnValue;
 use crate::token::tokens::SqlCollation;
 use crate::{
     connection::{
-        tds_connection::{ALREADY_EXECUTING_ERROR, ExecutionContext},
+        execution_context::{ALREADY_EXECUTING_ERROR, ExecutionContext},
         transport::network_transport::NetworkTransport,
     },
     datatypes::column_values::ColumnValues,
