@@ -122,7 +122,7 @@ impl Session {
                     row_count += 1;
                     // Print each column value
                     for value in row.iter() {
-                        print!("{:?} | ", value);
+                        print!("{value:?} | ");
                     }
                     println!();
                 }
@@ -130,7 +130,7 @@ impl Session {
                 if row_count == 0 {
                     println!("(0 rows affected)");
                 } else {
-                    println!("({} rows affected)", row_count);
+                    println!("({row_count} rows affected)");
                 }
             } else {
                 // No result set means DML operation

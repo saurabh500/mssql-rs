@@ -72,7 +72,7 @@ mod timeout_and_cancel_tests {
             // Start a timer.
             let start_time = Instant::now();
             let result = provider
-                .create_connection(client_context, Some(&child_handle))
+                .create_client(client_context, Some(&child_handle))
                 .await;
             verify_duration(result, start_time, 1000, 2500);
         });
@@ -177,7 +177,7 @@ mod timeout_and_cancel_tests {
 
         // Start a timer.
         let start_time = Instant::now();
-        let connection_result = provider.create_connection(client_context, None).await;
+        let connection_result = provider.create_client(client_context, None).await;
         verify_duration(
             connection_result,
             start_time,

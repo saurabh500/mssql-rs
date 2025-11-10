@@ -17,7 +17,7 @@ mod connectivity {
         TokenCredentialOptions,
     };
     use dotenv::dotenv;
-    use futures::StreamExt;
+    use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::core::EncryptionOptions;
     use mssql_tds::datatypes::column_values::ColumnValues;
     use mssql_tds::{
@@ -25,7 +25,6 @@ mod connectivity {
         connection_provider::tds_connection_provider::TdsConnectionProvider,
         core::{EncryptionSetting, TdsResult},
         message::login_options::ApplicationIntent,
-        query::result::QueryResultType,
     };
 
     // The scope we want an access token for.
@@ -153,28 +152,19 @@ mod connectivity {
         let access_token = generate_access_token().await;
         let context = create_context_with_accesstoken(access_token);
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(context, None).await;
+        let connection_result = provider.create_client(context, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
-        let result = connection.execute(command, None, None).await.unwrap();
-        let mut stream = result.stream_results();
-        while let Some(qrt) = stream.next().await {
-            let res = qrt.unwrap();
-            match res {
-                QueryResultType::ResultSet(rs) => {
-                    let mut row_stream = rs.into_row_stream().unwrap();
-                    while let Some(row) = row_stream.next().await {
-                        let mut unwrapped_row = row.unwrap();
-                        while let Some(cell) = unwrapped_row.next().await {
-                            print!("{:?},", cell.unwrap());
-                        }
-                    }
-                }
-                _ => {
-                    unreachable!("Shouldn't have reached here");
+        connection.execute(command, None, None).await.unwrap();
+
+        if let Some(resultset) = connection.get_current_resultset() {
+            while let Some(row) = resultset.next_row().await.unwrap() {
+                for cell in row {
+                    print!("{cell:?},");
                 }
             }
         }
+        connection.close_query().await.unwrap();
     }
 
     #[tokio::test]
@@ -182,28 +172,19 @@ mod connectivity {
         let context =
             create_context_with_auth_method(TdsAuthenticationMethod::ActiveDirectoryDefault);
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(context, None).await;
+        let connection_result = provider.create_client(context, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
-        let result = connection.execute(command, None, None).await.unwrap();
-        let mut stream = result.stream_results();
-        while let Some(qrt) = stream.next().await {
-            let res = qrt.unwrap();
-            match res {
-                QueryResultType::ResultSet(rs) => {
-                    let mut row_stream = rs.into_row_stream().unwrap();
-                    while let Some(row) = row_stream.next().await {
-                        let mut unwrapped_row = row.unwrap();
-                        while let Some(cell) = unwrapped_row.next().await {
-                            print!("{:?},", cell.unwrap());
-                        }
-                    }
-                }
-                _ => {
-                    unreachable!("Shouldn't have reached here");
+        connection.execute(command, None, None).await.unwrap();
+
+        if let Some(resultset) = connection.get_current_resultset() {
+            while let Some(row) = resultset.next_row().await.unwrap() {
+                for cell in row {
+                    print!("{cell:?},");
                 }
             }
         }
+        connection.close_query().await.unwrap();
     }
 
     #[derive(Clone)]
@@ -240,28 +221,19 @@ mod connectivity {
         let mut context = create_context_with_accesstoken(access_token);
         context.encryption_options.trust_server_certificate = true;
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_connection(context, None).await;
+        let connection_result = provider.create_client(context, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
-        let result = connection.execute(command, None, None).await.unwrap();
-        let mut stream = result.stream_results();
-        while let Some(qrt) = stream.next().await {
-            let res = qrt.unwrap();
-            match res {
-                QueryResultType::ResultSet(rs) => {
-                    let mut row_stream = rs.into_row_stream().unwrap();
-                    while let Some(row) = row_stream.next().await {
-                        let mut unwrapped_row = row.unwrap();
-                        while let Some(cell) = unwrapped_row.next().await {
-                            print!("{:?},", cell.unwrap());
-                        }
-                    }
-                }
-                _ => {
-                    unreachable!("Shouldn't have reached here");
+        connection.execute(command, None, None).await.unwrap();
+
+        if let Some(resultset) = connection.get_current_resultset() {
+            while let Some(row) = resultset.next_row().await.unwrap() {
+                for cell in row {
+                    print!("{cell:?},");
                 }
             }
         }
+        connection.close_query().await.unwrap();
     }
 
     #[tokio::test]
