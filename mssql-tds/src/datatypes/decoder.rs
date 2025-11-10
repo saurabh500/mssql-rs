@@ -948,7 +948,10 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::datatypes::{column_values::ColumnValues, decoder::{DecimalParts, GenericDecoder, StringDecoder}};
+    use crate::datatypes::{
+        column_values::ColumnValues,
+        decoder::{DecimalParts, GenericDecoder, StringDecoder},
+    };
 
     #[test]
     fn test_f64_conversion() {
@@ -966,7 +969,6 @@ mod test {
         assert_eq!(expected, parts.to_f64());
     }
 
-    
     #[test]
     fn test_f64_conversion_negative() {
         let expected: f64 = -123456.322;
