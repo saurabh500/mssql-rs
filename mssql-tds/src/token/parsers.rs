@@ -518,6 +518,23 @@ where
             )));
         }
 
+        // Validate that we have enough data for the options_count
+        // Each option requires FEDAUTH_OPTIONS_SIZE bytes
+        let required_size = options_count
+            .checked_mul(Self::FEDAUTH_OPTIONS_SIZE)
+            .ok_or_else(|| {
+                crate::error::Error::ProtocolError(format!(
+                    "FedAuthInfo options_count overflow: {options_count} * {} would overflow",
+                    Self::FEDAUTH_OPTIONS_SIZE
+                ))
+            })?;
+        
+        if required_size as i32 > data_left {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Invalid FedAuthInfo token: options_count ({options_count}) requires {required_size} bytes, but only {data_left} bytes available"
+            )));
+        }
+
         let mut token_data: Vec<u8> = vec![0; data_left as usize];
         reader.read_bytes(&mut token_data[0..]).await?;
 

@@ -412,6 +412,13 @@ pub(crate) async fn read_type_info<T>(reader: &mut T, data_type: TdsDataType) ->
 where
     T: TdsPacketReader + Send + Sync,
 {
+    // Handle the special Void type which represents no data/null column
+    if data_type == TdsDataType::Void {
+        return Err(Error::ProtocolError(
+            "Void data type (0x1F) is not supported in column metadata. This typically indicates malformed or invalid token stream.".to_string()
+        ));
+    }
+
     let fixed_length_type = FixedLengthTypes::try_from(data_type);
     if let Ok(fdt) = fixed_length_type {
         return Ok(TypeInfo {
