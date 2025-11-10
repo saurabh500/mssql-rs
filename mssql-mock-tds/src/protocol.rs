@@ -490,7 +490,8 @@ mod tests {
 
     #[test]
     fn test_select_one_result() {
-        let response = build_select_one_result();
+        use crate::query_response::QueryResponse;
+        let response = build_query_result(&QueryResponse::select_one());
         assert!(response.len() >= PACKET_HEADER_SIZE);
     }
 }

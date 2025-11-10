@@ -59,7 +59,7 @@ mod mock_server_tests {
         let provider = TdsConnectionProvider {};
         let client = provider.create_client(context, None).await?;
 
-        println!("Successfully connected to mock server at {}", server_addr);
+        println!("Successfully connected to mock server at {server_addr}");
 
         // Cleanup
         drop(client);
@@ -112,12 +112,12 @@ mod mock_server_tests {
         if let Some(resultset) = client.get_current_resultset() {
             while let Some(row) = resultset.next_row().await? {
                 row_count += 1;
-                println!("Row: {:?}", row);
+                println!("Row: {row:?}");
 
                 // Verify we got the value 1
                 assert_eq!(row.len(), 1);
                 if let Some(value) = row.first() {
-                    println!("Value: {:?}", value);
+                    println!("Value: {value:?}");
                 }
             }
         }
@@ -231,14 +231,14 @@ mod mock_server_tests {
 
         // Create multiple clients (simulating connection reuse scenario)
         for i in 0..3 {
-            println!("Connecting client {}", i);
+            println!("Connecting client {i}");
             let mut client = provider.create_client(context.clone(), None).await?;
 
             client.execute("SELECT 1".to_string(), None, None).await?;
             client.close_query().await?;
             client.close_connection().await?;
 
-            println!("Client {} completed successfully", i);
+            println!("Client {i} completed successfully");
         }
 
         // Cleanup
@@ -316,14 +316,14 @@ mod mock_server_tests {
         if let Some(resultset) = client.get_current_resultset() {
             while let Some(row) = resultset.next_row().await? {
                 row_count += 1;
-                println!("Row: {:?}", row);
+                println!("Row: {row:?}");
 
                 // Verify we got 3 columns
                 assert_eq!(row.len(), 3, "Expected 3 columns");
 
                 // Print values
                 for (i, value) in row.iter().enumerate() {
-                    println!("Column {}: {:?}", i, value);
+                    println!("Column {i}: {value:?}");
                 }
             }
         }
@@ -408,7 +408,7 @@ mod mock_server_tests {
         if let Some(resultset) = client.get_current_resultset() {
             while let Some(row) = resultset.next_row().await? {
                 row_count += 1;
-                println!("Row with NULLs: {:?}", row);
+                println!("Row with NULLs: {row:?}");
                 assert_eq!(row.len(), 3, "Expected 3 columns");
             }
         }
