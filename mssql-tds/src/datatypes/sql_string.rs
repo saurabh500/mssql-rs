@@ -142,14 +142,14 @@ mod tests {
     #[test]
     fn test_sql_string_debug_utf16() {
         let sql_str = SqlString::from_utf8_string("Debug".to_string());
-        let debug_str = format!("{:?}", sql_str);
+        let debug_str = format!("{sql_str:?}");
         assert!(debug_str.contains("Debug"));
     }
 
     #[test]
     fn test_sql_string_debug_delayed_set() {
         let sql_str = SqlString::new(vec![1, 2, 3, 4, 5], EncodingType::DelayedSet);
-        let debug_str = format!("{:?}", sql_str);
+        let debug_str = format!("{sql_str:?}");
         assert!(debug_str.contains("DelayedSet"));
         assert!(debug_str.contains("5"));
     }
@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn test_sql_string_display_utf16() {
         let sql_str = SqlString::from_utf8_string("Display".to_string());
-        let display_str = format!("{}", sql_str);
+        let display_str = format!("{sql_str}");
         assert_eq!(display_str, "Display");
     }
 

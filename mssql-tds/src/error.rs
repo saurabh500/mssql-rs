@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn test_error_debug_format() {
         let error = Error::ProtocolError("Test".to_string());
-        let debug_str = format!("{:?}", error);
+        let debug_str = format!("{error:?}");
         assert!(debug_str.contains("ProtocolError"));
     }
 }

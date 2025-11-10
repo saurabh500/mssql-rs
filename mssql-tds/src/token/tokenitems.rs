@@ -67,14 +67,14 @@ mod tests {
     #[test]
     fn test_return_value_status_clone() {
         let status = ReturnValueStatus::OutputParam;
-        let cloned = status.clone();
+        let cloned = status;
         assert_eq!(status, cloned);
     }
 
     #[test]
     fn test_return_value_status_debug() {
         let status = ReturnValueStatus::OutputParam;
-        let debug_str = format!("{:?}", status);
+        let debug_str = format!("{status:?}");
         assert!(debug_str.contains("OutputParam"));
     }
 }

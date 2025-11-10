@@ -61,7 +61,7 @@ mod tests {
     fn test_sql_json_debug_format() {
         let json_str = r#"{"test": true}"#;
         let json = SqlJson::new(json_str.as_bytes().to_vec());
-        let debug_output = format!("{:?}", json);
+        let debug_output = format!("{json:?}");
         assert!(debug_output.contains("Json:"));
         assert!(debug_output.contains(json_str));
     }

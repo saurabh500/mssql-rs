@@ -414,13 +414,13 @@ mod tests {
 
     #[test]
     fn test_column_values_real() {
-        let val = ColumnValues::Real(3.14);
+        let val = ColumnValues::Real(2.5);
         assert!(matches!(val, ColumnValues::Real(_)));
     }
 
     #[test]
     fn test_column_values_float() {
-        let val = ColumnValues::Float(3.14159);
+        let val = ColumnValues::Float(2.5);
         assert!(matches!(val, ColumnValues::Float(_)));
     }
 

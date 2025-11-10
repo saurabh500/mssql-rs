@@ -121,7 +121,7 @@ mod tests {
         let token = SspiToken {
             data: vec![1, 2, 3],
         };
-        let debug_str = format!("{:?}", token);
+        let debug_str = format!("{token:?}");
         assert!(debug_str.contains("SspiToken"));
     }
 
@@ -131,7 +131,7 @@ mod tests {
             spn: "test".to_string(),
             sts_url: "url".to_string(),
         };
-        let debug_str = format!("{:?}", token);
+        let debug_str = format!("{token:?}");
         assert!(debug_str.contains("FedAuthInfoToken"));
     }
 }

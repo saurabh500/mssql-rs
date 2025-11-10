@@ -277,7 +277,7 @@ mod tests {
     fn test_display_format() {
         let metadata =
             create_test_column_metadata(0x01, TypeInfoVariant::FixedLen(FixedLengthTypes::Int4));
-        let display = format!("{}", metadata);
+        let display = format!("{metadata}");
         assert!(display.contains("test_column"));
         assert!(display.contains("Nullable: true"));
     }

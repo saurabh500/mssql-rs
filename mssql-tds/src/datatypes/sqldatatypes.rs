@@ -931,7 +931,7 @@ mod tests {
     #[test]
     fn test_tds_data_type_clone() {
         let dt = TdsDataType::NVarChar;
-        let cloned = dt.clone();
+        let cloned = dt;
         assert_eq!(dt, cloned);
     }
 
