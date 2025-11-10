@@ -210,3 +210,107 @@ pub(crate) async fn write_headers(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transaction_descriptor_header_new() {
+        let header = TransactionDescriptorHeader::new(12345, 1);
+        assert_eq!(header.transaction_descriptor, 12345);
+        assert_eq!(header.outstanding_request_count, 1);
+    }
+
+    #[test]
+    fn test_transaction_descriptor_header_create_non_transaction() {
+        let header1 = TransactionDescriptorHeader::create_non_transaction_header();
+        let header2 = TransactionDescriptorHeader::create_non_transaction_header();
+        assert_eq!(header1.transaction_descriptor, 0);
+        assert_eq!(header2.transaction_descriptor, 0);
+        assert!(header2.outstanding_request_count > header1.outstanding_request_count);
+    }
+
+    #[test]
+    fn test_transaction_descriptor_header_type() {
+        let header = TransactionDescriptorHeader::new(0, 1);
+        assert_eq!(header.header_type(), 0x0002);
+    }
+
+    #[test]
+    fn test_transaction_descriptor_calculate_length() {
+        let header = TransactionDescriptorHeader::new(0, 1);
+        assert_eq!(header.calculate_length(), 18);
+    }
+
+    #[test]
+    fn test_query_notifications_header_new() {
+        let data = vec![1, 2, 3, 4, 5];
+        let header = QueryNotificationsHeader::new(data.clone());
+        assert_eq!(header.notification_data, data);
+    }
+
+    #[test]
+    fn test_query_notifications_header_type() {
+        let header = QueryNotificationsHeader::new(vec![]);
+        assert_eq!(header.header_type(), 0x0001);
+    }
+
+    #[test]
+    fn test_query_notifications_calculate_length() {
+        let header = QueryNotificationsHeader::new(vec![1, 2, 3]);
+        assert_eq!(header.calculate_length(), 9);
+    }
+
+    #[test]
+    fn test_query_notifications_calculate_length_empty() {
+        let header = QueryNotificationsHeader::new(vec![]);
+        assert_eq!(header.calculate_length(), 6);
+    }
+
+    #[test]
+    fn test_trace_activity_header_new() {
+        let uuid = uuid::Uuid::new_v4();
+        let header = TraceActivityHeader::new(uuid);
+        assert_eq!(header.id, uuid);
+        assert!(header.sequence_number >= 0);
+    }
+
+    #[test]
+    fn test_trace_activity_header_type() {
+        let header = TraceActivityHeader::new(uuid::Uuid::new_v4());
+        assert_eq!(header.header_type(), 0x0003);
+    }
+
+    #[test]
+    fn test_trace_activity_calculate_length() {
+        let header = TraceActivityHeader::new(uuid::Uuid::new_v4());
+        assert_eq!(header.calculate_length(), 26);
+    }
+
+    #[test]
+    fn test_trace_activity_sequence_numbers() {
+        let header1 = TraceActivityHeader::new(uuid::Uuid::new_v4());
+        let header2 = TraceActivityHeader::new(uuid::Uuid::new_v4());
+        assert!(header2.sequence_number > header1.sequence_number);
+    }
+
+    #[test]
+    fn test_tds_headers_from_transaction_descriptor() {
+        let header = TransactionDescriptorHeader::new(123, 1);
+        let tds_header = TdsHeaders::from(header);
+        match tds_header {
+            TdsHeaders::TransactionDescriptor(_) => {}
+            _ => panic!("Expected TransactionDescriptor"),
+        }
+    }
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(ACTIVITY_ID_LENGTH_IN_BYTES, 16);
+        assert_eq!(TDS_HEADER_LENGTH_IN_BYTES, 4);
+        assert_eq!(TRANSACTION_DESCRIPTOR_HEADER_LENGTH_IN_BYTES, 8);
+        assert_eq!(OUTSTANDING_REQUEST_COUNT_HEADER_LENGTH_IN_BYTES, 4);
+        assert_eq!(HEADER_TYPE_LENGTH_IN_BYTES, 2);
+    }
+}

@@ -99,3 +99,110 @@ pub fn get_encoding_type(metadata: &ColumnMetadata) -> EncodingType {
         EncodingType::LcidBased(collation.unwrap())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sql_string_new() {
+        let bytes = vec![72, 0, 101, 0, 108, 0, 108, 0, 111, 0];
+        let sql_str = SqlString::new(bytes.clone(), EncodingType::Utf16);
+        assert_eq!(sql_str.bytes, bytes);
+    }
+
+    #[test]
+    fn test_from_utf8_string() {
+        let input = "Hello World".to_string();
+        let sql_str = SqlString::from_utf8_string(input.clone());
+        assert_eq!(sql_str.to_utf8_string(), input);
+    }
+
+    #[test]
+    fn test_to_utf8_string_utf16() {
+        let bytes = vec![72, 0, 105, 0];
+        let sql_str = SqlString::new(bytes, EncodingType::Utf16);
+        assert_eq!(sql_str.to_utf8_string(), "Hi");
+    }
+
+    #[test]
+    fn test_to_utf8_string_utf8() {
+        let bytes = "Test".as_bytes().to_vec();
+        let sql_str = SqlString::new(bytes, EncodingType::Utf8);
+        assert_eq!(sql_str.to_utf8_string(), "Test");
+    }
+
+    #[test]
+    fn test_sql_string_clone() {
+        let sql_str = SqlString::from_utf8_string("Clone test".to_string());
+        let cloned = sql_str.clone();
+        assert_eq!(sql_str.bytes, cloned.bytes);
+    }
+
+    #[test]
+    fn test_sql_string_debug_utf16() {
+        let sql_str = SqlString::from_utf8_string("Debug".to_string());
+        let debug_str = format!("{:?}", sql_str);
+        assert!(debug_str.contains("Debug"));
+    }
+
+    #[test]
+    fn test_sql_string_debug_delayed_set() {
+        let sql_str = SqlString::new(vec![1, 2, 3, 4, 5], EncodingType::DelayedSet);
+        let debug_str = format!("{:?}", sql_str);
+        assert!(debug_str.contains("DelayedSet"));
+        assert!(debug_str.contains("5"));
+    }
+
+    #[test]
+    fn test_sql_string_display_utf16() {
+        let sql_str = SqlString::from_utf8_string("Display".to_string());
+        let display_str = format!("{}", sql_str);
+        assert_eq!(display_str, "Display");
+    }
+
+    #[test]
+    fn test_sql_string_equality() {
+        let sql_str1 = SqlString::from_utf8_string("Equal".to_string());
+        let sql_str2 = SqlString::from_utf8_string("Equal".to_string());
+        let sql_str3 = SqlString::from_utf8_string("Different".to_string());
+        assert_eq!(sql_str1, sql_str2);
+        assert_ne!(sql_str1, sql_str3);
+    }
+
+    #[test]
+    fn test_from_utf8_string_empty() {
+        let sql_str = SqlString::from_utf8_string(String::new());
+        assert_eq!(sql_str.to_utf8_string(), "");
+        assert!(sql_str.bytes.is_empty());
+    }
+
+    #[test]
+    fn test_from_utf8_string_special_chars() {
+        let input = "Hello! @#$%^&*()".to_string();
+        let sql_str = SqlString::from_utf8_string(input.clone());
+        assert_eq!(sql_str.to_utf8_string(), input);
+    }
+
+    #[test]
+    fn test_from_utf8_string_unicode() {
+        let input = "Hello World".to_string();
+        let sql_str = SqlString::from_utf8_string(input.clone());
+        assert_eq!(sql_str.to_utf8_string(), input);
+    }
+
+    #[test]
+    fn test_sql_string_new_utf8() {
+        let bytes = "UTF8 String".as_bytes().to_vec();
+        let sql_str = SqlString::new(bytes.clone(), EncodingType::Utf8);
+        assert_eq!(sql_str.bytes, bytes);
+        assert_eq!(sql_str.to_utf8_string(), "UTF8 String");
+    }
+
+    #[test]
+    fn test_sql_string_new_delayed_set() {
+        let bytes = vec![1, 2, 3, 4];
+        let sql_str = SqlString::new(bytes.clone(), EncodingType::DelayedSet);
+        assert_eq!(sql_str.bytes, bytes);
+    }
+}
