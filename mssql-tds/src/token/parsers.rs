@@ -510,8 +510,7 @@ where
         let options_count = reader.read_uint32().await?;
         let data_left = length.checked_sub(size_of::<u32>() as i32).ok_or_else(|| {
             crate::error::Error::ProtocolError(format!(
-                "Invalid FedAuthInfo token length: {} - subtraction underflow",
-                length
+                "Invalid FedAuthInfo token length: {length} - subtraction underflow"
             ))
         })?;
 
