@@ -600,15 +600,31 @@ impl TdsClient {
                     break;
                 }
                 Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
-                    info!(?done);
+                    info!(
+                        ?done,
+                        "Received Done token with has_more={}",
+                        done.has_more()
+                    );
 
                     let count = self.count_map.entry(done.cur_cmd).or_insert(0);
                     *count += done.row_count as usize;
                     self.current_result_set_has_been_read_till_end = true;
+
                     if !done.has_more() {
+                        // No more result sets - end of batch
+                        info!("No more result sets (has_more=false), ending batch");
                         self.execution_context.set_has_open_batch(false);
                         break;
                     }
+
+                    // has_more() is true - there are more result sets coming
+                    // For DML operations (CREATE TABLE, INSERT, UPDATE, DELETE), there's no ColMetadata.
+                    // The Done token represents the result, but we skip over it to find the next
+                    // result set with ColMetadata (SELECT). This matches SQL Server behavior.
+                    info!(
+                        "More result sets available (has_more=true), continuing to look for ColMetadata"
+                    );
+                    continue;
                 }
                 Tokens::EnvChange(env_change) => {
                     info!(?env_change);
