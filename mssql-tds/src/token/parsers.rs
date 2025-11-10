@@ -508,7 +508,12 @@ where
         let length = reader.read_int32().await?;
 
         let options_count = reader.read_uint32().await?;
-        let data_left = length - size_of::<u32>() as i32;
+        let data_left = length.checked_sub(size_of::<u32>() as i32).ok_or_else(|| {
+            crate::error::Error::ProtocolError(format!(
+                "Invalid FedAuthInfo token length: {} - subtraction underflow",
+                length
+            ))
+        })?;
 
         // Validate data_left to prevent capacity overflow attacks
         const MAX_TOKEN_DATA_SIZE: i32 = 1024 * 1024; // 1MB reasonable limit
