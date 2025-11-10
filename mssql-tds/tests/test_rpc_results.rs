@@ -204,12 +204,9 @@ mod rpc_results {
         }
     }
 
-    // TODO: TdsClient does not support execute_sp_prepare/unprepare yet
-    // These methods exist only on TdsConnection
     #[tokio::test]
-    #[ignore]
     async fn test_sp_prepare_and_unprepare_multi_param() {
-        let _query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
+        let query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
@@ -223,85 +220,87 @@ mod rpc_results {
         );
 
         let context = create_context();
-        let _connection = begin_connection(context).await;
+        let mut connection = begin_connection(context).await;
 
-        let _named_parameters = [database_id_param, compat_level_param];
+        let named_parameters = vec![database_id_param, compat_level_param];
 
-        // TODO: Implement execute_sp_prepare on TdsClient
-        // let handle = connection
-        //     .execute_sp_prepare(query.to_string(), named_parameters, None, None)
-        //     .await
-        //     .unwrap();
+        let handle = connection
+            .execute_sp_prepare(query.to_string(), named_parameters, None, None)
+            .await
+            .unwrap();
 
-        // assert!(handle > 0);
+        assert!(handle > 0);
 
         // This should simply complete and be successful.
-        // let result = connection.execute_sp_unprepare(handle, None, None).await;
-        // assert!(result.is_ok());
+        let result = connection.execute_sp_unprepare(handle, None, None).await;
+        assert!(result.is_ok());
     }
 
-    // TODO: TdsClient does not support execute_sp_prepexec/execute/unprepare yet
-    // These methods exist only on TdsConnection
     #[tokio::test]
-    #[ignore]
     async fn test_sp_prepareexec_and_unprepare_multi_param() {
-        let _query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
-        let _database_id_param = RpcParameter::new(
+        let query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
+        let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
             SqlType::Int(Some(1)),
         );
 
-        let _compat_level_param = RpcParameter::new(
+        let compat_level_param = RpcParameter::new(
             Some("@compat_level".to_string()),
             StatusFlags::NONE,
             SqlType::Int(Some(100)),
         );
 
-        let _context = create_context();
-        let _connection = begin_connection(_context).await;
+        let context = create_context();
+        let mut connection = begin_connection(context).await;
 
-        let _named_parameters = [_database_id_param, _compat_level_param];
+        let named_parameters = vec![database_id_param, compat_level_param];
 
-        // TODO: Implement execute_sp_prepexec, execute_sp_execute, execute_sp_unprepare on TdsClient
-        // let mut batch_result = connection
-        //     .execute_sp_prepexec(query.to_string(), named_parameters.clone(), None, None)
-        //     .await
-        //     .unwrap();
+        connection
+            .execute_sp_prepexec(query.to_string(), named_parameters.clone(), None, None)
+            .await
+            .unwrap();
 
-        // // TODD: WE need to check for data being returned as well, but right now the BatchResult ownership is transferred to
-        // // the iterators when retrieving data. Hence we cannot use the close() APis and iterators in tandem right now.
-        // // Once Batch result is enhanced we need to enhance this test as well.
-        // batch_result.close().await.unwrap();
-        // let out_params = batch_result.retrieve_output_params().unwrap();
-        // assert!(out_params.is_some());
-        // let out_params = out_params.unwrap();
-        // assert_eq!(out_params.len(), 1);
+        // Read the result set
+        if let Some(resultset) = connection.get_current_resultset() {
+            while resultset.next_row().await.unwrap().is_some() {}
+        }
 
-        // let handle_param = out_params.first().unwrap();
-        // let retrieved_handle = if let ColumnValues::Int(handle) = handle_param.value {
-        //     assert!(handle > 0);
-        //     handle
-        // } else {
-        //     unreachable!("Expected a handle value");
-        // };
-        // assert_eq!(handle_param.status, ReturnValueStatus::OutputParam);
+        // Move to next result set to consume remaining tokens (including return values)
+        connection.move_to_next().await.unwrap();
 
-        // let second_result = connection
-        //     .execute_sp_execute(retrieved_handle, None, Some(named_parameters), None, None)
-        //     .await
-        //     .unwrap();
-        // let scalar_value = get_scalar_value(second_result).await.unwrap();
-        // if let Some(ColumnValues::String(value)) = scalar_value {
-        //     assert_eq!(value.to_utf8_string(), "master".to_string());
-        // } else {
-        //     unreachable!("Expected a string value");
-        // }
+        // Get the prepared handle from output params
+        let out_params = connection.retrieve_output_params().unwrap();
+        assert!(out_params.is_some());
+        let out_params = out_params.unwrap();
+        assert_eq!(out_params.len(), 1);
 
-        // let result = connection
-        //     .execute_sp_unprepare(retrieved_handle, None, None)
-        //     .await;
-        // assert!(result.is_ok());
+        let handle_param = out_params.first().unwrap();
+        let retrieved_handle = if let ColumnValues::Int(handle) = handle_param.value {
+            assert!(handle > 0);
+            handle
+        } else {
+            unreachable!("Expected a handle value");
+        };
+        assert_eq!(handle_param.status, ReturnValueStatus::OutputParam);
+
+        // Execute the prepared statement again
+        connection
+            .execute_sp_execute(retrieved_handle, None, Some(named_parameters), None, None)
+            .await
+            .unwrap();
+
+        let scalar_value = get_scalar_value(&mut connection).await.unwrap();
+        if let Some(ColumnValues::String(value)) = scalar_value {
+            assert_eq!(value.to_utf8_string(), "master".to_string());
+        } else {
+            unreachable!("Expected a string value");
+        }
+
+        let result = connection
+            .execute_sp_unprepare(retrieved_handle, None, None)
+            .await;
+        assert!(result.is_ok());
     }
 
     // Executes the query and reads till the end of the result.

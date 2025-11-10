@@ -261,6 +261,271 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Prepares a SQL statement for execution and returns the prepared handle.
+    /// This uses `sp_prepare` under the hood.
+    #[instrument(skip(self, named_params), level = "info")]
+    pub async fn execute_sp_prepare(
+        &mut self,
+        sql: String,
+        named_params: Vec<RpcParameter>,
+        timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<i32> {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
+        // Store timeout and cancel handle for this operation
+        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
+
+        self.return_values.clear();
+        self.transport.reset_reader();
+
+        let database_collation = self.negotiated_settings.database_collation;
+
+        let sql_statement_value = SqlType::NVarcharMax(Some(SqlString::from_utf8_string(sql)));
+
+        // Create the parameter list for sp_prepare
+        let execute_sql_statement_parameter =
+            RpcParameter::new(None, StatusFlags::NONE, sql_statement_value);
+
+        // Build the comma separated list of parameters
+        let mut params_list_as_string = String::new();
+
+        build_parameter_list_string(&named_params, &mut params_list_as_string);
+
+        let params_as_sql_string =
+            SqlType::NVarcharMax(Some(SqlString::from_utf8_string(params_list_as_string)));
+
+        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, params_as_sql_string);
+
+        let output_handler_value = SqlType::Int(None);
+
+        let output_handler_parameter = RpcParameter::new(
+            None,
+            StatusFlags::BY_REF_VALUE, // Output parameter
+            output_handler_value,
+        );
+
+        // Create the parameter list for positional parameters of sp_prepare.
+        let positional_parameters_vec = vec![
+            output_handler_parameter,
+            params_parameter,
+            execute_sql_statement_parameter,
+        ];
+        let positional_parameters = Some(positional_parameters_vec);
+
+        // Build the RPC request.
+        let rpc = SqlRpc::new(
+            RpcType::ProcId(RpcProcs::Prepare),
+            positional_parameters,
+            Some(named_params),
+            &database_collation,
+            &self.execution_context,
+        );
+
+        let mut packet_writer =
+            rpc.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
+        rpc.serialize(&mut packet_writer).await?;
+
+        // Drain to completion to get output parameters
+        self.drain_stream().await?;
+
+        // We need to get the return value, and then extract the handle from it.
+        if self.return_values.len() == 1 {
+            let returned_parameter = self.return_values.first().unwrap();
+            if let ColumnValues::Int(handle) = &returned_parameter.value {
+                Ok(*handle)
+            } else {
+                Err(crate::error::Error::ProtocolError(
+                    "Expected an integer value".to_string(),
+                ))
+            }
+        } else {
+            Err(crate::error::Error::ProtocolError(
+                "Expected exactly one output parameter".to_string(),
+            ))
+        }
+    }
+
+    /// Unprepares a previously prepared statement using `sp_unprepare`.
+    #[instrument(skip(self), level = "info")]
+    pub async fn execute_sp_unprepare(
+        &mut self,
+        handle: i32,
+        timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<()> {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
+        // Store timeout and cancel handle for this operation
+        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
+
+        self.transport.reset_reader();
+
+        let database_collation = self.negotiated_settings.database_collation;
+
+        let handle_value = SqlType::Int(Some(handle));
+        let handle_parameter = RpcParameter::new(None, StatusFlags::NONE, handle_value);
+
+        let positional_parameters_vec = vec![handle_parameter];
+        let positional_parameters = Some(positional_parameters_vec);
+
+        // Build the RPC request.
+        let rpc = SqlRpc::new(
+            RpcType::ProcId(RpcProcs::Unprepare),
+            positional_parameters,
+            None,
+            &database_collation,
+            &self.execution_context,
+        );
+
+        let mut packet_writer =
+            rpc.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
+        rpc.serialize(&mut packet_writer).await?;
+
+        // Drain the result set. A successful unprepare will not return any results.
+        self.drain_stream().await?;
+        Ok(())
+    }
+
+    /// Executes `sp_prepexec` which will prepare the statement for execution,
+    /// return a result set as well as a prepared handle.
+    #[instrument(skip(self, named_params), level = "info")]
+    pub async fn execute_sp_prepexec(
+        &mut self,
+        sql: String,
+        named_params: Vec<RpcParameter>,
+        timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<()> {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
+        // Store timeout and cancel handle for this operation
+        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
+
+        self.return_values.clear();
+        self.transport.reset_reader();
+
+        let database_collation = self.negotiated_settings.database_collation;
+
+        let sql_statement_value = SqlType::NVarcharMax(Some(SqlString::from_utf8_string(sql)));
+
+        // Create the parameter list for sp_prepexec
+        let statement_parameter = RpcParameter::new(None, StatusFlags::NONE, sql_statement_value);
+
+        // Build the comma separated list of parameters
+        let mut params_list_as_string = String::new();
+
+        build_parameter_list_string(&named_params, &mut params_list_as_string);
+
+        let params_as_sql_string =
+            SqlType::NVarcharMax(Some(SqlString::from_utf8_string(params_list_as_string)));
+
+        let params_parameter = RpcParameter::new(None, StatusFlags::NONE, params_as_sql_string);
+
+        let handle_value = SqlType::Int(None);
+
+        let handle_parameter = RpcParameter::new(None, StatusFlags::BY_REF_VALUE, handle_value);
+
+        // Create the parameter list for positional parameters of sp_prepexec.
+        let positional_parameters_list =
+            vec![handle_parameter, params_parameter, statement_parameter];
+        let positional_parameters = Some(positional_parameters_list);
+
+        // Build the RPC request.
+        let rpc = SqlRpc::new(
+            RpcType::ProcId(RpcProcs::PrepExec),
+            positional_parameters,
+            Some(named_params),
+            &database_collation,
+            &self.execution_context,
+        );
+
+        let mut packet_writer =
+            rpc.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
+        rpc.serialize(&mut packet_writer).await?;
+
+        let metadata = self.move_to_column_metadata().await?;
+        // No metadata means no rows were returned, so we set has_open_batch to false.
+        if metadata.is_none() {
+            self.execution_context.set_has_open_batch(false);
+            self.current_result_set_has_been_read_till_end = true;
+        } else {
+            self.current_metadata = metadata;
+            self.current_result_set_has_been_read_till_end = false;
+            self.execution_context.set_has_open_batch(true);
+        }
+        Ok(())
+    }
+
+    /// Executes a previously prepared statement using `sp_execute`.
+    #[instrument(skip(self, positional_parameters, named_parameters), level = "info")]
+    pub async fn execute_sp_execute(
+        &mut self,
+        handle: i32,
+        positional_parameters: Option<Vec<RpcParameter>>,
+        named_parameters: Option<Vec<RpcParameter>>,
+        timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<()> {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        };
+
+        // Store timeout and cancel handle for this operation
+        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
+
+        self.return_values.clear();
+        self.transport.reset_reader();
+
+        let database_collation = self.negotiated_settings.database_collation;
+
+        let handle_value = SqlType::Int(Some(handle));
+        let handle_parameter = RpcParameter::new(None, StatusFlags::NONE, handle_value);
+
+        // Create the parameter list for positional parameters of sp_execute.
+        let mut all_positional_parameters = vec![handle_parameter];
+
+        if let Some(mut params) = positional_parameters {
+            all_positional_parameters.append(&mut params);
+        }
+        let all_positional_parameters = Some(all_positional_parameters);
+
+        // Build the RPC request.
+        let rpc = SqlRpc::new(
+            RpcType::ProcId(RpcProcs::Execute),
+            all_positional_parameters,
+            named_parameters,
+            &database_collation,
+            &self.execution_context,
+        );
+
+        let mut packet_writer =
+            rpc.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
+        rpc.serialize(&mut packet_writer).await?;
+
+        let metadata = self.move_to_column_metadata().await?;
+        // No metadata means no rows were returned, so we set has_open_batch to false.
+        if metadata.is_none() {
+            self.execution_context.set_has_open_batch(false);
+            self.current_result_set_has_been_read_till_end = true;
+        } else {
+            self.current_metadata = metadata;
+            self.current_result_set_has_been_read_till_end = false;
+            self.execution_context.set_has_open_batch(true);
+        }
+        Ok(())
+    }
+
     #[instrument(skip(self), level = "info")]
     async fn drain_rows(&mut self) -> TdsResult<()> {
         if self.maybe_has_unread_rows() {
@@ -295,6 +560,13 @@ impl TdsClient {
                 }
                 Tokens::EnvChange(t1) => {
                     self.execution_context.capture_change_property(&t1)?;
+                }
+                Tokens::ReturnValue(return_value_token) => {
+                    let return_value = return_value_token.into();
+                    self.return_values.push(return_value);
+                }
+                Tokens::ReturnStatus(_return_status) => {
+                    info!(?_return_status);
                 }
                 _ => {
                     info!(?token);
@@ -465,6 +737,19 @@ impl TdsClient {
     /// Gets the return values collected so far.
     pub fn get_return_values(&self) -> Vec<ReturnValue> {
         self.return_values.clone()
+    }
+
+    /// Retrieves a snapshot of the output parameters (including return values)
+    /// that have been retrieved from the result stream.
+    ///
+    /// Returns `None` if there are no output parameters, otherwise returns
+    /// a reference to the collected return values.
+    pub fn retrieve_output_params(&self) -> TdsResult<Option<&Vec<ReturnValue>>> {
+        if self.return_values.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(&self.return_values))
+        }
     }
 
     #[instrument(skip(self), level = "info")]
