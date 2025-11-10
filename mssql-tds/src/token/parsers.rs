@@ -116,8 +116,18 @@ where
                 })?;
                 EnvChangeContainer::from((old_value, new_value))
             }
-            EnvChangeTokenSubType::UnicodeDataSortingLocalId => todo!(),
-            EnvChangeTokenSubType::UnicodeDataSortingComparisonFlags => todo!(),
+            EnvChangeTokenSubType::UnicodeDataSortingLocalId => {
+                return Err(crate::error::Error::UnimplementedFeature {
+                    feature: "UnicodeDataSortingLocalId".to_string(),
+                    context: "EnvChange token parsing not yet implemented".to_string(),
+                });
+            }
+            EnvChangeTokenSubType::UnicodeDataSortingComparisonFlags => {
+                return Err(crate::error::Error::UnimplementedFeature {
+                    feature: "UnicodeDataSortingComparisonFlags".to_string(),
+                    context: "EnvChange token parsing not yet implemented".to_string(),
+                });
+            }
             EnvChangeTokenSubType::SqlCollation => {
                 let new_bytes = reader.read_u8_varbyte().await?;
                 let old_bytes = reader.read_u8_varbyte().await?;
@@ -208,16 +218,41 @@ where
                 }?;
                 EnvChangeContainer::from((old_descriptor, new_descriptor))
             }
-            EnvChangeTokenSubType::DatabaseMirroringPartner => todo!(),
-            EnvChangeTokenSubType::PromoteTransaction => todo!(),
-            EnvChangeTokenSubType::TransactionManagerAddress => todo!(),
-            EnvChangeTokenSubType::TransactionEnded => todo!(),
+            EnvChangeTokenSubType::DatabaseMirroringPartner => {
+                return Err(crate::error::Error::UnimplementedFeature {
+                    feature: "DatabaseMirroringPartner".to_string(),
+                    context: "EnvChange token parsing not yet implemented".to_string(),
+                });
+            }
+            EnvChangeTokenSubType::PromoteTransaction => {
+                return Err(crate::error::Error::UnimplementedFeature {
+                    feature: "PromoteTransaction".to_string(),
+                    context: "EnvChange token parsing not yet implemented".to_string(),
+                });
+            }
+            EnvChangeTokenSubType::TransactionManagerAddress => {
+                return Err(crate::error::Error::UnimplementedFeature {
+                    feature: "TransactionManagerAddress".to_string(),
+                    context: "EnvChange token parsing not yet implemented".to_string(),
+                });
+            }
+            EnvChangeTokenSubType::TransactionEnded => {
+                return Err(crate::error::Error::UnimplementedFeature {
+                    feature: "TransactionEnded".to_string(),
+                    context: "EnvChange token parsing not yet implemented".to_string(),
+                });
+            }
             EnvChangeTokenSubType::ResetConnection => {
                 let new_value = reader.read_u8_varbyte().await?;
                 let old_value = reader.read_u8_varbyte().await?;
                 EnvChangeContainer::from((old_value, new_value))
             }
-            EnvChangeTokenSubType::UserInstanceName => todo!(),
+            EnvChangeTokenSubType::UserInstanceName => {
+                return Err(crate::error::Error::UnimplementedFeature {
+                    feature: "UserInstanceName".to_string(),
+                    context: "EnvChange token parsing not yet implemented".to_string(),
+                });
+            }
             EnvChangeTokenSubType::Routing => {
                 let _length = reader.read_uint16().await?;
                 let protocol = reader.read_byte().await?;
@@ -483,6 +518,23 @@ where
             )));
         }
 
+        // Validate that we have enough data for the options_count
+        // Each option requires FEDAUTH_OPTIONS_SIZE bytes
+        let required_size = options_count
+            .checked_mul(Self::FEDAUTH_OPTIONS_SIZE)
+            .ok_or_else(|| {
+                crate::error::Error::ProtocolError(format!(
+                    "FedAuthInfo options_count overflow: {options_count} * {} would overflow",
+                    Self::FEDAUTH_OPTIONS_SIZE
+                ))
+            })?;
+
+        if required_size as i32 > data_left {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Invalid FedAuthInfo token: options_count ({options_count}) requires {required_size} bytes, but only {data_left} bytes available"
+            )));
+        }
+
         let mut token_data: Vec<u8> = vec![0; data_left as usize];
         reader.read_bytes(&mut token_data[0..]).await?;
 
@@ -637,7 +689,10 @@ where
         let col_count = reader.read_uint16().await?;
 
         if self.is_column_encryption_supported {
-            unimplemented!("Column encryption is not yet supported");
+            return Err(crate::error::Error::UnimplementedFeature {
+                feature: "Column Encryption".to_string(),
+                context: "Column encryption metadata parsing not yet supported".to_string(),
+            });
         }
 
         // Handle the special case where no metadata is sent
