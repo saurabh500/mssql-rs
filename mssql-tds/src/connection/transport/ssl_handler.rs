@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::connection::transport::network_transport::{Stream, StreamRecoverer};
+use crate::connection::transport::network_transport::Stream;
 use crate::message::messages::PacketType;
 use crate::read_write::packet_writer::PacketWriter;
 use byteorder::{BigEndian, ByteOrder};
@@ -64,6 +64,7 @@ impl SslHandler {
 
         match encrypted_stream {
             Ok(mut stream) => {
+                // Call tls_handshake_completed on the underlying stream through the TlsStream wrapper
                 stream
                     .get_mut()
                     .get_mut()
@@ -78,21 +79,15 @@ impl SslHandler {
 
 impl Stream for TlsStream<Box<dyn Stream>> {
     fn tls_handshake_starting(&mut self) {
-        self.get_mut().get_mut().get_mut().tls_handshake_starting()
+        // TlsStream wraps: tokio_native_tls::TlsStream -> native_tls::TlsStream -> AllowStd -> Box<dyn Stream>
+        // So we need get_mut() three times to reach the underlying Box<dyn Stream>
+        self.get_mut().get_mut().get_mut().tls_handshake_starting();
     }
 
     fn tls_handshake_completed(&mut self) {
+        // TlsStream wraps: tokio_native_tls::TlsStream -> native_tls::TlsStream -> AllowStd -> Box<dyn Stream>
+        // So we need get_mut() three times to reach the underlying Box<dyn Stream>
         self.get_mut().get_mut().get_mut().tls_handshake_completed();
-    }
-}
-
-impl Stream for Box<dyn Stream> {
-    fn tls_handshake_starting(&mut self) {
-        self.as_mut().tls_handshake_starting();
-    }
-
-    fn tls_handshake_completed(&mut self) {
-        self.as_mut().tls_handshake_completed();
     }
 }
 
@@ -145,10 +140,14 @@ impl ActiveWriteState {
                 // At least one byte from the payload was written.
                 payload_written -= self.header_bytes_remaining;
                 self.header_bytes_remaining = 0;
-                self.current_packet_bytes_remaining -= payload_written;
-                self.payload_bytes_remaining -= payload_written;
-                self.last_payload_written = payload_written;
-                payload_written
+
+                // Ensure we don't write more payload than the current packet can hold
+                let actual_payload_written =
+                    std::cmp::min(payload_written, self.current_packet_bytes_remaining);
+                self.current_packet_bytes_remaining -= actual_payload_written;
+                self.payload_bytes_remaining -= actual_payload_written;
+                self.last_payload_written = actual_payload_written;
+                actual_payload_written
             }
         } else {
             payload_written
@@ -168,7 +167,7 @@ impl ActiveWriteState {
     }
 }
 
-struct TlsOverTdsStream<S: Stream> {
+pub(crate) struct TlsOverTdsStream<S: Stream> {
     wrapped_stream: S,
     has_completed_tls_handshake: bool,
     remaining_read_packet_payload_length: usize,
@@ -179,16 +178,29 @@ struct TlsOverTdsStream<S: Stream> {
 }
 
 impl<S: Stream> TlsOverTdsStream<S> {
-    fn new(wrapped_stream: S) -> Self {
+    pub(crate) fn new(wrapped_stream: S) -> Self {
+        Self::new_with_handshake_state(wrapped_stream, true)
+    }
+
+    pub(crate) fn new_for_handshake(wrapped_stream: S) -> Self {
+        Self::new_with_handshake_state(wrapped_stream, false)
+    }
+
+    fn new_with_handshake_state(wrapped_stream: S, has_completed_tls_handshake: bool) -> Self {
         TlsOverTdsStream {
             wrapped_stream,
-            has_completed_tls_handshake: true,
+            has_completed_tls_handshake,
             remaining_read_packet_payload_length: 0,
             packet_header_receive_bytes: Some([0; PacketWriter::PACKET_HEADER_SIZE]),
             bytes_of_packet_header_read: 0,
             packet_write_buffer: Some(vec![0; PacketWriter::PACKET_HEADER_SIZE]),
             write_state: None,
         }
+    }
+
+    /// Mark the TLS handshake as completed, switching to passthrough mode
+    pub fn mark_handshake_completed(&mut self) {
+        self.has_completed_tls_handshake = true;
     }
 
     fn read_requested(
@@ -439,58 +451,17 @@ impl<S: Stream> Stream for TlsOverTdsStream<S> {
 
     fn tls_handshake_completed(&mut self) {
         self.has_completed_tls_handshake = true;
-        self.packet_write_buffer = None;
-        self.packet_header_receive_bytes = None;
-        self.write_state = None;
     }
 }
 
-// Specialized StreamRecoverer which returns Tds7OverTlsStreams when executing the TLS handshake.
-// This only occurs in the second prelogin message after negotiating the encryption mode.
-#[derive(Debug)]
-pub(crate) struct Tds7StreamRecoverer<S: StreamRecoverer> {
-    base_stream_recoverer: S,
-    is_executing_tls_handshake: bool,
-}
-
-impl<S: StreamRecoverer> Tds7StreamRecoverer<S> {
-    pub(crate) fn new(base_recoverer: S) -> Self {
-        Tds7StreamRecoverer {
-            base_stream_recoverer: base_recoverer,
-            is_executing_tls_handshake: false,
-        }
-    }
-}
-
-impl<S: StreamRecoverer> StreamRecoverer for Tds7StreamRecoverer<S> {
-    #[cfg(not(target_os = "macos"))]
-    fn recover_base_stream(&self) -> Box<dyn Stream> {
-        if !self.is_executing_tls_handshake {
-            self.base_stream_recoverer.recover_base_stream()
-        } else {
-            Box::new(TlsOverTdsStream::new(
-                self.base_stream_recoverer.recover_base_stream(),
-            ))
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    fn recover_base_stream(&self) -> Box<dyn Stream> {
-        if !self.is_executing_tls_handshake {
-            self.base_stream_recoverer.recover_base_stream()
-        } else {
-            Box::new(BufferedTdsStream::new(TlsOverTdsStream::new(
-                self.base_stream_recoverer.recover_base_stream(),
-            )))
-        }
-    }
-
+#[cfg(target_os = "macos")]
+impl Stream for BufferedTdsStream {
     fn tls_handshake_starting(&mut self) {
-        self.is_executing_tls_handshake = true;
+        self.tls_over_tds_stream.tls_handshake_starting();
     }
 
     fn tls_handshake_completed(&mut self) {
-        self.is_executing_tls_handshake = false;
+        self.tls_over_tds_stream.tls_handshake_completed();
     }
 }
 
@@ -618,18 +589,5 @@ impl AsyncWrite for BufferedTdsStream {
             let write_res = Write::write_vectored(&mut self.buffer.as_mut().unwrap(), bufs);
             Poll::Ready(write_res)
         }
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Stream for BufferedTdsStream {
-    fn tls_handshake_starting(&mut self) {
-        self.tls_over_tds_stream.tls_handshake_starting();
-        self.is_executing_tls_handshake = true;
-    }
-
-    fn tls_handshake_completed(&mut self) {
-        self.tls_over_tds_stream.tls_handshake_completed();
-        self.is_executing_tls_handshake = false;
     }
 }
