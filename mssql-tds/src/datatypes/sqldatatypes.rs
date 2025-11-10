@@ -699,12 +699,22 @@ where
     let length = match len_byte_count {
         1 => reader.read_byte().await? as usize,
         2 => reader.read_uint16().await? as usize,
-        4 => reader.read_int32().await? as usize,
+        4 => {
+            let len_i32 = reader.read_int32().await?;
+            // Negative values indicate invalid protocol data and should error out
+            // to prevent capacity overflow from casting negative i32 to huge usize values
+            if len_i32 < 0 {
+                return Err(Error::ProtocolError(format!(
+                    "Invalid length value {len_i32} for data type {data_type:?}. Length cannot be negative."
+                )));
+            }
+
+            len_i32 as usize
+        }
         _ => {
-            unreachable!(
-                "Invalid tds length {:?} for type: {:?}",
-                len_byte_count, data_type
-            )
+            return Err(Error::ProtocolError(format!(
+                "Invalid TDS length byte count {len_byte_count} for data type {data_type:?}. Expected 1, 2, or 4 bytes."
+            )));
         }
     };
     Ok(length)

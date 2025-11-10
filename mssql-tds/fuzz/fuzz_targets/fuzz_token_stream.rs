@@ -106,6 +106,14 @@ impl TdsPacketReader for FuzzReader {
 
     async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
         let len = self.read_byte().await? as usize;
+        // Prevent capacity overflow
+        const MAX_ALLOC: usize = 1024 * 1024; // 1MB
+        if len > MAX_ALLOC {
+            return Err(mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidData,
+                format!("Allocation size {} exceeds max {}", len, MAX_ALLOC),
+            )));
+        }
         let mut buf = vec![0u8; len];
         self.read_bytes(&mut buf).await?;
         Ok(buf)
@@ -113,6 +121,14 @@ impl TdsPacketReader for FuzzReader {
 
     async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
         let len = self.read_uint16().await? as usize;
+        // Prevent capacity overflow
+        const MAX_ALLOC: usize = 1024 * 1024; // 1MB
+        if len > MAX_ALLOC {
+            return Err(mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidData,
+                format!("Allocation size {} exceeds max {}", len, MAX_ALLOC),
+            )));
+        }
         let mut buf = vec![0u8; len];
         self.read_bytes(&mut buf).await?;
         Ok(buf)
@@ -120,7 +136,20 @@ impl TdsPacketReader for FuzzReader {
 
     async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
         let len = self.read_byte().await? as usize;
-        let byte_len = len * 2; // Unicode characters are 2 bytes
+        let byte_len = len.checked_mul(2).ok_or_else(|| {
+            mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidData,
+                format!("String length {} * 2 overflows", len),
+            ))
+        })?; // Unicode characters are 2 bytes
+        // Prevent capacity overflow
+        const MAX_ALLOC: usize = 1024 * 1024; // 1MB
+        if byte_len > MAX_ALLOC {
+            return Err(mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidData,
+                format!("Allocation size {} exceeds max {}", byte_len, MAX_ALLOC),
+            )));
+        }
         let mut buf = vec![0u8; byte_len];
         self.read_bytes(&mut buf).await?;
         
@@ -141,7 +170,20 @@ impl TdsPacketReader for FuzzReader {
             return Ok(None);
         }
         
-        let byte_len = len as usize * 2;
+        let byte_len = (len as usize).checked_mul(2).ok_or_else(|| {
+            mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidData,
+                format!("String length {} * 2 overflows", len),
+            ))
+        })?;
+        // Prevent capacity overflow
+        const MAX_ALLOC: usize = 1024 * 1024; // 1MB
+        if byte_len > MAX_ALLOC {
+            return Err(mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidData,
+                format!("Allocation size {} exceeds max {}", byte_len, MAX_ALLOC),
+            )));
+        }
         let mut buf = vec![0u8; byte_len];
         self.read_bytes(&mut buf).await?;
         
@@ -158,7 +200,20 @@ impl TdsPacketReader for FuzzReader {
     }
 
     async fn read_unicode(&mut self, char_count: usize) -> TdsResult<String> {
-        let byte_len = char_count * 2;
+        let byte_len = char_count.checked_mul(2).ok_or_else(|| {
+            mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidData,
+                format!("String char_count {} * 2 overflows", char_count),
+            ))
+        })?;
+        // Prevent capacity overflow
+        const MAX_ALLOC: usize = 1024 * 1024; // 1MB
+        if byte_len > MAX_ALLOC {
+            return Err(mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidData,
+                format!("Allocation size {} exceeds max {}", byte_len, MAX_ALLOC),
+            )));
+        }
         let mut buf = vec![0u8; byte_len];
         self.read_bytes(&mut buf).await?;
         
@@ -229,6 +284,14 @@ impl TdsPacketReader for FuzzReader {
 
     async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
         let byte_len = self.read_byte().await? as usize;
+        // Prevent capacity overflow
+        const MAX_ALLOC: usize = 1024 * 1024; // 1MB
+        if byte_len > MAX_ALLOC {
+            return Err(mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidData,
+                format!("Allocation size {} exceeds max {}", byte_len, MAX_ALLOC),
+            )));
+        }
         let mut buf = vec![0u8; byte_len];
         self.read_bytes(&mut buf).await?;
         
@@ -243,6 +306,14 @@ impl TdsPacketReader for FuzzReader {
     }
 
     async fn read_unicode_with_byte_length(&mut self, byte_len: usize) -> TdsResult<String> {
+        // Prevent capacity overflow
+        const MAX_ALLOC: usize = 1024 * 1024; // 1MB
+        if byte_len > MAX_ALLOC {
+            return Err(mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidData,
+                format!("Allocation size {} exceeds max {}", byte_len, MAX_ALLOC),
+            )));
+        }
         let mut buf = vec![0u8; byte_len];
         self.read_bytes(&mut buf).await?;
         
