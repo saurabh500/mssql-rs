@@ -528,7 +528,7 @@ where
                     Self::FEDAUTH_OPTIONS_SIZE
                 ))
             })?;
-        
+
         if required_size as i32 > data_left {
             return Err(crate::error::Error::ProtocolError(format!(
                 "Invalid FedAuthInfo token: options_count ({options_count}) requires {required_size} bytes, but only {data_left} bytes available"
