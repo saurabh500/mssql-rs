@@ -948,7 +948,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::datatypes::decoder::DecimalParts;
+    use crate::datatypes::{column_values::ColumnValues, decoder::{DecimalParts, GenericDecoder, StringDecoder}};
 
     #[test]
     fn test_f64_conversion() {
@@ -964,5 +964,224 @@ mod test {
         };
 
         assert_eq!(expected, parts.to_f64());
+    }
+
+    
+    #[test]
+    fn test_f64_conversion_negative() {
+        let expected: f64 = -123456.322;
+
+        // Represents -123456.322 as observed over TDS wire.
+        let int_parts = vec![-539269688, 2];
+        let parts = DecimalParts {
+            is_positive: false,
+            scale: 5,
+            precision: 18,
+            int_parts,
+        };
+
+        assert_eq!(expected, parts.to_f64());
+    }
+
+    #[test]
+    fn test_f64_conversion_zero() {
+        let expected: f64 = 0.0;
+
+        let int_parts = vec![0];
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 1,
+            int_parts,
+        };
+
+        assert_eq!(expected, parts.to_f64());
+    }
+
+    #[test]
+    fn test_f64_conversion_large_number() {
+        // Test conversion with larger numbers
+        let int_parts = vec![100000, 0];
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 7,
+            int_parts,
+        };
+
+        let result = parts.to_f64();
+        // With scale of 2, int value 100000 should become 1000.00
+        assert!((result - 1000.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_decimal_parts_with_multiple_int_parts() {
+        // Test with multiple integer parts to ensure full conversion
+        let int_parts = vec![1000000000, 1];
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 19,
+            int_parts,
+        };
+
+        // Should successfully convert to f64
+        let result = parts.to_f64();
+        assert!(result > 0.0);
+    }
+
+    #[test]
+    fn test_u8_to_column_values() {
+        let value: u8 = 123;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::TinyInt(v) => assert_eq!(v, 123),
+            _ => panic!("Expected TinyInt variant"),
+        }
+    }
+
+    #[test]
+    fn test_i32_to_column_values() {
+        let value: i32 = 12345;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::Int(v) => assert_eq!(v, 12345),
+            _ => panic!("Expected Int variant"),
+        }
+    }
+
+    #[test]
+    fn test_i32_negative_to_column_values() {
+        let value: i32 = -12345;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::Int(v) => assert_eq!(v, -12345),
+            _ => panic!("Expected Int variant"),
+        }
+    }
+
+    #[test]
+    fn test_generic_decoder_default() {
+        let decoder = GenericDecoder::default();
+        // Just verify it can be created
+        assert!(std::mem::size_of_val(&decoder) > 0);
+    }
+
+    #[test]
+    fn test_string_decoder_default() {
+        let decoder = StringDecoder::default();
+        // Just verify it can be created
+        assert!(std::mem::size_of_val(&decoder) > 0);
+    }
+
+    #[test]
+    fn test_decimal_parts_debug() {
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![123, 456],
+        };
+        let debug_str = format!("{parts:?}");
+        // Just verify the debug trait works - don't assert on exact format
+        assert!(!debug_str.is_empty());
+    }
+
+    #[test]
+    fn test_generic_decoder_constants() {
+        assert_eq!(GenericDecoder::SHORTLEN_MAXVALUE, 65535);
+        assert_eq!(GenericDecoder::SQL_PLP_NULL, 0xffffffffffffffff);
+        assert_eq!(GenericDecoder::SQL_PLP_UNKNOWNLEN, 0xfffffffffffffffe);
+    }
+
+    #[test]
+    fn test_decimal_parts_scale_precision() {
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 5,
+            precision: 18,
+            int_parts: vec![100000],
+        };
+
+        // Test that scale affects the decimal conversion
+        let result = parts.to_f64();
+        // With scale of 5, int value 100000 should become 1.00000
+        assert!((result - 1.0).abs() < 0.00001);
+    }
+
+    #[test]
+    fn test_decimal_parts_empty_int_parts() {
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 1,
+            int_parts: vec![],
+        };
+
+        let result = parts.to_f64();
+        assert_eq!(result, 0.0);
+    }
+
+    #[test]
+    fn test_decimal_parts_single_int_part() {
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 5,
+            int_parts: vec![12345],
+        };
+
+        let result = parts.to_f64();
+        assert_eq!(result, 12345.0);
+    }
+
+    #[test]
+    fn test_column_values_from_u8_zero() {
+        let value: u8 = 0;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::TinyInt(v) => assert_eq!(v, 0),
+            _ => panic!("Expected TinyInt variant"),
+        }
+    }
+
+    #[test]
+    fn test_column_values_from_u8_max() {
+        let value: u8 = 255;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::TinyInt(v) => assert_eq!(v, 255),
+            _ => panic!("Expected TinyInt variant"),
+        }
+    }
+
+    #[test]
+    fn test_column_values_from_i32_zero() {
+        let value: i32 = 0;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::Int(v) => assert_eq!(v, 0),
+            _ => panic!("Expected Int variant"),
+        }
+    }
+
+    #[test]
+    fn test_column_values_from_i32_max() {
+        let value: i32 = i32::MAX;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::Int(v) => assert_eq!(v, i32::MAX),
+            _ => panic!("Expected Int variant"),
+        }
+    }
+
+    #[test]
+    fn test_column_values_from_i32_min() {
+        let value: i32 = i32::MIN;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::Int(v) => assert_eq!(v, i32::MIN),
+            _ => panic!("Expected Int variant"),
+        }
     }
 }
