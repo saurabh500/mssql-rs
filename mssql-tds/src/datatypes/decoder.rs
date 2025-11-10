@@ -272,6 +272,18 @@ impl GenericDecoder {
     where
         T: TdsPacketReader + Send + Sync,
     {
+        // DateTime2N requires at least 6 bytes total:
+        // - 3 bytes for date (read_date)
+        // - 3-5 bytes for time depending on scale (read_time)
+        // Minimum: 3 (time) + 3 (date) = 6 bytes
+        const MIN_DATETIME2_LENGTH: u8 = 6;
+
+        if byte_len < MIN_DATETIME2_LENGTH {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Invalid DateTime2N length: {byte_len}. Must be at least {MIN_DATETIME2_LENGTH} bytes (3 for date + 3 for time minimum)"
+            )));
+        }
+
         let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
         let sql_date = Self::read_date(reader).await?;
         let datetime2 = SqlDateTime2 {
@@ -290,6 +302,20 @@ impl GenericDecoder {
     where
         T: TdsPacketReader + Send + Sync,
     {
+        // DateTimeOffsetN requires at least 5 bytes:
+        // - 3 bytes for date (read_date)
+        // - 2 bytes for timezone offset
+        // Plus time bytes which vary by scale (3-5 bytes)
+        // Minimum total: 3 (time) + 3 (date) + 2 (offset) = 8 bytes
+        // But we can have shorter lengths with scale-dependent time size
+        const MIN_DATETIMEOFFSET_LENGTH: u8 = 5; // 3 (date) + 2 (offset), minimum time is 0
+
+        if byte_len < MIN_DATETIMEOFFSET_LENGTH {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Invalid DateTimeOffsetN length: {byte_len}. Must be at least {MIN_DATETIMEOFFSET_LENGTH} bytes (3 for date + 2 for offset + variable for time)"
+            )));
+        }
+
         let datetime2 = self.read_datetime2(reader, byte_len - 2, scale).await?;
         let datetime2 = match datetime2 {
             ColumnValues::DateTime2(dt2) => dt2,
