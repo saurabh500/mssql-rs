@@ -131,12 +131,12 @@ mod rpc_datatypes {
         let context = create_context();
         let mut connection = begin_connection(context).await;
 
-        let batch_result = connection
+        connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
             .await
             .unwrap();
 
-        let (metadata, first_row_columns) = get_first_row(batch_result).await.unwrap();
+        let (metadata, first_row_columns) = get_first_row(&mut connection).await.unwrap();
 
         for (i, column) in metadata.iter().enumerate() {
             println!("Column {i}: {column:?}");
@@ -244,12 +244,12 @@ mod rpc_datatypes {
         let context = create_context();
         let mut connection = begin_connection(context).await;
 
-        let batch_result = connection
+        connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
             .await
             .unwrap();
 
-        let (_, first_row_columns) = get_first_row(batch_result).await.unwrap();
+        let (_, first_row_columns) = get_first_row(&mut connection).await.unwrap();
 
         assert_eq!(first_row_columns.len(), col_count);
         for column in first_row_columns.iter() {
@@ -285,12 +285,12 @@ mod rpc_datatypes {
         let context = create_context();
         let mut connection = begin_connection(context).await;
 
-        let batch_result = connection
+        connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
             .await
             .unwrap();
 
-        let (_, first_row_columns) = get_first_row(batch_result).await.unwrap();
+        let (_, first_row_columns) = get_first_row(&mut connection).await.unwrap();
 
         assert_eq!(first_row_columns.len(), col_count);
         for column in first_row_columns.iter() {

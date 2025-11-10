@@ -29,19 +29,12 @@ mod timeout_and_cancel_tests {
         let mut connection = begin_connection(context).await;
 
         let start_time = Instant::now();
-        let batch_result = connection
+        let execute_result = connection
             .execute("WAITFOR DELAY '00:00:05'".to_string(), Some(2), None)
             .await;
 
-        // Timeout could happen during send.
-        if batch_result.is_err() {
-            verify_duration(batch_result, start_time, 1500, 3000);
-            return;
-        }
-
-        // Or it can happen when getting results (more likely).
-        let close_result = batch_result.unwrap().close().await;
-        verify_duration(close_result, start_time, 1500, 3000);
+        // Timeout could happen during send or when getting results.
+        verify_duration(execute_result, start_time, 1500, 3000);
 
         // Re-use the connection just to make sure it still works.
         let expected = [ExpectedQueryResultType::Result(1)];
@@ -79,7 +72,7 @@ mod timeout_and_cancel_tests {
             // Start a timer.
             let start_time = Instant::now();
             let result = provider
-                .create_connection(client_context, Some(&child_handle))
+                .create_client(client_context, Some(&child_handle))
                 .await;
             verify_duration(result, start_time, 1000, 2500);
         });
@@ -105,14 +98,13 @@ mod timeout_and_cancel_tests {
             tx.send(true).unwrap();
 
             let start_time = Instant::now();
-            let batch = connection
+            let result = connection
                 .execute(
                     "WAITFOR DELAY '00:00:05'".to_string(),
                     None,
                     Some(&child_handle),
                 )
                 .await;
-            let result = batch.unwrap().close().await;
             verify_duration(result, start_time, 1000, 2500);
 
             // Re-use the connection just to make sure it still works.
@@ -185,7 +177,7 @@ mod timeout_and_cancel_tests {
 
         // Start a timer.
         let start_time = Instant::now();
-        let connection_result = provider.create_connection(client_context, None).await;
+        let connection_result = provider.create_client(client_context, None).await;
         verify_duration(
             connection_result,
             start_time,

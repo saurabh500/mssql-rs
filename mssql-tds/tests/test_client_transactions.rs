@@ -24,7 +24,7 @@ mod client_based_iterators {
             .begin_transaction(TransactionIsolationLevel::ReadCommitted, None)
             .await?;
 
-        client.commit_transaction().await?;
+        client.commit_transaction(None, None).await?;
         Ok(())
     }
 }

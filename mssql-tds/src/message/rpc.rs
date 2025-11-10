@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use tracing::debug;
 
 use crate::{
-    connection::tds_connection::ExecutionContext,
+    connection::execution_context::ExecutionContext,
     core::TdsResult,
     datatypes::encoder::GenericEncoder,
     message::messages::PacketType,

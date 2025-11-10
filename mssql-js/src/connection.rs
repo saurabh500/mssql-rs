@@ -294,7 +294,7 @@ impl Connection {
     #[napi]
     pub async fn commit_transaction(&self) -> napi::Result<()> {
         let mut client = self.tds_client.lock().await;
-        let result = client.commit_transaction().await;
+        let result = client.commit_transaction(None, None).await;
         match result {
             Ok(_) => Ok(()),
             Err(e) => Err(napi::Error::from_reason(format!(
@@ -306,7 +306,7 @@ impl Connection {
     #[napi]
     pub async fn rollback_transaction(&self, name: Option<String>) -> napi::Result<()> {
         let mut client = self.tds_client.lock().await;
-        let result = client.rollback_transaction(name).await;
+        let result = client.rollback_transaction(name, None).await;
         match result {
             Ok(_) => Ok(()),
             Err(e) => Err(napi::Error::from_reason(format!(

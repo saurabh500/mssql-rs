@@ -3,7 +3,7 @@
 
 use super::headers::{TdsHeaders, TransactionDescriptorHeader, write_headers};
 use super::messages::{PacketType, Request};
-use crate::connection::tds_connection::ExecutionContext;
+use crate::connection::execution_context::ExecutionContext;
 use crate::core::TdsResult;
 use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
 use async_trait::async_trait;

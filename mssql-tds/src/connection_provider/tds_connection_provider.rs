@@ -8,7 +8,6 @@ use tracing::info;
 
 use crate::connection::client_context::{ClientContext, TransportContext};
 use crate::connection::tds_client::TdsClient;
-use crate::connection::tds_connection::TdsConnection;
 use crate::connection::transport::network_transport;
 use crate::core::{CancelHandle, TdsResult};
 use crate::error::Error::{OperationCancelledError, TimeoutError};
@@ -21,45 +20,17 @@ use std::sync::LazyLock;
 pub(crate) static PARSER_REGISTRY: LazyLock<GenericTokenParserRegistry> =
     LazyLock::new(GenericTokenParserRegistry::default);
 
+/// Private struct to hold the components needed to create a TdsClient.
+/// This is an internal implementation detail and not exposed publicly.
+struct ConnectionComponents {
+    transport: Box<network_transport::NetworkTransport>,
+    negotiated_settings: crate::handler::handler_factory::NegotiatedSettings,
+    execution_context: crate::connection::execution_context::ExecutionContext,
+}
+
 pub struct TdsConnectionProvider {}
 
 impl TdsConnectionProvider {
-    pub async fn create_connection(
-        &self,
-        context: ClientContext,
-        cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<TdsConnection> {
-        CancelHandle::run_until_cancelled(cancel_handle, async move {
-            let timeout_duration = match context.connect_timeout {
-                1.. => Some(Duration::from_secs(context.connect_timeout.into())),
-                _ => None,
-            };
-
-            let cancellation_token = cancel_handle.map(|handle| handle.cancel_token.child_token());
-
-            match timeout_duration.as_ref() {
-                Some(timeout_duration) => {
-                    match timeout(
-                        *timeout_duration,
-                        self.create_connection_internal(&context, cancellation_token),
-                    )
-                    .await
-                    {
-                        Ok(result) => result,
-                        Err(_) => Err(TimeoutError(TimeoutErrorType::String(
-                            "Timeout while connecting".to_string(),
-                        ))),
-                    }
-                }
-                None => {
-                    self.create_connection_internal(&context, cancellation_token)
-                        .await
-                }
-            }
-        })
-        .await
-    }
-
     pub async fn create_client(
         &self,
         context: ClientContext,
@@ -113,7 +84,7 @@ impl TdsConnectionProvider {
         &self,
         context: &ClientContext,
         cancellation_token: Option<CancellationToken>,
-    ) -> TdsResult<TdsConnection> {
+    ) -> TdsResult<ConnectionComponents> {
         let mut redirect_count = 0;
         let max_redirects = 10;
         let mut connection_result = self
@@ -171,7 +142,7 @@ impl TdsConnectionProvider {
         &self,
         context: &ClientContext,
         transport_context: &TransportContext,
-    ) -> TdsResult<TdsConnection> {
+    ) -> TdsResult<ConnectionComponents> {
         // Create transport
         let mut transport = network_transport::create_transport(
             context.ipaddress_preference,
@@ -190,7 +161,17 @@ impl TdsConnectionProvider {
             .await;
 
         match session_result {
-            Ok(negotiated_settings) => Ok(TdsConnection::new(transport, negotiated_settings)),
+            Ok(negotiated_settings) => {
+                // Create execution context for the new connection
+                let execution_context =
+                    crate::connection::execution_context::ExecutionContext::new();
+
+                Ok(ConnectionComponents {
+                    transport,
+                    negotiated_settings,
+                    execution_context,
+                })
+            }
             Err(err) => {
                 transport.close_transport().await?;
                 Err(err)
