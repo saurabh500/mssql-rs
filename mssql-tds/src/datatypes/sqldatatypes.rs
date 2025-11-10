@@ -721,3 +721,246 @@ where
     };
     Ok(length)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tds_data_type_get_meta_type_name() {
+        assert_eq!(TdsDataType::Int8.get_meta_type_name(), "bigint");
+        assert_eq!(TdsDataType::Flt8.get_meta_type_name(), "float");
+        assert_eq!(TdsDataType::Flt4.get_meta_type_name(), "real");
+        assert_eq!(TdsDataType::BigBinary.get_meta_type_name(), "binary");
+        assert_eq!(TdsDataType::BigVarBinary.get_meta_type_name(), "varbinary");
+        assert_eq!(TdsDataType::Image.get_meta_type_name(), "image");
+        assert_eq!(TdsDataType::Bit.get_meta_type_name(), "bit");
+        assert_eq!(TdsDataType::Int1.get_meta_type_name(), "tinyint");
+        assert_eq!(TdsDataType::Int2.get_meta_type_name(), "smallint");
+        assert_eq!(TdsDataType::Int4.get_meta_type_name(), "int");
+        assert_eq!(TdsDataType::BigChar.get_meta_type_name(), "char");
+        assert_eq!(TdsDataType::BigVarChar.get_meta_type_name(), "varchar");
+        assert_eq!(TdsDataType::Text.get_meta_type_name(), "text");
+        assert_eq!(TdsDataType::NChar.get_meta_type_name(), "nchar");
+        assert_eq!(TdsDataType::NVarChar.get_meta_type_name(), "nvarchar");
+        assert_eq!(TdsDataType::NText.get_meta_type_name(), "ntext");
+        assert_eq!(TdsDataType::DecimalN.get_meta_type_name(), "decimal");
+        assert_eq!(TdsDataType::Xml.get_meta_type_name(), "xml");
+        assert_eq!(TdsDataType::DateTime.get_meta_type_name(), "datetime");
+        assert_eq!(TdsDataType::DateTim4.get_meta_type_name(), "smalldatetime");
+        assert_eq!(TdsDataType::Money.get_meta_type_name(), "money");
+        assert_eq!(TdsDataType::Money4.get_meta_type_name(), "smallmoney");
+        assert_eq!(TdsDataType::Guid.get_meta_type_name(), "uniqueidentifier");
+        assert_eq!(TdsDataType::SsVariant.get_meta_type_name(), "sql_variant");
+        assert_eq!(TdsDataType::Udt.get_meta_type_name(), "udt");
+        assert_eq!(TdsDataType::Json.get_meta_type_name(), "json");
+        assert_eq!(TdsDataType::DateN.get_meta_type_name(), "date");
+        assert_eq!(TdsDataType::TimeN.get_meta_type_name(), "time");
+        assert_eq!(TdsDataType::DateTime2N.get_meta_type_name(), "datetime2");
+        assert_eq!(
+            TdsDataType::DateTimeOffsetN.get_meta_type_name(),
+            "datetimeoffset"
+        );
+        assert_eq!(TdsDataType::VarChar.get_meta_type_name(), "varchar");
+        assert_eq!(TdsDataType::VarBinary.get_meta_type_name(), "varbinary");
+        assert_eq!(TdsDataType::Decimal.get_meta_type_name(), "decimal");
+        assert_eq!(TdsDataType::Numeric.get_meta_type_name(), "numeric");
+    }
+
+    #[test]
+    fn test_tds_data_type_try_from_u8() {
+        assert_eq!(TdsDataType::try_from(0x1F).unwrap(), TdsDataType::Void);
+        assert_eq!(TdsDataType::try_from(0x22).unwrap(), TdsDataType::Image);
+        assert_eq!(TdsDataType::try_from(0x23).unwrap(), TdsDataType::Text);
+        assert_eq!(TdsDataType::try_from(0x24).unwrap(), TdsDataType::Guid);
+        assert_eq!(TdsDataType::try_from(0x30).unwrap(), TdsDataType::Int1);
+        assert_eq!(TdsDataType::try_from(0x32).unwrap(), TdsDataType::Bit);
+        assert_eq!(TdsDataType::try_from(0x34).unwrap(), TdsDataType::Int2);
+        assert_eq!(TdsDataType::try_from(0x38).unwrap(), TdsDataType::Int4);
+        assert_eq!(TdsDataType::try_from(0x7F).unwrap(), TdsDataType::Int8);
+        assert_eq!(TdsDataType::try_from(0xE7).unwrap(), TdsDataType::NVarChar);
+        assert_eq!(TdsDataType::try_from(0xF1).unwrap(), TdsDataType::Xml);
+        assert_eq!(TdsDataType::try_from(0xF4).unwrap(), TdsDataType::Json);
+    }
+
+    #[test]
+    fn test_tds_data_type_try_from_u8_invalid() {
+        assert!(TdsDataType::try_from(0xFF).is_err());
+        assert!(TdsDataType::try_from(0x00).is_err());
+        assert!(TdsDataType::try_from(0x99).is_err());
+    }
+
+    #[test]
+    fn test_fixed_length_types_try_from() {
+        assert_eq!(
+            FixedLengthTypes::try_from(TdsDataType::Int1).unwrap(),
+            FixedLengthTypes::Int1
+        );
+        assert_eq!(
+            FixedLengthTypes::try_from(TdsDataType::Bit).unwrap(),
+            FixedLengthTypes::Bit
+        );
+        assert_eq!(
+            FixedLengthTypes::try_from(TdsDataType::Int2).unwrap(),
+            FixedLengthTypes::Int2
+        );
+        assert_eq!(
+            FixedLengthTypes::try_from(TdsDataType::Int4).unwrap(),
+            FixedLengthTypes::Int4
+        );
+        assert_eq!(
+            FixedLengthTypes::try_from(TdsDataType::Int8).unwrap(),
+            FixedLengthTypes::Int8
+        );
+        assert_eq!(
+            FixedLengthTypes::try_from(TdsDataType::Flt4).unwrap(),
+            FixedLengthTypes::Flt4
+        );
+        assert_eq!(
+            FixedLengthTypes::try_from(TdsDataType::Flt8).unwrap(),
+            FixedLengthTypes::Flt8
+        );
+        assert_eq!(
+            FixedLengthTypes::try_from(TdsDataType::Money).unwrap(),
+            FixedLengthTypes::Money
+        );
+        assert_eq!(
+            FixedLengthTypes::try_from(TdsDataType::Money4).unwrap(),
+            FixedLengthTypes::Money4
+        );
+    }
+
+    #[test]
+    fn test_fixed_length_types_try_from_invalid() {
+        assert!(FixedLengthTypes::try_from(TdsDataType::NVarChar).is_err());
+        assert!(FixedLengthTypes::try_from(TdsDataType::Xml).is_err());
+    }
+
+    #[test]
+    fn test_fixed_length_types_get_len() {
+        assert_eq!(FixedLengthTypes::Int1.get_len(), 1);
+        assert_eq!(FixedLengthTypes::Bit.get_len(), 1);
+        assert_eq!(FixedLengthTypes::Int2.get_len(), 2);
+        assert_eq!(FixedLengthTypes::Int4.get_len(), 4);
+        assert_eq!(FixedLengthTypes::Flt4.get_len(), 4);
+        assert_eq!(FixedLengthTypes::Money4.get_len(), 4);
+        assert_eq!(FixedLengthTypes::DateTim4.get_len(), 4);
+        assert_eq!(FixedLengthTypes::Int8.get_len(), 8);
+        assert_eq!(FixedLengthTypes::Flt8.get_len(), 8);
+        assert_eq!(FixedLengthTypes::Money.get_len(), 8);
+        assert_eq!(FixedLengthTypes::DateTime.get_len(), 8);
+    }
+
+    #[test]
+    fn test_variable_length_types_try_from() {
+        assert_eq!(
+            VariableLengthTypes::try_from(TdsDataType::Guid).unwrap(),
+            VariableLengthTypes::Guid
+        );
+        assert_eq!(
+            VariableLengthTypes::try_from(TdsDataType::IntN).unwrap(),
+            VariableLengthTypes::IntN
+        );
+        assert_eq!(
+            VariableLengthTypes::try_from(TdsDataType::NVarChar).unwrap(),
+            VariableLengthTypes::NVarChar
+        );
+        assert_eq!(
+            VariableLengthTypes::try_from(TdsDataType::BigVarChar).unwrap(),
+            VariableLengthTypes::BigVarChar
+        );
+        assert_eq!(
+            VariableLengthTypes::try_from(TdsDataType::Text).unwrap(),
+            VariableLengthTypes::Text
+        );
+        assert_eq!(
+            VariableLengthTypes::try_from(TdsDataType::Image).unwrap(),
+            VariableLengthTypes::Image
+        );
+    }
+
+    #[test]
+    fn test_variable_length_types_try_from_invalid() {
+        assert!(VariableLengthTypes::try_from(TdsDataType::Int4).is_err());
+        assert!(VariableLengthTypes::try_from(TdsDataType::Flt8).is_err());
+    }
+
+    #[test]
+    fn test_variable_length_types_get_len_byte_count() {
+        assert_eq!(VariableLengthTypes::BigVarBinary.get_len_byte_count(), 2);
+        assert_eq!(VariableLengthTypes::BigVarChar.get_len_byte_count(), 2);
+        assert_eq!(VariableLengthTypes::NVarChar.get_len_byte_count(), 2);
+        assert_eq!(VariableLengthTypes::NChar.get_len_byte_count(), 2);
+        assert_eq!(VariableLengthTypes::Guid.get_len_byte_count(), 1);
+        assert_eq!(VariableLengthTypes::IntN.get_len_byte_count(), 1);
+        assert_eq!(VariableLengthTypes::DateN.get_len_byte_count(), 1);
+        assert_eq!(VariableLengthTypes::TimeN.get_len_byte_count(), 1);
+    }
+
+    #[test]
+    fn test_partial_length_type_try_from() {
+        assert_eq!(
+            PartialLengthType::try_from(TdsDataType::Xml).unwrap(),
+            PartialLengthType::Xml
+        );
+        assert_eq!(
+            PartialLengthType::try_from(TdsDataType::Udt).unwrap(),
+            PartialLengthType::Udt
+        );
+        assert_eq!(
+            PartialLengthType::try_from(TdsDataType::Json).unwrap(),
+            PartialLengthType::Json
+        );
+        assert_eq!(
+            PartialLengthType::try_from(TdsDataType::BigVarChar).unwrap(),
+            PartialLengthType::BigVarChar
+        );
+        assert_eq!(
+            PartialLengthType::try_from(TdsDataType::BigVarBinary).unwrap(),
+            PartialLengthType::BigVarBinary
+        );
+        assert_eq!(
+            PartialLengthType::try_from(TdsDataType::NVarChar).unwrap(),
+            PartialLengthType::NVarChar
+        );
+    }
+
+    #[test]
+    fn test_partial_length_type_try_from_invalid() {
+        assert!(PartialLengthType::try_from(TdsDataType::Int4).is_err());
+        assert!(PartialLengthType::try_from(TdsDataType::Bit).is_err());
+        assert!(PartialLengthType::try_from(TdsDataType::Text).is_err());
+        assert!(PartialLengthType::try_from(TdsDataType::NText).is_err());
+        assert!(PartialLengthType::try_from(TdsDataType::Image).is_err());
+    }
+
+    #[test]
+    fn test_tds_data_type_equality() {
+        assert_eq!(TdsDataType::Int4, TdsDataType::Int4);
+        assert_ne!(TdsDataType::Int4, TdsDataType::Int8);
+    }
+
+    #[test]
+    fn test_tds_data_type_clone() {
+        let dt = TdsDataType::NVarChar;
+        let cloned = dt;
+        assert_eq!(dt, cloned);
+    }
+
+    #[test]
+    fn test_tds_data_type_default() {
+        assert_eq!(TdsDataType::default(), TdsDataType::None);
+    }
+
+    #[test]
+    fn test_fixed_length_types_equality() {
+        assert_eq!(FixedLengthTypes::Int4, FixedLengthTypes::Int4);
+        assert_ne!(FixedLengthTypes::Int4, FixedLengthTypes::Int8);
+    }
+
+    #[test]
+    fn test_variable_length_types_equality() {
+        assert_eq!(VariableLengthTypes::NVarChar, VariableLengthTypes::NVarChar);
+        assert_ne!(VariableLengthTypes::NVarChar, VariableLengthTypes::Text);
+    }
+}
