@@ -209,7 +209,7 @@ mod rpc_results {
     #[tokio::test]
     #[ignore]
     async fn test_sp_prepare_and_unprepare_multi_param() {
-        let query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
+        let _query = "select name from sys.databases where database_id = @database_id and compatibility_level > @compat_level";
         let database_id_param = RpcParameter::new(
             Some("@database_id".to_string()),
             StatusFlags::NONE,
@@ -223,9 +223,9 @@ mod rpc_results {
         );
 
         let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let _connection = begin_connection(context).await;
 
-        let named_parameters = vec![database_id_param, compat_level_param];
+        let _named_parameters = [database_id_param, compat_level_param];
 
         // TODO: Implement execute_sp_prepare on TdsClient
         // let handle = connection
@@ -259,9 +259,9 @@ mod rpc_results {
         );
 
         let _context = create_context();
-        let mut _connection = begin_connection(_context).await;
+        let _connection = begin_connection(_context).await;
 
-        let _named_parameters = vec![_database_id_param, _compat_level_param];
+        let _named_parameters = [_database_id_param, _compat_level_param];
 
         // TODO: Implement execute_sp_prepexec, execute_sp_execute, execute_sp_unprepare on TdsClient
         // let mut batch_result = connection

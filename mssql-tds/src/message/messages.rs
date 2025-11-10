@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(deprecated)]
+
 use crate::connection::tds_connection::TdsConnection;
 use crate::core::{CancelHandle, NegotiatedEncryptionSetting, TdsResult};
 use crate::error::Error::{OperationCancelledError, TimeoutError};

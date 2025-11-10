@@ -113,7 +113,7 @@ pub async fn validate_results(
                     while let Some(row) = resultset.next_row().await? {
                         print!("Row {actual_rows:?}: ");
                         for cell in row {
-                            print!("{:?},", cell);
+                            print!("{cell:?},");
                         }
                         println!();
                         actual_rows += 1;

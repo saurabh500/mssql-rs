@@ -9,9 +9,7 @@ mod transactions {
         ExpectedQueryResultType, begin_connection, create_context, run_query_and_check_results,
         validate_results,
     };
-    use mssql_tds::message::transaction_management::{
-        CreateTxnParams, TransactionIsolationLevel, TransactionManagementType,
-    };
+    use mssql_tds::message::transaction_management::{CreateTxnParams, TransactionIsolationLevel};
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_sql_rollback_transaction() {

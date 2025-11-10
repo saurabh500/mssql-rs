@@ -440,6 +440,19 @@ impl TdsClient {
                     self.return_values.push(return_value);
                     continue;
                 }
+                Tokens::Error(error_token) => {
+                    // SQL Server error occurred during row iteration
+                    info!(?error_token);
+                    return Err(crate::error::Error::SqlServerError {
+                        message: error_token.message.clone(),
+                        state: error_token.state,
+                        class: error_token.severity as i32,
+                        number: error_token.number,
+                        server_name: Some(error_token.server_name.clone()),
+                        proc_name: Some(error_token.proc_name.clone()),
+                        line_number: Some(error_token.line_number as i32),
+                    });
+                }
                 _ => {
                     unreachable!("Unexpected Token while finding the next row. {:?}", token);
                 }

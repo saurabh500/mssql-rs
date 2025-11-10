@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(deprecated)]
+
 use crate::connection::tds_connection::{ExecutionContext, TdsConnection};
 use crate::connection::transport::network_transport::NetworkTransport;
 use crate::core::{CancelHandle, TdsResult};
@@ -23,6 +25,18 @@ use std::vec::IntoIter;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, trace};
 
+/// QueryResultType represents either a DML result or a ResultSet.
+///
+/// # Deprecation Notice
+///
+/// **This type is deprecated and will be removed in a future version.**
+///
+/// Please use [`TdsClient`](crate::connection::tds_client::TdsClient) instead.
+/// See [`TdsConnection`](crate::connection::tds_connection::TdsConnection) for migration guide.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use TdsClient API instead. See TdsConnection deprecation notice for migration guide."
+)]
 pub enum QueryResultType<'result> {
     DmlResult(u64),
     ResultSet(ResultSet<'result>),
@@ -143,6 +157,18 @@ impl QueryResultType<'_> {
     }
 }
 
+/// BatchResult provides streaming access to query results from TdsConnection.
+///
+/// # Deprecation Notice
+///
+/// **This type is deprecated and will be removed in a future version.**
+///
+/// Please use [`TdsClient`](crate::connection::tds_client::TdsClient) instead.
+/// See [`TdsConnection`](crate::connection::tds_connection::TdsConnection) for migration guide.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use TdsClient API instead. See TdsConnection deprecation notice for migration guide."
+)]
 pub struct BatchResult<'result> {
     //  negotiated_settings: &'result mut NegotiatedSettings,
     token_stream_reader: &'result mut NetworkTransport,

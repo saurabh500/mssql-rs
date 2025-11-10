@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(deprecated)]
+
 use super::transport::network_transport::NetworkTransport;
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::column_values::ColumnValues;
@@ -28,6 +30,43 @@ use crate::token::tokens::{
 use std::time::{Duration, Instant};
 use tracing::{info, instrument};
 
+/// TdsConnection provides a streaming API for executing queries.
+///
+/// # Deprecation Notice
+///
+/// **This API is deprecated and will be removed in a future version.**
+///
+/// Please use [`TdsClient`](crate::connection::tds_client::TdsClient) instead, which provides:
+/// - Cursor-based result set iteration
+/// - Better error handling
+/// - Simpler API surface
+/// - Full feature parity with this API
+///
+/// ## Migration Guide
+///
+/// ```ignore
+/// // Old (TdsConnection):
+/// let mut connection = provider.create_connection(context).await?;
+/// let mut batch_result = connection.execute(query, None, None).await?;
+/// while let Some(result) = batch_result.next_result_set().await? {
+///     // Process result
+/// }
+///
+/// // New (TdsClient):
+/// let mut client = provider.create_client(context, None).await?;
+/// client.execute(query, None, None).await?;
+/// while client.move_to_next().await? {
+///     if let Some(resultset) = client.get_current_resultset() {
+///         while let Some(row) = resultset.next_row().await? {
+///             // Process row
+///         }
+///     }
+/// }
+/// ```
+#[deprecated(
+    since = "0.2.0",
+    note = "Use TdsClient instead. TdsClient provides a cursor-based API with better ergonomics and safety."
+)]
 pub struct TdsConnection {
     pub(crate) transport: Box<NetworkTransport>,
     pub(crate) negotiated_settings: NegotiatedSettings,

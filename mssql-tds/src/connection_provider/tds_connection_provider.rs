@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(deprecated)]
+
 use std::time::Duration;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
@@ -24,6 +26,18 @@ pub(crate) static PARSER_REGISTRY: LazyLock<GenericTokenParserRegistry> =
 pub struct TdsConnectionProvider {}
 
 impl TdsConnectionProvider {
+    /// Creates a new TdsConnection with streaming API.
+    ///
+    /// # Deprecation Notice
+    ///
+    /// **This method is deprecated. Use [`create_client`](Self::create_client) instead.**
+    ///
+    /// `create_client` provides a cursor-based API with better ergonomics and safety.
+    /// See [`TdsConnection`](crate::connection::tds_connection::TdsConnection) for migration guide.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use create_client() instead for the cursor-based TdsClient API."
+    )]
     pub async fn create_connection(
         &self,
         context: ClientContext,
