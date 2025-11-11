@@ -19,16 +19,12 @@ use crate::token::tokens::SqlCollation;
 use crate::{
     connection::{
         execution_context::{ALREADY_EXECUTING_ERROR, ExecutionContext},
-        transport::network_transport::NetworkTransport,
+        transport::tds_transport::TdsTransport,
     },
     datatypes::column_values::ColumnValues,
     handler::handler_factory::NegotiatedSettings,
     message::{batch::SqlBatch, messages::Request},
-    read_write::{
-        packet_reader::TdsPacketReader,
-        reader_writer::NetworkReaderWriter,
-        token_stream::{ParserContext, TdsTokenStreamReader},
-    },
+    read_write::token_stream::ParserContext,
     token::tokens::{ColMetadataToken, CurrentCommand, Tokens},
 };
 use async_trait::async_trait;
@@ -42,7 +38,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct TdsClient {
-    pub(crate) transport: Box<NetworkTransport>,
+    pub(crate) transport: Box<dyn TdsTransport>,
     pub(crate) negotiated_settings: NegotiatedSettings,
     pub(crate) execution_context: ExecutionContext,
 
@@ -62,7 +58,7 @@ pub struct TdsClient {
 
 impl TdsClient {
     pub(crate) fn new(
-        transport: Box<NetworkTransport>,
+        transport: Box<dyn TdsTransport>,
         negotiated_settings: NegotiatedSettings,
         execution_context: ExecutionContext,
     ) -> Self {
@@ -83,8 +79,8 @@ impl TdsClient {
         self.negotiated_settings.database_collation
     }
 
-    pub(crate) fn get_transport(&self) -> &NetworkTransport {
-        &self.transport
+    pub(crate) fn get_transport(&self) -> &dyn TdsTransport {
+        self.transport.as_ref()
     }
 
     pub(crate) fn get_negotiated_settings(&self) -> &NegotiatedSettings {

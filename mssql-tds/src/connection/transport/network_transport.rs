@@ -877,6 +877,28 @@ impl TdsTokenStreamReader for NetworkTransport {
     }
 }
 
+#[async_trait]
+impl crate::connection::transport::tds_transport::TdsTransport for NetworkTransport {
+    fn as_writer(&mut self) -> &mut dyn NetworkWriter {
+        self
+    }
+
+    fn reset_reader(&mut self) {
+        self.tds_read_buffer.reset_to_length(0);
+    }
+
+    fn packet_size(&self) -> u32 {
+        self.packet_size
+    }
+
+    async fn close_transport(&mut self) -> TdsResult<()> {
+        if let Some(stream) = self.stream.as_mut() {
+            stream.shutdown().await?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*; // Brings in NetworkTransport, SslHandler, StreamRecoverer, etc.
