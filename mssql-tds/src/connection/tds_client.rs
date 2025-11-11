@@ -28,7 +28,7 @@ use crate::{
     token::tokens::{ColMetadataToken, CurrentCommand, Tokens},
 };
 use async_trait::async_trait;
-use tracing::{info, instrument};
+use tracing::{debug, error, info, instrument};
 
 use crate::{
     core::{CancelHandle, TdsResult},
@@ -576,8 +576,19 @@ impl TdsClient {
     pub(crate) async fn move_to_column_metadata(&mut self) -> TdsResult<Option<ColMetadataToken>> {
         let parser_context = ParserContext::None(());
         let mut col_metadata: Option<ColMetadataToken> = None;
+        let mut loop_count = 0u32;
 
         loop {
+            loop_count += 1;
+
+            // Warn when approaching iteration limit to help diagnose issues
+            if loop_count % 1000 == 0 {
+                debug!(
+                    loop_count,
+                    "High iteration count in move_to_column_metadata"
+                );
+            }
+
             let start = Instant::now();
             let token = self
                 .transport
@@ -621,6 +632,18 @@ impl TdsClient {
                     info!(
                         "More result sets available (has_more=true), continuing to look for ColMetadata"
                     );
+
+                    // Prevent infinite loops from malicious inputs sending endless Done tokens with has_more=true
+                    if loop_count > 10000 {
+                        error!(
+                            loop_count,
+                            "Excessive iterations in move_to_column_metadata - possible malicious input or protocol violation"
+                        );
+                        return Err(crate::error::Error::UsageError(
+                            "Too many Done tokens with has_more=true without ColMetadata"
+                                .to_string(),
+                        ));
+                    }
                     continue;
                 }
                 Tokens::EnvChange(env_change) => {
