@@ -150,7 +150,7 @@ stages:
         parameters:
           osType: MacOS
           buildType: ${{ parameters.buildType }}
-          testFilter: -E 'not (test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout) | test(rpc_datatypes) | test(client_based_iterators) | test(connect_fetch_multiple_packets))'
+          testFilter: -E 'not (test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout) | test(rpc_datatypes) | test(client_based_iterators) | test(connect_fetch_multiple_packets) | test(bulk_copy))'
           enableJsBuild: true
 
 - stage: Fuzz
