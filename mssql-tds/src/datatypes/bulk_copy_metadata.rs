@@ -10,6 +10,29 @@
 use crate::token::tokens::SqlCollation;
 use tracing::{trace, warn};
 
+/// Newtype wrapper for SQL Server's system_type_id values.
+///
+/// This type represents the internal type identifiers stored in SQL Server's
+/// catalog tables (sys.columns.system_type_id, sys.types.system_type_id).
+/// These are different from TDS protocol type bytes used during wire transmission.
+///
+/// Using a newtype makes the conversion more explicit and self-documenting:
+/// - `SqlDbType::try_from(SystemTypeId(56))?` is clearer than `SqlDbType::try_from(56u8)?`
+/// - It prevents confusion between system_type_id values and TDS type bytes
+/// - Allows for future TryFrom implementations without ambiguity
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use mssql_tds::datatypes::bulk_copy_metadata::{SqlDbType, SystemTypeId};
+///
+/// // Convert from sys.columns.system_type_id (56 = int)
+/// let sql_type = SqlDbType::try_from(SystemTypeId(56))?;
+/// assert_eq!(sql_type, SqlDbType::Int);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemTypeId(pub u8);
+
 /// SQL Database types supported in bulk copy operations.
 ///
 /// This enum represents the SQL Server data types that can be used in BulkCopy.
@@ -147,20 +170,34 @@ impl SqlDbType {
     }
 }
 
-/// Convert SQL Server `system_type_id` (from sys.columns.system_type_id) to `SqlDbType`.
+/// Convert SQL Server `SystemTypeId` to `SqlDbType`.
 ///
 /// This mapping is based on the sys.types catalog view in SQL Server.
-/// The `system_type_id` values are SQL Server's internal type identifiers stored in metadata,
-/// which are different from the TDS protocol type bytes used during data transmission.
+/// The `SystemTypeId` wraps SQL Server's internal type identifiers (system_type_id)
+/// stored in catalog tables, which are different from the TDS protocol type bytes
+/// used during data transmission.
+///
+/// Using the newtype `SystemTypeId` instead of raw `u8` makes the conversion more
+/// explicit and self-documenting, preventing confusion with TDS type bytes.
 ///
 /// Reference: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-types-transact-sql
-impl TryFrom<u8> for SqlDbType {
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use mssql_tds::datatypes::bulk_copy_metadata::{SqlDbType, SystemTypeId};
+///
+/// // From sys.columns.system_type_id
+/// let sql_type = SqlDbType::try_from(SystemTypeId(56))?; // 56 = int
+/// assert_eq!(sql_type, SqlDbType::Int);
+/// ```
+impl TryFrom<SystemTypeId> for SqlDbType {
     type Error = crate::error::Error;
 
-    fn try_from(system_type_id: u8) -> Result<Self, Self::Error> {
+    fn try_from(id: SystemTypeId) -> Result<Self, Self::Error> {
         use crate::error::Error;
 
-        match system_type_id {
+        match id.0 {
             // Exact numeric types
             48 => Ok(SqlDbType::TinyInt),     // tinyint
             52 => Ok(SqlDbType::SmallInt),    // smallint
@@ -205,7 +242,8 @@ impl TryFrom<u8> for SqlDbType {
 
             // Unsupported or unknown types
             _ => Err(Error::UsageError(format!(
-                "Unsupported system_type_id: {system_type_id}"
+                "Unsupported system_type_id: {}",
+                id.0
             ))),
         }
     }

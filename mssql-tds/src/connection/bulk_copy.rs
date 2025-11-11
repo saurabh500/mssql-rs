@@ -46,7 +46,9 @@
 
 use crate::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
 use crate::core::TdsResult;
-use crate::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType, TypeLength};
+use crate::datatypes::bulk_copy_metadata::{
+    BulkCopyColumnMetadata, SqlDbType, SystemTypeId, TypeLength,
+};
 use crate::datatypes::column_values::ColumnValues;
 use crate::error::Error;
 use crate::message::bulk_load::BulkLoadMessage;
@@ -846,8 +848,8 @@ impl<'a> BulkCopy<'a> {
                     }
                 };
 
-                // Map system_type_id to SqlDbType using TryFrom trait
-                let sql_type = SqlDbType::try_from(system_type_id)?;
+                // Map system_type_id to SqlDbType using TryFrom trait with SystemTypeId wrapper
+                let sql_type = SqlDbType::try_from(SystemTypeId(system_type_id))?;
 
                 // TODO: Parse collation_name to create SqlCollation
                 // For now, use None (will be enhanced in future)
@@ -1574,19 +1576,34 @@ mod tests {
 
     #[test]
     fn test_system_type_id_to_sql_db_type_conversion() {
-        // Test common types using TryFrom trait
-        assert_eq!(SqlDbType::try_from(48).unwrap(), SqlDbType::TinyInt);
-        assert_eq!(SqlDbType::try_from(56).unwrap(), SqlDbType::Int);
-        assert_eq!(SqlDbType::try_from(127).unwrap(), SqlDbType::BigInt);
-        assert_eq!(SqlDbType::try_from(231).unwrap(), SqlDbType::NVarChar);
-        assert_eq!(SqlDbType::try_from(167).unwrap(), SqlDbType::VarChar);
+        // Test common types using TryFrom trait with SystemTypeId wrapper
         assert_eq!(
-            SqlDbType::try_from(36).unwrap(),
+            SqlDbType::try_from(SystemTypeId(48)).unwrap(),
+            SqlDbType::TinyInt
+        );
+        assert_eq!(
+            SqlDbType::try_from(SystemTypeId(56)).unwrap(),
+            SqlDbType::Int
+        );
+        assert_eq!(
+            SqlDbType::try_from(SystemTypeId(127)).unwrap(),
+            SqlDbType::BigInt
+        );
+        assert_eq!(
+            SqlDbType::try_from(SystemTypeId(231)).unwrap(),
+            SqlDbType::NVarChar
+        );
+        assert_eq!(
+            SqlDbType::try_from(SystemTypeId(167)).unwrap(),
+            SqlDbType::VarChar
+        );
+        assert_eq!(
+            SqlDbType::try_from(SystemTypeId(36)).unwrap(),
             SqlDbType::UniqueIdentifier
         );
 
         // Test unsupported type
-        assert!(SqlDbType::try_from(255).is_err());
+        assert!(SqlDbType::try_from(SystemTypeId(255)).is_err());
     }
 
     #[test]
