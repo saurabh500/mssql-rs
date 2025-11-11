@@ -962,12 +962,12 @@ impl<'a> BulkCopy<'a> {
 
     /// Retrieve destination table metadata directly from SQL Server's COLMETADATA token.
     ///
-    /// This method queries the destination table with `SELECT TOP 0 * FROM table_name`
-    /// to get the exact column metadata (including TDS types) that SQL Server expects.
-    /// This is more accurate than querying sys.columns because it gives us the actual
-    /// TDS types that will be used in bulk copy protocol.
+    /// This method uses `SET FMTONLY ON` to get the exact column metadata (including TDS types)
+    /// that SQL Server expects, without query execution overhead. The approach dynamically builds
+    /// the column list from sys.all_columns to support hidden columns (temporal tables) and
+    /// exclude SQL Graph columns that cannot be selected.
     ///
-    /// This matches the .NET SqlBulkCopy behavior which queries the table schema
+    /// This matches the .NET SqlBulkCopy behavior which uses FMTONLY to query the table schema
     /// before sending bulk data.
     ///
     /// # Returns

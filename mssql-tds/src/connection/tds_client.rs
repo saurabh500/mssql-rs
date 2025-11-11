@@ -243,10 +243,37 @@ impl TdsClient {
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<ColMetadataToken> {
-        // Query with TOP 0 to get metadata without fetching actual rows
-        let query = format!("SELECT TOP 0 * FROM {table_name}");
+        // Use SET FMTONLY ON to get metadata without query execution overhead.
+        // This matches .NET SqlBulkCopy behavior and is more efficient than SELECT TOP 0.
+        // It also dynamically builds the column list to:
+        // - Support hidden columns in temporal tables
+        // - Exclude SQL Graph columns that cannot be selected
+        let query = format!(
+            r#"DECLARE @Column_Names NVARCHAR(MAX) = NULL;
+IF EXISTS (SELECT TOP 1 * FROM sys.all_columns WHERE [object_id] = OBJECT_ID('sys.all_columns') AND [name] = 'graph_type')
+BEGIN
+    SELECT @Column_Names = COALESCE(@Column_Names + ', ', '') + QUOTENAME([name]) 
+    FROM sys.all_columns 
+    WHERE [object_id] = OBJECT_ID('{table_name}') 
+    AND COALESCE([graph_type], 0) NOT IN (1, 3, 4, 6, 7) 
+    ORDER BY [column_id] ASC;
+END
+ELSE
+BEGIN
+    SELECT @Column_Names = COALESCE(@Column_Names + ', ', '') + QUOTENAME([name]) 
+    FROM sys.all_columns 
+    WHERE [object_id] = OBJECT_ID('{table_name}') 
+    ORDER BY [column_id] ASC;
+END
 
-        debug!("Fetching table metadata with query: {}", query);
+SELECT @Column_Names = COALESCE(@Column_Names, '*');
+
+SET FMTONLY ON;
+EXEC(N'SELECT ' + @Column_Names + N' FROM {table_name}');
+SET FMTONLY OFF;"#
+        );
+
+        debug!("Fetching table metadata with FMTONLY");
 
         // Execute the query
         self.execute(query, timeout_sec, cancel_handle).await?;
