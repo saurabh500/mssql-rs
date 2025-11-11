@@ -174,10 +174,9 @@ impl GenericDecoder {
                     .await?
             }
             _ => {
-                unreachable!(
-                    "For 1 byte property, only TimeN, DateTime2N and DateTimeOffsetN are expected, but got: {:?}",
-                    tds_type
-                );
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "Invalid SQL_VARIANT: 1-byte property is only valid for TimeN, DateTime2N, and DateTimeOffsetN types, but got: {tds_type:?}"
+                )));
             }
         })
     }
@@ -192,13 +191,15 @@ impl GenericDecoder {
     {
         // Decimal/numeric data type has 1 byte length.
         let length = reader.read_byte().await?;
-        if let TypeInfoVariant::VarLenPrecisionScale(_, _, precision, scale) =
+        let TypeInfoVariant::VarLenPrecisionScale(_, _, precision, scale) =
             metadata.type_info.type_info_variant
-        {
-            GenericDecoder::read_decimal_data(reader, length, precision, scale).await
-        } else {
-            unreachable!("Should never get here")
-        }
+        else {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Invalid type info variant for Decimal/Numeric: expected VarLenPrecisionScale, got: {:?}",
+                metadata.type_info.type_info_variant
+            )));
+        };
+        GenericDecoder::read_decimal_data(reader, length, precision, scale).await
     }
 
     async fn read_decimal_data<T>(
@@ -318,7 +319,11 @@ impl GenericDecoder {
             .await?;
         let datetime2 = match datetime2 {
             ColumnValues::DateTime2(dt2) => dt2,
-            _ => unreachable!("Expected DateTime2 variant"),
+            _ => {
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "Internal error: read_datetime2 returned unexpected type: {datetime2:?}"
+                )));
+            }
         };
         let offset = reader.read_int16().await?;
         let datetime_offset = SqlDateTimeOffset { datetime2, offset };
