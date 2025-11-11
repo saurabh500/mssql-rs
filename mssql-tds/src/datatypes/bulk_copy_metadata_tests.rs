@@ -98,8 +98,8 @@ mod tests {
     #[test]
     fn test_decimal_precision_scale_boundaries() {
         // Test minimum precision/scale
-        let meta_min = BulkCopyColumnMetadata::new("dec", SqlDbType::Decimal, 0x6A)
-            .with_precision_scale(1, 0);
+        let meta_min =
+            BulkCopyColumnMetadata::new("dec", SqlDbType::Decimal, 0x6A).with_precision_scale(1, 0);
         assert_eq!(meta_min.precision, 1);
         assert_eq!(meta_min.scale, 0);
 
