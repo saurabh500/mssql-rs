@@ -8,7 +8,6 @@ mod bulk_copy_integration_tests {
     use crate::common::{begin_connection, create_context, init_tracing};
     use mssql_tds::connection::bulk_copy::{BulkCopy, BulkCopyRow};
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
-    use mssql_tds::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType, TypeLength};
     use mssql_tds::datatypes::column_values::ColumnValues;
     use mssql_tds::datatypes::sql_string::SqlString;
 
@@ -33,34 +32,6 @@ mod bulk_copy_integration_tests {
                 ColumnValues::String(SqlString::from_utf8_string(self.name.clone())),
                 ColumnValues::SmallInt(self.age),
                 ColumnValues::Bit(self.active),
-            ]
-        }
-
-        fn column_metadata() -> Vec<BulkCopyColumnMetadata>
-        where
-            Self: Sized,
-        {
-            vec![
-                BulkCopyColumnMetadata::new("id", SqlDbType::Int, SqlDbType::Int.to_tds_type())
-                    .with_length(4, TypeLength::Fixed(4))
-                    .with_nullable(false),
-                BulkCopyColumnMetadata::new(
-                    "name",
-                    SqlDbType::NVarChar,
-                    SqlDbType::NVarChar.to_tds_type(),
-                )
-                .with_length(200, TypeLength::Variable(200))
-                .with_nullable(false),
-                BulkCopyColumnMetadata::new(
-                    "age",
-                    SqlDbType::SmallInt,
-                    SqlDbType::SmallInt.to_tds_type(),
-                )
-                .with_length(2, TypeLength::Fixed(2))
-                .with_nullable(false),
-                BulkCopyColumnMetadata::new("active", SqlDbType::Bit, SqlDbType::Bit.to_tds_type())
-                    .with_length(1, TypeLength::Fixed(1))
-                    .with_nullable(false),
             ]
         }
     }
@@ -307,20 +278,6 @@ mod bulk_copy_integration_tests {
                     self.age
                         .map(ColumnValues::SmallInt)
                         .unwrap_or(ColumnValues::Null),
-                ]
-            }
-
-            fn column_metadata() -> Vec<BulkCopyColumnMetadata> {
-                vec![
-                    BulkCopyColumnMetadata::new("id", SqlDbType::Int, 0x38)
-                        .with_length(4, TypeLength::Fixed(4))
-                        .with_nullable(false),
-                    BulkCopyColumnMetadata::new("name", SqlDbType::NVarChar, 0xE7)
-                        .with_length(200, TypeLength::Variable(200))
-                        .with_nullable(true),
-                    BulkCopyColumnMetadata::new("age", SqlDbType::SmallInt, 0x34)
-                        .with_length(2, TypeLength::Fixed(2))
-                        .with_nullable(true),
                 ]
             }
         }

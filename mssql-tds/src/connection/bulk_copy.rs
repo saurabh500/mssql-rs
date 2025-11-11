@@ -11,7 +11,6 @@
 //! ```rust,ignore
 //! use mssql_tds::connection::bulk_copy::{BulkCopy, BulkCopyRow};
 //! use mssql_tds::datatypes::column_values::ColumnValues;
-//! use mssql_tds::datatypes::bulk_copy_metadata::BulkCopyColumnMetadata;
 //!
 //! // Define a struct to represent your data
 //! struct User {
@@ -29,24 +28,18 @@
 //!             ColumnValues::String(self.email.clone().into()),
 //!         ]
 //!     }
-//!     
-//!     fn column_metadata() -> Vec<BulkCopyColumnMetadata> where Self: Sized {
-//!         vec![
-//!             BulkCopyColumnMetadata::new("id", SqlDbType::Int, 0x38)
-//!                 .with_length(4, TypeLength::Fixed(4))
-//!                 .with_nullable(false),
-//!             // ... more metadata
-//!         ]
-//!     }
 //! }
 //!
-//! // Use bulk copy
-//! let mut bulk_copy = client.bulk_copy("Users");
+//! // Use bulk copy - metadata is automatically retrieved from SQL Server
+//! let users = vec![
+//!     User { id: 1, name: "Alice".to_string(), email: "alice@example.com".to_string() },
+//!     User { id: 2, name: "Bob".to_string(), email: "bob@example.com".to_string() },
+//! ];
+//! let mut bulk_copy = BulkCopy::new(&mut client, "Users");
 //! bulk_copy
 //!     .batch_size(5000)
 //!     .timeout(30);
 //!
-//! let users = vec![/* your data */];
 //! let result = bulk_copy.write_to_server(users.into_iter()).await?;
 //! println!("Inserted {} rows", result.rows_affected);
 //! ```
@@ -64,16 +57,15 @@ use tracing::{debug, trace};
 /// Trait for types that can be bulk copied to SQL Server.
 ///
 /// Implement this trait for your custom types to enable bulk copy operations.
-/// The trait requires two methods:
-/// 1. `to_column_values()` - Converts an instance to a vector of column values
-/// 2. `column_metadata()` - Provides metadata about the columns (static method)
+/// The trait only requires implementing `to_column_values()` which converts your
+/// struct into a vector of column values. Column metadata is automatically retrieved
+/// from the destination SQL Server table.
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// use mssql_tds::connection::bulk_copy::BulkCopyRow;
 /// use mssql_tds::datatypes::column_values::ColumnValues;
-/// use mssql_tds::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType, TypeLength};
 ///
 /// struct Product {
 ///     id: i32,
@@ -89,32 +81,20 @@ use tracing::{debug, trace};
 ///             ColumnValues::Float(self.price),
 ///         ]
 ///     }
-///     
-///     fn column_metadata() -> Vec<BulkCopyColumnMetadata> where Self: Sized {
-///         vec![
-///             BulkCopyColumnMetadata::new("id", SqlDbType::Int, 0x38)
-///                 .with_length(4, TypeLength::Fixed(4)),
-///             BulkCopyColumnMetadata::new("name", SqlDbType::NVarChar, 0xE7)
-///                 .with_length(100, TypeLength::Variable(100)),
-///             BulkCopyColumnMetadata::new("price", SqlDbType::Float, 0x3E)
-///                 .with_length(8, TypeLength::Fixed(8)),
-///         ]
-///     }
 /// }
+///
+/// // Use it:
+/// let products = vec![Product { id: 1, name: "Widget".to_string(), price: 9.99 }];
+/// let bulk_copy = BulkCopy::new(&mut client, "Products");
+/// bulk_copy.write_to_server(products.into_iter()).await?;
 /// ```
 pub trait BulkCopyRow {
     /// Convert this row to a vector of column values.
     ///
-    /// The order of values must match the order of columns in `column_metadata()`.
+    /// The order of values must match the order of columns in the destination table.
+    /// Column metadata is automatically retrieved from SQL Server, so you don't need
+    /// to specify types, lengths, or TDS protocol details.
     fn to_column_values(&self) -> Vec<ColumnValues>;
-
-    /// Get metadata for all columns.
-    ///
-    /// This is called once per bulk copy operation to set up the column structure.
-    /// The metadata must match the values returned by `to_column_values()`.
-    fn column_metadata() -> Vec<BulkCopyColumnMetadata>
-    where
-        Self: Sized;
 }
 
 /// Metadata about a destination table column.
@@ -1292,6 +1272,11 @@ impl<'a> BulkCopy<'a> {
     /// This method will batch rows according to the configured `batch_size`,
     /// serialize them using the TDS bulk load protocol, and send them to the server.
     ///
+    /// Column metadata is automatically retrieved from the destination SQL Server table,
+    /// so you don't need to specify types or TDS protocol details. The method uses ordinal
+    /// mapping by default (column 0 → column 0, etc.), or you can configure custom mappings
+    /// using `add_column_mapping()`.
+    ///
     /// # Arguments
     ///
     /// * `rows` - Iterator over rows implementing `BulkCopyRow`
@@ -1330,9 +1315,6 @@ impl<'a> BulkCopy<'a> {
         let start_time = Instant::now();
         let mut total_rows: u64 = 0;
 
-        // Get column metadata from the row type
-        let source_metadata = R::column_metadata();
-
         // Retrieve destination table metadata directly from server with exact TDS types
         // This matches .NET SqlBulkCopy behavior and ensures we use the types SQL Server expects
         let server_metadata = self.retrieve_destination_metadata_from_server().await?;
@@ -1341,20 +1323,111 @@ impl<'a> BulkCopy<'a> {
         // So retrieve that as well (it's cached)
         let destination_metadata = self.retrieve_destination_metadata().await?;
 
-        // Resolve column mappings
-        let resolved_mappings = self
-            .resolve_column_mappings(&source_metadata, &destination_metadata)
-            .await?;
+        // Peek at the first row to determine source column count
+        let mut rows = rows.peekable();
+        let source_column_count = if let Some(first_row) = rows.peek() {
+            first_row.to_column_values().len()
+        } else {
+            // No rows to copy - return early
+            let elapsed = start_time.elapsed();
+            return Ok(BulkCopyResult::new(0, elapsed));
+        };
 
-        // Build destination column metadata for the bulk load message
-        // Use the server-provided metadata with exact TDS types
-        let mut dest_column_metadata = Vec::new();
-        for mapping in &resolved_mappings {
-            // Use the server metadata which has the correct TDS types
-            let server_col = &server_metadata[mapping.destination_index];
-            dest_column_metadata.push(server_col.clone());
+        // If no column mappings are specified, create default ordinal mappings
+        // This matches .NET's CreateDefaultMapping behavior
+        if self.column_mappings.is_empty() {
+            // Create simple source metadata just for mapping resolution
+            // We use the server metadata as the basis since we already have it
+            let source_metadata: Vec<BulkCopyColumnMetadata> = (0..source_column_count)
+                .map(|i| {
+                    // For unmapped columns, we'll use a placeholder that will be matched by ordinal
+                    if i < server_metadata.len() {
+                        server_metadata[i].clone()
+                    } else {
+                        // Source has more columns than destination - this will be caught in validation
+                        BulkCopyColumnMetadata::new(format!("col{i}"), SqlDbType::VarChar, 0xA7)
+                            .with_length(0, TypeLength::Variable(0))
+                    }
+                })
+                .collect();
+
+            // Resolve column mappings with auto-generated source metadata
+            let resolved_mappings = self
+                .resolve_column_mappings(&source_metadata, &destination_metadata)
+                .await?;
+
+            // Build destination column metadata for the bulk load message
+            // Use the server-provided metadata with exact TDS types
+            let mut dest_column_metadata = Vec::new();
+            for mapping in &resolved_mappings {
+                // Use the server metadata which has the correct TDS types
+                let server_col = &server_metadata[mapping.destination_index];
+                dest_column_metadata.push(server_col.clone());
+            }
+
+            // Process rows with the resolved mappings
+            self.write_rows_to_server(
+                rows,
+                &resolved_mappings,
+                dest_column_metadata,
+                &mut total_rows,
+                start_time,
+            )
+            .await?;
+        } else {
+            // User specified column mappings - need to resolve them
+            // Create simple source metadata based on column count
+            let source_metadata: Vec<BulkCopyColumnMetadata> = (0..source_column_count)
+                .map(|i| {
+                    if i < server_metadata.len() {
+                        server_metadata[i].clone()
+                    } else {
+                        BulkCopyColumnMetadata::new(format!("col{i}"), SqlDbType::VarChar, 0xA7)
+                            .with_length(0, TypeLength::Variable(0))
+                    }
+                })
+                .collect();
+
+            // Resolve column mappings
+            let resolved_mappings = self
+                .resolve_column_mappings(&source_metadata, &destination_metadata)
+                .await?;
+
+            // Build destination column metadata for the bulk load message
+            let mut dest_column_metadata = Vec::new();
+            for mapping in &resolved_mappings {
+                let server_col = &server_metadata[mapping.destination_index];
+                dest_column_metadata.push(server_col.clone());
+            }
+
+            // Process rows with the resolved mappings
+            self.write_rows_to_server(
+                rows,
+                &resolved_mappings,
+                dest_column_metadata,
+                &mut total_rows,
+                start_time,
+            )
+            .await?;
         }
 
+        let elapsed = start_time.elapsed();
+        Ok(BulkCopyResult::new(total_rows, elapsed))
+    }
+
+    /// Internal method to write rows to the server with resolved mappings.
+    async fn write_rows_to_server<I, R>(
+        &mut self,
+        mut rows: std::iter::Peekable<I>,
+        resolved_mappings: &[ResolvedColumnMapping],
+        dest_column_metadata: Vec<BulkCopyColumnMetadata>,
+        total_rows: &mut u64,
+        start_time: Instant,
+    ) -> TdsResult<()>
+    where
+        I: Iterator<Item = R>,
+        R: BulkCopyRow,
+    {
         // Determine batch size (0 means all rows in one batch)
         let batch_size = if self.options.batch_size == 0 {
             usize::MAX
@@ -1363,7 +1436,6 @@ impl<'a> BulkCopy<'a> {
         };
 
         // Process rows in batches
-        let mut rows = rows.peekable();
         while rows.peek().is_some() {
             // Collect a batch of rows
             let mut batch_rows = Vec::with_capacity(batch_size.min(10000));
@@ -1373,7 +1445,7 @@ impl<'a> BulkCopy<'a> {
 
                     // Reorder columns according to resolved mappings
                     let mut dest_values = Vec::with_capacity(resolved_mappings.len());
-                    for mapping in &resolved_mappings {
+                    for mapping in resolved_mappings {
                         if mapping.source_index < source_values.len() {
                             dest_values.push(source_values[mapping.source_index].clone());
                         } else {
@@ -1413,22 +1485,22 @@ impl<'a> BulkCopy<'a> {
                 .client
                 .execute_bulk_load(message, timeout_sec, None)
                 .await?;
-            total_rows += batch_count;
+            *total_rows += batch_count;
 
             // Report progress if callback is configured
             if let Some(ref mut callback) = self.progress_callback {
                 if self.options.notification_interval > 0
-                    && total_rows % self.options.notification_interval as u64 == 0
+                    && *total_rows % self.options.notification_interval as u64 == 0
                 {
                     let elapsed = start_time.elapsed();
                     let rows_per_second = if elapsed.as_secs_f64() > 0.0 {
-                        total_rows as f64 / elapsed.as_secs_f64()
+                        *total_rows as f64 / elapsed.as_secs_f64()
                     } else {
                         0.0
                     };
 
                     callback(BulkCopyProgress {
-                        rows_copied: total_rows,
+                        rows_copied: *total_rows,
                         total_rows: None,
                         elapsed,
                         rows_per_second,
@@ -1437,8 +1509,7 @@ impl<'a> BulkCopy<'a> {
             }
         }
 
-        let elapsed = start_time.elapsed();
-        Ok(BulkCopyResult::new(total_rows, elapsed))
+        Ok(())
     }
 }
 
