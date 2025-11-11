@@ -358,6 +358,9 @@ where
             CurrentCommand::try_from(current_command_value).unwrap_or(CurrentCommand::None);
         let row_count = reader.read_uint64().await?;
 
+        eprintln!("DEBUG: DoneTokenParser - Raw bytes: status=0x{:04X}, cur_cmd=0x{:04X}, row_count={} | status_flags={:?}", 
+            status, current_command_value, row_count, done_status);
+
         Ok(Tokens::Done(DoneToken {
             status: done_status,
             cur_cmd: current_command,

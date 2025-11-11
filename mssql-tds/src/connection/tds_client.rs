@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqltypes::SqlType;
 use crate::error::Error::UsageError;
+use crate::message::bulk_load::BulkLoadMessage;
 use crate::message::parameters::rpc_parameters::{
     RpcParameter, StatusFlags, build_parameter_list_string,
 };
@@ -210,6 +211,196 @@ impl TdsClient {
             self.execution_context.set_has_open_batch(true);
         }
         Ok(())
+    }
+
+    /// Fetches table metadata from SQL Server by querying the table with TOP 0.
+    ///
+    /// This method queries the destination table to get the exact column metadata
+    /// (including TDS types) that SQL Server expects. This matches the .NET SqlBulkCopy
+    /// behavior which queries the table schema before sending bulk data.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_name` - The fully qualified table name (e.g., "dbo.TableName")
+    /// * `timeout_sec` - Optional timeout in seconds for the query
+    /// * `cancel_handle` - Optional cancellation handle
+    ///
+    /// # Returns
+    ///
+    /// A `ColMetadataToken` containing the column metadata from the server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The table doesn't exist
+    /// - Network errors occur
+    /// - Timeout occurs
+    /// - Operation is cancelled
+    #[instrument(skip(self), level = "info")]
+    pub async fn fetch_table_metadata(
+        &mut self,
+        table_name: &str,
+        timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<ColMetadataToken> {
+        // Query with TOP 0 to get metadata without fetching actual rows
+        let query = format!("SELECT TOP 0 * FROM {}", table_name);
+        
+        eprintln!("DEBUG: Fetching table metadata with query: {}", query);
+        
+        // Execute the query
+        self.execute(query, timeout_sec, cancel_handle).await?;
+        
+        // Get the metadata from the result
+        let metadata = self.current_metadata.clone().ok_or_else(|| {
+            UsageError(format!("Failed to fetch metadata for table {}", table_name))
+        })?;
+        
+        eprintln!("DEBUG: Fetched {} columns from table metadata", metadata.columns.len());
+        for (i, col) in metadata.columns.iter().enumerate() {
+            eprintln!("DEBUG:   Column {}: name='{}', tds_type=0x{:02X}, nullable={}", 
+                i, col.column_name, col.data_type as u8, col.is_nullable());
+        }
+        
+        // Close the query to free up the connection
+        self.close_query().await?;
+        
+        Ok(metadata)
+    }
+
+    /// Executes a bulk load operation.
+    ///
+    /// This method sends a bulk load message containing column metadata and row data
+    /// to SQL Server using the TDS bulk load protocol. It's used internally by the
+    /// BulkCopy API for high-performance data insertion.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - The bulk load message containing table name, metadata, and rows
+    /// * `timeout_sec` - Optional timeout in seconds for the operation
+    /// * `cancel_handle` - Optional cancellation handle
+    ///
+    /// # Returns
+    ///
+    /// The number of rows affected (inserted) as reported by the SQL Server DONE token.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - There's an open batch already executing
+    /// - Network errors occur during transmission
+    /// - SQL Server returns an error (constraints, type mismatches, etc.)
+    /// - Timeout occurs
+    /// - Operation is cancelled
+    #[instrument(skip(self, message), level = "info")]
+    pub(crate) async fn execute_bulk_load(
+        &mut self,
+        message: BulkLoadMessage,
+        timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<u64> {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        }
+
+        // Store timeout and cancel handle for this operation
+        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
+
+        self.transport.reset_reader();
+
+        // STEP 1: Send INSERT BULK command as SQL Batch (matching .NET SqlBulkCopy.SubmitUpdateBulkCommand)
+        // This must be sent before the COLMETADATA and row data
+        eprintln!("DEBUG: Building INSERT BULK command...");
+        let insert_bulk_command = message.build_insert_bulk_command();
+        eprintln!("DEBUG: INSERT BULK command: {}", insert_bulk_command);
+        
+        // Send the INSERT BULK command WITHOUT waiting for response
+        // The server won't send a response until after we send the bulk data
+        // So we can't use execute() which waits for column metadata
+        let batch = SqlBatch::new(insert_bulk_command, &self.execution_context);
+        let mut packet_writer =
+            batch.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
+        batch.serialize(&mut packet_writer).await?;
+        eprintln!("DEBUG: INSERT BULK command sent, server is now waiting for bulk data...");
+
+        // STEP 2: Now send the COLMETADATA and row data (matching .NET TdsParser.WriteBulkCopyMetaData)
+        eprintln!("DEBUG: Sending COLMETADATA and row data...");
+        let mut packet_writer =
+            message.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
+        message.serialize(&mut packet_writer).await?;
+        eprintln!("DEBUG: COLMETADATA and row data sent successfully");
+
+        // STEP 3: Read response tokens until we get the DONE token with row count
+        let mut rows_affected: u64 = 0;
+        let parser_context = ParserContext::None(());
+
+        loop {
+            let start = Instant::now();
+            let token = self
+                .transport
+                .receive_token(
+                    &parser_context,
+                    self.remaining_request_timeout,
+                    self.cancel_handle.as_ref(),
+                )
+                .await?;
+            self.update_remaining_timeout(start);
+
+            eprintln!("DEBUG: Received token type: {:?}", token);
+            match token {
+                Tokens::Done(done) | Tokens::DoneProc(done) | Tokens::DoneInProc(done) => {
+                    eprintln!("DEBUG: Bulk load DONE token - status={:?}, cur_cmd={:?}, row_count={}, has_more={}", 
+                        done.status, done.cur_cmd, done.row_count, done.has_more());
+                    info!("Bulk load done: {:?}", done);
+                    // Accumulate row counts from multiple DONE tokens
+                    rows_affected += done.row_count;
+                    eprintln!("DEBUG: rows_affected is now: {}", rows_affected);
+                    
+                    // Check if this is the final DONE token for bulk insert (cur_cmd=BulkInsert)
+                    // Server may send multiple DONE tokens; we need to wait for the one with cur_cmd=BulkInsert  
+                    let is_bulk_insert_done = matches!(done.cur_cmd, crate::token::tokens::CurrentCommand::BulkInsert);
+                    if is_bulk_insert_done || (!done.has_more() && done.cur_cmd != crate::token::tokens::CurrentCommand::None) {
+                        eprintln!("DEBUG: Breaking out of loop, final rows_affected: {}", rows_affected);
+                        break;
+                    }
+                }
+                Tokens::Error(error_token) => {
+                    // SQL Server error occurred during bulk load
+                    info!(?error_token);
+                    return Err(crate::error::Error::SqlServerError {
+                        message: error_token.message.clone(),
+                        state: error_token.state,
+                        class: error_token.severity as i32,
+                        number: error_token.number,
+                        server_name: Some(error_token.server_name.clone()),
+                        proc_name: Some(error_token.proc_name.clone()),
+                        line_number: Some(error_token.line_number as i32),
+                    });
+                }
+                Tokens::Info(info_token) => {
+                    // Informational message from server
+                    info!(?info_token);
+                    continue;
+                }
+                Tokens::EnvChange(env_change) => {
+                    // Handle environment changes
+                    info!(?env_change);
+                    self.execution_context
+                        .capture_change_property(&env_change)?;
+                    continue;
+                }
+                _ => {
+                    // Unexpected token
+                    info!("Unexpected token during bulk load: {:?}", token);
+                    return Err(UsageError(format!(
+                        "Unexpected token while executing bulk load: {token:?}"
+                    )));
+                }
+            }
+        }
+
+        Ok(rows_affected)
     }
 
     /// Executes a stored procedure with the given name and parameters.
