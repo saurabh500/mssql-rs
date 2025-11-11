@@ -175,8 +175,7 @@ impl GenericDecoder {
             }
             _ => {
                 return Err(crate::error::Error::ProtocolError(format!(
-                    "Invalid SQL_VARIANT: 1-byte property is only valid for TimeN, DateTime2N, and DateTimeOffsetN types, but got: {:?}",
-                    tds_type
+                    "Invalid SQL_VARIANT: 1-byte property is only valid for TimeN, DateTime2N, and DateTimeOffsetN types, but got: {tds_type:?}"
                 )));
             }
         })
@@ -322,8 +321,7 @@ impl GenericDecoder {
             ColumnValues::DateTime2(dt2) => dt2,
             _ => {
                 return Err(crate::error::Error::ProtocolError(format!(
-                    "Internal error: read_datetime2 returned unexpected type: {:?}",
-                    datetime2
+                    "Internal error: read_datetime2 returned unexpected type: {datetime2:?}"
                 )));
             }
         };
