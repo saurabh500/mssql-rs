@@ -70,7 +70,16 @@ impl GenericDecoder {
         let tds_type = TdsDataType::try_from(variant_base_type)?;
         let variant_prop_bytes = reader.read_byte().await?;
         let bytes_for_type_and_properties_byte = 2;
-        let data_length = length - bytes_for_type_and_properties_byte - (variant_prop_bytes as u32);
+
+        // Use checked arithmetic to prevent integer underflow
+        let data_length = length
+            .checked_sub(bytes_for_type_and_properties_byte)
+            .and_then(|v| v.checked_sub(variant_prop_bytes as u32))
+            .ok_or_else(|| {
+                crate::error::Error::ProtocolError(format!(
+                    "SQL_VARIANT data length calculation underflow: length={length}, prop_bytes={variant_prop_bytes}"
+                ))
+            })?;
 
         let col_value = match variant_prop_bytes {
             0 => {
@@ -133,12 +142,9 @@ impl GenericDecoder {
                 match tds_type {
                     TdsDataType::Guid => Self::read_guid(reader, data_length as u8).await,
                     TdsDataType::DateN => Self::read_daten(reader, data_length as u8).await,
-                    _ => {
-                        unreachable!(
-                            "For 0 byte property, only Guid and DateN are expected, but got: {:?}",
-                            tds_type
-                        );
-                    }
+                    _ => Err(crate::error::Error::ProtocolError(format!(
+                        "For 0 byte property, only Guid and DateN are expected, but got: {tds_type:?}"
+                    ))),
                 }
             }
         }
@@ -422,7 +428,7 @@ impl GenericDecoder {
             };
             let mut plp_buffer = vec![0u8; vector_capacity];
             let mut chunk_len = reader.read_uint32().await? as usize;
-            let mut offset = 0;
+            let mut offset: usize = 0;
             while chunk_len > 0 {
                 if long_len as usize == Self::SQL_PLP_UNKNOWNLEN {
                     // Use checked_add to prevent capacity overflow
@@ -438,7 +444,20 @@ impl GenericDecoder {
                         )));
                     }
                     plp_buffer.resize(vector_capacity, 0);
-                };
+                } else {
+                    // For known length, validate that chunk fits within the allocated buffer
+                    let end_offset = offset.checked_add(chunk_len).ok_or_else(|| {
+                        crate::error::Error::ProtocolError(format!(
+                            "PLP chunk offset would overflow: {offset} + {chunk_len}"
+                        ))
+                    })?;
+                    if end_offset > plp_buffer.len() {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "PLP chunk exceeds declared length: offset={offset}, chunk_len={chunk_len}, buffer_len={}, declared_len={long_len}",
+                            plp_buffer.len()
+                        )));
+                    }
+                }
                 let chunk_size_read = reader
                     .read_bytes(&mut plp_buffer[offset..offset + chunk_len])
                     .await?;
