@@ -270,9 +270,13 @@ impl TdsClient {
 
     /// Executes a bulk load operation.
     ///
-    /// This method sends a bulk load message containing column metadata and row data
-    /// to SQL Server using the TDS bulk load protocol. It's used internally by the
-    /// BulkCopy API for high-performance data insertion.
+    /// This method implements the TDS bulk load protocol following the proper request-response pattern:
+    /// 1. Send INSERT BULK command → Read response (DONE token with cur_cmd=0xFD)
+    /// 2. Send bulk data (COLMETADATA + ROW tokens) → Read response (DONE token with cur_cmd=0xF0)
+    ///
+    /// This two-phase approach matches .NET SqlBulkCopy behavior and eliminates the need for
+    /// special DONE token filtering. Each operation is acknowledged by the server before
+    /// proceeding to the next step.
     ///
     /// # Arguments
     ///
@@ -309,31 +313,30 @@ impl TdsClient {
 
         self.transport.reset_reader();
 
-        // STEP 1: Send INSERT BULK command as SQL Batch (matching .NET SqlBulkCopy.SubmitUpdateBulkCommand)
-        // This must be sent before the COLMETADATA and row data
-        eprintln!("DEBUG: Building INSERT BULK command...");
+        // STEP 1: Send INSERT BULK command and consume response
+        // Uses the standard batch send/consume pattern (reuses send_batch_and_consume_response)
         let insert_bulk_command = message.build_insert_bulk_command();
-        eprintln!("DEBUG: INSERT BULK command: {}", insert_bulk_command);
-        
-        // Send the INSERT BULK command WITHOUT waiting for response
-        // The server won't send a response until after we send the bulk data
-        // So we can't use execute() which waits for column metadata
-        let batch = SqlBatch::new(insert_bulk_command, &self.execution_context);
-        let mut packet_writer =
-            batch.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
-        batch.serialize(&mut packet_writer).await?;
-        eprintln!("DEBUG: INSERT BULK command sent, server is now waiting for bulk data...");
+        self.send_batch_and_consume_response(insert_bulk_command, timeout_sec, cancel_handle).await?;
 
-        // STEP 2: Now send the COLMETADATA and row data (matching .NET TdsParser.WriteBulkCopyMetaData)
-        eprintln!("DEBUG: Sending COLMETADATA and row data...");
+        // STEP 2: Send the COLMETADATA and row data
         let mut packet_writer =
             message.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
         message.serialize(&mut packet_writer).await?;
-        eprintln!("DEBUG: COLMETADATA and row data sent successfully");
 
-        // STEP 3: Read response tokens until we get the DONE token with row count
-        let mut rows_affected: u64 = 0;
+        // STEP 3: Read the final response with row count
+        let rows_affected = self.consume_done_token().await?;
+
+        Ok(rows_affected)
+    }
+
+    /// Consumes response tokens until a DONE token is received.
+    /// Returns the row count from the DONE token.
+    /// 
+    /// This helper method implements the standard TDS response consumption pattern,
+    /// handling INFO, ERROR, and DONE tokens appropriately.
+    async fn consume_done_token(&mut self) -> TdsResult<u64> {
         let parser_context = ParserContext::None(());
+        let mut rows_affected: u64 = 0;
 
         loop {
             let start = Instant::now();
@@ -347,26 +350,18 @@ impl TdsClient {
                 .await?;
             self.update_remaining_timeout(start);
 
-            eprintln!("DEBUG: Received token type: {:?}", token);
             match token {
                 Tokens::Done(done) | Tokens::DoneProc(done) | Tokens::DoneInProc(done) => {
-                    eprintln!("DEBUG: Bulk load DONE token - status={:?}, cur_cmd={:?}, row_count={}, has_more={}", 
-                        done.status, done.cur_cmd, done.row_count, done.has_more());
-                    info!("Bulk load done: {:?}", done);
-                    // Accumulate row counts from multiple DONE tokens
-                    rows_affected += done.row_count;
-                    eprintln!("DEBUG: rows_affected is now: {}", rows_affected);
+                    info!("Done token: {:?}", done);
                     
-                    // Check if this is the final DONE token for bulk insert (cur_cmd=BulkInsert)
-                    // Server may send multiple DONE tokens; we need to wait for the one with cur_cmd=BulkInsert  
-                    let is_bulk_insert_done = matches!(done.cur_cmd, crate::token::tokens::CurrentCommand::BulkInsert);
-                    if is_bulk_insert_done || (!done.has_more() && done.cur_cmd != crate::token::tokens::CurrentCommand::None) {
-                        eprintln!("DEBUG: Breaking out of loop, final rows_affected: {}", rows_affected);
+                    rows_affected = done.row_count;
+                    
+                    // Stop when we receive a DONE token without the MORE flag
+                    if !done.has_more() {
                         break;
                     }
                 }
                 Tokens::Error(error_token) => {
-                    // SQL Server error occurred during bulk load
                     info!(?error_token);
                     return Err(crate::error::Error::SqlServerError {
                         message: error_token.message.clone(),
@@ -401,6 +396,25 @@ impl TdsClient {
         }
 
         Ok(rows_affected)
+    }
+
+    /// Sends a SQL batch and consumes the response without expecting column metadata.
+    /// This is used for commands that don't return result sets (DML statements, etc.).
+    /// 
+    /// Returns the row count from the DONE token.
+    async fn send_batch_and_consume_response(
+        &mut self,
+        sql_command: String,
+        timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<u64> {
+        let batch = SqlBatch::new(sql_command, &self.execution_context);
+        let mut packet_writer =
+            batch.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
+        batch.serialize(&mut packet_writer).await?;
+
+        // Consume the response
+        self.consume_done_token().await
     }
 
     /// Executes a stored procedure with the given name and parameters.
