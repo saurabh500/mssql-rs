@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 //! Fuzz test for TokenStreamReader
-//! 
+//!
 //! This fuzzer tests the complete TokenStreamReader with arbitrary byte inputs to find:
 //! - Panics or crashes when parsing various token types
 //! - Infinite loops or hangs
@@ -20,11 +20,11 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use mssql_tds::core::TdsResult;
 use mssql_tds::fuzz_support::{
     GenericTokenParserRegistry, ParserContext, TdsPacketReader, TdsTokenStreamReader,
     TokenStreamReader,
 };
-use mssql_tds::core::TdsResult;
 use std::io::{Error, ErrorKind};
 
 /// Simple reader that wraps fuzz input data
@@ -152,13 +152,13 @@ impl TdsPacketReader for FuzzReader {
         }
         let mut buf = vec![0u8; byte_len];
         self.read_bytes(&mut buf).await?;
-        
+
         // Try to decode as UTF-16LE
         let chars: Vec<u16> = buf
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
+
         String::from_utf16(&chars).map_err(|_| {
             mssql_tds::error::Error::Io(Error::new(ErrorKind::InvalidData, "Invalid UTF-16"))
         })
@@ -169,7 +169,7 @@ impl TdsPacketReader for FuzzReader {
         if len == 0xFFFF {
             return Ok(None);
         }
-        
+
         let byte_len = (len as usize).checked_mul(2).ok_or_else(|| {
             mssql_tds::error::Error::Io(Error::new(
                 ErrorKind::InvalidData,
@@ -186,17 +186,15 @@ impl TdsPacketReader for FuzzReader {
         }
         let mut buf = vec![0u8; byte_len];
         self.read_bytes(&mut buf).await?;
-        
+
         let chars: Vec<u16> = buf
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
-        String::from_utf16(&chars)
-            .map(Some)
-            .map_err(|_| {
-                mssql_tds::error::Error::Io(Error::new(ErrorKind::InvalidData, "Invalid UTF-16"))
-            })
+
+        String::from_utf16(&chars).map(Some).map_err(|_| {
+            mssql_tds::error::Error::Io(Error::new(ErrorKind::InvalidData, "Invalid UTF-16"))
+        })
     }
 
     async fn read_unicode(&mut self, char_count: usize) -> TdsResult<String> {
@@ -216,12 +214,12 @@ impl TdsPacketReader for FuzzReader {
         }
         let mut buf = vec![0u8; byte_len];
         self.read_bytes(&mut buf).await?;
-        
+
         let chars: Vec<u16> = buf
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
+
         String::from_utf16(&chars).map_err(|_| {
             mssql_tds::error::Error::Io(Error::new(ErrorKind::InvalidData, "Invalid UTF-16"))
         })
@@ -279,7 +277,9 @@ impl TdsPacketReader for FuzzReader {
     async fn read_uint40(&mut self) -> TdsResult<u64> {
         let mut buf = [0u8; 5];
         self.read_bytes(&mut buf).await?;
-        Ok(u64::from_le_bytes([buf[0], buf[1], buf[2], buf[3], buf[4], 0, 0, 0]))
+        Ok(u64::from_le_bytes([
+            buf[0], buf[1], buf[2], buf[3], buf[4], 0, 0, 0,
+        ]))
     }
 
     async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
@@ -294,12 +294,12 @@ impl TdsPacketReader for FuzzReader {
         }
         let mut buf = vec![0u8; byte_len];
         self.read_bytes(&mut buf).await?;
-        
+
         let chars: Vec<u16> = buf
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
+
         String::from_utf16(&chars).map_err(|_| {
             mssql_tds::error::Error::Io(Error::new(ErrorKind::InvalidData, "Invalid UTF-16"))
         })
@@ -316,12 +316,12 @@ impl TdsPacketReader for FuzzReader {
         }
         let mut buf = vec![0u8; byte_len];
         self.read_bytes(&mut buf).await?;
-        
+
         let chars: Vec<u16> = buf
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
+
         String::from_utf16(&chars).map_err(|_| {
             mssql_tds::error::Error::Io(Error::new(ErrorKind::InvalidData, "Invalid UTF-16"))
         })
@@ -360,18 +360,18 @@ fuzz_target!(|data: &[u8]| {
 
     // Create a tokio runtime to execute async code
     let rt = tokio::runtime::Runtime::new().unwrap();
-    
+
     rt.block_on(async {
         let reader = FuzzReader::new(data);
         let parser_registry = Box::new(GenericTokenParserRegistry::default());
         let mut token_stream = TokenStreamReader::new(reader, parser_registry);
         let context = ParserContext::default();
-        
+
         // Test the TokenStreamReader.receive_token() method
         // This is the main entry point that orchestrates token parsing
         // The fuzzer will try to trigger panics or unexpected behavior
         let _ = token_stream.receive_token(&context, None, None).await;
-        
+
         // Try to receive multiple tokens to test token stream continuity
         let _ = token_stream.receive_token(&context, None, None).await;
     });
