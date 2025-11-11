@@ -70,22 +70,10 @@ mod bulk_copy_with_metadata_tests {
         let context = create_context();
         let mut client = begin_connection(context).await;
 
-        // Drop table if exists
+        // Create temp table (automatically cleaned up)
         client
             .execute(
-                "IF OBJECT_ID('dbo.BulkCopyMetadataTest', 'U') IS NOT NULL DROP TABLE dbo.BulkCopyMetadataTest"
-                .to_string(),
-                None,
-                None,
-            )
-            .await
-            .expect("Failed to drop test table");
-        client.close_query().await.expect("Failed to close query");
-
-        // Create real table (not temp table for better debugging)
-        client
-            .execute(
-                "CREATE TABLE dbo.BulkCopyMetadataTest (
+                "CREATE TABLE #BulkCopyMetadataTest (
                     id INT NOT NULL,
                     name NVARCHAR(100) NOT NULL,
                     age SMALLINT NOT NULL,
@@ -125,7 +113,7 @@ mod bulk_copy_with_metadata_tests {
 
         // Execute bulk copy using public API
         let result = {
-            let bulk_copy = BulkCopy::new(&mut client, "dbo.BulkCopyMetadataTest");
+            let bulk_copy = BulkCopy::new(&mut client, "#BulkCopyMetadataTest");
             bulk_copy
                 .batch_size(1000)
                 .write_to_server(test_data.into_iter())
@@ -141,7 +129,7 @@ mod bulk_copy_with_metadata_tests {
         // Check actual row count in database before assertion
         client
             .execute(
-                "SELECT COUNT(*) as cnt FROM dbo.BulkCopyMetadataTest".to_string(),
+                "SELECT COUNT(*) as cnt FROM #BulkCopyMetadataTest".to_string(),
                 None,
                 None,
             )

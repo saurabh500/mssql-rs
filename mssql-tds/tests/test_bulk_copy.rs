@@ -70,22 +70,10 @@ mod bulk_copy_integration_tests {
         let context = create_context();
         let mut client = begin_connection(context).await;
 
-        // Drop table if exists
+        // Create temp table (automatically cleaned up)
         client
             .execute(
-                "IF OBJECT_ID('dbo.BulkCopyTest', 'U') IS NOT NULL DROP TABLE dbo.BulkCopyTest"
-                    .to_string(),
-                None,
-                None,
-            )
-            .await
-            .expect("Failed to drop test table");
-        client.close_query().await.expect("Failed to close query");
-
-        // Create real table (not temp table for better debugging)
-        client
-            .execute(
-                "CREATE TABLE dbo.BulkCopyTest (
+                "CREATE TABLE #BulkCopyTest (
                     id INT NOT NULL,
                     name NVARCHAR(100) NOT NULL,
                     age SMALLINT NOT NULL,
@@ -125,7 +113,7 @@ mod bulk_copy_integration_tests {
 
         // Execute bulk copy
         let result = {
-            let bulk_copy = BulkCopy::new(&mut client, "dbo.BulkCopyTest");
+            let bulk_copy = BulkCopy::new(&mut client, "#BulkCopyTest");
             bulk_copy
                 .batch_size(1000)
                 .write_to_server(test_data.into_iter())
@@ -138,7 +126,7 @@ mod bulk_copy_integration_tests {
         // Check actual row count in database before assertion
         client
             .execute(
-                "SELECT COUNT(*) as cnt FROM dbo.BulkCopyTest".to_string(),
+                "SELECT COUNT(*) as cnt FROM #BulkCopyTest".to_string(),
                 None,
                 None,
             )
@@ -160,7 +148,7 @@ mod bulk_copy_integration_tests {
         // Verify the data was inserted
         client
             .execute(
-                "SELECT id, name, age, active FROM dbo.BulkCopyTest ORDER BY id".to_string(),
+                "SELECT id, name, age, active FROM #BulkCopyTest ORDER BY id".to_string(),
                 None,
                 None,
             )
@@ -209,12 +197,7 @@ mod bulk_copy_integration_tests {
 
         assert_eq!(row_count, 3, "Expected 3 rows to be returned");
 
-        // Cleanup - drop the table
-        client
-            .execute("DROP TABLE dbo.BulkCopyTest".to_string(), None, None)
-            .await
-            .expect("Failed to drop test table");
-        client.close_query().await.expect("Failed to close query");
+        // Temp table will be automatically dropped when connection closes
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
