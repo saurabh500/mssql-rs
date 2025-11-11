@@ -603,7 +603,8 @@ impl TdsClient {
                     );
 
                     let count = self.count_map.entry(done.cur_cmd).or_insert(0);
-                    *count += done.row_count as usize;
+                    // Use saturating_add to prevent integer overflow from malicious/corrupted TDS responses
+                    *count = count.saturating_add(done.row_count as usize);
                     self.current_result_set_has_been_read_till_end = true;
 
                     if !done.has_more() {
