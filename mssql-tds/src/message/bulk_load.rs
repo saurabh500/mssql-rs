@@ -894,3 +894,8 @@ mod tests {
         assert_eq!(msg.rows.len(), 1);
     }
 }
+
+// Include additional unit tests from separate test file
+#[cfg(test)]
+#[path = "bulk_load_tests.rs"]
+mod bulk_load_tests;

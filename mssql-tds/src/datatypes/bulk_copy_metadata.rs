@@ -779,3 +779,8 @@ mod tests {
         assert!(!meta2.is_long());
     }
 }
+
+// Include additional unit tests from separate test file
+#[cfg(test)]
+#[path = "bulk_copy_metadata_tests.rs"]
+mod bulk_copy_metadata_tests;
