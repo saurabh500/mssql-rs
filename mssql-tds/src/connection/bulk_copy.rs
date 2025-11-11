@@ -1332,8 +1332,21 @@ impl<'a> BulkCopy<'a> {
                 break;
             }
 
-            // Send this batch to the server
-            let batch_count = self.send_batch(&dest_column_metadata, batch_rows).await?;
+            // Send this batch directly through TDS client
+            let message = BulkLoadMessage {
+                table_name: self.table_name.clone(),
+                column_metadata: dest_column_metadata.clone(),
+                rows: batch_rows,
+                options: self.options.clone(),
+            };
+
+            let timeout_sec = if self.options.timeout_sec > 0 {
+                Some(self.options.timeout_sec)
+            } else {
+                None
+            };
+
+            let batch_count = self.client.execute_bulk_load(message, timeout_sec, None).await?;
             total_rows += batch_count;
 
             // Report progress if callback is configured
@@ -1360,39 +1373,6 @@ impl<'a> BulkCopy<'a> {
 
         let elapsed = start_time.elapsed();
         Ok(BulkCopyResult::new(total_rows, elapsed))
-    }
-
-    /// Send a single batch of rows to the server.
-    ///
-    /// This is an internal method that creates a BulkLoadMessage and sends it
-    /// through the TDS protocol.
-    async fn send_batch(
-        &mut self,
-        column_metadata: &[BulkCopyColumnMetadata],
-        rows: Vec<Vec<ColumnValues>>,
-    ) -> TdsResult<u64> {
-        // Create the bulk load message (cloning metadata since BulkLoadMessage owns its data)
-        let message = BulkLoadMessage {
-            table_name: self.table_name.clone(),
-            column_metadata: column_metadata.to_vec(),
-            rows,
-            options: self.options.clone(),
-        };
-
-        // Send the message through the TDS client and get the number of rows affected
-        let timeout_sec = if self.options.timeout_sec > 0 {
-            Some(self.options.timeout_sec)
-        } else {
-            None
-        };
-
-        // Execute the bulk load and return the row count from SQL Server
-        let rows_affected = self
-            .client
-            .execute_bulk_load(message, timeout_sec, None)
-            .await?;
-
-        Ok(rows_affected)
     }
 }
 
