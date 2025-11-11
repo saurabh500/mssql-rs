@@ -15,6 +15,7 @@ use crate::datatypes::column_values::ColumnValues;
 use crate::error::Error;
 use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
 use async_trait::async_trait;
+use tracing::{debug, trace};
 
 // TDS Token types
 const TOKEN_COLMETADATA: u8 = 0x81;
@@ -63,27 +64,27 @@ impl BulkLoadMessage {
     }
 
     /// Build the "INSERT BULK" SQL command that must be sent before the bulk data.
-    /// 
+    ///
     /// This matches .NET's SqlBulkCopy.AnalyzeTargetAndCreateUpdateBulkCommand() behavior.
     /// Format: INSERT BULK table_name (col1 type1, col2 type2, ...) [WITH (options)]
     pub fn build_insert_bulk_command(&self) -> String {
         let mut command = format!("INSERT BULK {} (", self.table_name);
-        
+
         for (i, col_meta) in self.column_metadata.iter().enumerate() {
             if i > 0 {
                 command.push_str(", ");
             }
-            
+
             // Column name
             command.push_str(&format!("[{}] ", col_meta.column_name));
-            
+
             // Type definition
             let type_def = self.get_sql_type_definition(col_meta);
             command.push_str(&type_def);
         }
-        
+
         command.push(')');
-        
+
         // Add WITH clause for options
         let mut options = Vec::new();
         if self.options.keep_nulls {
@@ -101,83 +102,27 @@ impl BulkLoadMessage {
         if self.options.keep_identity {
             options.push("KEEP_IDENTITY");
         }
-        
+
         if !options.is_empty() {
             command.push_str(" WITH (");
             command.push_str(&options.join(", "));
             command.push(')');
         }
-        
+
         command
     }
-    
+
     /// Get SQL type definition string for a column.
     fn get_sql_type_definition(&self, col_meta: &BulkCopyColumnMetadata) -> String {
-        use crate::datatypes::bulk_copy_metadata::SqlDbType;
-        
-        match col_meta.sql_type {
-            SqlDbType::Int => "int".to_string(),
-            SqlDbType::BigInt => "bigint".to_string(),
-            SqlDbType::SmallInt => "smallint".to_string(),
-            SqlDbType::TinyInt => "tinyint".to_string(),
-            SqlDbType::Bit => "bit".to_string(),
-            SqlDbType::Decimal | SqlDbType::Numeric => {
-                format!("decimal({}, {})", col_meta.precision, col_meta.scale)
-            }
-            SqlDbType::Float => "float".to_string(),
-            SqlDbType::Real => "real".to_string(),
-            SqlDbType::Money => "money".to_string(),
-            SqlDbType::SmallMoney => "smallmoney".to_string(),
-            SqlDbType::NVarChar => {
-                if col_meta.is_plp() {
-                    "nvarchar(max)".to_string()
-                } else {
-                    format!("nvarchar({})", col_meta.length)
-                }
-            }
-            SqlDbType::NChar => format!("nchar({})", col_meta.length),
-            SqlDbType::VarChar => {
-                if col_meta.is_plp() {
-                    "varchar(max)".to_string()
-                } else {
-                    format!("varchar({})", col_meta.length)
-                }
-            }
-            SqlDbType::Char => format!("char({})", col_meta.length),
-            SqlDbType::VarBinary => {
-                if col_meta.is_plp() {
-                    "varbinary(max)".to_string()
-                } else {
-                    format!("varbinary({})", col_meta.length)
-                }
-            }
-            SqlDbType::Binary => format!("binary({})", col_meta.length),
-            SqlDbType::UniqueIdentifier => "uniqueidentifier".to_string(),
-            SqlDbType::DateTime => "datetime".to_string(),
-            SqlDbType::SmallDateTime => "smalldatetime".to_string(),
-            SqlDbType::Date => "date".to_string(),
-            SqlDbType::Time => format!("time({})", col_meta.scale),
-            SqlDbType::DateTime2 => format!("datetime2({})", col_meta.scale),
-            SqlDbType::DateTimeOffset => format!("datetimeoffset({})", col_meta.scale),
-            SqlDbType::Text => "text".to_string(),
-            SqlDbType::NText => "ntext".to_string(),
-            SqlDbType::Image => "image".to_string(),
-            SqlDbType::Xml => "xml".to_string(),
-            SqlDbType::Udt => format!("varbinary({})", col_meta.length),
-            SqlDbType::Variant => "sql_variant".to_string(),
-            SqlDbType::Json => "nvarchar(max)".to_string(),
-            SqlDbType::Vector => format!("vector({})", col_meta.length),
-        }
+        // Reuse the implementation from BulkCopyColumnMetadata
+        col_meta.get_sql_type_definition()
     }
 
     /// Write column metadata block.
     ///
     /// Based on .NET TdsParser.WriteBulkCopyMetaData (lines 11498-11724).
     /// Writes the COLMETADATA token followed by column descriptors.
-    async fn write_metadata<'a, 'b>(
-        &'a self,
-        writer: &'a mut PacketWriter<'b>,
-    ) -> TdsResult<()>
+    async fn write_metadata<'a, 'b>(&'a self, writer: &'a mut PacketWriter<'b>) -> TdsResult<()>
     where
         'b: 'a,
     {
@@ -185,8 +130,8 @@ impl BulkLoadMessage {
         writer.write_byte_async(TOKEN_COLMETADATA).await?;
 
         // Write column count as 2 bytes (u16)
-        eprintln!(
-            "DEBUG: Writing COLMETADATA: token=0x81, column_count={} (2 bytes)",
+        debug!(
+            "Writing COLMETADATA: token=0x81, column_count={} (2 bytes)",
             self.column_metadata.len()
         );
         writer
@@ -223,17 +168,23 @@ impl BulkLoadMessage {
     where
         'b: 'a,
     {
-        eprintln!("DEBUG: Writing column descriptor for '{}': sql_type={:?}, tds_type=0x{:02X}, nullable={}, length={}", 
-            col_meta.column_name, col_meta.sql_type, col_meta.tds_type, col_meta.is_nullable, col_meta.length);
-        
+        trace!(
+            "Writing column descriptor for '{}': sql_type={:?}, tds_type=0x{:02X}, nullable={}, length={}",
+            col_meta.column_name,
+            col_meta.sql_type,
+            col_meta.tds_type,
+            col_meta.is_nullable,
+            col_meta.length
+        );
+
         // Based on .NET packet capture analysis when CEK is NOT negotiated:
         // .NET WriteBulkCopyMetaData writes UserType as 4 bytes for ALL columns
         // Per TdsParser.cs line 11522: WriteInt(0x0, stateObj) - always 4 bytes
         //
         // Format: UserType(4) + Flags(2) + TDS Type(1) + Type Info + ColName
-        
+
         // User type (4 bytes) - always 0 for standard types
-        eprintln!("DEBUG:   Writing UserType: 0x00000000 (4 bytes)");
+        trace!("Writing UserType: 0x00000000 (4 bytes)");
         writer.write_u32_async(0).await?;
 
         // Flags (2 bytes)
@@ -244,22 +195,31 @@ impl BulkLoadMessage {
         if col_meta.is_identity {
             flags |= 0x0010; // Identity
         }
-        eprintln!("DEBUG:   Writing Flags: 0x{:04X} (nullable={}, identity={})", flags, col_meta.is_nullable, col_meta.is_identity);
+        trace!(
+            "Writing Flags: 0x{:04X} (nullable={}, identity={})",
+            flags, col_meta.is_nullable, col_meta.is_identity
+        );
         writer.write_u16_async(flags).await?;
 
         // TDS type byte
-        eprintln!("DEBUG:   Writing TDS Type: 0x{:02X}", col_meta.tds_type);
+        trace!("Writing TDS Type: 0x{:02X}", col_meta.tds_type);
         writer.write_byte_async(col_meta.tds_type).await?;
 
         // Type-specific info (length, precision, scale, collation, etc.)
-        eprintln!("DEBUG:   Writing type info...");
+        trace!("Writing type info...");
         self.write_type_info(writer, col_meta).await?;
 
         // Column name (B_VARCHAR format)
         // Length byte (number of UTF-16 characters) + UTF-16LE string
         let name_utf16: Vec<u16> = col_meta.column_name.encode_utf16().collect();
-        eprintln!("DEBUG:   Writing column name: length={}, name='{}'", name_utf16.len(), col_meta.column_name);
-        writer.write_byte_async((name_utf16.len() & 0xFF) as u8).await?;
+        trace!(
+            "Writing column name: length={}, name='{}'",
+            name_utf16.len(),
+            col_meta.column_name
+        );
+        writer
+            .write_byte_async((name_utf16.len() & 0xFF) as u8)
+            .await?;
         for c in name_utf16 {
             writer.write_u16_async(c).await?;
         }
@@ -293,7 +253,7 @@ impl BulkLoadMessage {
         // - Variable-length nullable (0x26 INTN, 0x6D FLTN, 0x68 BITN, etc.): Length byte
         // - Variable-length strings: Length + collation
         // - PLP types: 0xFFFF
-        
+
         match col_meta.tds_type {
             // DECIMAL/NUMERIC (0x37, 0x3F, 0x6A, 0x6C) - precision and scale
             // Check these first since 0x3F could be ambiguous
@@ -305,7 +265,7 @@ impl BulkLoadMessage {
                 // Scale
                 writer.write_byte_async(col_meta.scale).await?;
             }
-            
+
             // Fixed-length types (0x30-0x3F range except 0x37, 0x3F above) - NO type info needed
             0x30 | // INT1 (TINYINT)
             0x32 | // BIT
@@ -319,7 +279,7 @@ impl BulkLoadMessage {
             0x7F   // INT8 (BIGINT)
             => {
                 // These are fixed-length types, no additional type info
-                eprintln!("DEBUG:   Fixed-length type, no type info written");
+                trace!("Fixed-length type, no type info written");
             }
 
             // INTN (0x26) - nullable integer, needs length byte
@@ -331,7 +291,7 @@ impl BulkLoadMessage {
                     SqlDbType::BigInt => 8,
                     _ => col_meta.length as u8,
                 };
-                eprintln!("DEBUG:   Writing INTN length: {}", len);
+                trace!("Writing INTN length: {}", len);
                 writer.write_byte_async(len).await?;
             }
 
@@ -342,13 +302,13 @@ impl BulkLoadMessage {
                     SqlDbType::Float => 8,
                     _ => col_meta.length as u8,
                 };
-                eprintln!("DEBUG:   Writing FLTN length: {}", len);
+                trace!("Writing FLTN length: {}", len);
                 writer.write_byte_async(len).await?;
             }
 
             // BITN (0x68) - nullable bit, needs length byte
             0x68 => {
-                eprintln!("DEBUG:   Writing BITN length: 1");
+                trace!("Writing BITN length: 1");
                 writer.write_byte_async(1).await?;
             }
 
@@ -396,20 +356,20 @@ impl BulkLoadMessage {
             0xE7 | 0xEF => {
                 // Max length in BYTES (2 bytes) - for NVARCHAR this is characters * 2
                 if col_meta.is_plp() {
-                    eprintln!("DEBUG:   Writing NVARCHAR/NCHAR max length: 0xFFFF (PLP)");
+                    trace!("Writing NVARCHAR/NCHAR max length: 0xFFFF (PLP)");
                     writer.write_u16_async(0xFFFF).await?;
                 } else {
-                    eprintln!("DEBUG:   Writing NVARCHAR/NCHAR max length: {} bytes", col_meta.length);
+                    trace!("Writing NVARCHAR/NCHAR max length: {} bytes", col_meta.length);
                     writer.write_u16_async(col_meta.length as u16).await?;
                 }
 
                 // Collation (5 bytes)
                 if let Some(collation) = col_meta.collation {
-                    eprintln!("DEBUG:   Writing collation: info=0x{:08X}, sort_id=0x{:02X}", collation.info, collation.sort_id);
+                    trace!("Writing collation: info=0x{:08X}, sort_id=0x{:02X}", collation.info, collation.sort_id);
                     writer.write_u32_async(collation.info).await?;
                     writer.write_byte_async(collation.sort_id).await?;
                 } else {
-                    eprintln!("DEBUG:   Writing default collation: 0x00000409, sort_id=0x00");
+                    trace!("Writing default collation: 0x00000409, sort_id=0x00");
                     // Default collation
                     writer.write_u32_async(0x00000409).await?;
                     writer.write_byte_async(0).await?;
@@ -433,7 +393,7 @@ impl BulkLoadMessage {
             }
 
             // Time types (0x29, 0x2A, 0x2B) - scale
-            0x29 | 0x2A | 0x2B => {
+            0x29..=0x2B => {
                 // Scale (1 byte)
                 writer.write_byte_async(col_meta.scale).await?;
             }
@@ -464,12 +424,12 @@ impl BulkLoadMessage {
     where
         'b: 'a,
     {
-        eprintln!("DEBUG: Writing {} rows", self.rows.len());
+        debug!("Writing {} rows", self.rows.len());
         for (i, row) in self.rows.iter().enumerate() {
-            eprintln!("DEBUG:   Writing row {}", i);
+            trace!("Writing row {}", i);
             self.write_row(writer, row).await?;
         }
-        eprintln!("DEBUG: All rows written");
+        debug!("All rows written");
         Ok(())
     }
 
@@ -527,7 +487,7 @@ impl BulkLoadMessage {
         // Fixed types (0x30-0x3F, 0x7F): Write value directly, NO length byte
         // Nullable types (0x26 INTN, 0x6D FLTN, etc.): Write length byte then value
         let is_fixed_type = matches!(col_meta.tds_type, 0x30..=0x3F | 0x7F);
-        
+
         match value {
             ColumnValues::TinyInt(v) => {
                 // Could be INT1 (0x30 fixed) or INTN (0x26 nullable)
@@ -589,8 +549,10 @@ impl BulkLoadMessage {
 
             ColumnValues::Decimal(parts) | ColumnValues::Numeric(parts) => {
                 // Decimal: sign (1 byte) + data (16 bytes max)
-                writer.write_byte_async(if parts.is_positive { 1 } else { 0 }).await?;
-                
+                writer
+                    .write_byte_async(if parts.is_positive { 1 } else { 0 })
+                    .await?;
+
                 // Write integer parts as little-endian bytes
                 let mut bytes = vec![0u8; 16];
                 for (i, &part) in parts.int_parts.iter().enumerate() {
@@ -637,7 +599,7 @@ impl BulkLoadMessage {
                 // Time: scale determines length (3-5 bytes)
                 let length = Self::time_length_from_scale(time.scale);
                 writer.write_byte_async(length).await?;
-                
+
                 let time_bytes = time.time_nanoseconds.to_le_bytes();
                 writer.write_async(&time_bytes[0..length as usize]).await?;
             }
@@ -647,10 +609,12 @@ impl BulkLoadMessage {
                 let time_length = Self::time_length_from_scale(dt2.time.scale);
                 let total_length = time_length + 3; // time + 3 bytes for days
                 writer.write_byte_async(total_length).await?;
-                
+
                 let time_bytes = dt2.time.time_nanoseconds.to_le_bytes();
-                writer.write_async(&time_bytes[0..time_length as usize]).await?;
-                
+                writer
+                    .write_async(&time_bytes[0..time_length as usize])
+                    .await?;
+
                 let days_bytes = dt2.days.to_le_bytes();
                 writer.write_async(&days_bytes[0..3]).await?;
             }
@@ -660,13 +624,15 @@ impl BulkLoadMessage {
                 let time_length = Self::time_length_from_scale(dto.datetime2.time.scale);
                 let total_length = time_length + 3 + 2; // time + days + offset
                 writer.write_byte_async(total_length).await?;
-                
+
                 let time_bytes = dto.datetime2.time.time_nanoseconds.to_le_bytes();
-                writer.write_async(&time_bytes[0..time_length as usize]).await?;
-                
+                writer
+                    .write_async(&time_bytes[0..time_length as usize])
+                    .await?;
+
                 let days_bytes = dto.datetime2.days.to_le_bytes();
                 writer.write_async(&days_bytes[0..3]).await?;
-                
+
                 writer.write_i16_async(dto.offset).await?;
             }
 
@@ -755,10 +721,7 @@ impl BulkLoadMessage {
     where
         'b: 'a,
     {
-        let encoding = col_meta
-            .encoding
-            .as_ref()
-            .unwrap_or(&EncodingType::Utf16Le);
+        let encoding = col_meta.encoding.as_ref().unwrap_or(&EncodingType::Utf16Le);
         let bytes = encoding.encode(s);
 
         if col_meta.is_plp() {
@@ -836,14 +799,10 @@ impl BulkLoadMessage {
     }
 
     /// Write DONE token to complete the bulk load.
-    /// 
+    ///
     /// IMPORTANT: Client DONE token uses 4-byte (Int32) row count, while server DONE token uses 8-byte (Int64).
     /// This matches .NET TdsParser behavior where client sends WriteInt(0) but server returns TryReadInt64().
-    async fn write_done_token<'a, 'b>(
-        &'a self,
-        writer: &'a mut PacketWriter<'b>,
-        row_count: u64,
-    ) -> TdsResult<()>
+    async fn write_done_token<'a, 'b>(&'a self, writer: &'a mut PacketWriter<'b>) -> TdsResult<()>
     where
         'b: 'a,
     {
@@ -872,10 +831,10 @@ impl Request for BulkLoadMessage {
     where
         'b: 'a,
     {
-        // NOTE: Table name is NOT sent here. It must be sent via "INSERT BULK table_name (...)" 
+        // NOTE: Table name is NOT sent here. It must be sent via "INSERT BULK table_name (...)"
         // SQL command first, then this bulk load packet follows with the data.
         // See .NET implementation: SqlBulkCopy.AnalyzeTargetAndCreateUpdateBulkCommand()
-        
+
         // Write column metadata
         self.write_metadata(packet_writer).await?;
 
@@ -883,8 +842,7 @@ impl Request for BulkLoadMessage {
         self.write_rows(packet_writer).await?;
 
         // Write DONE token to signal end of bulk load data
-        self.write_done_token(packet_writer, self.rows.len() as u64)
-            .await?;
+        self.write_done_token(packet_writer).await?;
 
         // Finalize packet
         packet_writer.finalize().await?;
@@ -918,7 +876,7 @@ mod tests {
         ];
 
         use crate::datatypes::sql_string::SqlString;
-        
+
         let rows = vec![vec![
             ColumnValues::Int(1),
             ColumnValues::String(SqlString::from_utf8_string("test".to_string())),

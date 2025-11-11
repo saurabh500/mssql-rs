@@ -8,9 +8,7 @@ mod bulk_copy_integration_tests {
     use crate::common::{begin_connection, create_context, init_tracing};
     use mssql_tds::connection::bulk_copy::{BulkCopy, BulkCopyRow};
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
-    use mssql_tds::datatypes::bulk_copy_metadata::{
-        BulkCopyColumnMetadata, SqlDbType, TypeLength,
-    };
+    use mssql_tds::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType, TypeLength};
     use mssql_tds::datatypes::column_values::ColumnValues;
     use mssql_tds::datatypes::sql_string::SqlString;
 
@@ -46,12 +44,20 @@ mod bulk_copy_integration_tests {
                 BulkCopyColumnMetadata::new("id", SqlDbType::Int, SqlDbType::Int.to_tds_type())
                     .with_length(4, TypeLength::Fixed(4))
                     .with_nullable(false),
-                BulkCopyColumnMetadata::new("name", SqlDbType::NVarChar, SqlDbType::NVarChar.to_tds_type())
-                    .with_length(200, TypeLength::Variable(200))
-                    .with_nullable(false),
-                BulkCopyColumnMetadata::new("age", SqlDbType::SmallInt, SqlDbType::SmallInt.to_tds_type())
-                    .with_length(2, TypeLength::Fixed(2))
-                    .with_nullable(false),
+                BulkCopyColumnMetadata::new(
+                    "name",
+                    SqlDbType::NVarChar,
+                    SqlDbType::NVarChar.to_tds_type(),
+                )
+                .with_length(200, TypeLength::Variable(200))
+                .with_nullable(false),
+                BulkCopyColumnMetadata::new(
+                    "age",
+                    SqlDbType::SmallInt,
+                    SqlDbType::SmallInt.to_tds_type(),
+                )
+                .with_length(2, TypeLength::Fixed(2))
+                .with_nullable(false),
                 BulkCopyColumnMetadata::new("active", SqlDbType::Bit, SqlDbType::Bit.to_tds_type())
                     .with_length(1, TypeLength::Fixed(1))
                     .with_nullable(false),
@@ -68,7 +74,7 @@ mod bulk_copy_integration_tests {
         client
             .execute(
                 "IF OBJECT_ID('dbo.BulkCopyTest', 'U') IS NOT NULL DROP TABLE dbo.BulkCopyTest"
-                .to_string(),
+                    .to_string(),
                 None,
                 None,
             )
@@ -127,8 +133,8 @@ mod bulk_copy_integration_tests {
                 .expect("Bulk copy failed")
         };
 
-        println!("Bulk copy result: {:?}", result);
-        
+        println!("Bulk copy result: {result:?}");
+
         // Check actual row count in database before assertion
         client
             .execute(
@@ -138,14 +144,17 @@ mod bulk_copy_integration_tests {
             )
             .await
             .expect("Failed to count rows");
-        
+
         if let Some(resultset) = client.get_current_resultset() {
             if let Some(row) = resultset.next_row().await.expect("Failed to read count") {
                 println!("DEBUG: Actual rows in database: {:?}", row[0]);
             }
         }
-        client.close_query().await.expect("Failed to close count query");
-        
+        client
+            .close_query()
+            .await
+            .expect("Failed to close count query");
+
         assert_eq!(result.rows_affected, 3, "Expected 3 rows to be inserted");
 
         // Verify the data was inserted
@@ -202,11 +211,7 @@ mod bulk_copy_integration_tests {
 
         // Cleanup - drop the table
         client
-            .execute(
-                "DROP TABLE dbo.BulkCopyTest".to_string(),
-                None,
-                None,
-            )
+            .execute("DROP TABLE dbo.BulkCopyTest".to_string(), None, None)
             .await
             .expect("Failed to drop test table");
         client.close_query().await.expect("Failed to close query");
@@ -239,7 +244,7 @@ mod bulk_copy_integration_tests {
         let test_data: Vec<TestUser> = (1..=100)
             .map(|i| TestUser {
                 id: i,
-                name: format!("User{}", i),
+                name: format!("User{i}"),
                 age: (20 + (i % 50)) as i16,
                 active: i % 2 == 0,
             })
@@ -254,15 +259,12 @@ mod bulk_copy_integration_tests {
                 .expect("Bulk copy failed")
         };
 
-        println!("Bulk copy result: {:?}", result);
+        println!("Bulk copy result: {result:?}");
         assert_eq!(
             result.rows_affected, 100,
             "Expected 100 rows to be inserted"
         );
-        assert!(
-            result.rows_per_second > 0.0,
-            "Expected positive throughput"
-        );
+        assert!(result.rows_per_second > 0.0, "Expected positive throughput");
 
         // Verify count
         client

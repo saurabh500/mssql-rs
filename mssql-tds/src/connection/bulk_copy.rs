@@ -51,7 +51,7 @@
 //! println!("Inserted {} rows", result.rows_affected);
 //! ```
 
-use crate::connection::tds_client::{TdsClient, ResultSet, ResultSetClient};
+use crate::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
 use crate::core::TdsResult;
 use crate::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType, TypeLength};
 use crate::datatypes::column_values::ColumnValues;
@@ -59,6 +59,7 @@ use crate::error::Error;
 use crate::message::bulk_load::BulkLoadMessage;
 use crate::token::tokens::SqlCollation;
 use std::time::{Duration, Instant};
+use tracing::{debug, trace};
 
 /// Trait for types that can be bulk copied to SQL Server.
 ///
@@ -124,34 +125,34 @@ pub trait BulkCopyRow {
 pub struct DestinationColumnMetadata {
     /// Column name
     pub name: String,
-    
+
     /// Column ordinal (0-based position in table)
     pub ordinal: usize,
-    
+
     /// SQL Server type ID (from sys.columns.system_type_id)
     pub system_type_id: u8,
-    
+
     /// SqlDbType mapped from system_type_id
     pub sql_type: SqlDbType,
-    
+
     /// Maximum length in bytes (-1 for MAX types)
     pub max_length: i16,
-    
+
     /// Precision (for numeric/decimal types)
     pub precision: u8,
-    
+
     /// Scale (for numeric/decimal types)
     pub scale: u8,
-    
+
     /// Whether the column allows NULL values
     pub is_nullable: bool,
-    
+
     /// Whether the column is an identity column
     pub is_identity: bool,
-    
+
     /// Whether the column is computed
     pub is_computed: bool,
-    
+
     /// Collation (for string types)
     pub collation: Option<SqlCollation>,
 }
@@ -159,14 +160,25 @@ pub struct DestinationColumnMetadata {
 impl DestinationColumnMetadata {
     /// Convert destination metadata to BulkCopyColumnMetadata for protocol serialization.
     pub fn to_bulk_copy_metadata(&self) -> BulkCopyColumnMetadata {
-        let tds_type = self.sql_type.to_tds_type();
-        
+        // Use fixed-length types for non-nullable columns, nullable types for nullable columns
+        let tds_type = if self.is_nullable {
+            self.sql_type.to_tds_type()
+        } else {
+            self.sql_type.to_tds_type_fixed()
+        };
+
         let type_length = match self.sql_type {
-            SqlDbType::BigInt | SqlDbType::Int | SqlDbType::SmallInt | SqlDbType::TinyInt |
-            SqlDbType::Bit | SqlDbType::Real | SqlDbType::Float | SqlDbType::Date |
-            SqlDbType::SmallDateTime | SqlDbType::Money | SqlDbType::SmallMoney => {
-                TypeLength::Fixed(self.max_length as i32)
-            }
+            SqlDbType::BigInt
+            | SqlDbType::Int
+            | SqlDbType::SmallInt
+            | SqlDbType::TinyInt
+            | SqlDbType::Bit
+            | SqlDbType::Real
+            | SqlDbType::Float
+            | SqlDbType::Date
+            | SqlDbType::SmallDateTime
+            | SqlDbType::Money
+            | SqlDbType::SmallMoney => TypeLength::Fixed(self.max_length as i32),
             SqlDbType::VarChar | SqlDbType::NVarChar | SqlDbType::VarBinary => {
                 if self.max_length == -1 {
                     TypeLength::Plp
@@ -177,32 +189,33 @@ impl DestinationColumnMetadata {
             SqlDbType::Char | SqlDbType::NChar | SqlDbType::Binary => {
                 TypeLength::Fixed(self.max_length as i32)
             }
-            SqlDbType::Text | SqlDbType::NText | SqlDbType::Image | 
-            SqlDbType::Xml | SqlDbType::Json => {
-                TypeLength::Plp
-            }
+            SqlDbType::Text
+            | SqlDbType::NText
+            | SqlDbType::Image
+            | SqlDbType::Xml
+            | SqlDbType::Json => TypeLength::Plp,
             _ => TypeLength::Variable(self.max_length as i32),
         };
-        
+
         let mut metadata = BulkCopyColumnMetadata::new(&self.name, self.sql_type, tds_type)
             .with_length(self.max_length as i32, type_length)
             .with_nullable(self.is_nullable);
-        
+
         if matches!(self.sql_type, SqlDbType::Decimal | SqlDbType::Numeric) {
             metadata = metadata.with_precision_scale(self.precision, self.scale);
         }
-        
+
         if let Some(collation) = self.collation {
             metadata = metadata.with_collation(collation);
         }
-        
+
         if self.is_identity {
             metadata = metadata.with_identity(true);
         }
-        
+
         // Note: Computed columns are typically skipped in bulk copy operations
         // The metadata doesn't need to track this flag for serialization
-        
+
         metadata
     }
 }
@@ -214,51 +227,50 @@ impl DestinationColumnMetadata {
 fn map_system_type_id_to_sql_db_type(system_type_id: u8) -> Result<SqlDbType, Error> {
     match system_type_id {
         // Exact numeric types
-        48 => Ok(SqlDbType::TinyInt),      // tinyint
-        52 => Ok(SqlDbType::SmallInt),     // smallint
-        56 => Ok(SqlDbType::Int),          // int
-        127 => Ok(SqlDbType::BigInt),      // bigint
-        106 => Ok(SqlDbType::Decimal),     // decimal
-        108 => Ok(SqlDbType::Numeric),     // numeric
-        122 => Ok(SqlDbType::SmallMoney),  // smallmoney
-        60 => Ok(SqlDbType::Money),        // money
-        104 => Ok(SqlDbType::Bit),         // bit
-        
+        48 => Ok(SqlDbType::TinyInt),     // tinyint
+        52 => Ok(SqlDbType::SmallInt),    // smallint
+        56 => Ok(SqlDbType::Int),         // int
+        127 => Ok(SqlDbType::BigInt),     // bigint
+        106 => Ok(SqlDbType::Decimal),    // decimal
+        108 => Ok(SqlDbType::Numeric),    // numeric
+        122 => Ok(SqlDbType::SmallMoney), // smallmoney
+        60 => Ok(SqlDbType::Money),       // money
+        104 => Ok(SqlDbType::Bit),        // bit
+
         // Approximate numeric types
-        59 => Ok(SqlDbType::Real),         // real
-        62 => Ok(SqlDbType::Float),        // float
-        
+        59 => Ok(SqlDbType::Real),  // real
+        62 => Ok(SqlDbType::Float), // float
+
         // Date and time types
-        40 => Ok(SqlDbType::Date),         // date
-        41 => Ok(SqlDbType::Time),         // time
-        42 => Ok(SqlDbType::DateTime2),    // datetime2
+        40 => Ok(SqlDbType::Date),           // date
+        41 => Ok(SqlDbType::Time),           // time
+        42 => Ok(SqlDbType::DateTime2),      // datetime2
         43 => Ok(SqlDbType::DateTimeOffset), // datetimeoffset
-        58 => Ok(SqlDbType::SmallDateTime), // smalldatetime
-        61 => Ok(SqlDbType::DateTime),     // datetime
-        
+        58 => Ok(SqlDbType::SmallDateTime),  // smalldatetime
+        61 => Ok(SqlDbType::DateTime),       // datetime
+
         // Character strings
-        167 => Ok(SqlDbType::VarChar),     // varchar
-        175 => Ok(SqlDbType::Char),        // char
-        35 => Ok(SqlDbType::Text),         // text
-        
+        167 => Ok(SqlDbType::VarChar), // varchar
+        175 => Ok(SqlDbType::Char),    // char
+        35 => Ok(SqlDbType::Text),     // text
+
         // Unicode character strings
-        231 => Ok(SqlDbType::NVarChar),    // nvarchar
-        239 => Ok(SqlDbType::NChar),       // nchar
-        99 => Ok(SqlDbType::NText),        // ntext
-        
+        231 => Ok(SqlDbType::NVarChar), // nvarchar
+        239 => Ok(SqlDbType::NChar),    // nchar
+        99 => Ok(SqlDbType::NText),     // ntext
+
         // Binary strings
-        165 => Ok(SqlDbType::VarBinary),   // varbinary
-        173 => Ok(SqlDbType::Binary),      // binary
-        34 => Ok(SqlDbType::Image),        // image
-        
+        165 => Ok(SqlDbType::VarBinary), // varbinary
+        173 => Ok(SqlDbType::Binary),    // binary
+        34 => Ok(SqlDbType::Image),      // image
+
         // Other types
         36 => Ok(SqlDbType::UniqueIdentifier), // uniqueidentifier
-        241 => Ok(SqlDbType::Xml),         // xml
-        
+        241 => Ok(SqlDbType::Xml),             // xml
+
         // Unsupported or unknown types
         _ => Err(Error::UsageError(format!(
-            "Unsupported system_type_id: {}",
-            system_type_id
+            "Unsupported system_type_id: {system_type_id}"
         ))),
     }
 }
@@ -487,7 +499,7 @@ pub struct BulkCopy<'a> {
 
     /// Progress callback
     progress_callback: Option<Box<dyn FnMut(BulkCopyProgress) + Send + 'a>>,
-    
+
     /// Cached destination table metadata (retrieved from sys.columns)
     destination_metadata: Option<Vec<DestinationColumnMetadata>>,
 }
@@ -752,7 +764,9 @@ impl<'a> BulkCopy<'a> {
     ///     println!("Column: {}, Type: {:?}", col.name, col.sql_type);
     /// }
     /// ```
-    pub async fn retrieve_destination_metadata(&mut self) -> TdsResult<Vec<DestinationColumnMetadata>> {
+    pub async fn retrieve_destination_metadata(
+        &mut self,
+    ) -> TdsResult<Vec<DestinationColumnMetadata>> {
         // Check if we already have cached metadata
         if let Some(ref metadata) = self.destination_metadata {
             return Ok(metadata.clone());
@@ -781,7 +795,7 @@ impl<'a> BulkCopy<'a> {
                 INNER JOIN tempdb.sys.objects o ON c.object_id = o.object_id \
                 WHERE o.name LIKE '{}%' \
                 ORDER BY c.column_id",
-                table.replace('\'', "''").replace("%", "[%]")  // Escape wildcards for LIKE
+                table.replace('\'', "''").replace("%", "[%]") // Escape wildcards for LIKE
             )
         } else {
             // Regular tables
@@ -801,29 +815,35 @@ impl<'a> BulkCopy<'a> {
                 INNER JOIN sys.objects o ON c.object_id = o.object_id \
                 WHERE o.name = '{}' AND SCHEMA_NAME(o.schema_id) = '{}' \
                 ORDER BY c.column_id",
-                table.replace('\'', "''"),  // Escape single quotes
+                table.replace('\'', "''"), // Escape single quotes
                 schema.replace('\'', "''")
             )
         };
 
         // Execute the query
-        self.client.execute(query, Some(self.options.timeout_sec), None).await?;
+        self.client
+            .execute(query, Some(self.options.timeout_sec), None)
+            .await?;
 
         // Read the results
         let mut metadata = Vec::new();
-        
+
         if let Some(resultset) = self.client.get_current_resultset() {
             while let Some(row) = resultset.next_row().await? {
                 if row.len() < 10 {
                     return Err(Error::UsageError(
-                        "Unexpected number of columns in metadata query result".to_string()
+                        "Unexpected number of columns in metadata query result".to_string(),
                     ));
                 }
 
                 // Extract column values
                 let name = match &row[0] {
                     ColumnValues::String(s) => s.to_utf8_string(),
-                    _ => return Err(Error::UsageError("Expected string for column name".to_string())),
+                    _ => {
+                        return Err(Error::UsageError(
+                            "Expected string for column name".to_string(),
+                        ));
+                    }
                 };
 
                 let column_id = match &row[1] {
@@ -833,17 +853,29 @@ impl<'a> BulkCopy<'a> {
 
                 let system_type_id = match &row[2] {
                     ColumnValues::TinyInt(t) => *t,
-                    _ => return Err(Error::UsageError("Expected tinyint for system_type_id".to_string())),
+                    _ => {
+                        return Err(Error::UsageError(
+                            "Expected tinyint for system_type_id".to_string(),
+                        ));
+                    }
                 };
 
                 let max_length = match &row[3] {
                     ColumnValues::SmallInt(s) => *s,
-                    _ => return Err(Error::UsageError("Expected smallint for max_length".to_string())),
+                    _ => {
+                        return Err(Error::UsageError(
+                            "Expected smallint for max_length".to_string(),
+                        ));
+                    }
                 };
 
                 let precision = match &row[4] {
                     ColumnValues::TinyInt(p) => *p,
-                    _ => return Err(Error::UsageError("Expected tinyint for precision".to_string())),
+                    _ => {
+                        return Err(Error::UsageError(
+                            "Expected tinyint for precision".to_string(),
+                        ));
+                    }
                 };
 
                 let scale = match &row[5] {
@@ -853,24 +885,40 @@ impl<'a> BulkCopy<'a> {
 
                 let is_nullable = match &row[6] {
                     ColumnValues::Bit(b) => *b,
-                    _ => return Err(Error::UsageError("Expected bit for is_nullable".to_string())),
+                    _ => {
+                        return Err(Error::UsageError(
+                            "Expected bit for is_nullable".to_string(),
+                        ));
+                    }
                 };
 
                 let is_identity = match &row[7] {
                     ColumnValues::Bit(b) => *b,
-                    _ => return Err(Error::UsageError("Expected bit for is_identity".to_string())),
+                    _ => {
+                        return Err(Error::UsageError(
+                            "Expected bit for is_identity".to_string(),
+                        ));
+                    }
                 };
 
                 let is_computed = match &row[8] {
                     ColumnValues::Bit(b) => *b,
-                    _ => return Err(Error::UsageError("Expected bit for is_computed".to_string())),
+                    _ => {
+                        return Err(Error::UsageError(
+                            "Expected bit for is_computed".to_string(),
+                        ));
+                    }
                 };
 
                 // collation_name can be NULL for non-string types
                 let _collation_name = match &row[9] {
                     ColumnValues::String(s) => Some(s.to_utf8_string()),
                     ColumnValues::Null => None,
-                    _ => return Err(Error::UsageError("Expected string or NULL for collation_name".to_string())),
+                    _ => {
+                        return Err(Error::UsageError(
+                            "Expected string or NULL for collation_name".to_string(),
+                        ));
+                    }
                 };
 
                 // Map system_type_id to SqlDbType
@@ -882,7 +930,7 @@ impl<'a> BulkCopy<'a> {
 
                 metadata.push(DestinationColumnMetadata {
                     name,
-                    ordinal: column_id - 1,  // SQL Server is 1-based, we use 0-based
+                    ordinal: column_id - 1, // SQL Server is 1-based, we use 0-based
                     system_type_id,
                     sql_type,
                     max_length,
@@ -932,20 +980,18 @@ impl<'a> BulkCopy<'a> {
     /// - The table doesn't exist
     /// - Network errors occur
     /// - Timeout occurs
-    pub async fn retrieve_destination_metadata_from_server(&mut self) -> TdsResult<Vec<BulkCopyColumnMetadata>> {
+    pub async fn retrieve_destination_metadata_from_server(
+        &mut self,
+    ) -> TdsResult<Vec<BulkCopyColumnMetadata>> {
         // Fetch metadata from the server using COLMETADATA token
-        let col_metadata = self.client.fetch_table_metadata(
-            &self.table_name,
-            Some(self.options.timeout_sec),
-            None,
-        ).await?;
+        let col_metadata = self
+            .client
+            .fetch_table_metadata(&self.table_name, Some(self.options.timeout_sec), None)
+            .await?;
 
         // Convert from ColumnMetadata (from COLMETADATA token) to BulkCopyColumnMetadata
-        let bulk_copy_metadata: Vec<BulkCopyColumnMetadata> = col_metadata
-            .columns
-            .iter()
-            .map(|col| col.into())
-            .collect();
+        let bulk_copy_metadata: Vec<BulkCopyColumnMetadata> =
+            col_metadata.columns.iter().map(|col| col.into()).collect();
 
         if bulk_copy_metadata.is_empty() {
             return Err(Error::UsageError(format!(
@@ -954,10 +1000,15 @@ impl<'a> BulkCopy<'a> {
             )));
         }
 
-        eprintln!("DEBUG: Retrieved {} columns with server TDS types:", bulk_copy_metadata.len());
+        debug!(
+            "Retrieved {} columns with server TDS types:",
+            bulk_copy_metadata.len()
+        );
         for (i, meta) in bulk_copy_metadata.iter().enumerate() {
-            eprintln!("  Column {}: name='{}', tds_type=0x{:02X}, sql_type={:?}, nullable={}", 
-                i, meta.column_name, meta.tds_type, meta.sql_type, meta.is_nullable);
+            trace!(
+                "Column {}: name='{}', tds_type=0x{:02X}, sql_type={:?}, nullable={}",
+                i, meta.column_name, meta.tds_type, meta.sql_type, meta.is_nullable
+            );
         }
 
         Ok(bulk_copy_metadata)
@@ -1034,7 +1085,12 @@ impl<'a> BulkCopy<'a> {
                 }
 
                 // Check type compatibility
-                self.check_type_compatibility(&source_col.sql_type, &dest_col.sql_type, &source_col.column_name, &dest_col.name)?;
+                self.check_type_compatibility(
+                    &source_col.sql_type,
+                    &dest_col.sql_type,
+                    &source_col.column_name,
+                    &dest_col.name,
+                )?;
 
                 resolved_mappings.push(ResolvedColumnMapping {
                     source_index: source_idx,
@@ -1050,17 +1106,14 @@ impl<'a> BulkCopy<'a> {
             for mapping in &self.column_mappings {
                 // Find source column index
                 let source_idx = match &mapping.source {
-                    ColumnMappingSource::Name(source_name) => {
-                        source_metadata
-                            .iter()
-                            .position(|col| col.column_name.eq_ignore_ascii_case(source_name))
-                            .ok_or_else(|| {
-                                Error::UsageError(format!(
-                                    "Source column '{}' not found in source metadata",
-                                    source_name
-                                ))
-                            })?
-                    }
+                    ColumnMappingSource::Name(source_name) => source_metadata
+                        .iter()
+                        .position(|col| col.column_name.eq_ignore_ascii_case(source_name))
+                        .ok_or_else(|| {
+                            Error::UsageError(format!(
+                                "Source column '{source_name}' not found in source metadata"
+                            ))
+                        })?,
                     ColumnMappingSource::Ordinal(idx) => {
                         if *idx >= source_metadata.len() {
                             return Err(Error::UsageError(format!(
@@ -1110,7 +1163,12 @@ impl<'a> BulkCopy<'a> {
 
                 // Check type compatibility
                 let source_col = &source_metadata[source_idx];
-                self.check_type_compatibility(&source_col.sql_type, &dest_col.sql_type, &source_col.column_name, &dest_col.name)?;
+                self.check_type_compatibility(
+                    &source_col.sql_type,
+                    &dest_col.sql_type,
+                    &source_col.column_name,
+                    &dest_col.name,
+                )?;
 
                 resolved_mappings.push(ResolvedColumnMapping {
                     source_index: source_idx,
@@ -1179,47 +1237,50 @@ impl<'a> BulkCopy<'a> {
             (SqlDbType::TinyInt, SqlDbType::SmallInt | SqlDbType::Int | SqlDbType::BigInt) => true,
             (SqlDbType::SmallInt, SqlDbType::Int | SqlDbType::BigInt) => true,
             (SqlDbType::Int, SqlDbType::BigInt) => true,
-            
+
             // Numeric to float conversions
-            (SqlDbType::TinyInt | SqlDbType::SmallInt | SqlDbType::Int | SqlDbType::BigInt, 
-             SqlDbType::Real | SqlDbType::Float) => true,
+            (
+                SqlDbType::TinyInt | SqlDbType::SmallInt | SqlDbType::Int | SqlDbType::BigInt,
+                SqlDbType::Real | SqlDbType::Float,
+            ) => true,
             (SqlDbType::Real, SqlDbType::Float) => true,
-            
+
             // Decimal/Numeric are interchangeable
-            (SqlDbType::Decimal, SqlDbType::Numeric) | (SqlDbType::Numeric, SqlDbType::Decimal) => true,
-            
+            (SqlDbType::Decimal, SqlDbType::Numeric) | (SqlDbType::Numeric, SqlDbType::Decimal) => {
+                true
+            }
+
             // String type conversions (char → varchar, nchar → nvarchar)
             (SqlDbType::Char, SqlDbType::VarChar) => true,
             (SqlDbType::NChar, SqlDbType::NVarChar) => true,
             (SqlDbType::VarChar, SqlDbType::NVarChar) => true, // ASCII → Unicode
-            
+
             // Text type conversions
             (SqlDbType::Text, SqlDbType::VarChar | SqlDbType::NVarChar) => true,
             (SqlDbType::NText, SqlDbType::NVarChar) => true,
             (SqlDbType::VarChar, SqlDbType::Text) => true,
             (SqlDbType::NVarChar, SqlDbType::NText) => true,
-            
+
             // Binary type conversions
             (SqlDbType::Binary, SqlDbType::VarBinary) => true,
             (SqlDbType::VarBinary, SqlDbType::Image) => true,
             (SqlDbType::Image, SqlDbType::VarBinary) => true,
-            
+
             // DateTime conversions
             (SqlDbType::SmallDateTime, SqlDbType::DateTime | SqlDbType::DateTime2) => true,
             (SqlDbType::DateTime, SqlDbType::DateTime2) => true,
             (SqlDbType::Date, SqlDbType::DateTime | SqlDbType::DateTime2) => true,
-            
+
             // Money conversions
             (SqlDbType::SmallMoney, SqlDbType::Money) => true,
-            
+
             // All other combinations are incompatible
             _ => false,
         };
 
         if !compatible {
             return Err(Error::UsageError(format!(
-                "Type mismatch: Cannot convert source column '{}' ({:?}) to destination column '{}' ({:?})",
-                source_name, source_type, dest_name, dest_type
+                "Type mismatch: Cannot convert source column '{source_name}' ({source_type:?}) to destination column '{dest_name}' ({dest_type:?})"
             )));
         }
 
@@ -1281,7 +1342,9 @@ impl<'a> BulkCopy<'a> {
         let destination_metadata = self.retrieve_destination_metadata().await?;
 
         // Resolve column mappings
-        let resolved_mappings = self.resolve_column_mappings(&source_metadata, &destination_metadata).await?;
+        let resolved_mappings = self
+            .resolve_column_mappings(&source_metadata, &destination_metadata)
+            .await?;
 
         // Build destination column metadata for the bulk load message
         // Use the server-provided metadata with exact TDS types
@@ -1307,7 +1370,7 @@ impl<'a> BulkCopy<'a> {
             for _ in 0..batch_size {
                 if let Some(row) = rows.next() {
                     let source_values = row.to_column_values();
-                    
+
                     // Reorder columns according to resolved mappings
                     let mut dest_values = Vec::with_capacity(resolved_mappings.len());
                     for mapping in &resolved_mappings {
@@ -1321,7 +1384,7 @@ impl<'a> BulkCopy<'a> {
                             )));
                         }
                     }
-                    
+
                     batch_rows.push(dest_values);
                 } else {
                     break;
@@ -1346,7 +1409,10 @@ impl<'a> BulkCopy<'a> {
                 None
             };
 
-            let batch_count = self.client.execute_bulk_load(message, timeout_sec, None).await?;
+            let batch_count = self
+                .client
+                .execute_bulk_load(message, timeout_sec, None)
+                .await?;
             total_rows += batch_count;
 
             // Report progress if callback is configured
@@ -1422,10 +1488,7 @@ mod tests {
     #[test]
     fn test_column_mapping_by_ordinal() {
         let mapping = ColumnMapping::by_ordinal(2, "dest_col");
-        assert!(matches!(
-            mapping.source,
-            ColumnMappingSource::Ordinal(2)
-        ));
+        assert!(matches!(mapping.source, ColumnMappingSource::Ordinal(2)));
         assert_eq!(mapping.destination, "dest_col");
     }
 
@@ -1489,19 +1552,37 @@ mod tests {
         let bulk_meta = dest_meta.to_bulk_copy_metadata();
         assert_eq!(bulk_meta.column_name, "TestColumn");
         assert_eq!(bulk_meta.sql_type, SqlDbType::Int);
-        assert_eq!(bulk_meta.tds_type, 0x38); // TDS type for Int
+        assert_eq!(bulk_meta.tds_type, 0x26); // TDS type for IntN (nullable int)
         assert!(bulk_meta.is_nullable);
     }
 
     #[test]
     fn test_map_system_type_id_to_sql_db_type() {
         // Test common types
-        assert_eq!(map_system_type_id_to_sql_db_type(48).unwrap(), SqlDbType::TinyInt);
-        assert_eq!(map_system_type_id_to_sql_db_type(56).unwrap(), SqlDbType::Int);
-        assert_eq!(map_system_type_id_to_sql_db_type(127).unwrap(), SqlDbType::BigInt);
-        assert_eq!(map_system_type_id_to_sql_db_type(231).unwrap(), SqlDbType::NVarChar);
-        assert_eq!(map_system_type_id_to_sql_db_type(167).unwrap(), SqlDbType::VarChar);
-        assert_eq!(map_system_type_id_to_sql_db_type(36).unwrap(), SqlDbType::UniqueIdentifier);
+        assert_eq!(
+            map_system_type_id_to_sql_db_type(48).unwrap(),
+            SqlDbType::TinyInt
+        );
+        assert_eq!(
+            map_system_type_id_to_sql_db_type(56).unwrap(),
+            SqlDbType::Int
+        );
+        assert_eq!(
+            map_system_type_id_to_sql_db_type(127).unwrap(),
+            SqlDbType::BigInt
+        );
+        assert_eq!(
+            map_system_type_id_to_sql_db_type(231).unwrap(),
+            SqlDbType::NVarChar
+        );
+        assert_eq!(
+            map_system_type_id_to_sql_db_type(167).unwrap(),
+            SqlDbType::VarChar
+        );
+        assert_eq!(
+            map_system_type_id_to_sql_db_type(36).unwrap(),
+            SqlDbType::UniqueIdentifier
+        );
 
         // Test unsupported type
         assert!(map_system_type_id_to_sql_db_type(255).is_err());
@@ -1512,7 +1593,7 @@ mod tests {
         // Mock a TdsClient (we just need the table_name field for this test)
         // Note: In real code, we'd use a proper test fixture or mock
         // For now, we'll test the logic directly through the parsing behavior
-        
+
         // Test with schema.table format
         let table_with_schema = "myschema.mytable";
         let (schema, table) = if let Some(dot_pos) = table_with_schema.rfind('.') {
@@ -1540,7 +1621,7 @@ mod tests {
 
     // Tests for type compatibility checking
     // Note: These test the internal logic without needing a full BulkCopy instance
-    
+
     fn check_compat(source: SqlDbType, dest: SqlDbType) -> bool {
         // Exact match
         if source == dest {
@@ -1555,7 +1636,7 @@ mod tests {
             (SqlDbType::SmallInt, SqlDbType::Int | SqlDbType::BigInt) |
             (SqlDbType::Int, SqlDbType::BigInt) |
             // Numeric to float
-            (SqlDbType::TinyInt | SqlDbType::SmallInt | SqlDbType::Int | SqlDbType::BigInt, 
+            (SqlDbType::TinyInt | SqlDbType::SmallInt | SqlDbType::Int | SqlDbType::BigInt,
              SqlDbType::Real | SqlDbType::Float) |
             (SqlDbType::Real, SqlDbType::Float) |
             // Decimal/Numeric
@@ -1595,14 +1676,14 @@ mod tests {
         assert!(check_compat(SqlDbType::TinyInt, SqlDbType::SmallInt));
         assert!(check_compat(SqlDbType::TinyInt, SqlDbType::Int));
         assert!(check_compat(SqlDbType::TinyInt, SqlDbType::BigInt));
-        
+
         // SmallInt can promote to larger integer types
         assert!(check_compat(SqlDbType::SmallInt, SqlDbType::Int));
         assert!(check_compat(SqlDbType::SmallInt, SqlDbType::BigInt));
-        
+
         // Int can promote to BigInt
         assert!(check_compat(SqlDbType::Int, SqlDbType::BigInt));
-        
+
         // But not the reverse
         assert!(!check_compat(SqlDbType::BigInt, SqlDbType::Int));
         assert!(!check_compat(SqlDbType::Int, SqlDbType::SmallInt));
@@ -1615,10 +1696,10 @@ mod tests {
         assert!(check_compat(SqlDbType::SmallInt, SqlDbType::Float));
         assert!(check_compat(SqlDbType::Int, SqlDbType::Float));
         assert!(check_compat(SqlDbType::BigInt, SqlDbType::Real));
-        
+
         // Real can promote to Float
         assert!(check_compat(SqlDbType::Real, SqlDbType::Float));
-        
+
         // But not the reverse
         assert!(!check_compat(SqlDbType::Float, SqlDbType::Real));
     }
@@ -1628,10 +1709,10 @@ mod tests {
         // Char types can convert to Varchar
         assert!(check_compat(SqlDbType::Char, SqlDbType::VarChar));
         assert!(check_compat(SqlDbType::NChar, SqlDbType::NVarChar));
-        
+
         // ASCII to Unicode conversion
         assert!(check_compat(SqlDbType::VarChar, SqlDbType::NVarChar));
-        
+
         // Text type conversions
         assert!(check_compat(SqlDbType::Text, SqlDbType::VarChar));
         assert!(check_compat(SqlDbType::Text, SqlDbType::NVarChar));
@@ -1652,10 +1733,10 @@ mod tests {
         // SmallDateTime can convert to DateTime and DateTime2
         assert!(check_compat(SqlDbType::SmallDateTime, SqlDbType::DateTime));
         assert!(check_compat(SqlDbType::SmallDateTime, SqlDbType::DateTime2));
-        
+
         // DateTime can convert to DateTime2
         assert!(check_compat(SqlDbType::DateTime, SqlDbType::DateTime2));
-        
+
         // Date can convert to DateTime types
         assert!(check_compat(SqlDbType::Date, SqlDbType::DateTime));
         assert!(check_compat(SqlDbType::Date, SqlDbType::DateTime2));
@@ -1666,13 +1747,13 @@ mod tests {
         // String to numeric should not be compatible
         assert!(!check_compat(SqlDbType::VarChar, SqlDbType::Int));
         assert!(!check_compat(SqlDbType::NVarChar, SqlDbType::BigInt));
-        
+
         // Numeric to string should not be compatible
         assert!(!check_compat(SqlDbType::Int, SqlDbType::VarChar));
-        
+
         // DateTime to numeric should not be compatible
         assert!(!check_compat(SqlDbType::DateTime, SqlDbType::Int));
-        
+
         // Binary to string should not be compatible
         assert!(!check_compat(SqlDbType::VarBinary, SqlDbType::VarChar));
     }

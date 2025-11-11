@@ -33,7 +33,7 @@ use crate::{
     token::tokens::{ColMetadataToken, CurrentCommand, Tokens},
 };
 use async_trait::async_trait;
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument, trace};
 
 use crate::{
     core::{CancelHandle, TdsResult},
@@ -237,34 +237,42 @@ impl TdsClient {
     /// - Timeout occurs
     /// - Operation is cancelled
     #[instrument(skip(self), level = "info")]
-    pub async fn fetch_table_metadata(
+    pub(crate) async fn fetch_table_metadata(
         &mut self,
         table_name: &str,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<ColMetadataToken> {
         // Query with TOP 0 to get metadata without fetching actual rows
-        let query = format!("SELECT TOP 0 * FROM {}", table_name);
-        
-        eprintln!("DEBUG: Fetching table metadata with query: {}", query);
-        
+        let query = format!("SELECT TOP 0 * FROM {table_name}");
+
+        debug!("Fetching table metadata with query: {}", query);
+
         // Execute the query
         self.execute(query, timeout_sec, cancel_handle).await?;
-        
+
         // Get the metadata from the result
         let metadata = self.current_metadata.clone().ok_or_else(|| {
-            UsageError(format!("Failed to fetch metadata for table {}", table_name))
+            UsageError(format!("Failed to fetch metadata for table {table_name}"))
         })?;
-        
-        eprintln!("DEBUG: Fetched {} columns from table metadata", metadata.columns.len());
+
+        debug!(
+            "Fetched {} columns from table metadata",
+            metadata.columns.len()
+        );
         for (i, col) in metadata.columns.iter().enumerate() {
-            eprintln!("DEBUG:   Column {}: name='{}', tds_type=0x{:02X}, nullable={}", 
-                i, col.column_name, col.data_type as u8, col.is_nullable());
+            trace!(
+                "Column {}: name='{}', tds_type=0x{:02X}, nullable={}",
+                i,
+                col.column_name,
+                col.data_type as u8,
+                col.is_nullable()
+            );
         }
-        
+
         // Close the query to free up the connection
         self.close_query().await?;
-        
+
         Ok(metadata)
     }
 
@@ -316,7 +324,8 @@ impl TdsClient {
         // STEP 1: Send INSERT BULK command and consume response
         // Uses the standard batch send/consume pattern (reuses send_batch_and_consume_response)
         let insert_bulk_command = message.build_insert_bulk_command();
-        self.send_batch_and_consume_response(insert_bulk_command, timeout_sec, cancel_handle).await?;
+        self.send_batch_and_consume_response(insert_bulk_command, timeout_sec, cancel_handle)
+            .await?;
 
         // STEP 2: Send the COLMETADATA and row data
         let mut packet_writer =
@@ -331,12 +340,12 @@ impl TdsClient {
 
     /// Consumes response tokens until a DONE token is received.
     /// Returns the row count from the DONE token.
-    /// 
+    ///
     /// This helper method implements the standard TDS response consumption pattern,
     /// handling INFO, ERROR, and DONE tokens appropriately.
     async fn consume_done_token(&mut self) -> TdsResult<u64> {
         let parser_context = ParserContext::None(());
-        let mut rows_affected: u64 = 0;
+        let mut rows_affected = 0_u64;
 
         loop {
             let start = Instant::now();
@@ -353,9 +362,10 @@ impl TdsClient {
             match token {
                 Tokens::Done(done) | Tokens::DoneProc(done) | Tokens::DoneInProc(done) => {
                     info!("Done token: {:?}", done);
-                    
-                    rows_affected = done.row_count;
-                    
+
+                    // Accumulate row count from multiple DONE tokens
+                    rows_affected += done.row_count;
+
                     // Stop when we receive a DONE token without the MORE flag
                     if !done.has_more() {
                         break;
@@ -400,7 +410,7 @@ impl TdsClient {
 
     /// Sends a SQL batch and consumes the response without expecting column metadata.
     /// This is used for commands that don't return result sets (DML statements, etc.).
-    /// 
+    ///
     /// Returns the row count from the DONE token.
     async fn send_batch_and_consume_response(
         &mut self,

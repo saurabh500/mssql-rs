@@ -6,15 +6,63 @@ mod common;
 
 mod bulk_copy_with_metadata_tests {
     use crate::common::{begin_connection, create_context, init_tracing};
+    use mssql_tds::connection::bulk_copy::{BulkCopy, BulkCopyRow};
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
+    use mssql_tds::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType, TypeLength};
     use mssql_tds::datatypes::column_values::ColumnValues;
     use mssql_tds::datatypes::sql_string::SqlString;
-    use mssql_tds::message::bulk_load::BulkLoadMessage;
-    use mssql_tds::connection::bulk_copy::BulkCopyOptions;
 
     #[ctor::ctor]
     fn init() {
         init_tracing();
+    }
+
+    // Define a simple test data structure
+    #[derive(Debug, Clone)]
+    struct TestUser {
+        id: i32,
+        name: String,
+        age: i16,
+        active: bool,
+    }
+
+    impl BulkCopyRow for TestUser {
+        fn to_column_values(&self) -> Vec<ColumnValues> {
+            vec![
+                ColumnValues::Int(self.id),
+                ColumnValues::String(SqlString::from_utf8_string(self.name.clone())),
+                ColumnValues::SmallInt(self.age),
+                ColumnValues::Bit(self.active),
+            ]
+        }
+
+        fn column_metadata() -> Vec<BulkCopyColumnMetadata>
+        where
+            Self: Sized,
+        {
+            vec![
+                BulkCopyColumnMetadata::new("id", SqlDbType::Int, SqlDbType::Int.to_tds_type())
+                    .with_length(4, TypeLength::Fixed(4))
+                    .with_nullable(false),
+                BulkCopyColumnMetadata::new(
+                    "name",
+                    SqlDbType::NVarChar,
+                    SqlDbType::NVarChar.to_tds_type(),
+                )
+                .with_length(200, TypeLength::Variable(200))
+                .with_nullable(false),
+                BulkCopyColumnMetadata::new(
+                    "age",
+                    SqlDbType::SmallInt,
+                    SqlDbType::SmallInt.to_tds_type(),
+                )
+                .with_length(2, TypeLength::Fixed(2))
+                .with_nullable(false),
+                BulkCopyColumnMetadata::new("active", SqlDbType::Bit, SqlDbType::Bit.to_tds_type())
+                    .with_length(1, TypeLength::Fixed(1))
+                    .with_nullable(false),
+            ]
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -53,63 +101,43 @@ mod bulk_copy_with_metadata_tests {
         // Close the query to free up the connection
         client.close_query().await.expect("Failed to close query");
 
-        // Fetch metadata from the server
-        let table_metadata = client.fetch_table_metadata("dbo.BulkCopyMetadataTest", None, None)
-            .await
-            .expect("Failed to fetch table metadata");
-
-        println!("DEBUG: Fetched metadata for {} columns", table_metadata.columns.len());
-        
-        // Convert server metadata to bulk copy metadata
-        let bulk_copy_metadata: Vec<_> = table_metadata
-            .columns
-            .iter()
-            .map(|col| col.into())
-            .collect();
-
-        println!("DEBUG: Converted to bulk copy metadata:");
-        for (i, meta) in bulk_copy_metadata.iter().enumerate() {
-            println!("  Column {}: name='{}', tds_type=0x{:02X}, sql_type={:?}", 
-                i, meta.column_name, meta.tds_type, meta.sql_type);
-        }
-
         // Prepare test data
-        let rows = vec![
-            vec![
-                ColumnValues::Int(1),
-                ColumnValues::String(SqlString::from_utf8_string("Alice".to_string())),
-                ColumnValues::SmallInt(30),
-                ColumnValues::Bit(true),
-            ],
-            vec![
-                ColumnValues::Int(2),
-                ColumnValues::String(SqlString::from_utf8_string("Bob".to_string())),
-                ColumnValues::SmallInt(25),
-                ColumnValues::Bit(false),
-            ],
-            vec![
-                ColumnValues::Int(3),
-                ColumnValues::String(SqlString::from_utf8_string("Charlie".to_string())),
-                ColumnValues::SmallInt(35),
-                ColumnValues::Bit(true),
-            ],
+        let test_data = vec![
+            TestUser {
+                id: 1,
+                name: "Alice".to_string(),
+                age: 30,
+                active: true,
+            },
+            TestUser {
+                id: 2,
+                name: "Bob".to_string(),
+                age: 25,
+                active: false,
+            },
+            TestUser {
+                id: 3,
+                name: "Charlie".to_string(),
+                age: 35,
+                active: true,
+            },
         ];
 
-        // Create bulk load message with server-provided metadata
-        let message = BulkLoadMessage::new(
-            "dbo.BulkCopyMetadataTest".to_string(),
-            bulk_copy_metadata,
-            rows,
-            BulkCopyOptions::default(),
+        // Execute bulk copy using public API
+        let result = {
+            let bulk_copy = BulkCopy::new(&mut client, "dbo.BulkCopyMetadataTest");
+            bulk_copy
+                .batch_size(1000)
+                .write_to_server(test_data.into_iter())
+                .await
+                .expect("Bulk copy failed")
+        };
+
+        println!(
+            "DEBUG: Bulk copy completed, rows_affected: {}",
+            result.rows_affected
         );
 
-        // Execute bulk copy
-        let rows_affected = client.execute_bulk_load(message, None, None)
-            .await
-            .expect("Bulk copy failed");
-
-        println!("DEBUG: Bulk copy completed, rows_affected: {}", rows_affected);
-        
         // Check actual row count in database before assertion
         client
             .execute(
@@ -119,14 +147,17 @@ mod bulk_copy_with_metadata_tests {
             )
             .await
             .expect("Failed to count rows");
-        
+
         if let Some(resultset) = client.get_current_resultset() {
             if let Some(row) = resultset.next_row().await.expect("Failed to read count") {
                 println!("DEBUG: Actual rows in database: {:?}", row[0]);
             }
         }
-        client.close_query().await.expect("Failed to close count query");
-        
-        assert_eq!(rows_affected, 3, "Expected 3 rows to be inserted");
+        client
+            .close_query()
+            .await
+            .expect("Failed to close count query");
+
+        assert_eq!(result.rows_affected, 3, "Expected 3 rows to be inserted");
     }
 }
