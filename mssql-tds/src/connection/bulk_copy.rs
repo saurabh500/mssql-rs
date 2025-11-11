@@ -200,61 +200,6 @@ impl DestinationColumnMetadata {
     }
 }
 
-/// Map SQL Server system_type_id to SqlDbType.
-///
-/// This mapping is based on the sys.types catalog view in SQL Server.
-/// Reference: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-types-transact-sql
-fn map_system_type_id_to_sql_db_type(system_type_id: u8) -> Result<SqlDbType, Error> {
-    match system_type_id {
-        // Exact numeric types
-        48 => Ok(SqlDbType::TinyInt),     // tinyint
-        52 => Ok(SqlDbType::SmallInt),    // smallint
-        56 => Ok(SqlDbType::Int),         // int
-        127 => Ok(SqlDbType::BigInt),     // bigint
-        106 => Ok(SqlDbType::Decimal),    // decimal
-        108 => Ok(SqlDbType::Numeric),    // numeric
-        122 => Ok(SqlDbType::SmallMoney), // smallmoney
-        60 => Ok(SqlDbType::Money),       // money
-        104 => Ok(SqlDbType::Bit),        // bit
-
-        // Approximate numeric types
-        59 => Ok(SqlDbType::Real),  // real
-        62 => Ok(SqlDbType::Float), // float
-
-        // Date and time types
-        40 => Ok(SqlDbType::Date),           // date
-        41 => Ok(SqlDbType::Time),           // time
-        42 => Ok(SqlDbType::DateTime2),      // datetime2
-        43 => Ok(SqlDbType::DateTimeOffset), // datetimeoffset
-        58 => Ok(SqlDbType::SmallDateTime),  // smalldatetime
-        61 => Ok(SqlDbType::DateTime),       // datetime
-
-        // Character strings
-        167 => Ok(SqlDbType::VarChar), // varchar
-        175 => Ok(SqlDbType::Char),    // char
-        35 => Ok(SqlDbType::Text),     // text
-
-        // Unicode character strings
-        231 => Ok(SqlDbType::NVarChar), // nvarchar
-        239 => Ok(SqlDbType::NChar),    // nchar
-        99 => Ok(SqlDbType::NText),     // ntext
-
-        // Binary strings
-        165 => Ok(SqlDbType::VarBinary), // varbinary
-        173 => Ok(SqlDbType::Binary),    // binary
-        34 => Ok(SqlDbType::Image),      // image
-
-        // Other types
-        36 => Ok(SqlDbType::UniqueIdentifier), // uniqueidentifier
-        241 => Ok(SqlDbType::Xml),             // xml
-
-        // Unsupported or unknown types
-        _ => Err(Error::UsageError(format!(
-            "Unsupported system_type_id: {system_type_id}"
-        ))),
-    }
-}
-
 /// Options for configuring bulk copy operations.
 ///
 /// These options control various aspects of the bulk copy behavior,
@@ -901,8 +846,8 @@ impl<'a> BulkCopy<'a> {
                     }
                 };
 
-                // Map system_type_id to SqlDbType
-                let sql_type = map_system_type_id_to_sql_db_type(system_type_id)?;
+                // Map system_type_id to SqlDbType using TryFrom trait
+                let sql_type = SqlDbType::try_from(system_type_id)?;
 
                 // TODO: Parse collation_name to create SqlCollation
                 // For now, use None (will be enhanced in future)
@@ -1628,35 +1573,20 @@ mod tests {
     }
 
     #[test]
-    fn test_map_system_type_id_to_sql_db_type() {
-        // Test common types
+    fn test_system_type_id_to_sql_db_type_conversion() {
+        // Test common types using TryFrom trait
+        assert_eq!(SqlDbType::try_from(48).unwrap(), SqlDbType::TinyInt);
+        assert_eq!(SqlDbType::try_from(56).unwrap(), SqlDbType::Int);
+        assert_eq!(SqlDbType::try_from(127).unwrap(), SqlDbType::BigInt);
+        assert_eq!(SqlDbType::try_from(231).unwrap(), SqlDbType::NVarChar);
+        assert_eq!(SqlDbType::try_from(167).unwrap(), SqlDbType::VarChar);
         assert_eq!(
-            map_system_type_id_to_sql_db_type(48).unwrap(),
-            SqlDbType::TinyInt
-        );
-        assert_eq!(
-            map_system_type_id_to_sql_db_type(56).unwrap(),
-            SqlDbType::Int
-        );
-        assert_eq!(
-            map_system_type_id_to_sql_db_type(127).unwrap(),
-            SqlDbType::BigInt
-        );
-        assert_eq!(
-            map_system_type_id_to_sql_db_type(231).unwrap(),
-            SqlDbType::NVarChar
-        );
-        assert_eq!(
-            map_system_type_id_to_sql_db_type(167).unwrap(),
-            SqlDbType::VarChar
-        );
-        assert_eq!(
-            map_system_type_id_to_sql_db_type(36).unwrap(),
+            SqlDbType::try_from(36).unwrap(),
             SqlDbType::UniqueIdentifier
         );
 
         // Test unsupported type
-        assert!(map_system_type_id_to_sql_db_type(255).is_err());
+        assert!(SqlDbType::try_from(255).is_err());
     }
 
     #[test]

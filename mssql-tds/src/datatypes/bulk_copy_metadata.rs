@@ -147,6 +147,70 @@ impl SqlDbType {
     }
 }
 
+/// Convert SQL Server `system_type_id` (from sys.columns.system_type_id) to `SqlDbType`.
+///
+/// This mapping is based on the sys.types catalog view in SQL Server.
+/// The `system_type_id` values are SQL Server's internal type identifiers stored in metadata,
+/// which are different from the TDS protocol type bytes used during data transmission.
+///
+/// Reference: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-types-transact-sql
+impl TryFrom<u8> for SqlDbType {
+    type Error = crate::error::Error;
+
+    fn try_from(system_type_id: u8) -> Result<Self, Self::Error> {
+        use crate::error::Error;
+
+        match system_type_id {
+            // Exact numeric types
+            48 => Ok(SqlDbType::TinyInt),     // tinyint
+            52 => Ok(SqlDbType::SmallInt),    // smallint
+            56 => Ok(SqlDbType::Int),         // int
+            127 => Ok(SqlDbType::BigInt),     // bigint
+            106 => Ok(SqlDbType::Decimal),    // decimal
+            108 => Ok(SqlDbType::Numeric),    // numeric
+            122 => Ok(SqlDbType::SmallMoney), // smallmoney
+            60 => Ok(SqlDbType::Money),       // money
+            104 => Ok(SqlDbType::Bit),        // bit
+
+            // Approximate numeric types
+            59 => Ok(SqlDbType::Real),  // real
+            62 => Ok(SqlDbType::Float), // float
+
+            // Date and time types
+            40 => Ok(SqlDbType::Date),           // date
+            41 => Ok(SqlDbType::Time),           // time
+            42 => Ok(SqlDbType::DateTime2),      // datetime2
+            43 => Ok(SqlDbType::DateTimeOffset), // datetimeoffset
+            58 => Ok(SqlDbType::SmallDateTime),  // smalldatetime
+            61 => Ok(SqlDbType::DateTime),       // datetime
+
+            // Character strings
+            167 => Ok(SqlDbType::VarChar), // varchar
+            175 => Ok(SqlDbType::Char),    // char
+            35 => Ok(SqlDbType::Text),     // text
+
+            // Unicode character strings
+            231 => Ok(SqlDbType::NVarChar), // nvarchar
+            239 => Ok(SqlDbType::NChar),    // nchar
+            99 => Ok(SqlDbType::NText),     // ntext
+
+            // Binary strings
+            165 => Ok(SqlDbType::VarBinary), // varbinary
+            173 => Ok(SqlDbType::Binary),    // binary
+            34 => Ok(SqlDbType::Image),      // image
+
+            // Other types
+            36 => Ok(SqlDbType::UniqueIdentifier), // uniqueidentifier
+            241 => Ok(SqlDbType::Xml),             // xml
+
+            // Unsupported or unknown types
+            _ => Err(Error::UsageError(format!(
+                "Unsupported system_type_id: {system_type_id}"
+            ))),
+        }
+    }
+}
+
 /// Encoding types for character data.
 ///
 /// Represents different character encodings that can be used for string columns,
