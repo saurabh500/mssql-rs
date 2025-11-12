@@ -24,8 +24,8 @@ use crate::{
     },
     datatypes::column_values::ColumnValues,
     handler::handler_factory::NegotiatedSettings,
-    message::{batch::SqlBatch, messages::Request},
     io::token_stream::ParserContext,
+    message::{batch::SqlBatch, messages::Request},
     token::tokens::{ColMetadataToken, CurrentCommand, Tokens},
 };
 use async_trait::async_trait;

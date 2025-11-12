@@ -3,8 +3,8 @@
 
 use crate::connection::transport::network_transport::PRE_NEGOTIATED_PACKET_SIZE;
 use crate::core::CancelHandle;
-use crate::message::messages::PacketType;
 use crate::io::packet_writer::PacketWriter;
+use crate::message::messages::PacketType;
 use std::fmt::Debug;
 use std::io::Cursor;
 use std::ops::{Deref, DerefMut, Index, IndexMut};

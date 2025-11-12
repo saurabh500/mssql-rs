@@ -7,9 +7,9 @@ use tracing::event;
 
 use super::packet_writer::PacketWriter;
 use crate::core::TdsResult;
+use crate::io::reader_writer::NetworkReaderWriter;
 use crate::message::attention::AttentionRequest;
 use crate::message::messages::Request;
-use crate::io::reader_writer::NetworkReaderWriter;
 use std::{
     cmp::min,
     io::{Error, ErrorKind},
