@@ -13,7 +13,7 @@ use crate::core::TdsResult;
 use crate::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, EncodingType, SqlDbType};
 use crate::datatypes::column_values::ColumnValues;
 use crate::error::Error;
-use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
+use crate::io::packet_writer::{PacketWriter, TdsPacketWriter};
 use async_trait::async_trait;
 use tracing::{debug, trace};
 

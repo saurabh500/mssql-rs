@@ -8,9 +8,9 @@ pub mod core;
 pub mod datatypes;
 pub mod error;
 pub mod handler;
+pub mod io;
 pub mod message;
 pub mod query;
-pub mod read_write;
 pub mod token;
 
 // Expose internal APIs for fuzzing
@@ -19,8 +19,8 @@ pub mod fuzz_support {
     // Re-export types that are needed for fuzzing
     // These are pub(crate) in the main crate but exposed here for fuzz targets
     pub use crate::connection::tds_client::TdsClient;
-    pub use crate::read_write::packet_reader::TdsPacketReader;
-    pub use crate::read_write::token_stream::{
+    pub use crate::io::packet_reader::TdsPacketReader;
+    pub use crate::io::token_stream::{
         GenericTokenParserRegistry, ParserContext, TdsTokenStreamReader, TokenParserRegistry,
         TokenStreamReader,
     };
@@ -31,7 +31,7 @@ pub mod fuzz_support {
     use crate::connection::transport::tds_transport::TdsTransport;
     use crate::core::NegotiatedEncryptionSetting;
     use crate::handler::handler_factory::NegotiatedSettings;
-    use crate::read_write::reader_writer::NetworkWriter;
+    use crate::io::reader_writer::NetworkWriter;
 
     use crate::core::{CancelHandle, TdsResult};
     use async_trait::async_trait;

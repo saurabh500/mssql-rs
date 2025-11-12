@@ -14,7 +14,7 @@ use crate::core::{CancelHandle, TdsResult};
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::{Error, TimeoutErrorType};
 use crate::handler::handler_factory::HandlerFactory;
-use crate::read_write::token_stream::GenericTokenParserRegistry;
+use crate::io::token_stream::GenericTokenParserRegistry;
 
 use std::sync::LazyLock;
 

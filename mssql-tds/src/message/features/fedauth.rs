@@ -6,7 +6,7 @@ use tracing::event;
 
 use crate::connection::client_context::TdsAuthenticationMethod;
 use crate::core::TdsResult;
-use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
+use crate::io::packet_writer::{PacketWriter, TdsPacketWriter};
 
 use crate::message::login::{Feature, FeatureExtension};
 

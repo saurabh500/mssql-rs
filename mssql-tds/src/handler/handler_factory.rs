@@ -4,6 +4,9 @@
 use crate::connection::client_context::{ClientContext, TransportContext};
 use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::error::Error;
+use crate::io::packet_reader::TdsPacketReader;
+use crate::io::reader_writer::NetworkReaderWriter;
+use crate::io::token_stream::TdsTokenStreamReader;
 use crate::message::login::{
     EnvChangeProperties, Feature, FeaturesRequest, FedAuthTokenRequest, LoginRequest,
     LoginRequestModel, LoginResponse, LoginResponseModel, LoginResponseStatus,
@@ -12,9 +15,6 @@ use crate::message::messages::Request;
 use crate::message::prelogin::{
     EncryptionType, PreloginRequest, PreloginRequestModel, PreloginResponse,
 };
-use crate::read_write::packet_reader::TdsPacketReader;
-use crate::read_write::reader_writer::NetworkReaderWriter;
-use crate::read_write::token_stream::TdsTokenStreamReader;
 use crate::token::tokens::SqlCollation;
 use tracing::warn;
 use uuid::Uuid;

@@ -11,15 +11,15 @@ use crate::core::{
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::TimeoutErrorType;
 use crate::handler::handler_factory::SessionSettings;
+use crate::io::packet_reader::{PacketReader, TdsPacketReader};
+use crate::io::packet_writer::PacketWriter;
+use crate::io::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
+use crate::io::token_stream::{
+    ParserContext, TdsTokenStreamReader, TokenParserRegistry, TokenParsers,
+};
 use crate::message::attention::AttentionRequest;
 use crate::message::login_options::TdsVersion;
 use crate::message::messages::Request;
-use crate::read_write::packet_reader::{PacketReader, TdsPacketReader};
-use crate::read_write::packet_writer::PacketWriter;
-use crate::read_write::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
-use crate::read_write::token_stream::{
-    ParserContext, TdsTokenStreamReader, TokenParserRegistry, TokenParsers,
-};
 use crate::token::parsers::TokenParser;
 use crate::token::tokens::{DoneStatus, TokenType, Tokens};
 use async_trait::async_trait;

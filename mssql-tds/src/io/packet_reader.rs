@@ -7,9 +7,9 @@ use tracing::event;
 
 use super::packet_writer::PacketWriter;
 use crate::core::TdsResult;
+use crate::io::reader_writer::NetworkReaderWriter;
 use crate::message::attention::AttentionRequest;
 use crate::message::messages::Request;
-use crate::read_write::reader_writer::NetworkReaderWriter;
 use std::{
     cmp::min,
     io::{Error, ErrorKind},
@@ -629,7 +629,7 @@ pub(crate) mod tests {
     use crate::connection::transport::network_transport::TransportSslHandler;
     use crate::core::NegotiatedEncryptionSetting;
     use crate::handler::handler_factory::SessionSettings;
-    use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
+    use crate::io::reader_writer::{NetworkReader, NetworkWriter};
     use async_trait::async_trait;
     use rand::Rng;
 

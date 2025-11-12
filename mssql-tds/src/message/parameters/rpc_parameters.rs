@@ -10,7 +10,7 @@ use crate::{
     core::TdsResult,
     datatypes::sqldatatypes::TdsDataType,
     error::Error,
-    read_write::packet_writer::{PacketWriter, TdsPacketWriter},
+    io::packet_writer::{PacketWriter, TdsPacketWriter},
     token::tokens::SqlCollation,
 };
 
