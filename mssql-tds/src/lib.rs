@@ -24,7 +24,10 @@ pub mod fuzz_support {
         GenericTokenParserRegistry, ParserContext, TdsTokenStreamReader, TokenParserRegistry,
         TokenStreamReader,
     };
-    pub use crate::token::parsers::{DoneTokenParser, EnvChangeTokenParser, TokenParser};
+    pub use crate::token::parsers::common::TokenParser;
+    pub use crate::token::parsers::{
+        FuzzDoneTokenParser as DoneTokenParser, FuzzEnvChangeTokenParser as EnvChangeTokenParser,
+    };
     pub use crate::token::tokens::{SqlCollation, Tokens};
 
     // Import types we need internally

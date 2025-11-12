@@ -19,13 +19,6 @@ async-trait = "0.1"
 members = ["."]
 
 [[bin]]
-name = "fuzz_done_token"
-path = "fuzz_targets/fuzz_done_token.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "fuzz_token_stream"
 path = "fuzz_targets/fuzz_token_stream.rs"
 test = false

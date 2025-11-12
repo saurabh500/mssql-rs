@@ -16,13 +16,14 @@ use crate::{
     token::tokens::{EnvChangeContainer, EnvChangeTokenSubType, SqlCollation, TokenType},
 };
 
+#[cfg(not(fuzzing))]
 #[derive(Default)]
 pub(crate) struct EnvChangeTokenParser {
     // fields omitted
 }
 
-#[derive(Debug, Default)]
 #[cfg(fuzzing)]
+#[derive(Debug, Default)]
 pub struct EnvChangeTokenParser {
     // fields omitted
 }

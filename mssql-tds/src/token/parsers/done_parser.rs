@@ -62,7 +62,7 @@ use crate::{
 };
 
 /// Parser for DONE token (0xFD) - signals completion of a SQL statement
-/// Parser for DONE token (0xFD) - signals completion of a SQL statement
+#[cfg(not(fuzzing))]
 #[derive(Default)]
 pub(crate) struct DoneTokenParser {
     // fields omitted
