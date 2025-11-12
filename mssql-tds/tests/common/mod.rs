@@ -7,17 +7,14 @@ use std::env;
 use std::sync::Once;
 
 use dotenv::dotenv;
-use futures::StreamExt;
 use mssql_tds::connection::client_context::TransportContext;
-use mssql_tds::connection::tds_client::TdsClient;
+use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
 use mssql_tds::core::{EncryptionOptions, TdsResult};
 use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::query::metadata::ColumnMetadata;
 use mssql_tds::{
-    connection::{client_context::ClientContext, tds_connection::TdsConnection},
-    connection_provider::tds_connection_provider::TdsConnectionProvider,
-    core::EncryptionSetting,
-    query::result::{BatchResult, QueryResultType},
+    connection::client_context::ClientContext,
+    connection_provider::tds_connection_provider::TdsConnectionProvider, core::EncryptionSetting,
 };
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
@@ -53,43 +50,6 @@ pub(crate) enum ExpectedQueryResultType {
     Result(u64),
 }
 
-#[allow(clippy::assertions_on_constants)]
-pub async fn assert_matches_expected(qrt: QueryResultType<'_>, expected: &ExpectedQueryResultType) {
-    match (qrt, expected) {
-        (QueryResultType::ResultSet(_), ExpectedQueryResultType::Update(_)) => {
-            assert!(false)
-        }
-        (QueryResultType::DmlResult(_), ExpectedQueryResultType::Result(_)) => {
-            assert!(false)
-        }
-        (
-            QueryResultType::ResultSet(result_set),
-            ExpectedQueryResultType::Result(expected_row_count),
-        ) => {
-            let mut actual_rows: u64 = 0;
-            println!("Columns: {:?}", result_set.get_metadata());
-            let mut row_stream = result_set.into_row_stream().unwrap();
-            while let Some(row) = row_stream.next().await {
-                let mut unwrapped_row = row.unwrap();
-                print!("Row {actual_rows:?}: ");
-                while let Some(cell) = unwrapped_row.next().await {
-                    print!("{:?},", cell.unwrap());
-                }
-                println!();
-                actual_rows += 1;
-            }
-            row_stream.close().await.unwrap();
-            assert_eq!(actual_rows, *expected_row_count);
-        }
-        (
-            QueryResultType::DmlResult(rows_affected),
-            ExpectedQueryResultType::Update(expected_row_count),
-        ) => {
-            assert_eq!(rows_affected, *expected_row_count);
-        }
-    }
-}
-
 pub fn create_context() -> ClientContext {
     dotenv().ok();
     ClientContext {
@@ -120,10 +80,6 @@ pub fn create_context() -> ClientContext {
     }
 }
 
-pub async fn begin_connection(client_context: ClientContext) -> Box<TdsConnection> {
-    create_connection(client_context).await.unwrap()
-}
-
 #[allow(dead_code)]
 pub async fn create_client(client_context: ClientContext) -> TdsResult<TdsClient> {
     let provider = TdsConnectionProvider {};
@@ -131,36 +87,63 @@ pub async fn create_client(client_context: ClientContext) -> TdsResult<TdsClient
     Ok(client)
 }
 
-pub async fn create_connection(context: ClientContext) -> TdsResult<Box<TdsConnection>> {
-    let provider = TdsConnectionProvider {};
-    let connection_result = provider.create_connection(context, None).await?;
-    Ok(Box::new(connection_result))
+#[allow(dead_code)]
+pub async fn begin_connection(client_context: ClientContext) -> TdsClient {
+    create_client(client_context).await.unwrap()
 }
 
 pub async fn validate_results(
-    batch_result: BatchResult<'_>,
+    client: &mut TdsClient,
     expected_results: &[ExpectedQueryResultType],
-) {
-    let mut query_result_stream = batch_result.stream_results();
+) -> TdsResult<()> {
     let mut expected_index = 0;
     println!("Before looping.");
-    while let Some(query_result_type) = query_result_stream.next().await {
-        println!("Current index {expected_index:?}");
-        assert!(expected_index < expected_results.len());
-        let qrt = query_result_type.unwrap();
-        assert_matches_expected(qrt, &expected_results[expected_index]).await;
-        expected_index += 1;
+
+    loop {
+        if let Some(resultset) = client.get_current_resultset() {
+            println!("Current index {expected_index:?}");
+            assert!(expected_index < expected_results.len());
+
+            let expected = &expected_results[expected_index];
+            match expected {
+                ExpectedQueryResultType::Result(expected_row_count) => {
+                    let mut actual_rows: u64 = 0;
+                    println!("Columns: {:?}", resultset.get_metadata());
+
+                    while let Some(row) = resultset.next_row().await? {
+                        print!("Row {actual_rows:?}: ");
+                        for cell in row {
+                            print!("{cell:?},");
+                        }
+                        println!();
+                        actual_rows += 1;
+                    }
+                    assert_eq!(actual_rows, *expected_row_count);
+                }
+                ExpectedQueryResultType::Update(_expected_row_count) => {
+                    // For DML statements, we just drain any rows if present
+                    while resultset.next_row().await?.is_some() {}
+                }
+            }
+            expected_index += 1;
+        }
+
+        if !client.move_to_next().await? {
+            break;
+        }
     }
-    query_result_stream.close().await.unwrap();
+
+    client.close_query().await?;
+    Ok(())
 }
 
 pub async fn run_query_and_check_results(
-    connection: &mut TdsConnection,
+    client: &mut TdsClient,
     query: String,
     expected_results: &[ExpectedQueryResultType],
 ) {
-    let results = connection.execute(query, None, None).await;
-    validate_results(results.unwrap(), expected_results).await;
+    client.execute(query, None, None).await.unwrap();
+    validate_results(client, expected_results).await.unwrap();
 }
 
 #[allow(dead_code)]
@@ -169,87 +152,60 @@ pub async fn connect_query_and_validate(
     expected_results: &[ExpectedQueryResultType],
 ) {
     let context: ClientContext = create_context();
-    let mut connection = begin_connection(context).await;
-    run_query_and_check_results(&mut connection, query, expected_results).await;
+    let mut client = create_client(context).await.unwrap();
+    run_query_and_check_results(&mut client, query, expected_results).await;
 }
 
 // Returns the first column of the first row of the result set, and drains the resultset.
 #[allow(dead_code)]
-pub async fn get_scalar_value<'a, 'n>(
-    batch_result: BatchResult<'n>,
-) -> TdsResult<Option<ColumnValues>>
-where
-    'n: 'a,
-{
+pub async fn get_scalar_value(client: &mut TdsClient) -> TdsResult<Option<ColumnValues>> {
     let mut result = None;
-    let mut query_result_stream = batch_result.stream_results();
 
-    while let Some(query_result_type) = query_result_stream.next().await {
-        let qrt = query_result_type.unwrap();
-        match qrt {
-            QueryResultType::DmlResult(_) => {
-                // Do Nothing. Skip;
-            }
-            QueryResultType::ResultSet(rs) => {
-                let mut rowstream = rs.into_row_stream().unwrap();
-                while let Some(row) = rowstream.next().await {
-                    let mut unwrapped_row = row.unwrap();
-
-                    if let Some(cell) = unwrapped_row.next().await {
-                        result = Some(cell.unwrap());
-                    }
-                    if result.is_some() {
-                        break;
-                    }
+    loop {
+        if let Some(resultset) = client.get_current_resultset() {
+            if let Some(row) = resultset.next_row().await? {
+                if !row.is_empty() {
+                    result = Some(row[0].clone());
+                    break;
                 }
-                rowstream.close().await?;
             }
         }
-        if result.is_some() {
-            query_result_stream.close().await?;
+
+        if !client.move_to_next().await? {
             break;
         }
     }
 
+    client.close_query().await?;
     Ok(result)
 }
 
 // Returns the first row of the result set, and drains the resultset.
 #[allow(dead_code)]
-pub async fn get_first_row<'a, 'n>(
-    batch_result: BatchResult<'n>,
-) -> TdsResult<(Vec<ColumnMetadata>, Vec<ColumnValues>)>
-where
-    'n: 'a,
-{
+pub async fn get_first_row(
+    client: &mut TdsClient,
+) -> TdsResult<(Vec<ColumnMetadata>, Vec<ColumnValues>)> {
     let mut result: Vec<ColumnValues> = Vec::new();
     let mut metadata: Vec<ColumnMetadata> = Vec::new();
-    let mut query_result_stream = batch_result.stream_results();
 
-    while let Some(query_result_type) = query_result_stream.next().await {
-        let qrt = query_result_type.unwrap();
-        match qrt {
-            QueryResultType::DmlResult(_) => {
-                // Do Nothing. Skip;
+    loop {
+        if let Some(resultset) = client.get_current_resultset() {
+            if metadata.is_empty() {
+                metadata = resultset.get_metadata().clone();
             }
-            QueryResultType::ResultSet(rs) => {
-                metadata.append(&mut rs.get_metadata().clone());
-                let mut rowstream = rs.into_row_stream().unwrap();
-                while let Some(row) = rowstream.next().await {
-                    let mut unwrapped_row = row.unwrap();
-                    while let Some(cell) = unwrapped_row.next().await {
-                        result.push(cell.unwrap());
-                    }
-                }
-                rowstream.close().await?;
+
+            if let Some(row) = resultset.next_row().await? {
+                result = row;
+                break;
             }
         }
-        if !result.is_empty() {
-            query_result_stream.close().await?;
+
+        if !client.move_to_next().await? {
             break;
         }
     }
 
+    client.close_query().await?;
     Ok((metadata, result))
 }
 

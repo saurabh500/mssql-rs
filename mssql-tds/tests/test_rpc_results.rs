@@ -6,14 +6,12 @@ mod common;
 
 mod rpc_results {
     use crate::common::{begin_connection, create_context, get_scalar_value, init_tracing};
-    use futures::StreamExt;
+    use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::datatypes::column_values::ColumnValues;
     use mssql_tds::datatypes::sqltypes::SqlType;
     use mssql_tds::{
-        connection::tds_connection::TdsConnection,
         core::TdsResult,
         message::parameters::rpc_parameters::{RpcParameter, StatusFlags},
-        query::result::QueryResultType,
         token::tokenitems::ReturnValueStatus,
     };
 
@@ -59,7 +57,7 @@ mod rpc_results {
 
         let stored_procedure_query = "#TempScrollProc";
 
-        let mut result = connection
+        connection
             .execute_stored_procedure(
                 stored_procedure_query.to_string(),
                 None,
@@ -69,11 +67,8 @@ mod rpc_results {
             )
             .await
             .unwrap();
-        result.close().await.unwrap();
 
-        let return_values = result.retrieve_output_params().unwrap();
-        assert!(return_values.is_some());
-        let returned_parameters = return_values.unwrap();
+        let returned_parameters = connection.get_return_values();
         assert_eq!(returned_parameters.len(), 1);
         let returned_parameter = returned_parameters.first().unwrap();
         assert_eq!(returned_parameter.param_name, "@OutputInt".to_string());
@@ -118,7 +113,7 @@ mod rpc_results {
 
         let stored_procedure_query = "#TempScrollProc";
 
-        let result = connection
+        connection
             .execute_stored_procedure(
                 stored_procedure_query.to_string(),
                 None,
@@ -128,25 +123,20 @@ mod rpc_results {
             )
             .await
             .unwrap();
-        let mut query_result_stream = result.stream_results();
-        while let Some(query_result_type) = query_result_stream.next().await {
-            let qrt = query_result_type.unwrap();
-            match qrt {
-                QueryResultType::DmlResult(_) => {
-                    // Do Nothing. Skip;
-                }
-                QueryResultType::ResultSet(mut rs) => {
-                    // Iterate till the end
-                    rs.close().await.unwrap();
-                }
+
+        // Drain all result sets
+        loop {
+            if let Some(resultset) = connection.get_current_resultset() {
+                while resultset.next_row().await.unwrap().is_some() {}
+            }
+            if !connection.move_to_next().await.unwrap() {
+                break;
             }
         }
 
-        let return_values = query_result_stream.clone_output_params().await.unwrap();
-        assert!(return_values.is_some());
-        let returned_parameters = return_values.unwrap();
-        assert_eq!(returned_parameters.len(), 1);
-        let returned_parameter = returned_parameters.first().unwrap();
+        let return_values = connection.get_return_values();
+        assert_eq!(return_values.len(), 1);
+        let returned_parameter = return_values.first().unwrap();
         assert_eq!(returned_parameter.param_name, "@OutputInt".to_string());
         assert_eq!(returned_parameter.value, ColumnValues::Int(45612));
         assert_eq!(returned_parameter.status, ReturnValueStatus::OutputParam);
@@ -172,12 +162,12 @@ mod rpc_results {
 
         let named_parameters = vec![database_id_param, compat_level_param];
 
-        let batch_result = connection
+        connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
             .await
             .unwrap();
 
-        let scalar_value = get_scalar_value(batch_result).await.unwrap();
+        let scalar_value = get_scalar_value(&mut connection).await.unwrap();
 
         if let Some(ColumnValues::String(value)) = scalar_value {
             assert_eq!(value.to_utf8_string(), "master".to_string());
@@ -200,12 +190,12 @@ mod rpc_results {
 
         let named_parameters = vec![database_id_param];
 
-        let batch_result = connection
+        connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
             .await
             .unwrap();
 
-        let scalar_value = get_scalar_value(batch_result).await.unwrap();
+        let scalar_value = get_scalar_value(&mut connection).await.unwrap();
 
         if let Some(ColumnValues::String(value)) = scalar_value {
             assert_eq!(value.to_utf8_string(), "master".to_string());
@@ -266,16 +256,21 @@ mod rpc_results {
 
         let named_parameters = vec![database_id_param, compat_level_param];
 
-        let mut batch_result = connection
+        connection
             .execute_sp_prepexec(query.to_string(), named_parameters.clone(), None, None)
             .await
             .unwrap();
 
-        // TODD: WE need to check for data being returned as well, but right now the BatchResult ownership is transferred to
-        // the iterators when retrieving data. Hence we cannot use the close() APis and iterators in tandem right now.
-        // Once Batch result is enhanced we need to enhance this test as well.
-        batch_result.close().await.unwrap();
-        let out_params = batch_result.retrieve_output_params().unwrap();
+        // Read the result set
+        if let Some(resultset) = connection.get_current_resultset() {
+            while resultset.next_row().await.unwrap().is_some() {}
+        }
+
+        // Move to next result set to consume remaining tokens (including return values)
+        connection.move_to_next().await.unwrap();
+
+        // Get the prepared handle from output params
+        let out_params = connection.retrieve_output_params().unwrap();
         assert!(out_params.is_some());
         let out_params = out_params.unwrap();
         assert_eq!(out_params.len(), 1);
@@ -289,11 +284,13 @@ mod rpc_results {
         };
         assert_eq!(handle_param.status, ReturnValueStatus::OutputParam);
 
-        let second_result = connection
+        // Execute the prepared statement again
+        connection
             .execute_sp_execute(retrieved_handle, None, Some(named_parameters), None, None)
             .await
             .unwrap();
-        let scalar_value = get_scalar_value(second_result).await.unwrap();
+
+        let scalar_value = get_scalar_value(&mut connection).await.unwrap();
         if let Some(ColumnValues::String(value)) = scalar_value {
             assert_eq!(value.to_utf8_string(), "master".to_string());
         } else {
@@ -307,23 +304,21 @@ mod rpc_results {
     }
 
     // Executes the query and reads till the end of the result.
-    async fn execute_non_query(connection: &mut TdsConnection, query: String) -> TdsResult<()> {
-        let batch_result = connection.execute(query, None, None).await?;
-        let mut query_result_stream = batch_result.stream_results();
+    async fn execute_non_query(
+        connection: &mut mssql_tds::connection::tds_client::TdsClient,
+        query: String,
+    ) -> TdsResult<()> {
+        connection.execute(query, None, None).await?;
 
-        while let Some(query_result_type) = query_result_stream.next().await {
-            let qrt = query_result_type.unwrap();
-            match qrt {
-                QueryResultType::DmlResult(_) => {
-                    // Do Nothing. Skip;
-                }
-                QueryResultType::ResultSet(mut rs) => {
-                    // Iterate till the end
-                    rs.close().await?;
-                }
+        // Drain all result sets
+        loop {
+            if let Some(resultset) = connection.get_current_resultset() {
+                while resultset.next_row().await?.is_some() {}
+            }
+            if !connection.move_to_next().await? {
+                break;
             }
         }
-        query_result_stream.close().await?;
 
         Ok(())
     }

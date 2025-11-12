@@ -7,7 +7,7 @@
 				"x-mcp-ec-organization": "sqlclientdrivers",
 				"x-mcp-ec-project": "mssql-rs",
 				"x-mcp-ec-repository": "mssql-tds",
-				"x-mcp-ec-branch": "main"
+				"x-mcp-ec-branch": "development"
 			}
 		}
 	},

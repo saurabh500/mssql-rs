@@ -21,6 +21,7 @@ use tokio::time::timeout;
 use tracing::event;
 
 #[async_trait]
+#[cfg(not(fuzzing))]
 pub(crate) trait TdsTokenStreamReader {
     async fn receive_token(
         &mut self,
@@ -30,6 +31,18 @@ pub(crate) trait TdsTokenStreamReader {
     ) -> TdsResult<Tokens>;
 }
 
+#[async_trait]
+#[cfg(fuzzing)]
+pub trait TdsTokenStreamReader {
+    async fn receive_token(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<Tokens>;
+}
+
+#[cfg(not(fuzzing))]
 pub(crate) struct TokenStreamReader<T, R>
 where
     T: TdsPacketReader + Send + Sync,
@@ -39,13 +52,31 @@ where
     pub(crate) parser_registry: Box<R>,
 }
 
+#[cfg(fuzzing)]
+pub struct TokenStreamReader<T, R>
+where
+    T: TdsPacketReader + Send + Sync,
+    R: TokenParserRegistry + Send + Sync,
+{
+    pub packet_reader: T,
+    pub parser_registry: Box<R>,
+}
+
 /// `ParserContext` is used to add additional context, which can be leveraged by the token parsers.
 /// One of the usecase is passing the metadata for the columns, to the row parser and to the
 /// NBC row token parser.
 /// The consumer of the TokenStreamReader is supposed to set/reset this context.
 /// Incorrectly managing this context, can lead to bad context being used for subsequent operations.
 #[derive(Debug)]
+#[cfg(not(fuzzing))]
 pub(crate) enum ParserContext {
+    ColumnMetadata(ColMetadataToken),
+    None(()),
+}
+
+#[derive(Debug)]
+#[cfg(fuzzing)]
+pub enum ParserContext {
     ColumnMetadata(ColMetadataToken),
     None(()),
 }
@@ -61,7 +92,16 @@ where
     T: TdsPacketReader + Send + Sync,
     R: TokenParserRegistry + Send + Sync,
 {
+    #[cfg(not(fuzzing))]
     pub(crate) fn new(packet_reader: T, parser_registry: Box<R>) -> TokenStreamReader<T, R> {
+        TokenStreamReader {
+            packet_reader,
+            parser_registry,
+        }
+    }
+
+    #[cfg(fuzzing)]
+    pub fn new(packet_reader: T, parser_registry: Box<R>) -> TokenStreamReader<T, R> {
         TokenStreamReader {
             packet_reader,
             parser_registry,
@@ -72,15 +112,14 @@ where
         // Read the token type so that we can get the right parser for this token.
         // The first byte of the token is the token type.
         let token_type_byte = self.packet_reader.read_byte().await?;
-        let token_type = TokenType::from(token_type_byte);
+        let token_type: crate::token::tokens::TokenType = token_type_byte.try_into()?;
 
         // We should always have a parser for the token type.
-        // If we don't, then we have a bug in the code.
+        // If we don't, then this is an unsupported token type.
         if !self.parser_registry.has_parser(&token_type) {
-            unreachable!(
-                "No parser implemented for token type: {:?}. This is an internal implementation error.",
-                token_type
-            );
+            return Err(crate::error::Error::ProtocolError(format!(
+                "No parser implemented for token type: {token_type:?}. This token type is not supported yet."
+            )));
         }
 
         let parser = self
@@ -180,12 +219,25 @@ where
         token_result
     }
 }
+#[cfg(not(fuzzing))]
 pub(crate) trait TokenParserRegistry: Send + Sync {
     fn has_parser(&self, token_type: &TokenType) -> bool;
     fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers>;
 }
 
+#[cfg(fuzzing)]
+pub trait TokenParserRegistry: Send + Sync {
+    fn has_parser(&self, token_type: &TokenType) -> bool;
+    fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers>;
+}
+
+#[cfg(not(fuzzing))]
 pub(crate) struct GenericTokenParserRegistry {
+    parsers: HashMap<TokenType, TokenParsers>,
+}
+
+#[cfg(fuzzing)]
+pub struct GenericTokenParserRegistry {
     parsers: HashMap<TokenType, TokenParsers>,
 }
 
@@ -308,3 +360,171 @@ impl_from_token_parser!(
     NbcRowTokenParser<GenericDecoder> => NbcRow,
     ReturnValueTokenParser<GenericDecoder> => ReturnValue
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::token::tokens::TokenType;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_parser_context_default() {
+        let context = ParserContext::default();
+        match context {
+            ParserContext::None(_) => {}
+            _ => panic!("Default ParserContext should be None variant"),
+        }
+    }
+
+    #[test]
+    fn test_generic_token_parser_registry_has_all_parsers() {
+        let registry = GenericTokenParserRegistry::default();
+
+        // Test that all expected token types have parsers
+        assert!(registry.has_parser(&TokenType::EnvChange));
+        assert!(registry.has_parser(&TokenType::LoginAck));
+        assert!(registry.has_parser(&TokenType::Done));
+        assert!(registry.has_parser(&TokenType::DoneInProc));
+        assert!(registry.has_parser(&TokenType::DoneProc));
+        assert!(registry.has_parser(&TokenType::Info));
+        assert!(registry.has_parser(&TokenType::Error));
+        assert!(registry.has_parser(&TokenType::FeatureExtAck));
+        assert!(registry.has_parser(&TokenType::FedAuthInfo));
+        assert!(registry.has_parser(&TokenType::ColMetadata));
+        assert!(registry.has_parser(&TokenType::Row));
+        assert!(registry.has_parser(&TokenType::Order));
+        assert!(registry.has_parser(&TokenType::ReturnStatus));
+        assert!(registry.has_parser(&TokenType::NbcRow));
+        assert!(registry.has_parser(&TokenType::ReturnValue));
+    }
+
+    #[test]
+    fn test_generic_token_parser_registry_get_parser() {
+        let registry = GenericTokenParserRegistry::default();
+
+        // Test that we can get parsers for supported token types
+        assert!(registry.get_parser(&TokenType::EnvChange).is_some());
+        assert!(registry.get_parser(&TokenType::Done).is_some());
+        assert!(registry.get_parser(&TokenType::Info).is_some());
+    }
+
+    #[test]
+    fn test_generic_token_parser_registry_unsupported_token() {
+        let registry = GenericTokenParserRegistry::default();
+
+        // Test with an unsupported token type (using a type that's not registered)
+        // This tests the negative case
+        let unsupported_type = TokenType::SSPI; // This token type is not registered in the default registry
+        assert!(!registry.has_parser(&unsupported_type));
+        assert!(registry.get_parser(&unsupported_type).is_none());
+    }
+
+    #[test]
+    fn test_token_parsers_from_conversions() {
+        // Test that all From implementations work correctly
+        let env_change_parser = EnvChangeTokenParser::default();
+        let _: TokenParsers = env_change_parser.into();
+
+        let login_ack_parser = LoginAckTokenParser::default();
+        let _: TokenParsers = login_ack_parser.into();
+
+        let done_parser = DoneTokenParser {};
+        let _: TokenParsers = done_parser.into();
+
+        let done_in_proc_parser = DoneInProcTokenParser::default();
+        let _: TokenParsers = done_in_proc_parser.into();
+
+        let done_proc_parser = DoneProcTokenParser::default();
+        let _: TokenParsers = done_proc_parser.into();
+
+        let info_parser = InfoTokenParser {};
+        let _: TokenParsers = info_parser.into();
+
+        let error_parser = ErrorTokenParser {};
+        let _: TokenParsers = error_parser.into();
+    }
+
+    #[test]
+    fn test_parser_context_variants() {
+        // Test None variant
+        let context_none = ParserContext::None(());
+        match context_none {
+            ParserContext::None(_) => {}
+            _ => panic!("Expected ParserContext::None"),
+        }
+
+        // Test ColumnMetadata variant (would need actual ColMetadataToken to construct)
+        // This tests that the variant exists and can be pattern matched
+    }
+
+    struct MockTokenParserRegistry {
+        parsers: HashMap<TokenType, TokenParsers>,
+    }
+
+    impl MockTokenParserRegistry {
+        fn new() -> Self {
+            Self {
+                parsers: HashMap::new(),
+            }
+        }
+
+        fn add_parser(&mut self, token_type: TokenType, parser: TokenParsers) {
+            self.parsers.insert(token_type, parser);
+        }
+    }
+
+    impl TokenParserRegistry for MockTokenParserRegistry {
+        fn has_parser(&self, token_type: &TokenType) -> bool {
+            self.parsers.contains_key(token_type)
+        }
+
+        fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers> {
+            self.parsers.get(token_type)
+        }
+    }
+
+    #[test]
+    fn test_custom_token_parser_registry() {
+        let mut registry = MockTokenParserRegistry::new();
+
+        // Initially empty
+        assert!(!registry.has_parser(&TokenType::Done));
+
+        // Add a parser
+        registry.add_parser(TokenType::Done, TokenParsers::from(DoneTokenParser {}));
+
+        // Now it should have the parser
+        assert!(registry.has_parser(&TokenType::Done));
+        assert!(registry.get_parser(&TokenType::Done).is_some());
+    }
+
+    #[test]
+    fn test_parser_registry_count() {
+        let registry = GenericTokenParserRegistry::default();
+        let expected_count = 15; // Number of token types registered in default()
+
+        let token_types = [
+            TokenType::EnvChange,
+            TokenType::LoginAck,
+            TokenType::Done,
+            TokenType::DoneInProc,
+            TokenType::DoneProc,
+            TokenType::Info,
+            TokenType::Error,
+            TokenType::FeatureExtAck,
+            TokenType::FedAuthInfo,
+            TokenType::ColMetadata,
+            TokenType::Row,
+            TokenType::Order,
+            TokenType::ReturnStatus,
+            TokenType::NbcRow,
+            TokenType::ReturnValue,
+        ];
+
+        let count = token_types
+            .iter()
+            .filter(|tt| registry.has_parser(tt))
+            .count();
+        assert_eq!(count, expected_count);
+    }
+}

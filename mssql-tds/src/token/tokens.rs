@@ -10,6 +10,7 @@ use super::{
 };
 use crate::datatypes::column_values::ColumnValues;
 use crate::{
+    error::Error,
     message::login::{FeatureExtension, RoutingInfo},
     query::metadata::ColumnMetadata,
 };
@@ -40,31 +41,35 @@ pub enum TokenType {
     TabName = 0xA4,
 }
 
-impl From<u8> for TokenType {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for TokenType {
+    type Error = crate::error::Error;
+
+    fn try_from(value: u8) -> Result<Self, <Self as TryFrom<u8>>::Error> {
         match value {
-            0x88 => TokenType::AltMetadata,
-            0xD3 => TokenType::AltRow,
-            0x81 => TokenType::ColMetadata,
-            0xA5 => TokenType::ColInfo,
-            0xFD => TokenType::Done,
-            0xFE => TokenType::DoneProc,
-            0xFF => TokenType::DoneInProc,
-            0xE3 => TokenType::EnvChange,
-            0xAA => TokenType::Error,
-            0xAE => TokenType::FeatureExtAck,
-            0xEE => TokenType::FedAuthInfo,
-            0xAB => TokenType::Info,
-            0xAD => TokenType::LoginAck,
-            0xD2 => TokenType::NbcRow,
-            0x78 => TokenType::Offset,
-            0xA9 => TokenType::Order,
-            0x79 => TokenType::ReturnStatus,
-            0xAC => TokenType::ReturnValue,
-            0xD1 => TokenType::Row,
-            0xED => TokenType::SSPI,
-            0xA4 => TokenType::TabName,
-            _ => panic!("Unknown token type: {value:#X}"),
+            0x88 => Ok(TokenType::AltMetadata),
+            0xD3 => Ok(TokenType::AltRow),
+            0x81 => Ok(TokenType::ColMetadata),
+            0xA5 => Ok(TokenType::ColInfo),
+            0xFD => Ok(TokenType::Done),
+            0xFE => Ok(TokenType::DoneProc),
+            0xFF => Ok(TokenType::DoneInProc),
+            0xE3 => Ok(TokenType::EnvChange),
+            0xAA => Ok(TokenType::Error),
+            0xAE => Ok(TokenType::FeatureExtAck),
+            0xEE => Ok(TokenType::FedAuthInfo),
+            0xAB => Ok(TokenType::Info),
+            0xAD => Ok(TokenType::LoginAck),
+            0xD2 => Ok(TokenType::NbcRow),
+            0x78 => Ok(TokenType::Offset),
+            0xA9 => Ok(TokenType::Order),
+            0x79 => Ok(TokenType::ReturnStatus),
+            0xAC => Ok(TokenType::ReturnValue),
+            0xD1 => Ok(TokenType::Row),
+            0xED => Ok(TokenType::SSPI),
+            0xA4 => Ok(TokenType::TabName),
+            _ => Err(crate::error::Error::ProtocolError(format!(
+                "Unknown token type: {value:#X}"
+            ))),
         }
     }
 }
@@ -74,7 +79,29 @@ pub trait Token {
 }
 
 #[derive(Debug)]
+#[cfg(not(fuzzing))]
 pub(crate) enum Tokens {
+    Done(DoneToken),
+    DoneInProc(DoneToken),
+    DoneProc(DoneToken),
+    EnvChange(EnvChangeToken),
+    Error(ErrorToken),
+    Info(InfoToken),
+    LoginAck(LoginAckToken),
+    FeatureExtAck(FeatureExtAckToken),
+    FedAuthInfo(FedAuthInfoToken),
+    Sspi(SspiToken),
+    Row(RowToken),
+    ColMetadata(ColMetadataToken),
+    NbcRow(RowToken),
+    Order(OrderToken),
+    ReturnStatus(ReturnStatusToken),
+    ReturnValue(ReturnValueToken),
+}
+
+#[derive(Debug)]
+#[cfg(fuzzing)]
+pub enum Tokens {
     Done(DoneToken),
     DoneInProc(DoneToken),
     DoneProc(DoneToken),
@@ -290,12 +317,18 @@ pub struct SqlCollation {
     pub sort_id: u8,
 }
 
-impl SqlCollation {
-    /// Creates a new SqlCollation from a 5-byte array.
-    pub fn new(collation_bytes: &[u8]) -> Self {
-        let byte_len = collation_bytes.len();
-        if byte_len != 5 && byte_len != 0 {
-            panic!("Collation must be exactly 5 bytes long or none.");
+impl TryFrom<&[u8]> for SqlCollation {
+    type Error = Error;
+
+    fn try_from(collation_bytes: &[u8]) -> Result<Self, Self::Error> {
+        if collation_bytes.len() != 5 {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Invalid collation length: {} (expected 5)",
+                    collation_bytes.len()
+                ),
+            )));
         }
 
         let info = u32::from_ne_bytes([
@@ -309,12 +342,13 @@ impl SqlCollation {
         let lcid_language_id = (info & 0x000FFFFF) as i32; // Lower 16 bits.
         let col_flags = ((info >> 20) & 0xFF) as u8; // Next 8 bits
         let sort_id = collation_bytes[4];
-        SqlCollation {
+
+        Ok(SqlCollation {
             info,
             lcid_language_id,
             col_flags,
             sort_id,
-        }
+        })
     }
 }
 
@@ -394,6 +428,47 @@ impl fmt::Display for SqlCollation {
             self.sort_id,
             self.utf8()
         )
+    }
+}
+
+#[cfg(test)]
+mod sql_collation_tests {
+    use super::*;
+
+    #[test]
+    fn test_try_from_valid() {
+        // Valid 5-byte collation
+        let collation_bytes = [0x09, 0x04, 0xd0, 0x00, 0x34];
+        let collation: SqlCollation = collation_bytes.as_slice().try_into().unwrap();
+        assert_eq!(collation.sort_id, 0x34);
+    }
+
+    #[test]
+    fn test_try_from_invalid_length() {
+        // Invalid length: 4 bytes
+        let collation_bytes = [0x09, 0x04, 0xd0, 0x00];
+        let result: Result<SqlCollation, _> = collation_bytes.as_slice().try_into();
+        assert!(result.is_err());
+
+        // Invalid length: 6 bytes
+        let collation_bytes = [0x09, 0x04, 0xd0, 0x00, 0x34, 0xff];
+        let result: Result<SqlCollation, _> = collation_bytes.as_slice().try_into();
+        assert!(result.is_err());
+
+        // Invalid length: empty
+        let collation_bytes: &[u8] = &[];
+        let result: Result<SqlCollation, _> = collation_bytes.try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_collation_flags() {
+        // Create collation with UTF-8 flag set (flag is in col_flags, which comes from bits 20-27 of info)
+        // UTF-8 flag is 0x40 in col_flags, so we need to set bit 26 of info
+        // info = (0x40 << 20) = 0x04000000
+        let collation_bytes = [0x00, 0x00, 0x00, 0x04, 0x00];
+        let collation: SqlCollation = collation_bytes.as_slice().try_into().unwrap();
+        assert!(collation.utf8());
     }
 }
 
@@ -854,32 +929,34 @@ impl TryFrom<u16> for CurrentCommand {
 
 /// Represents the different sub-types of environment change tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
 pub enum EnvChangeTokenSubType {
-    Database = 1,
-    Language = 2,
-    CharacterSet = 3,
-    PacketSize = 4,
-    UnicodeDataSortingLocalId = 5,
-    UnicodeDataSortingComparisonFlags = 6,
-    SqlCollation = 7,
-    BeginTransaction = 8,
-    CommitTransaction = 9,
-    RollbackTransaction = 10,
-    EnlistDtcTransaction = 11,
-    DefectTransaction = 12,
-    DatabaseMirroringPartner = 13,
-    PromoteTransaction = 15,
-    TransactionManagerAddress = 16,
-    TransactionEnded = 17,
-    ResetConnection = 18,
-    UserInstanceName = 19,
-    Routing = 20,
+    Database,
+    Language,
+    CharacterSet,
+    PacketSize,
+    UnicodeDataSortingLocalId,
+    UnicodeDataSortingComparisonFlags,
+    SqlCollation,
+    BeginTransaction,
+    CommitTransaction,
+    RollbackTransaction,
+    EnlistDtcTransaction,
+    DefectTransaction,
+    DatabaseMirroringPartner,
+    PromoteTransaction,
+    TransactionManagerAddress,
+    TransactionEnded,
+    ResetConnection,
+    UserInstanceName,
+    Routing,
+    Unknown(u8),
 }
 
-impl From<u8> for EnvChangeTokenSubType {
-    fn from(value: u8) -> Self {
-        match value {
+impl TryFrom<u8> for EnvChangeTokenSubType {
+    type Error = crate::error::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Ok(match value {
             1 => EnvChangeTokenSubType::Database,
             2 => EnvChangeTokenSubType::Language,
             3 => EnvChangeTokenSubType::CharacterSet,
@@ -899,9 +976,70 @@ impl From<u8> for EnvChangeTokenSubType {
             18 => EnvChangeTokenSubType::ResetConnection,
             19 => EnvChangeTokenSubType::UserInstanceName,
             20 => EnvChangeTokenSubType::Routing,
-            // Panic on unknown values, since From must be infallible.
-            _ => panic!("Invalid value for EnvChangeTokenSubType: {value}"),
+            unknown => EnvChangeTokenSubType::Unknown(unknown),
+        })
+    }
+}
+
+impl EnvChangeTokenSubType {
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            EnvChangeTokenSubType::Database => 1,
+            EnvChangeTokenSubType::Language => 2,
+            EnvChangeTokenSubType::CharacterSet => 3,
+            EnvChangeTokenSubType::PacketSize => 4,
+            EnvChangeTokenSubType::UnicodeDataSortingLocalId => 5,
+            EnvChangeTokenSubType::UnicodeDataSortingComparisonFlags => 6,
+            EnvChangeTokenSubType::SqlCollation => 7,
+            EnvChangeTokenSubType::BeginTransaction => 8,
+            EnvChangeTokenSubType::CommitTransaction => 9,
+            EnvChangeTokenSubType::RollbackTransaction => 10,
+            EnvChangeTokenSubType::EnlistDtcTransaction => 11,
+            EnvChangeTokenSubType::DefectTransaction => 12,
+            EnvChangeTokenSubType::DatabaseMirroringPartner => 13,
+            EnvChangeTokenSubType::PromoteTransaction => 15,
+            EnvChangeTokenSubType::TransactionManagerAddress => 16,
+            EnvChangeTokenSubType::TransactionEnded => 17,
+            EnvChangeTokenSubType::ResetConnection => 18,
+            EnvChangeTokenSubType::UserInstanceName => 19,
+            EnvChangeTokenSubType::Routing => 20,
+            EnvChangeTokenSubType::Unknown(val) => *val,
         }
+    }
+}
+
+#[cfg(test)]
+mod env_change_tests {
+    use super::*;
+
+    #[test]
+    fn test_env_change_token_subtype_try_from() {
+        // Test valid values
+        assert!(matches!(
+            EnvChangeTokenSubType::try_from(1).unwrap(),
+            EnvChangeTokenSubType::Database
+        ));
+        assert!(matches!(
+            EnvChangeTokenSubType::try_from(20).unwrap(),
+            EnvChangeTokenSubType::Routing
+        ));
+
+        // Test invalid values (should not panic, should return Unknown)
+        assert!(matches!(
+            EnvChangeTokenSubType::try_from(30).unwrap(),
+            EnvChangeTokenSubType::Unknown(30)
+        ));
+        assert!(matches!(
+            EnvChangeTokenSubType::try_from(255).unwrap(),
+            EnvChangeTokenSubType::Unknown(255)
+        ));
+    }
+
+    #[test]
+    fn test_env_change_token_subtype_as_u8() {
+        assert_eq!(EnvChangeTokenSubType::Database.as_u8(), 1);
+        assert_eq!(EnvChangeTokenSubType::Routing.as_u8(), 20);
+        assert_eq!(EnvChangeTokenSubType::Unknown(30).as_u8(), 30);
     }
 }
 

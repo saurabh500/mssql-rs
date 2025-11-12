@@ -44,18 +44,36 @@ pub(crate) struct EnvChangeProperties {
 }
 
 #[derive(Eq, PartialEq, Hash, Debug, Copy, Clone)]
-#[repr(u8)]
 pub(crate) enum FeatureExtension {
-    SRecovery = 0x01,
-    FedAuth = 0x02,
-    AlwaysEncrypted = 0x04,
-    GlobalTransactions = 0x05,
-    AzureSqlSupport = 0x08,
-    DataClassification = 0x09,
-    Utf8Support = 0x0A,
-    SqlDnsCaching = 0x0B,
-    Json = 0x0D,
-    Terminator = 0xFF,
+    SRecovery,
+    FedAuth,
+    AlwaysEncrypted,
+    GlobalTransactions,
+    AzureSqlSupport,
+    DataClassification,
+    Utf8Support,
+    SqlDnsCaching,
+    Json,
+    Terminator,
+    Unknown(u8),
+}
+
+impl FeatureExtension {
+    pub fn as_u8(self) -> u8 {
+        match self {
+            FeatureExtension::SRecovery => 0x01,
+            FeatureExtension::FedAuth => 0x02,
+            FeatureExtension::AlwaysEncrypted => 0x04,
+            FeatureExtension::GlobalTransactions => 0x05,
+            FeatureExtension::AzureSqlSupport => 0x08,
+            FeatureExtension::DataClassification => 0x09,
+            FeatureExtension::Utf8Support => 0x0A,
+            FeatureExtension::SqlDnsCaching => 0x0B,
+            FeatureExtension::Json => 0x0D,
+            FeatureExtension::Terminator => 0xFF,
+            FeatureExtension::Unknown(value) => value,
+        }
+    }
 }
 
 impl From<u8> for FeatureExtension {
@@ -71,7 +89,7 @@ impl From<u8> for FeatureExtension {
             0x0B => FeatureExtension::SqlDnsCaching,
             0x0D => FeatureExtension::Json,
             0xFF => FeatureExtension::Terminator,
-            _ => unreachable!("Invalid Feature Extension."),
+            _ => FeatureExtension::Unknown(value),
         }
     }
 }
@@ -155,7 +173,12 @@ impl FeaturesRequest {
                 }
             }
             None => {
-                unreachable!("Feature not found in the features request.");
+                event!(
+                    Level::WARN,
+                    "Feature {:?} not found in the features request",
+                    _feature_extension
+                );
+                None
             }
         }
     }
@@ -168,7 +191,11 @@ impl FeaturesRequest {
                 f.deserialize(_data);
             }
             None => {
-                unreachable!("Feature not found in the features request.");
+                event!(
+                    Level::WARN,
+                    "Feature {:?} not found in the features request when setting acknowledged",
+                    _feature_extension
+                );
             }
         }
     }
@@ -503,7 +530,13 @@ impl LoginResponse {
                             );
                         }
                         Tokens::Sspi(_t) => {
-                            todo!()
+                            event!(
+                                Level::ERROR,
+                                "SSPI authentication token received but not yet implemented"
+                            );
+                            return Err(crate::error::Error::ProtocolError(
+                                "SSPI authentication is not yet implemented".to_string(),
+                            ));
                         }
                         _ => {
                             event!(
@@ -577,7 +610,7 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
             .write_i32_async(login_record_length)
             .await?;
         self.payload_writer
-            .write_u32_async(self.model.tds_version as u32)
+            .write_u32_async(self.model.tds_version.as_u32())
             .await?;
 
         self.payload_writer

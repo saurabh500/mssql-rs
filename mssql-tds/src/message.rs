@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 pub(crate) mod batch;
+pub(crate) mod bulk_load;
 pub mod parameters;
 
 mod features;

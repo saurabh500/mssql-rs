@@ -23,6 +23,72 @@ use crate::{
 };
 use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 
+// Maximum reasonable allocation size for a single value (100MB)
+// This prevents fuzzer-induced capacity overflow panics
+#[cfg(fuzzing)]
+const MAX_ALLOC_SIZE: usize = 64 * 1024; // 64KB for fuzzing
+#[cfg(not(fuzzing))]
+const MAX_ALLOC_SIZE: usize = 100 * 1024 * 1024;
+
+// Maximum allocation size for PLP (Partial Length Pointer) types
+// SQL Server supports PLP types up to 2GB (i32::MAX is approximately 2.1GB)
+#[cfg(fuzzing)]
+const MAX_PLP_SIZE: usize = 64 * 1024; // 64KB for fuzzing
+#[cfg(not(fuzzing))]
+const MAX_PLP_SIZE: usize = i32::MAX as usize;
+
+// Helper function to validate allocation size before allocating
+#[inline]
+fn validate_alloc_size(size: usize, context: &str) -> TdsResult<()> {
+    if size > MAX_ALLOC_SIZE {
+        #[cfg(fuzzing)]
+        {
+            use std::io::Write;
+            let _ = writeln!(
+                std::io::stderr(),
+                "[ALLOC-REJECT] {} requesting {} bytes (max {})",
+                context,
+                size,
+                MAX_ALLOC_SIZE
+            );
+        }
+
+        return Err(crate::error::Error::ProtocolError(format!(
+            "{context}: allocation size {size} exceeds maximum allowed {MAX_ALLOC_SIZE} bytes"
+        )));
+    }
+    #[cfg(fuzzing)]
+    {
+        use std::io::Write;
+        let _ = writeln!(
+            std::io::stderr(),
+            "[ALLOC-OK] {} requesting {} bytes",
+            context,
+            size
+        );
+    }
+    Ok(())
+}
+
+// Macro to create validated Vec allocations
+#[cfg(fuzzing)]
+macro_rules! safe_vec {
+    ($elem:expr; $size:expr, $context:expr) => {{
+        let size = $size;
+        validate_alloc_size(size, $context)?;
+        vec![$elem; size]
+    }};
+}
+
+#[cfg(not(fuzzing))]
+macro_rules! safe_vec {
+    ($elem:expr; $size:expr, $context:expr) => {{
+        let size = $size;
+        validate_alloc_size(size, $context)?;
+        vec![$elem; size]
+    }};
+}
+
 #[async_trait]
 pub(crate) trait SqlTypeDecode {
     async fn decode<T>(&self, reader: &mut T, metadata: &ColumnMetadata) -> TdsResult<ColumnValues>
@@ -62,7 +128,16 @@ impl GenericDecoder {
         let tds_type = TdsDataType::try_from(variant_base_type)?;
         let variant_prop_bytes = reader.read_byte().await?;
         let bytes_for_type_and_properties_byte = 2;
-        let data_length = length - bytes_for_type_and_properties_byte - (variant_prop_bytes as u32);
+
+        // Use checked arithmetic to prevent integer underflow
+        let data_length = length
+            .checked_sub(bytes_for_type_and_properties_byte)
+            .and_then(|v| v.checked_sub(variant_prop_bytes as u32))
+            .ok_or_else(|| {
+                crate::error::Error::ProtocolError(format!(
+                    "SQL_VARIANT data length calculation underflow: length={length}, prop_bytes={variant_prop_bytes}"
+                ))
+            })?;
 
         let col_value = match variant_prop_bytes {
             0 => {
@@ -83,10 +158,9 @@ impl GenericDecoder {
                 decode_seven_propbyte_variant(reader, tds_type, data_length).await?
             }
             _ => {
-                unreachable!(
-                    "Unexpected variant properties length: {}. This shouldn't have happened. Did the server send the wrong payload?",
-                    variant_prop_bytes
-                );
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "Unexpected SQL variant properties length: {variant_prop_bytes}. Expected 0, 1, 2, or 7. This indicates malformed or invalid data."
+                )));
             }
         };
         Ok(col_value)
@@ -126,12 +200,9 @@ impl GenericDecoder {
                 match tds_type {
                     TdsDataType::Guid => Self::read_guid(reader, data_length as u8).await,
                     TdsDataType::DateN => Self::read_daten(reader, data_length as u8).await,
-                    _ => {
-                        unreachable!(
-                            "For 0 byte property, only Guid and DateN are expected, but got: {:?}",
-                            tds_type
-                        );
-                    }
+                    _ => Err(crate::error::Error::ProtocolError(format!(
+                        "For 0 byte property, only Guid and DateN are expected, but got: {tds_type:?}"
+                    ))),
                 }
             }
         }
@@ -161,10 +232,9 @@ impl GenericDecoder {
                     .await?
             }
             _ => {
-                unreachable!(
-                    "For 1 byte property, only TimeN, DateTime2N and DateTimeOffsetN are expected, but got: {:?}",
-                    tds_type
-                );
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "Invalid SQL_VARIANT: 1-byte property is only valid for TimeN, DateTime2N, and DateTimeOffsetN types, but got: {tds_type:?}"
+                )));
             }
         })
     }
@@ -179,13 +249,15 @@ impl GenericDecoder {
     {
         // Decimal/numeric data type has 1 byte length.
         let length = reader.read_byte().await?;
-        if let TypeInfoVariant::VarLenPrecisionScale(_, _, precision, scale) =
+        let TypeInfoVariant::VarLenPrecisionScale(_, _, precision, scale) =
             metadata.type_info.type_info_variant
-        {
-            GenericDecoder::read_decimal_data(reader, length, precision, scale).await
-        } else {
-            unreachable!("Should never get here")
-        }
+        else {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Invalid type info variant for Decimal/Numeric: expected VarLenPrecisionScale, got: {:?}",
+                metadata.type_info.type_info_variant
+            )));
+        };
+        GenericDecoder::read_decimal_data(reader, length, precision, scale).await
     }
 
     async fn read_decimal_data<T>(
@@ -205,7 +277,22 @@ impl GenericDecoder {
         let is_positive = sign == 1;
 
         let number_of_int_parts = (length - 1) >> 2;
-        let mut int_parts = vec![0i32; number_of_int_parts as usize];
+
+        // Limit decimal parts allocation for fuzzing
+        #[cfg(fuzzing)]
+        const MAX_DECIMAL_INT_PARTS: u8 = 10; // Maximum 10 int parts = 40 bytes
+        #[cfg(not(fuzzing))]
+        const MAX_DECIMAL_INT_PARTS: u8 = 64; // SQL Server max precision is 38, which needs max ~17 int parts
+
+        if number_of_int_parts > MAX_DECIMAL_INT_PARTS {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Decimal int parts {number_of_int_parts} exceeds maximum allowed {MAX_DECIMAL_INT_PARTS} (length was {length})"
+            )));
+        }
+
+        let int_parts_len = number_of_int_parts as usize;
+        validate_alloc_size(int_parts_len * 4, "read_decimal int_parts")?;
+        let mut int_parts = vec![0i32; int_parts_len];
         for part_index in 0..number_of_int_parts {
             int_parts[part_index as usize] = reader.read_int32().await?;
         }
@@ -272,7 +359,12 @@ impl GenericDecoder {
     where
         T: TdsPacketReader + Send + Sync,
     {
-        let time_nanos = self.read_time(reader, byte_len - 3, scale).await?;
+        let time_byte_len = byte_len.checked_sub(3).ok_or_else(|| {
+            crate::error::Error::ProtocolError(format!(
+                "Invalid DateTime2 byte length: {byte_len}. Expected at least 3 bytes for date component."
+            ))
+        })?;
+        let time_nanos = self.read_time(reader, time_byte_len, scale).await?;
         let sql_date = Self::read_date(reader).await?;
         let datetime2 = SqlDateTime2 {
             days: sql_date.get_days(),
@@ -290,10 +382,21 @@ impl GenericDecoder {
     where
         T: TdsPacketReader + Send + Sync,
     {
-        let datetime2 = self.read_datetime2(reader, byte_len - 2, scale).await?;
+        let datetime2_byte_len = byte_len.checked_sub(2).ok_or_else(|| {
+            crate::error::Error::ProtocolError(format!(
+                "Invalid DateTimeOffset byte length: {byte_len}. Expected at least 2 bytes for offset component."
+            ))
+        })?;
+        let datetime2 = self
+            .read_datetime2(reader, datetime2_byte_len, scale)
+            .await?;
         let datetime2 = match datetime2 {
             ColumnValues::DateTime2(dt2) => dt2,
-            _ => unreachable!("Expected DateTime2 variant"),
+            _ => {
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "Internal error: read_datetime2 returned unexpected type: {datetime2:?}"
+                )));
+            }
         };
         let offset = reader.read_int16().await?;
         let datetime_offset = SqlDateTimeOffset { datetime2, offset };
@@ -359,9 +462,17 @@ impl GenericDecoder {
         T: TdsPacketReader + Send + Sync,
     {
         if length > 0 {
-            let mut bytes = vec![0u8; length as usize];
+            // UUID must be exactly 16 bytes
+            if length != 16 {
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "Invalid GUID length: expected 16 bytes, got {length}"
+                )));
+            }
+            let mut bytes = safe_vec![0u8; length as usize, "read_guid"];
             reader.read_bytes(&mut bytes).await?;
-            let unique_id = uuid::Uuid::from_slice_le(&bytes).unwrap();
+            let unique_id = uuid::Uuid::from_slice_le(&bytes).map_err(|e| {
+                crate::error::Error::ProtocolError(format!("Failed to parse UUID: {e}"))
+            })?;
             Ok(ColumnValues::Uuid(unique_id))
         } else {
             Ok(ColumnValues::Null)
@@ -372,7 +483,8 @@ impl GenericDecoder {
     where
         T: TdsPacketReader + Send + Sync,
     {
-        let long_len = reader.read_int64().await? as u64;
+        let long_len_i64 = reader.read_int64().await?;
+        let long_len = long_len_i64 as u64;
 
         // If the length is SQL_PLP_NULL, it means the value is NULL.
         if long_len as usize == Self::SQL_PLP_NULL {
@@ -382,18 +494,84 @@ impl GenericDecoder {
             // gather all the chunks until we reach the end of the PLP data which is a zero length
             // chunk.
             let mut vector_capacity = if long_len as usize != Self::SQL_PLP_UNKNOWNLEN {
-                long_len as usize
+                let capacity = long_len as usize;
+                // Check for overflow or excessively large values
+                // If long_len_i64 was negative, casting to u64 then usize can produce huge values
+                if long_len_i64 < 0 || capacity > MAX_PLP_SIZE {
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "PLP length {capacity} (raw i64: {long_len_i64}) exceeds maximum allowed size of {MAX_PLP_SIZE} bytes"
+                    )));
+                }
+                capacity
             } else {
                 0
             };
             let mut plp_buffer = vec![0u8; vector_capacity];
             let mut chunk_len = reader.read_uint32().await? as usize;
-            let mut offset = 0;
+            let mut offset: usize = 0;
+            let mut chunk_count = 0u32;
+
+            #[cfg(fuzzing)]
+            const MAX_PLP_CHUNKS: u32 = 1000;
+            #[cfg(not(fuzzing))]
+            const MAX_PLP_CHUNKS: u32 = 100000;
+
+            #[cfg(fuzzing)]
+            const MAX_CHUNK_SIZE: usize = 8 * 1024; // 8KB per chunk for fuzzing
+            #[cfg(not(fuzzing))]
+            const MAX_CHUNK_SIZE: usize = 16 * 1024 * 1024; // 16MB per chunk normally
+
             while chunk_len > 0 {
+                chunk_count += 1;
+
+                #[cfg(fuzzing)]
+                {
+                    eprintln!(
+                        "[ALLOC] read_plp_bytes: chunk #{chunk_count}, chunk_len={chunk_len}, total_capacity={vector_capacity}"
+                    );
+                }
+
+                if chunk_count > MAX_PLP_CHUNKS {
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "Too many PLP chunks: {chunk_count} (max {MAX_PLP_CHUNKS})"
+                    )));
+                }
+
+                // Limit individual chunk size
+                if chunk_len > MAX_CHUNK_SIZE {
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "PLP chunk size {chunk_len} exceeds maximum allowed chunk size of {MAX_CHUNK_SIZE} bytes"
+                    )));
+                }
+
                 if long_len as usize == Self::SQL_PLP_UNKNOWNLEN {
-                    vector_capacity += chunk_len;
+                    // Use checked_add to prevent capacity overflow
+                    vector_capacity = vector_capacity.checked_add(chunk_len).ok_or_else(|| {
+                        crate::error::Error::ProtocolError(format!(
+                            "PLP chunk accumulation would overflow capacity: {vector_capacity} + {chunk_len}"
+                        ))
+                    })?;
+                    // Validate against MAX_PLP_SIZE after accumulation
+                    if vector_capacity > MAX_PLP_SIZE {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "PLP accumulated size {vector_capacity} exceeds maximum allowed size of {MAX_PLP_SIZE} bytes (SQL Server limit: 2GB)"
+                        )));
+                    }
                     plp_buffer.resize(vector_capacity, 0);
-                };
+                } else {
+                    // For known length, validate that chunk fits within the allocated buffer
+                    let end_offset = offset.checked_add(chunk_len).ok_or_else(|| {
+                        crate::error::Error::ProtocolError(format!(
+                            "PLP chunk offset would overflow: {offset} + {chunk_len}"
+                        ))
+                    })?;
+                    if end_offset > plp_buffer.len() {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "PLP chunk exceeds declared length: offset={offset}, chunk_len={chunk_len}, buffer_len={}, declared_len={long_len}",
+                            plp_buffer.len()
+                        )));
+                    }
+                }
                 let chunk_size_read = reader
                     .read_bytes(&mut plp_buffer[offset..offset + chunk_len])
                     .await?;
@@ -487,6 +665,11 @@ impl SqlTypeDecode for GenericDecoder {
             }
             TdsDataType::BigBinary => {
                 let length = reader.read_uint16().await?;
+                if length as usize > MAX_ALLOC_SIZE {
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "BigBinary length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+                    )));
+                }
                 let mut bytes = vec![0u8; length as usize];
                 reader.read_bytes(&mut bytes).await?;
                 ColumnValues::Bytes(bytes)
@@ -500,6 +683,11 @@ impl SqlTypeDecode for GenericDecoder {
                     }
                 } else {
                     let length = reader.read_uint16().await?;
+                    if length as usize > MAX_ALLOC_SIZE {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "BigVarBinary length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+                        )));
+                    }
                     let mut bytes = vec![0u8; length as usize];
                     reader.read_bytes(&mut bytes).await?;
                     ColumnValues::Bytes(bytes)
@@ -612,6 +800,11 @@ impl SqlTypeDecode for GenericDecoder {
                 if length == 0 {
                     ColumnValues::Null
                 } else {
+                    if length > MAX_ALLOC_SIZE {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "Image length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+                        )));
+                    }
                     let mut buffer = vec![0u8; length];
                     reader.read_bytes(&mut buffer).await?;
                     ColumnValues::Bytes(buffer)
@@ -634,7 +827,33 @@ impl SqlTypeDecode for GenericDecoder {
                     time: timepart,
                 })
             }
-            _ => unimplemented!("Data type not implemented: {:?}", metadata.data_type),
+            TdsDataType::Decimal => {
+                return Err(crate::error::Error::UnimplementedFeature {
+                    feature: "Fixed-length Decimal type".to_string(),
+                    context: format!(
+                        "Data type {:?} (0x{:02X}) is not implemented. Use DecimalN instead.",
+                        metadata.data_type, metadata.data_type as u8
+                    ),
+                });
+            }
+            TdsDataType::Numeric => {
+                return Err(crate::error::Error::UnimplementedFeature {
+                    feature: "Fixed-length Numeric type".to_string(),
+                    context: format!(
+                        "Data type {:?} (0x{:02X}) is not implemented. Use NumericN instead.",
+                        metadata.data_type, metadata.data_type as u8
+                    ),
+                });
+            }
+            _ => {
+                return Err(crate::error::Error::UnimplementedFeature {
+                    feature: format!("Data type {:?}", metadata.data_type),
+                    context: format!(
+                        "Data type {:?} (0x{:02X}) is not yet supported in the decoder",
+                        metadata.data_type, metadata.data_type as u8
+                    ),
+                });
+            }
         };
         Ok(result)
     }
@@ -687,6 +906,11 @@ impl SqlTypeDecode for StringDecoder {
             if length == 0 {
                 return Ok(ColumnValues::Null);
             } else {
+                if length > MAX_ALLOC_SIZE {
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "Text data length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+                    )));
+                }
                 let mut buffer = vec![0u8; length];
                 reader.read_bytes(&mut buffer).await?;
                 let sql_string = SqlString::new(buffer, encoding_type);
@@ -789,7 +1013,12 @@ where
     Ok(match tds_type {
         // BIGVARBINARYTYPE, BIGBINARYTYPE
         TdsDataType::BigVarBinary | TdsDataType::BigBinary => {
-            let _max_length = reader.read_uint16().await?;
+            let _max_length: u16 = reader.read_uint16().await?;
+            if data_length as usize > MAX_ALLOC_SIZE {
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "SQL Variant binary data length {data_length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+                )));
+            }
             let mut buffer = vec![0u8; data_length as usize];
             reader.read_bytes(&mut buffer).await?;
             ColumnValues::Bytes(buffer)
@@ -814,10 +1043,9 @@ where
             }
         }
         _ => {
-            unreachable!(
-                "Unexpected variant base type for len(2) prop bytes: {:?}",
-                variant_base_type
-            );
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Unexpected SQL variant base type for len(2) prop bytes: {variant_base_type:#04X}. Expected binary or numeric types."
+            )));
         }
     })
 }
@@ -837,7 +1065,12 @@ where
     let mut collation_bytes = vec![0u8; 5];
     reader.read_bytes(&mut collation_bytes).await?;
     let _max_length = reader.read_uint16().await? as usize;
-    let collation = SqlCollation::new(&collation_bytes);
+    let collation: SqlCollation = collation_bytes.as_slice().try_into()?;
+    if data_length as usize > MAX_ALLOC_SIZE {
+        return Err(crate::error::Error::ProtocolError(format!(
+            "SQL Variant string data length {data_length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+        )));
+    }
     let mut buffer = vec![0u8; data_length as usize];
     reader.read_bytes(&mut buffer).await?;
     let encoding = if matches!(tds_type, TdsDataType::NVarChar | TdsDataType::NChar) {
@@ -853,7 +1086,10 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::datatypes::decoder::DecimalParts;
+    use crate::datatypes::{
+        column_values::ColumnValues,
+        decoder::{DecimalParts, GenericDecoder, StringDecoder},
+    };
 
     #[test]
     fn test_f64_conversion() {
@@ -869,5 +1105,223 @@ mod test {
         };
 
         assert_eq!(expected, parts.to_f64());
+    }
+
+    #[test]
+    fn test_f64_conversion_negative() {
+        let expected: f64 = -123456.322;
+
+        // Represents -123456.322 as observed over TDS wire.
+        let int_parts = vec![-539269688, 2];
+        let parts = DecimalParts {
+            is_positive: false,
+            scale: 5,
+            precision: 18,
+            int_parts,
+        };
+
+        assert_eq!(expected, parts.to_f64());
+    }
+
+    #[test]
+    fn test_f64_conversion_zero() {
+        let expected: f64 = 0.0;
+
+        let int_parts = vec![0];
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 1,
+            int_parts,
+        };
+
+        assert_eq!(expected, parts.to_f64());
+    }
+
+    #[test]
+    fn test_f64_conversion_large_number() {
+        // Test conversion with larger numbers
+        let int_parts = vec![100000, 0];
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 7,
+            int_parts,
+        };
+
+        let result = parts.to_f64();
+        // With scale of 2, int value 100000 should become 1000.00
+        assert!((result - 1000.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_decimal_parts_with_multiple_int_parts() {
+        // Test with multiple integer parts to ensure full conversion
+        let int_parts = vec![1000000000, 1];
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 19,
+            int_parts,
+        };
+
+        // Should successfully convert to f64
+        let result = parts.to_f64();
+        assert!(result > 0.0);
+    }
+
+    #[test]
+    fn test_u8_to_column_values() {
+        let value: u8 = 123;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::TinyInt(v) => assert_eq!(v, 123),
+            _ => panic!("Expected TinyInt variant"),
+        }
+    }
+
+    #[test]
+    fn test_i32_to_column_values() {
+        let value: i32 = 12345;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::Int(v) => assert_eq!(v, 12345),
+            _ => panic!("Expected Int variant"),
+        }
+    }
+
+    #[test]
+    fn test_i32_negative_to_column_values() {
+        let value: i32 = -12345;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::Int(v) => assert_eq!(v, -12345),
+            _ => panic!("Expected Int variant"),
+        }
+    }
+
+    #[test]
+    fn test_generic_decoder_default() {
+        let decoder = GenericDecoder::default();
+        // Just verify it can be created
+        assert!(std::mem::size_of_val(&decoder) > 0);
+    }
+
+    #[test]
+    fn test_string_decoder_default() {
+        let decoder = StringDecoder::default();
+        // Just verify it can be created
+        assert!(std::mem::size_of_val(&decoder) > 0);
+    }
+
+    #[test]
+    fn test_decimal_parts_debug() {
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![123, 456],
+        };
+        let debug_str = format!("{parts:?}");
+        // Just verify the debug trait works - don't assert on exact format
+        assert!(!debug_str.is_empty());
+    }
+
+    #[test]
+    fn test_generic_decoder_constants() {
+        assert_eq!(GenericDecoder::SHORTLEN_MAXVALUE, 65535);
+        assert_eq!(GenericDecoder::SQL_PLP_NULL, 0xffffffffffffffff);
+        assert_eq!(GenericDecoder::SQL_PLP_UNKNOWNLEN, 0xfffffffffffffffe);
+    }
+
+    #[test]
+    fn test_decimal_parts_scale_precision() {
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 5,
+            precision: 18,
+            int_parts: vec![100000],
+        };
+
+        // Test that scale affects the decimal conversion
+        let result = parts.to_f64();
+        // With scale of 5, int value 100000 should become 1.00000
+        assert!((result - 1.0).abs() < 0.00001);
+    }
+
+    #[test]
+    fn test_decimal_parts_empty_int_parts() {
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 1,
+            int_parts: vec![],
+        };
+
+        let result = parts.to_f64();
+        assert_eq!(result, 0.0);
+    }
+
+    #[test]
+    fn test_decimal_parts_single_int_part() {
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 5,
+            int_parts: vec![12345],
+        };
+
+        let result = parts.to_f64();
+        assert_eq!(result, 12345.0);
+    }
+
+    #[test]
+    fn test_column_values_from_u8_zero() {
+        let value: u8 = 0;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::TinyInt(v) => assert_eq!(v, 0),
+            _ => panic!("Expected TinyInt variant"),
+        }
+    }
+
+    #[test]
+    fn test_column_values_from_u8_max() {
+        let value: u8 = 255;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::TinyInt(v) => assert_eq!(v, 255),
+            _ => panic!("Expected TinyInt variant"),
+        }
+    }
+
+    #[test]
+    fn test_column_values_from_i32_zero() {
+        let value: i32 = 0;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::Int(v) => assert_eq!(v, 0),
+            _ => panic!("Expected Int variant"),
+        }
+    }
+
+    #[test]
+    fn test_column_values_from_i32_max() {
+        let value: i32 = i32::MAX;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::Int(v) => assert_eq!(v, i32::MAX),
+            _ => panic!("Expected Int variant"),
+        }
+    }
+
+    #[test]
+    fn test_column_values_from_i32_min() {
+        let value: i32 = i32::MIN;
+        let col_val: ColumnValues = value.into();
+        match col_val {
+            ColumnValues::Int(v) => assert_eq!(v, i32::MIN),
+            _ => panic!("Expected Int variant"),
+        }
     }
 }

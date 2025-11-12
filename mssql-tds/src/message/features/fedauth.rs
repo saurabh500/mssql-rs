@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use async_trait::async_trait;
+use tracing::event;
 
 use crate::connection::client_context::TdsAuthenticationMethod;
 use crate::core::TdsResult;
@@ -77,7 +78,7 @@ impl FedAuthFeature {
     /// The workflow identifier is a byte that indicates the type of authentication being used.
     /// The mapping of authentication methods to workflow identifiers is as follows:
     /// Some of the workflow identifiers are re-used.
-    fn get_work_flow_identifier(&self) -> u8 {
+    fn get_work_flow_identifier(&self) -> TdsResult<u8> {
         let active_directory_password: u8 = 0x01;
         let active_directory_integrated: u8 = 0x02;
         let active_directory_interactive: u8 = 0x03;
@@ -89,23 +90,28 @@ impl FedAuthFeature {
         let active_directory_workload_identity: u8 = 0x03; // Using the Interactive byte as that's supported for Identity based authentication
 
         match self.tds_authentication_method {
-            TdsAuthenticationMethod::ActiveDirectoryInteractive => active_directory_interactive,
-            TdsAuthenticationMethod::ActiveDirectoryIntegrated => active_directory_integrated,
-            TdsAuthenticationMethod::ActiveDirectoryPassword => active_directory_password,
+            TdsAuthenticationMethod::ActiveDirectoryInteractive => Ok(active_directory_interactive),
+            TdsAuthenticationMethod::ActiveDirectoryIntegrated => Ok(active_directory_integrated),
+            TdsAuthenticationMethod::ActiveDirectoryPassword => Ok(active_directory_password),
             TdsAuthenticationMethod::ActiveDirectoryServicePrincipal => {
-                active_directory_service_principal
+                Ok(active_directory_service_principal)
             }
             TdsAuthenticationMethod::ActiveDirectoryDeviceCodeFlow => {
-                active_directory_device_code_flow
+                Ok(active_directory_device_code_flow)
             }
             TdsAuthenticationMethod::ActiveDirectoryManagedIdentity => {
-                active_directory_managed_identity
+                Ok(active_directory_managed_identity)
             }
             TdsAuthenticationMethod::ActiveDirectoryWorkloadIdentity => {
-                active_directory_workload_identity
+                Ok(active_directory_workload_identity)
             }
-            TdsAuthenticationMethod::ActiveDirectoryDefault => active_directory_token_credential,
-            _ => unreachable!("Invalid authentication method for FedAuth feature"),
+            TdsAuthenticationMethod::ActiveDirectoryDefault => {
+                Ok(active_directory_token_credential)
+            }
+            _ => Err(crate::error::Error::ProtocolError(format!(
+                "Unsupported authentication method {:?} used with FedAuth feature",
+                self.tds_authentication_method
+            ))),
         }
     }
 
@@ -146,7 +152,7 @@ impl Feature for FedAuthFeature {
 
     async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()> {
         packet_writer
-            .write_byte_async(self.feature_identifier() as u8)
+            .write_byte_async(self.feature_identifier().as_u8())
             .await?;
         packet_writer
             .write_i32_async(self.get_payload_length())
@@ -157,7 +163,7 @@ impl Feature for FedAuthFeature {
             packet_writer.write_i32_async(bytes.len() as i32).await?;
             packet_writer.write_async(bytes).await?;
         } else {
-            let workflow_identifier = self.get_work_flow_identifier();
+            let workflow_identifier = self.get_work_flow_identifier()?;
             packet_writer.write_byte_async(workflow_identifier).await?;
         }
         Ok(())
@@ -165,7 +171,11 @@ impl Feature for FedAuthFeature {
 
     fn deserialize(&self, data: &[u8]) {
         if !data.is_empty() {
-            unreachable!("Invalid data length for FedAuth feature. This is unexpected.");
+            event!(
+                tracing::Level::WARN,
+                "FedAuth feature deserialize received non-empty data of length {}, expected empty. Ignoring.",
+                data.len()
+            );
         }
     }
 
@@ -209,7 +219,13 @@ mod unittests {
             None,
             false,
         );
-        assert_eq!(feature.get_work_flow_identifier(), 0x03);
+        assert_eq!(feature.get_work_flow_identifier().unwrap(), 0x03);
+    }
+
+    #[test]
+    fn test_get_work_flow_identifier_unsupported() {
+        let feature = FedAuthFeature::new(TdsAuthenticationMethod::Password, None, false);
+        assert!(feature.get_work_flow_identifier().is_err());
     }
 
     #[test]

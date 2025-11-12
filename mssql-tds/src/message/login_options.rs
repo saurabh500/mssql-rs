@@ -5,8 +5,9 @@ use crate::connection::client_context::ClientContext;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TdsVersion {
-    V7_4 = 0x74000004,
-    V8_0 = 0x08000000,
+    V7_4,
+    V8_0,
+    Unknown(i32),
 }
 
 impl From<i32> for TdsVersion {
@@ -14,7 +15,23 @@ impl From<i32> for TdsVersion {
         match value {
             0x74000004 => TdsVersion::V7_4,
             0x08000000 => TdsVersion::V8_0,
-            _ => panic!("Invalid value for TdsVersion"),
+            _ => {
+                tracing::warn!(
+                    "Unknown TDS version value: 0x{:08X}, defaulting to TDS 7.4",
+                    value
+                );
+                TdsVersion::Unknown(value)
+            }
+        }
+    }
+}
+
+impl TdsVersion {
+    pub fn as_u32(&self) -> u32 {
+        match self {
+            TdsVersion::V7_4 => 0x74000004,
+            TdsVersion::V8_0 => 0x08000000,
+            TdsVersion::Unknown(value) => *value as u32,
         }
     }
 }
