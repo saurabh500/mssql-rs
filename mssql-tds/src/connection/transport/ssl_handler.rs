@@ -3,7 +3,7 @@
 
 use crate::connection::transport::network_transport::Stream;
 use crate::message::messages::PacketType;
-use crate::read_write::packet_writer::PacketWriter;
+use crate::io::packet_writer::PacketWriter;
 use byteorder::{BigEndian, ByteOrder};
 use native_tls::TlsConnector as NativeTlsConnector;
 use std::io::{Error, IoSlice};

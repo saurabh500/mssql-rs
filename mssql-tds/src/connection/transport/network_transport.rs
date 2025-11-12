@@ -14,10 +14,10 @@ use crate::handler::handler_factory::SessionSettings;
 use crate::message::attention::AttentionRequest;
 use crate::message::login_options::TdsVersion;
 use crate::message::messages::Request;
-use crate::read_write::packet_reader::{PacketReader, TdsPacketReader};
-use crate::read_write::packet_writer::PacketWriter;
-use crate::read_write::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
-use crate::read_write::token_stream::{
+use crate::io::packet_reader::{PacketReader, TdsPacketReader};
+use crate::io::packet_writer::PacketWriter;
+use crate::io::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
+use crate::io::token_stream::{
     ParserContext, TdsTokenStreamReader, TokenParserRegistry, TokenParsers,
 };
 use crate::token::parsers::TokenParser;

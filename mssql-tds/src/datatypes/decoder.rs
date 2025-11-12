@@ -19,7 +19,7 @@ use crate::{
         ColumnValues, SqlDate, SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlMoney,
         SqlSmallDateTime, SqlSmallMoney, SqlTime, SqlXml,
     },
-    read_write::packet_reader::TdsPacketReader,
+    io::packet_reader::TdsPacketReader,
 };
 use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 

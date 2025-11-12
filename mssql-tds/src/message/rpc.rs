@@ -9,7 +9,7 @@ use crate::{
     core::TdsResult,
     datatypes::encoder::GenericEncoder,
     message::messages::PacketType,
-    read_write::packet_writer::{PacketWriter, TdsPacketWriter},
+    io::packet_writer::{PacketWriter, TdsPacketWriter},
     token::tokens::SqlCollation,
 };
 

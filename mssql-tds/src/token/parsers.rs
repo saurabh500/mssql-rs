@@ -20,7 +20,7 @@ use super::{
         ReturnValueToken, RowToken, Tokens,
     },
 };
-use crate::{core::TdsResult, read_write::packet_reader::TdsPacketReader};
+use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
 use crate::{
     core::Version,
     datatypes::{
@@ -33,7 +33,7 @@ use crate::{
         login_options::TdsVersion,
     },
     query::metadata::{ColumnMetadata, MultiPartName},
-    read_write::token_stream::ParserContext,
+    io::token_stream::ParserContext,
     token::{
         fed_auth_info::FedAuthInfoId,
         login_ack::{LoginAckToken, SqlInterfaceType},
@@ -993,7 +993,7 @@ pub(crate) mod tests {
     use crate::{
         core::TdsResult,
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::{
                 PacketReader, TdsPacketReader,
                 tests::{MockNetworkReaderWriter, TestPacketBuilder},

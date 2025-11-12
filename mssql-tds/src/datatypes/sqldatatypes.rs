@@ -3,7 +3,7 @@
 
 use crate::core::TdsResult;
 use crate::error::Error;
-use crate::read_write::packet_reader::TdsPacketReader;
+use crate::io::packet_reader::TdsPacketReader;
 use crate::token::tokens::SqlCollation;
 use std::fmt::format;
 

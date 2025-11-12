@@ -8,7 +8,7 @@ use crate::message::login_options::{
 };
 use crate::message::messages::{PacketType, Request, TdsError};
 
-use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
+use crate::io::packet_writer::{PacketWriter, TdsPacketWriter};
 use crate::token::fed_auth_info::FedAuthInfoToken;
 use crate::token::login_ack::LoginAckToken;
 use crate::token::tokens::{
@@ -21,7 +21,7 @@ use std::fmt::Debug;
 use super::features::fedauth::FedAuthFeature;
 use super::features::utf8::Utf8Feature;
 use crate::core::TdsResult;
-use crate::read_write::token_stream::{ParserContext, TdsTokenStreamReader};
+use crate::io::token_stream::{ParserContext, TdsTokenStreamReader};
 use tracing::{Level, debug, event, info, trace};
 
 pub(crate) const FIXED_LOGIN_RECORD_LENGTH: i32 = 94;

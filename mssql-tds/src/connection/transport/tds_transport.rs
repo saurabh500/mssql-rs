@@ -5,8 +5,8 @@
 //! This allows for different implementations (real network, mock for testing/fuzzing, etc.)
 
 use crate::core::TdsResult;
-use crate::read_write::reader_writer::NetworkWriter;
-use crate::read_write::token_stream::TdsTokenStreamReader;
+use crate::io::reader_writer::NetworkWriter;
+use crate::io::token_stream::TdsTokenStreamReader;
 use async_trait::async_trait;
 
 /// TdsTransport abstracts the transport layer for TDS communication.

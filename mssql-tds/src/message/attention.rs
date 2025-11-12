@@ -4,7 +4,7 @@
 use crate::core::TdsResult;
 use crate::message::headers::write_headers;
 use crate::message::messages::{PacketType, Request};
-use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
+use crate::io::packet_writer::{PacketWriter, TdsPacketWriter};
 use async_trait::async_trait;
 
 pub(crate) struct AttentionRequest {}

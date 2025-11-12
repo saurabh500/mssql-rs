@@ -17,7 +17,7 @@ use crate::{
         sqldatatypes::{FixedLengthTypes, TdsDataType},
     },
     error::Error,
-    read_write::packet_writer::{PacketWriter, TdsPacketWriter},
+    io::packet_writer::{PacketWriter, TdsPacketWriter},
     token::tokens::SqlCollation,
 };
 
@@ -1061,7 +1061,7 @@ mod datetime_tests {
             sqltypes::{NULL_LENGTH, SqlType, get_scale_based_length},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -1431,8 +1431,8 @@ mod datetime_tests {
             scale: 1,
         };
         let mut mock_reader_writer =
-            crate::read_write::packet_reader::tests::MockNetworkReaderWriter::default();
-        let mut packet_writer = crate::read_write::packet_writer::PacketWriter::new(
+            crate::io::packet_reader::tests::MockNetworkReaderWriter::default();
+        let mut packet_writer = crate::io::packet_writer::PacketWriter::new(
             crate::message::messages::PacketType::TabularResult,
             &mut mock_reader_writer,
             None,
@@ -1466,8 +1466,8 @@ mod datetime_tests {
     #[tokio::test]
     async fn test_write_null_time() {
         let mut mock_reader_writer =
-            crate::read_write::packet_reader::tests::MockNetworkReaderWriter::default();
-        let mut packet_writer = crate::read_write::packet_writer::PacketWriter::new(
+            crate::io::packet_reader::tests::MockNetworkReaderWriter::default();
+        let mut packet_writer = crate::io::packet_writer::PacketWriter::new(
             crate::message::messages::PacketType::TabularResult,
             &mut mock_reader_writer,
             None,
@@ -1536,7 +1536,7 @@ mod binary_tests {
             sqltypes::{PLP_TERMINATOR_CHUNK_LEN, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -1673,7 +1673,7 @@ mod nvarchar_tests {
             sqltypes::{PLP_NULL, PLP_TERMINATOR_CHUNK_LEN, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -1826,7 +1826,7 @@ mod bigint_tests {
             sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -1900,7 +1900,7 @@ mod f32_tests {
             sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -1970,7 +1970,7 @@ mod f64_tests {
             sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -2040,7 +2040,7 @@ mod decimalparts_tests {
             sqltypes::{DECIMAL_FIXED_SIZE, NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -2187,7 +2187,7 @@ mod int_tests {
             sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -2285,7 +2285,7 @@ mod smallint_tests {
             sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -2384,7 +2384,7 @@ mod tinyint_tests {
     use bytes::Buf;
 
     use crate::{
-        message::messages::PacketType, read_write::packet_reader::tests::MockNetworkReaderWriter,
+        message::messages::PacketType, io::packet_reader::tests::MockNetworkReaderWriter,
     };
 
     use super::*;
@@ -2454,7 +2454,7 @@ mod bit_tests {
     use bytes::Buf;
 
     use crate::{
-        message::messages::PacketType, read_write::packet_reader::tests::MockNetworkReaderWriter,
+        message::messages::PacketType, io::packet_reader::tests::MockNetworkReaderWriter,
     };
 
     use super::*;
@@ -2552,7 +2552,7 @@ mod xml_tests {
             sqltypes::{NO_XML_SCHEMA, PLP_NULL, PLP_UNKNOWN_LENGTH, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -2690,7 +2690,7 @@ mod uuid_tests {
             sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -2761,7 +2761,7 @@ mod money_tests {
             sqltypes::{NULL_LENGTH, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
@@ -2900,7 +2900,7 @@ mod json_tests {
             sqltypes::{PLP_NULL, PLP_UNKNOWN_LENGTH, SqlType},
         },
         message::messages::PacketType,
-        read_write::{
+        io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },

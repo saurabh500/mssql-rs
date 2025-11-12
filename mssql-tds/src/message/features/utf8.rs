@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use crate::core::TdsResult;
 use crate::{
     message::login::{Feature, FeatureExtension},
-    read_write::packet_writer::{PacketWriter, TdsPacketWriter},
+    io::packet_writer::{PacketWriter, TdsPacketWriter},
 };
 
 #[derive(Debug, Default, Clone, Copy)]

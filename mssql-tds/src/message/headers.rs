@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use crate::{
     connection::execution_context::ExecutionContext,
     core::TdsResult,
-    read_write::packet_writer::{PacketWriter, TdsPacketWriter},
+    io::packet_writer::{PacketWriter, TdsPacketWriter},
 };
 
 pub(crate) const ACTIVITY_ID_LENGTH_IN_BYTES: u32 = 16;

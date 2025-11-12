@@ -3,10 +3,10 @@
 
 use crate::core::{EncryptionSetting, TdsResult};
 use crate::message::messages::{PacketType, Request};
-use crate::read_write::packet_reader::TdsPacketReader;
+use crate::io::packet_reader::TdsPacketReader;
 use crate::{
     core::{SQLServerVersion, Version},
-    read_write::packet_writer::{PacketWriter, TdsPacketWriter},
+    io::packet_writer::{PacketWriter, TdsPacketWriter},
 };
 use async_trait::async_trait;
 use std::collections::VecDeque;
@@ -437,9 +437,9 @@ pub(crate) mod tests {
         OptionType, PreloginRequestModel, PreloginResponse, Serializer,
     };
 
-    use crate::read_write::packet_reader::TdsPacketReader;
-    use crate::read_write::packet_writer::PacketWriter;
-    use crate::read_write::packet_writer::tests::MockNetworkWriter;
+    use crate::io::packet_reader::TdsPacketReader;
+    use crate::io::packet_writer::PacketWriter;
+    use crate::io::packet_writer::tests::MockNetworkWriter;
     use async_trait::async_trait;
     use byteorder::{BigEndian, ReadBytesExt};
     use futures::executor::block_on;

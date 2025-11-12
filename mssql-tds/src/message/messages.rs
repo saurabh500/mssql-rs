@@ -3,7 +3,7 @@
 
 use crate::core::{CancelHandle, NegotiatedEncryptionSetting, TdsResult};
 use crate::{
-    read_write::{packet_writer::PacketWriter, reader_writer::NetworkWriter},
+    io::{packet_writer::PacketWriter, reader_writer::NetworkWriter},
     token::tokens::ErrorToken,
 };
 use async_trait::async_trait;

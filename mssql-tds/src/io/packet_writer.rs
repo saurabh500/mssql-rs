@@ -6,7 +6,7 @@ use crate::core::{CancelHandle, TdsResult};
 use crate::error::Error::TimeoutError;
 use crate::error::TimeoutErrorType;
 use crate::message::messages::{PacketStatusFlags, PacketType};
-use crate::read_write::packet_writer::MessageSendState::{Complete, NotStarted, Partial};
+use crate::io::packet_writer::MessageSendState::{Complete, NotStarted, Partial};
 use async_trait::async_trait;
 use byteorder::{BigEndian, WriteBytesExt};
 use std::io::Cursor;
