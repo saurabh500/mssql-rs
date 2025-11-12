@@ -1,22 +1,19 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-
 use async_trait::async_trait;
 
-use super::common::TokenParser;
 use super::super::tokenitems::ReturnValueStatus;
-use super::super::tokens::{
-    ReturnValueToken, Tokens,
-};
+use super::super::tokens::{ReturnValueToken, Tokens};
+use super::common::TokenParser;
 use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
 use crate::{
     datatypes::{
         decoder::SqlTypeDecode,
         sqldatatypes::{TdsDataType, read_type_info},
     },
-    query::metadata::ColumnMetadata,
     io::token_stream::ParserContext,
+    query::metadata::ColumnMetadata,
 };
 
 pub(crate) struct ReturnValueTokenParser<T>

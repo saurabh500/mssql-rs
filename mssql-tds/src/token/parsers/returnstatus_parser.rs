@@ -1,15 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-
 use async_trait::async_trait;
 
+use super::super::tokens::{ReturnStatusToken, Tokens};
 use super::common::TokenParser;
-use super::super::tokens::{
-    ReturnStatusToken, Tokens,
-};
-use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
 use crate::io::token_stream::ParserContext;
+use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
 
 #[derive(Default)]
 pub(crate) struct ReturnStatusTokenParser {}

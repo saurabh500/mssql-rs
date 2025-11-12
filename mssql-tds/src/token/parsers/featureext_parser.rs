@@ -5,15 +5,10 @@ use std::vec;
 
 use async_trait::async_trait;
 
-use super::common::{TokenParser, MAX_ALLOWED_FE_DATA_IN_BYTES};
-use super::super::tokens::{
-    FeatureExtAckToken, Tokens,
-};
+use super::super::tokens::{FeatureExtAckToken, Tokens};
+use super::common::{MAX_ALLOWED_FE_DATA_IN_BYTES, TokenParser};
 use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
-use crate::{
-    message::login::FeatureExtension,
-    io::token_stream::ParserContext,
-};
+use crate::{io::token_stream::ParserContext, message::login::FeatureExtension};
 
 #[derive(Default)]
 pub(crate) struct FeatureExtAckTokenParser {

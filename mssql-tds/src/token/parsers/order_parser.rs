@@ -5,13 +5,10 @@ use std::vec;
 
 use async_trait::async_trait;
 
-use super::common::TokenParser;
 use super::super::tokens::Tokens;
+use super::common::TokenParser;
 use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
-use crate::{
-    io::token_stream::ParserContext,
-    token::tokens::OrderToken,
-};
+use crate::{io::token_stream::ParserContext, token::tokens::OrderToken};
 
 #[derive(Default)]
 pub(crate) struct OrderTokenParser {}

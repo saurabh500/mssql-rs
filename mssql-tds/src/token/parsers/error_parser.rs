@@ -1,19 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-
 use async_trait::async_trait;
 use tracing::error;
 
+use super::super::tokens::{ErrorToken, Tokens};
 use super::common::TokenParser;
-use super::super::tokens::{
-    ErrorToken, Tokens,
-};
 use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
-use crate::{
-    io::token_stream::ParserContext,
-    token::tokens::TokenType,
-};
+use crate::{io::token_stream::ParserContext, token::tokens::TokenType};
 
 #[derive(Default)]
 pub(crate) struct ErrorTokenParser {

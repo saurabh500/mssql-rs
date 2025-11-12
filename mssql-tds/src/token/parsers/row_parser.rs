@@ -6,16 +6,11 @@ use std::io::Error;
 use async_trait::async_trait;
 use tracing::trace;
 
+use super::super::tokens::{RowToken, Tokens};
 use super::common::TokenParser;
-use super::super::tokens::{
-    RowToken, Tokens,
-};
 use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
 use crate::{
-    datatypes::{
-        column_values::ColumnValues,
-        decoder::SqlTypeDecode,
-    },
+    datatypes::{column_values::ColumnValues, decoder::SqlTypeDecode},
     io::token_stream::ParserContext,
 };
 

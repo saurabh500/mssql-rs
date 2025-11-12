@@ -6,11 +6,9 @@ use std::{io::Error, vec};
 use async_trait::async_trait;
 use tracing::trace;
 
-use super::common::TokenParser;
 use super::super::tokenitems::ReturnValueStatus;
-use super::super::tokens::{
-    ReturnValueToken, RowToken, Tokens,
-};
+use super::super::tokens::{ReturnValueToken, RowToken, Tokens};
+use super::common::TokenParser;
 use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
 use crate::{
     datatypes::{
@@ -18,8 +16,8 @@ use crate::{
         decoder::SqlTypeDecode,
         sqldatatypes::{TdsDataType, read_type_info},
     },
-    query::metadata::ColumnMetadata,
     io::token_stream::ParserContext,
+    query::metadata::ColumnMetadata,
 };
 
 pub(crate) struct NbcRowTokenParser<T>
@@ -143,4 +141,3 @@ impl<T: SqlTypeDecode + Sync, P: TdsPacketReader + Send + Sync> TokenParser<P>
         Ok(Tokens::from(RowToken::new(all_values)))
     }
 }
-

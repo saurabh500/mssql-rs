@@ -6,14 +6,11 @@ use std::{io::Error, vec};
 use async_trait::async_trait;
 use tracing::debug;
 
-use super::common::TokenParser;
 use super::super::fed_auth_info::FedAuthInfoToken;
 use super::super::tokens::Tokens;
+use super::common::TokenParser;
 use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
-use crate::{
-    io::token_stream::ParserContext,
-    token::fed_auth_info::FedAuthInfoId,
-};
+use crate::{io::token_stream::ParserContext, token::fed_auth_info::FedAuthInfoId};
 
 #[derive(Default)]
 pub(crate) struct FedAuthInfoTokenParser {

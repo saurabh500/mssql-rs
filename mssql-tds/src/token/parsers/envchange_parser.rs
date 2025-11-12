@@ -7,18 +7,13 @@ use async_trait::async_trait;
 use byteorder::{ByteOrder, LittleEndian};
 use tracing::event;
 
+use super::super::tokens::{EnvChangeToken, Tokens};
 use super::common::TokenParser;
-use super::super::tokens::{
-    EnvChangeToken, Tokens,
-};
 use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
 use crate::{
-    message::login::RoutingInfo,
     io::token_stream::ParserContext,
-    token::tokens::{
-            EnvChangeContainer,
-            EnvChangeTokenSubType, SqlCollation, TokenType,
-        },
+    message::login::RoutingInfo,
+    token::tokens::{EnvChangeContainer, EnvChangeTokenSubType, SqlCollation, TokenType},
 };
 
 #[derive(Default)]

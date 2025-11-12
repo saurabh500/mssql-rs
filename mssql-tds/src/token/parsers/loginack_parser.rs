@@ -1,17 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-
 use async_trait::async_trait;
 use tracing::event;
 
-use super::common::TokenParser;
 use super::super::tokens::Tokens;
+use super::common::TokenParser;
 use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
 use crate::{
     core::Version,
-    message::login_options::{TdsVersion},
     io::token_stream::ParserContext,
+    message::login_options::TdsVersion,
     token::{
         login_ack::{LoginAckToken, SqlInterfaceType},
         tokens::TokenType,

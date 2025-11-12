@@ -1,19 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-
 use async_trait::async_trait;
 
+use super::super::tokens::{DoneToken, Tokens};
 use super::common::TokenParser;
-use super::super::tokens::{
-    DoneToken, Tokens,
-};
 use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
 use crate::{
     io::token_stream::ParserContext,
-    token::tokens::{
-            CurrentCommand, DoneStatus,
-        },
+    token::tokens::{CurrentCommand, DoneStatus},
 };
 
 #[derive(Default)]

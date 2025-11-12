@@ -3,8 +3,11 @@
 
 //! Common types and traits for token parsers.
 
+use crate::{
+    core::TdsResult, io::packet_reader::TdsPacketReader, io::token_stream::ParserContext,
+    token::tokens::Tokens,
+};
 use async_trait::async_trait;
-use crate::{core::TdsResult, io::packet_reader::TdsPacketReader, io::token_stream::ParserContext, token::tokens::Tokens};
 
 /// Maximum allowed size for Feature Extension acknowledgment data.
 pub(crate) const MAX_ALLOWED_FE_DATA_IN_BYTES: usize = 1024;

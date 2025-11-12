@@ -5,13 +5,13 @@ use std::io::Error;
 
 use async_trait::async_trait;
 
-use super::common::TokenParser;
 use super::super::tokens::Tokens;
+use super::common::TokenParser;
 use crate::{core::TdsResult, io::packet_reader::TdsPacketReader};
 use crate::{
     datatypes::sqldatatypes::{TdsDataType, read_type_info},
-    query::metadata::{ColumnMetadata, MultiPartName},
     io::token_stream::ParserContext,
+    query::metadata::{ColumnMetadata, MultiPartName},
     token::tokens::ColMetadataToken,
 };
 
