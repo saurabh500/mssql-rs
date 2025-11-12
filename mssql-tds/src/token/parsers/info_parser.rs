@@ -87,26 +87,26 @@ where
     async fn parse(&self, reader: &mut T, _context: &ParserContext) -> TdsResult<Tokens> {
         // Read token length (2 bytes) - total length excluding this field
         let _length = reader.read_uint16().await?;
-        
+
         // Read message number (4 bytes) - informational code
         let number = reader.read_uint32().await?;
-        
+
         // Read state (1 byte) - internal state code
         let state = reader.read_byte().await?;
-        
+
         // Read severity (1 byte) - typically 0-10 for INFO tokens
         let severity = reader.read_byte().await?;
-        
+
         // Read message text (US_VARCHAR with 2-byte length prefix)
         // Message is in UTF-16 LE format
         let message = reader.read_varchar_u16_length().await?;
-        
+
         // Read server name (B_VARCHAR with 1-byte length prefix)
         let server_name = reader.read_varchar_u8_length().await?;
-        
+
         // Read procedure name (B_VARCHAR with 1-byte length prefix)
         let proc_name = reader.read_varchar_u8_length().await?;
-        
+
         // Read line number (4 bytes) - line where message originated
         let line_number = reader.read_uint32().await?;
 

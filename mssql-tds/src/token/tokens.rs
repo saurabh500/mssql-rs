@@ -761,22 +761,22 @@ pub static CODE_PAGE_FROM_SORT_ID: [Option<u16>; 256] = [
 pub(crate) struct ErrorToken {
     /// SQL Server error number (e.g., 208 for "invalid object name")
     pub number: u32,
-    
+
     /// Internal state code (indicates position in SQL Server's state machine)
     pub state: u8,
-    
+
     /// Error severity (11-25 for errors, typically 16 for user errors)
     pub severity: u8,
-    
+
     /// Human-readable error message
     pub message: String,
-    
+
     /// Name of the SQL Server instance that generated the error
     pub server_name: String,
-    
+
     /// Name of stored procedure where error occurred (empty if not in proc)
     pub proc_name: String,
-    
+
     /// Line number in batch or procedure where error occurred
     pub line_number: u32,
 }
@@ -815,22 +815,22 @@ impl Token for ErrorToken {
 pub(crate) struct InfoToken {
     /// Message number (informational code, e.g., 5701 for database change)
     pub number: u32,
-    
+
     /// Internal state code
     pub state: u8,
-    
+
     /// Message severity (typically 0-10 for INFO tokens)
     pub severity: u8,
-    
+
     /// Human-readable message text
     pub message: String,
-    
+
     /// Name of the SQL Server instance
     pub server_name: String,
-    
+
     /// Name of stored procedure if applicable
     pub proc_name: String,
-    
+
     /// Line number where message originated
     pub line_number: u32,
 }
@@ -867,11 +867,11 @@ pub(crate) struct DoneToken {
     /// - DONE_COUNT (0x10): Row count is valid
     /// - DONE_ATTN (0x20): Attention acknowledgment
     pub status: DoneStatus,
-    
+
     /// The type of SQL command that completed
     /// (SELECT, INSERT, UPDATE, DELETE, etc.)
     pub cur_cmd: CurrentCommand,
-    
+
     /// Number of rows affected by the statement
     /// Only valid if DONE_COUNT flag is set in status
     pub row_count: u64,
@@ -957,7 +957,7 @@ impl Token for ReturnStatusToken {
 /// BEGIN
 ///     SELECT @count = COUNT(*) FROM Users;
 /// END
-/// 
+///
 /// -- Execution:
 /// DECLARE @c INT;
 /// EXEC spGetUserCount @count = @c OUTPUT;
@@ -971,16 +971,16 @@ impl Token for ReturnStatusToken {
 pub(crate) struct ReturnValueToken {
     /// Ordinal position of the parameter (0-based)
     pub param_ordinal: u16,
-    
+
     /// Name of the OUTPUT parameter (e.g., "@count")
     pub param_name: String,
-    
+
     /// The actual value being returned
     pub value: ColumnValues,
-    
+
     /// Metadata describing the parameter's data type
     pub column_metadata: Box<ColumnMetadata>,
-    
+
     /// Status of the return value
     /// (indicates if value is default, NULL, etc.)
     pub status: ReturnValueStatus,

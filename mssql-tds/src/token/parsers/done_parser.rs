@@ -82,12 +82,12 @@ where
         // Read status flags (2 bytes) - indicates completion state
         let status = reader.read_uint16().await?;
         let done_status = DoneStatus::from(status);
-        
+
         // Read current command type (2 bytes) - what operation completed
         let current_command_value = reader.read_uint16().await?;
         let current_command =
             CurrentCommand::try_from(current_command_value).unwrap_or(CurrentCommand::None);
-        
+
         // Read row count (8 bytes) - number of rows affected
         // Valid only if DONE_COUNT flag (0x10) is set in status
         let row_count = reader.read_uint64().await?;

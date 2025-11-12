@@ -125,16 +125,16 @@ impl<D: SqlTypeDecode + Default + Send + Sync, P: TdsPacketReader + Send + Sync>
 
         // Get metadata for all columns in the result set
         let all_metadata = &column_metadata_token.columns;
-        
+
         // Pre-allocate vector for column values
         let mut all_values: Vec<ColumnValues> =
             Vec::with_capacity(column_metadata_token.column_count as usize);
-        
+
         // Parse each column value in order
         // The decoder knows how to read each SQL type based on its metadata
         for metadata in all_metadata {
             trace!("Metadata: {:?}", metadata);
-            
+
             // Decode the value according to its data type
             // This handles:
             // - NULL values
@@ -144,7 +144,7 @@ impl<D: SqlTypeDecode + Default + Send + Sync, P: TdsPacketReader + Send + Sync>
 
             all_values.push(column_value);
         }
-        
+
         // Construct the complete row token with all column values
         Ok(Tokens::from(RowToken::new(all_values)))
     }

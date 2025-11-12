@@ -84,16 +84,16 @@ where
             "Parsing Error token with type: 0x{:02X}",
             TokenType::Error as u8
         );
-        
+
         // Read token length (2 bytes) - total length excluding this field
         let _ = reader.read_uint16().await?;
-        
+
         // Read error number (4 bytes) - SQL Server error code
         let number = reader.read_uint32().await?;
-        
+
         // Read state (1 byte) - internal state code
         let state = reader.read_byte().await?;
-        
+
         // Read severity (1 byte) - error severity level (0-25)
         let severity = reader.read_byte().await?;
 
@@ -101,10 +101,10 @@ where
         // Message is in UTF-16 LE format
         let message = reader.read_varchar_u16_length().await?.unwrap_or_default();
         error!("Error message: {:?}", message);
-        
+
         // Read server name (B_VARCHAR with 1-byte length prefix)
         let server_name = reader.read_varchar_u8_length().await?;
-        
+
         // Read procedure name (B_VARCHAR with 1-byte length prefix)
         // Empty if error not in a stored procedure
         let proc_name = reader.read_varchar_u8_length().await?;

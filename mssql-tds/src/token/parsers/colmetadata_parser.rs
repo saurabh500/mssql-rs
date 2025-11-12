@@ -134,7 +134,7 @@ where
 
         // Pre-allocate vector for column metadata
         let mut column_metadata: Vec<ColumnMetadata> = Vec::with_capacity(col_count as usize);
-        
+
         // Parse each column definition
         for _ in 0..col_count {
             // User-defined type identifier (4 bytes)
@@ -154,7 +154,7 @@ where
                 )));
             }
             let data_type = some_data_type?;
-            
+
             // Type-specific information (variable length)
             // Structure depends on data_type (see sqldatatypes.rs)
             // Type-specific information (variable length)
@@ -207,7 +207,7 @@ where
                 column_name: col_name,
                 multi_part_name,
             };
-            
+
             // Check for Always Encrypted columns (not yet supported)
             if col_metadata.is_encrypted() {
                 return Err(crate::error::Error::ProtocolError(
@@ -217,7 +217,7 @@ where
 
             column_metadata.push(col_metadata);
         }
-        
+
         // Construct the complete metadata token
         let metadata = ColMetadataToken {
             column_count: col_count,
