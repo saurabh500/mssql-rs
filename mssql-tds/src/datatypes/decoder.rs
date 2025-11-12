@@ -54,8 +54,7 @@ fn validate_alloc_size(size: usize, context: &str) -> TdsResult<()> {
         }
 
         return Err(crate::error::Error::ProtocolError(format!(
-            "{}: allocation size {} exceeds maximum allowed {} bytes",
-            context, size, MAX_ALLOC_SIZE
+            "{context}: allocation size {size} exceeds maximum allowed {MAX_ALLOC_SIZE} bytes"
         )));
     }
     #[cfg(fuzzing)]
@@ -286,8 +285,7 @@ impl GenericDecoder {
 
         if number_of_int_parts > MAX_DECIMAL_INT_PARTS {
             return Err(crate::error::Error::ProtocolError(format!(
-                "Decimal int parts {} exceeds maximum allowed {} (length was {})",
-                number_of_int_parts, MAX_DECIMAL_INT_PARTS, length
+                "Decimal int parts {number_of_int_parts} exceeds maximum allowed {MAX_DECIMAL_INT_PARTS} (length was {length})"
             )));
         }
 
@@ -496,8 +494,7 @@ impl GenericDecoder {
                 // If long_len_i64 was negative, casting to u64 then usize can produce huge values
                 if long_len_i64 < 0 || capacity > MAX_PLP_SIZE {
                     return Err(crate::error::Error::ProtocolError(format!(
-                        "PLP length {} (raw i64: {}) exceeds maximum allowed size of {} bytes",
-                        capacity, long_len_i64, MAX_PLP_SIZE
+                        "PLP length {capacity} (raw i64: {long_len_i64}) exceeds maximum allowed size of {MAX_PLP_SIZE} bytes"
                     )));
                 }
                 capacity
@@ -525,23 +522,20 @@ impl GenericDecoder {
                 #[cfg(fuzzing)]
                 {
                     eprintln!(
-                        "[ALLOC] read_plp_bytes: chunk #{}, chunk_len={}, total_capacity={}",
-                        chunk_count, chunk_len, vector_capacity
+                        "[ALLOC] read_plp_bytes: chunk #{chunk_count}, chunk_len={chunk_len}, total_capacity={vector_capacity}"
                     );
+                }
 
-                    if chunk_count > MAX_PLP_CHUNKS {
-                        return Err(crate::error::Error::ProtocolError(format!(
-                            "Too many PLP chunks: {} (max {})",
-                            chunk_count, MAX_PLP_CHUNKS
-                        )));
-                    }
+                if chunk_count > MAX_PLP_CHUNKS {
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "Too many PLP chunks: {chunk_count} (max {MAX_PLP_CHUNKS})"
+                    )));
                 }
 
                 // Limit individual chunk size
                 if chunk_len > MAX_CHUNK_SIZE {
                     return Err(crate::error::Error::ProtocolError(format!(
-                        "PLP chunk size {} exceeds maximum allowed chunk size of {} bytes",
-                        chunk_len, MAX_CHUNK_SIZE
+                        "PLP chunk size {chunk_len} exceeds maximum allowed chunk size of {MAX_CHUNK_SIZE} bytes"
                     )));
                 }
 
@@ -909,8 +903,7 @@ impl SqlTypeDecode for StringDecoder {
             } else {
                 if length > MAX_ALLOC_SIZE {
                     return Err(crate::error::Error::ProtocolError(format!(
-                        "Text data length {} exceeds maximum allowed size of {} bytes",
-                        length, MAX_ALLOC_SIZE
+                        "Text data length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
                     )));
                 }
                 let mut buffer = vec![0u8; length];
