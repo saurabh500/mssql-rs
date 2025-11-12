@@ -421,6 +421,14 @@ impl TdsPacketReader for PacketReader<'_> {
 
     async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
         let length: u16 = self.read_uint16().await?;
+        if length as usize > u16::MAX as usize {
+            return Err(crate::error::Error::UsageError(format!(
+                "Varbyte length {} exceeds maximum allowed size of {} bytes",
+                length,
+                u16::MAX
+            )));
+        }
+
         let mut result: Vec<u8> = vec![0; length as usize];
         self.read_bytes(&mut result[0..]).await?;
         Ok(result)
@@ -460,6 +468,15 @@ impl TdsPacketReader for PacketReader<'_> {
     }
 
     async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String> {
+        // Prevent OOM by limiting maximum string allocation to twice the u8 length.
+        const MAX_STRING_BYTE_LENGTH: usize = u8::MAX as usize * 2;
+        if byte_length > MAX_STRING_BYTE_LENGTH {
+            return Err(crate::error::Error::UsageError(format!(
+                "Unicode string byte length {} exceeds maximum allowed size of {} bytes",
+                byte_length, MAX_STRING_BYTE_LENGTH
+            )));
+        }
+
         let mut byte_buffer: Vec<u8> = vec![0; byte_length];
         let _ = self.read_bytes(&mut byte_buffer[0..]).await?;
 
