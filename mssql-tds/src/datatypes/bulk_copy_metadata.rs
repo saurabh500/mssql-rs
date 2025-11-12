@@ -180,7 +180,7 @@ impl SqlDbType {
 /// Using the newtype `SystemTypeId` instead of raw `u8` makes the conversion more
 /// explicit and self-documenting, preventing confusion with TDS type bytes.
 ///
-/// Reference: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-types-transact-sql
+/// Reference: <https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-types-transact-sql>
 ///
 /// # Example
 ///

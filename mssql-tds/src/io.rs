@@ -9,7 +9,7 @@
 //! It handles:
 //!
 //! - **Packet I/O**: Reading and writing TDS packets ([`packet_reader`], [`packet_writer`])
-//! - **Token Streaming**: Parsing token streams from server responses ([`token_stream`])
+//! - **Token Streaming**: Parsing token streams from server responses
 //! - **Network Abstractions**: Traits for network read/write operations ([`reader_writer`])
 //!
 //! ## Module Organization
@@ -17,7 +17,7 @@
 //! - [`packet_reader`] - Deserializes TDS packets from the network stream
 //! - [`packet_writer`] - Serializes data into TDS packets for transmission
 //! - [`reader_writer`] - Traits and types for network I/O operations
-//! - [`token_stream`] - Parses token streams returned by SQL Server
+//! - `token_stream` - Parses token streams returned by SQL Server (internal)
 //!
 //! ## Usage
 //!
