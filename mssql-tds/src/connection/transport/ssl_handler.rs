@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::connection::transport::network_transport::Stream;
-use crate::message::messages::PacketType;
 use crate::io::packet_writer::PacketWriter;
+use crate::message::messages::PacketType;
 use byteorder::{BigEndian, ByteOrder};
 use native_tls::TlsConnector as NativeTlsConnector;
 use std::io::{Error, IoSlice};

@@ -28,12 +28,12 @@ use crate::{
         decoder::SqlTypeDecode,
         sqldatatypes::{TdsDataType, read_type_info},
     },
+    io::token_stream::ParserContext,
     message::{
         login::{FeatureExtension, RoutingInfo},
         login_options::TdsVersion,
     },
     query::metadata::{ColumnMetadata, MultiPartName},
-    io::token_stream::ParserContext,
     token::{
         fed_auth_info::FedAuthInfoId,
         login_ack::{LoginAckToken, SqlInterfaceType},
@@ -992,7 +992,6 @@ impl<T: SqlTypeDecode + Sync, P: TdsPacketReader + Send + Sync> TokenParser<P>
 pub(crate) mod tests {
     use crate::{
         core::TdsResult,
-        message::messages::PacketType,
         io::{
             packet_reader::{
                 PacketReader, TdsPacketReader,
@@ -1000,6 +999,7 @@ pub(crate) mod tests {
             },
             token_stream::ParserContext,
         },
+        message::messages::PacketType,
         token::{
             fed_auth_info::{FedAuthInfoId, FedAuthInfoToken},
             parsers::{FedAuthInfoTokenParser, TokenParser},

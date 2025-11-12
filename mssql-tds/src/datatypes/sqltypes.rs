@@ -1060,11 +1060,11 @@ mod datetime_tests {
             sqldatatypes::TdsDataType,
             sqltypes::{NULL_LENGTH, SqlType, get_scale_based_length},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
 
     #[tokio::test]
@@ -1535,11 +1535,11 @@ mod binary_tests {
             sqldatatypes::TdsDataType,
             sqltypes::{PLP_TERMINATOR_CHUNK_LEN, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
 
     #[tokio::test]
@@ -1672,11 +1672,11 @@ mod nvarchar_tests {
             sqldatatypes::TdsDataType,
             sqltypes::{PLP_NULL, PLP_TERMINATOR_CHUNK_LEN, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
         token::tokens::SqlCollation,
     };
 
@@ -1825,11 +1825,11 @@ mod bigint_tests {
             sqldatatypes::{FixedLengthTypes, TdsDataType},
             sqltypes::{NULL_LENGTH, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
 
     #[tokio::test]
@@ -1899,11 +1899,11 @@ mod f32_tests {
             sqldatatypes::{FixedLengthTypes, TdsDataType},
             sqltypes::{NULL_LENGTH, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
 
     #[tokio::test]
@@ -1969,11 +1969,11 @@ mod f64_tests {
             sqldatatypes::{FixedLengthTypes, TdsDataType},
             sqltypes::{NULL_LENGTH, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
 
     #[tokio::test]
@@ -2039,11 +2039,11 @@ mod decimalparts_tests {
             sqldatatypes::TdsDataType,
             sqltypes::{DECIMAL_FIXED_SIZE, NULL_LENGTH, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
 
     #[tokio::test]
@@ -2186,11 +2186,11 @@ mod int_tests {
             sqldatatypes::{FixedLengthTypes, TdsDataType},
             sqltypes::{NULL_LENGTH, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
 
     #[tokio::test]
@@ -2284,11 +2284,11 @@ mod smallint_tests {
             sqldatatypes::{FixedLengthTypes, TdsDataType},
             sqltypes::{NULL_LENGTH, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
 
     #[tokio::test]
@@ -2383,9 +2383,7 @@ mod tinyint_tests {
 
     use bytes::Buf;
 
-    use crate::{
-        message::messages::PacketType, io::packet_reader::tests::MockNetworkReaderWriter,
-    };
+    use crate::{io::packet_reader::tests::MockNetworkReaderWriter, message::messages::PacketType};
 
     use super::*;
 
@@ -2453,9 +2451,7 @@ mod bit_tests {
 
     use bytes::Buf;
 
-    use crate::{
-        message::messages::PacketType, io::packet_reader::tests::MockNetworkReaderWriter,
-    };
+    use crate::{io::packet_reader::tests::MockNetworkReaderWriter, message::messages::PacketType};
 
     use super::*;
 
@@ -2551,11 +2547,11 @@ mod xml_tests {
             sqldatatypes::TdsDataType,
             sqltypes::{NO_XML_SCHEMA, PLP_NULL, PLP_UNKNOWN_LENGTH, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
 
     #[tokio::test]
@@ -2689,11 +2685,11 @@ mod uuid_tests {
             sqldatatypes::TdsDataType,
             sqltypes::{NULL_LENGTH, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
     use bytes::Buf;
     use std::io::Cursor;
@@ -2760,11 +2756,11 @@ mod money_tests {
             sqldatatypes::TdsDataType,
             sqltypes::{NULL_LENGTH, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
 
     #[tokio::test]
@@ -2899,11 +2895,11 @@ mod json_tests {
             sqldatatypes::TdsDataType,
             sqltypes::{PLP_NULL, PLP_UNKNOWN_LENGTH, SqlType},
         },
-        message::messages::PacketType,
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
             packet_writer::{PacketWriter, TdsPacketWriter},
         },
+        message::messages::PacketType,
     };
 
     #[tokio::test]

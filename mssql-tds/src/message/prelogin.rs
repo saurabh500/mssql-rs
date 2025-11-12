@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::core::{EncryptionSetting, TdsResult};
-use crate::message::messages::{PacketType, Request};
 use crate::io::packet_reader::TdsPacketReader;
+use crate::message::messages::{PacketType, Request};
 use crate::{
     core::{SQLServerVersion, Version},
     io::packet_writer::{PacketWriter, TdsPacketWriter},
