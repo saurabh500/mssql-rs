@@ -4,34 +4,34 @@
 //! Token parsers for TDS protocol.
 //!
 //! This module contains parsers for each TDS token type. Each parser implements
-//! the [`TokenParser`] trait and is responsible for reading the binary representation
+//! the `TokenParser` trait and is responsible for reading the binary representation
 //! of a specific token type from the packet stream.
 //!
 //! # Organization
 //!
 //! Each token type has its own parser module:
 //!
-//! - [`common`] - Common types and the [`TokenParser`] trait
-//! - [`envchange_parser`] - ENVCHANGE token (environment changes)
-//! - [`loginack_parser`] - LOGINACK token (login acknowledgment)
-//! - [`done_parser`] - DONE family tokens (statement completion)
-//! - [`info_parser`] - INFO token (informational messages)
-//! - [`error_parser`] - ERROR token (error messages)
-//! - [`fedauth_parser`] - FEDAUTHINFO token (federated authentication)
-//! - [`featureext_parser`] - FEATUREEXTACK token (feature extension acknowledgment)
-//! - [`colmetadata_parser`] - COLMETADATA token (column metadata)
-//! - [`row_parser`] - ROW token (data row)
-//! - [`nbcrow_parser`] - NBCROW token (null-bitmap compressed row)
-//! - [`order_parser`] - ORDER token (ordering information)
-//! - [`returnstatus_parser`] - RETURNSTATUS token (return status)
-//! - [`returnvalue_parser`] - RETURNVALUE token (return value)
+//! - `common` - Common types and the `TokenParser` trait (internal)
+//! - `envchange_parser` - ENVCHANGE token (environment changes)
+//! - `loginack_parser` - LOGINACK token (login acknowledgment)
+//! - `done_parser` - DONE family tokens (statement completion)
+//! - `info_parser` - INFO token (informational messages)
+//! - `error_parser` - ERROR token (error messages)
+//! - `fedauth_parser` - FEDAUTHINFO token (federated authentication)
+//! - `featureext_parser` - FEATUREEXTACK token (feature extension acknowledgment)
+//! - `colmetadata_parser` - COLMETADATA token (column metadata)
+//! - `row_parser` - ROW token (data row)
+//! - `nbcrow_parser` - NBCROW token (null-bitmap compressed row)
+//! - `order_parser` - ORDER token (ordering information)
+//! - `returnstatus_parser` - RETURNSTATUS token (return status)
+//! - `returnvalue_parser` - RETURNVALUE token (return value)
 //!
 //! # Architecture
 //!
 //! The parser architecture follows these principles:
 //!
 //! 1. **Single Responsibility**: Each parser handles exactly one token type
-//! 2. **Trait-Based**: All parsers implement the [`TokenParser`] trait
+//! 2. **Trait-Based**: All parsers implement the `TokenParser` trait
 //! 3. **Async**: Parsers use async/await for non-blocking I/O
 //! 4. **Type Safety**: Strong typing prevents token confusion
 //!

@@ -40,13 +40,15 @@
 //!
 //! ## Token Flow Example
 //!
-//! ```ignore
+//! ## Example
+//!
+//! ```text
 //! // Execute: EXEC spGetUser @userId = 123
 //! // Server sends (in order):
 //! //   1. ColMetadata (if procedure returns result set)
-//! //   2. Row tokens (actual data)
-//! //   3. DONE
-//! //   4. RETURNSTATUS (return value from procedure)
+//! //   2. Row tokens (result set data)
+//! //   3. DONE (result set completion)
+//! //   4. RETURNSTATUS token (Value = 0 for success)
 //! //   5. DONEPROC (procedure completion)
 //! ```
 //!

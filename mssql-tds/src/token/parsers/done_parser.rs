@@ -41,9 +41,9 @@
 //! - **DONEPROC (0xFE)**: Indicates completion of a stored procedure
 //! - **DONEINPROC (0xFF)**: Indicates completion of a statement within a procedure
 //!
-//! ## Example Usage
+//! ## Example
 //!
-//! ```ignore
+//! ```text
 //! // After executing "SELECT * FROM users"
 //! // Server sends:
 //! //   - ColMetadata token (column definitions)

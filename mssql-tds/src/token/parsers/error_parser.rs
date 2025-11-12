@@ -47,14 +47,14 @@
 //! - **2601**: Duplicate key violation
 //! - **18456**: Login failed
 //!
-//! ## Example Usage
+//! ## Example
 //!
-//! ```ignore
+//! ```text
 //! // After executing "SELECT * FROM NonExistentTable"
 //! // Server sends ERROR token:
 //! //   Number   = 208
 //! //   State    = 1
-//! //   Severity = 16 (user error)
+//! //   Class    = 16 (user error)
 //! //   Message  = "Invalid object name 'NonExistentTable'."
 //! //   LineNumber = 1
 //! ```

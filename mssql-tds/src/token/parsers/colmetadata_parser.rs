@@ -53,13 +53,12 @@
 //!
 //! ## Example
 //!
-//! ```ignore
+//! ```text
 //! // For query: SELECT Id, Name, Age FROM Users
 //! // COLMETADATA token contains:
 //! //   ColCount = 3
-//! //   Column 1: UserType=0, Flags=0x00 (not null), DataType=INT, Name="Id"
-//! //   Column 2: UserType=0, Flags=0x01 (nullable), DataType=NVARCHAR, 
-//! //             TypeInfo={MaxLen=100, Collation=...}, Name="Name"
+//! //   Column 1: UserType=0, Flags=0x00 (not nullable), DataType=INT, Name="Id"
+//! //   Column 2: UserType=0, Flags=0x09 (nullable, updatable), DataType=NVARCHAR(50), Name="Name"
 //! //   Column 3: UserType=0, Flags=0x01 (nullable), DataType=INT, Name="Age"
 //! ```
 //!
