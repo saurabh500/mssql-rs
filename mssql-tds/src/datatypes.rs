@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub mod bulk_copy_metadata;
 pub mod column_values;
 pub mod decoder;
 pub(crate) mod encoder;

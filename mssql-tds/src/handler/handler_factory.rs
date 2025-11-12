@@ -16,6 +16,7 @@ use crate::read_write::packet_reader::TdsPacketReader;
 use crate::read_write::reader_writer::NetworkReaderWriter;
 use crate::read_write::token_stream::TdsTokenStreamReader;
 use crate::token::tokens::SqlCollation;
+use tracing::warn;
 use uuid::Uuid;
 
 pub(crate) struct HandlerFactory {
@@ -335,7 +336,7 @@ impl PreloginHandler<'_> {
 
         if !response_model.dbinstance_valid.unwrap() {
             // Non-fatal behaviour.
-            eprintln!("Database instance validation failed.")
+            warn!("Database instance validation failed");
         }
 
         if request_model.encryption_setting == EncryptionSetting::Strict {
