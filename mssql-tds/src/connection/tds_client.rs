@@ -20,20 +20,16 @@ use crate::token::tokens::SqlCollation;
 use crate::{
     connection::{
         execution_context::{ALREADY_EXECUTING_ERROR, ExecutionContext},
-        transport::network_transport::NetworkTransport,
+        transport::tds_transport::TdsTransport,
     },
     datatypes::column_values::ColumnValues,
     handler::handler_factory::NegotiatedSettings,
     message::{batch::SqlBatch, messages::Request},
-    read_write::{
-        packet_reader::TdsPacketReader,
-        reader_writer::NetworkReaderWriter,
-        token_stream::{ParserContext, TdsTokenStreamReader},
-    },
+    read_write::token_stream::ParserContext,
     token::tokens::{ColMetadataToken, CurrentCommand, Tokens},
 };
 use async_trait::async_trait;
-use tracing::{debug, info, instrument, trace};
+use tracing::{debug, error, info, instrument, trace};
 
 use crate::{
     core::{CancelHandle, TdsResult},
@@ -43,7 +39,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct TdsClient {
-    pub(crate) transport: Box<NetworkTransport>,
+    pub(crate) transport: Box<dyn TdsTransport>,
     pub(crate) negotiated_settings: NegotiatedSettings,
     pub(crate) execution_context: ExecutionContext,
 
@@ -63,7 +59,7 @@ pub struct TdsClient {
 
 impl TdsClient {
     pub(crate) fn new(
-        transport: Box<NetworkTransport>,
+        transport: Box<dyn TdsTransport>,
         negotiated_settings: NegotiatedSettings,
         execution_context: ExecutionContext,
     ) -> Self {
@@ -84,8 +80,8 @@ impl TdsClient {
         self.negotiated_settings.database_collation
     }
 
-    pub(crate) fn get_transport(&self) -> &NetworkTransport {
-        &self.transport
+    pub(crate) fn get_transport(&self) -> &dyn TdsTransport {
+        self.transport.as_ref()
     }
 
     pub(crate) fn get_negotiated_settings(&self) -> &NegotiatedSettings {
@@ -822,8 +818,19 @@ SET FMTONLY OFF;"#
     pub(crate) async fn move_to_column_metadata(&mut self) -> TdsResult<Option<ColMetadataToken>> {
         let parser_context = ParserContext::None(());
         let mut col_metadata: Option<ColMetadataToken> = None;
+        let mut loop_count = 0u32;
 
         loop {
+            loop_count += 1;
+
+            // Warn when approaching iteration limit to help diagnose issues
+            if loop_count % 1000 == 0 {
+                debug!(
+                    loop_count,
+                    "High iteration count in move_to_column_metadata"
+                );
+            }
+
             let start = Instant::now();
             let token = self
                 .transport
@@ -849,7 +856,8 @@ SET FMTONLY OFF;"#
                     );
 
                     let count = self.count_map.entry(done.cur_cmd).or_insert(0);
-                    *count += done.row_count as usize;
+                    // Use saturating_add to prevent integer overflow from malicious/corrupted TDS responses
+                    *count = count.saturating_add(done.row_count as usize);
                     self.current_result_set_has_been_read_till_end = true;
 
                     if !done.has_more() {
@@ -866,6 +874,18 @@ SET FMTONLY OFF;"#
                     info!(
                         "More result sets available (has_more=true), continuing to look for ColMetadata"
                     );
+
+                    // Prevent infinite loops from malicious inputs sending endless Done tokens with has_more=true
+                    if loop_count > 10000 {
+                        error!(
+                            loop_count,
+                            "Excessive iterations in move_to_column_metadata - possible malicious input or protocol violation"
+                        );
+                        return Err(crate::error::Error::UsageError(
+                            "Too many Done tokens with has_more=true without ColMetadata"
+                                .to_string(),
+                        ));
+                    }
                     continue;
                 }
                 Tokens::EnvChange(env_change) => {

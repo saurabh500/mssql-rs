@@ -25,11 +25,69 @@ use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 
 // Maximum reasonable allocation size for a single value (100MB)
 // This prevents fuzzer-induced capacity overflow panics
+#[cfg(fuzzing)]
+const MAX_ALLOC_SIZE: usize = 64 * 1024; // 64KB for fuzzing
+#[cfg(not(fuzzing))]
 const MAX_ALLOC_SIZE: usize = 100 * 1024 * 1024;
 
 // Maximum allocation size for PLP (Partial Length Pointer) types
 // SQL Server supports PLP types up to 2GB (i32::MAX is approximately 2.1GB)
+#[cfg(fuzzing)]
+const MAX_PLP_SIZE: usize = 64 * 1024; // 64KB for fuzzing
+#[cfg(not(fuzzing))]
 const MAX_PLP_SIZE: usize = i32::MAX as usize;
+
+// Helper function to validate allocation size before allocating
+#[inline]
+fn validate_alloc_size(size: usize, context: &str) -> TdsResult<()> {
+    if size > MAX_ALLOC_SIZE {
+        #[cfg(fuzzing)]
+        {
+            use std::io::Write;
+            let _ = writeln!(
+                std::io::stderr(),
+                "[ALLOC-REJECT] {} requesting {} bytes (max {})",
+                context,
+                size,
+                MAX_ALLOC_SIZE
+            );
+        }
+
+        return Err(crate::error::Error::ProtocolError(format!(
+            "{context}: allocation size {size} exceeds maximum allowed {MAX_ALLOC_SIZE} bytes"
+        )));
+    }
+    #[cfg(fuzzing)]
+    {
+        use std::io::Write;
+        let _ = writeln!(
+            std::io::stderr(),
+            "[ALLOC-OK] {} requesting {} bytes",
+            context,
+            size
+        );
+    }
+    Ok(())
+}
+
+// Macro to create validated Vec allocations
+#[cfg(fuzzing)]
+macro_rules! safe_vec {
+    ($elem:expr; $size:expr, $context:expr) => {{
+        let size = $size;
+        validate_alloc_size(size, $context)?;
+        vec![$elem; size]
+    }};
+}
+
+#[cfg(not(fuzzing))]
+macro_rules! safe_vec {
+    ($elem:expr; $size:expr, $context:expr) => {{
+        let size = $size;
+        validate_alloc_size(size, $context)?;
+        vec![$elem; size]
+    }};
+}
 
 #[async_trait]
 pub(crate) trait SqlTypeDecode {
@@ -219,7 +277,22 @@ impl GenericDecoder {
         let is_positive = sign == 1;
 
         let number_of_int_parts = (length - 1) >> 2;
-        let mut int_parts = vec![0i32; number_of_int_parts as usize];
+
+        // Limit decimal parts allocation for fuzzing
+        #[cfg(fuzzing)]
+        const MAX_DECIMAL_INT_PARTS: u8 = 10; // Maximum 10 int parts = 40 bytes
+        #[cfg(not(fuzzing))]
+        const MAX_DECIMAL_INT_PARTS: u8 = 64; // SQL Server max precision is 38, which needs max ~17 int parts
+
+        if number_of_int_parts > MAX_DECIMAL_INT_PARTS {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Decimal int parts {number_of_int_parts} exceeds maximum allowed {MAX_DECIMAL_INT_PARTS} (length was {length})"
+            )));
+        }
+
+        let int_parts_len = number_of_int_parts as usize;
+        validate_alloc_size(int_parts_len * 4, "read_decimal int_parts")?;
+        let mut int_parts = vec![0i32; int_parts_len];
         for part_index in 0..number_of_int_parts {
             int_parts[part_index as usize] = reader.read_int32().await?;
         }
@@ -395,7 +468,7 @@ impl GenericDecoder {
                     "Invalid GUID length: expected 16 bytes, got {length}"
                 )));
             }
-            let mut bytes = vec![0u8; length as usize];
+            let mut bytes = safe_vec![0u8; length as usize, "read_guid"];
             reader.read_bytes(&mut bytes).await?;
             let unique_id = uuid::Uuid::from_slice_le(&bytes).map_err(|e| {
                 crate::error::Error::ProtocolError(format!("Failed to parse UUID: {e}"))
@@ -410,7 +483,8 @@ impl GenericDecoder {
     where
         T: TdsPacketReader + Send + Sync,
     {
-        let long_len = reader.read_int64().await? as u64;
+        let long_len_i64 = reader.read_int64().await?;
+        let long_len = long_len_i64 as u64;
 
         // If the length is SQL_PLP_NULL, it means the value is NULL.
         if long_len as usize == Self::SQL_PLP_NULL {
@@ -421,10 +495,11 @@ impl GenericDecoder {
             // chunk.
             let mut vector_capacity = if long_len as usize != Self::SQL_PLP_UNKNOWNLEN {
                 let capacity = long_len as usize;
-                // Validate the capacity before allocating
-                if capacity > MAX_PLP_SIZE {
+                // Check for overflow or excessively large values
+                // If long_len_i64 was negative, casting to u64 then usize can produce huge values
+                if long_len_i64 < 0 || capacity > MAX_PLP_SIZE {
                     return Err(crate::error::Error::ProtocolError(format!(
-                        "PLP length {capacity} exceeds maximum allowed size of {MAX_PLP_SIZE} bytes (SQL Server limit: 2GB)"
+                        "PLP length {capacity} (raw i64: {long_len_i64}) exceeds maximum allowed size of {MAX_PLP_SIZE} bytes"
                     )));
                 }
                 capacity
@@ -434,7 +509,41 @@ impl GenericDecoder {
             let mut plp_buffer = vec![0u8; vector_capacity];
             let mut chunk_len = reader.read_uint32().await? as usize;
             let mut offset: usize = 0;
+            let mut chunk_count = 0u32;
+
+            #[cfg(fuzzing)]
+            const MAX_PLP_CHUNKS: u32 = 1000;
+            #[cfg(not(fuzzing))]
+            const MAX_PLP_CHUNKS: u32 = 100000;
+
+            #[cfg(fuzzing)]
+            const MAX_CHUNK_SIZE: usize = 8 * 1024; // 8KB per chunk for fuzzing
+            #[cfg(not(fuzzing))]
+            const MAX_CHUNK_SIZE: usize = 16 * 1024 * 1024; // 16MB per chunk normally
+
             while chunk_len > 0 {
+                chunk_count += 1;
+
+                #[cfg(fuzzing)]
+                {
+                    eprintln!(
+                        "[ALLOC] read_plp_bytes: chunk #{chunk_count}, chunk_len={chunk_len}, total_capacity={vector_capacity}"
+                    );
+                }
+
+                if chunk_count > MAX_PLP_CHUNKS {
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "Too many PLP chunks: {chunk_count} (max {MAX_PLP_CHUNKS})"
+                    )));
+                }
+
+                // Limit individual chunk size
+                if chunk_len > MAX_CHUNK_SIZE {
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "PLP chunk size {chunk_len} exceeds maximum allowed chunk size of {MAX_CHUNK_SIZE} bytes"
+                    )));
+                }
+
                 if long_len as usize == Self::SQL_PLP_UNKNOWNLEN {
                     // Use checked_add to prevent capacity overflow
                     vector_capacity = vector_capacity.checked_add(chunk_len).ok_or_else(|| {
@@ -797,6 +906,11 @@ impl SqlTypeDecode for StringDecoder {
             if length == 0 {
                 return Ok(ColumnValues::Null);
             } else {
+                if length > MAX_ALLOC_SIZE {
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "Text data length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+                    )));
+                }
                 let mut buffer = vec![0u8; length];
                 reader.read_bytes(&mut buffer).await?;
                 let sql_string = SqlString::new(buffer, encoding_type);

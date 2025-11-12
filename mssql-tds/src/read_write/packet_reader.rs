@@ -421,6 +421,14 @@ impl TdsPacketReader for PacketReader<'_> {
 
     async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
         let length: u16 = self.read_uint16().await?;
+        if length as usize > u16::MAX as usize {
+            return Err(crate::error::Error::UsageError(format!(
+                "Varbyte length {} exceeds maximum allowed size of {} bytes",
+                length,
+                u16::MAX
+            )));
+        }
+
         let mut result: Vec<u8> = vec![0; length as usize];
         self.read_bytes(&mut result[0..]).await?;
         Ok(result)
@@ -460,6 +468,14 @@ impl TdsPacketReader for PacketReader<'_> {
     }
 
     async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String> {
+        // Prevent OOM by limiting maximum string allocation to twice the u8 length.
+        const MAX_STRING_BYTE_LENGTH: usize = u8::MAX as usize * 2;
+        if byte_length > MAX_STRING_BYTE_LENGTH {
+            return Err(crate::error::Error::UsageError(format!(
+                "Unicode string byte length {byte_length} exceeds maximum allowed size of {MAX_STRING_BYTE_LENGTH} bytes"
+            )));
+        }
+
         let mut byte_buffer: Vec<u8> = vec![0; byte_length];
         let _ = self.read_bytes(&mut byte_buffer[0..]).await?;
 
@@ -494,6 +510,114 @@ impl TdsPacketReader for PacketReader<'_> {
             }
         }
         Ok(())
+    }
+}
+
+// Blanket implementation for Box<dyn TdsPacketReader> to enable dynamic dispatch
+#[async_trait]
+impl TdsPacketReader for Box<dyn TdsPacketReader + Send + Sync> {
+    async fn read_byte(&mut self) -> TdsResult<u8> {
+        (**self).read_byte().await
+    }
+
+    async fn read_int16_big_endian(&mut self) -> TdsResult<i16> {
+        (**self).read_int16_big_endian().await
+    }
+
+    async fn read_int32_big_endian(&mut self) -> TdsResult<i32> {
+        (**self).read_int32_big_endian().await
+    }
+
+    async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
+        (**self).read_int64_big_endian().await
+    }
+
+    async fn read_uint40(&mut self) -> TdsResult<u64> {
+        (**self).read_uint40().await
+    }
+
+    async fn read_float32(&mut self) -> TdsResult<f32> {
+        (**self).read_float32().await
+    }
+
+    async fn read_float64(&mut self) -> TdsResult<f64> {
+        (**self).read_float64().await
+    }
+
+    async fn read_int16(&mut self) -> TdsResult<i16> {
+        (**self).read_int16().await
+    }
+
+    async fn read_uint16(&mut self) -> TdsResult<u16> {
+        (**self).read_uint16().await
+    }
+
+    async fn read_int24(&mut self) -> TdsResult<i32> {
+        (**self).read_int24().await
+    }
+
+    async fn read_uint24(&mut self) -> TdsResult<u32> {
+        (**self).read_uint24().await
+    }
+
+    async fn read_int32(&mut self) -> TdsResult<i32> {
+        (**self).read_int32().await
+    }
+
+    async fn read_uint32(&mut self) -> TdsResult<u32> {
+        (**self).read_uint32().await
+    }
+
+    async fn read_int64(&mut self) -> TdsResult<i64> {
+        (**self).read_int64().await
+    }
+
+    async fn read_uint64(&mut self) -> TdsResult<u64> {
+        (**self).read_uint64().await
+    }
+
+    async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
+        (**self).read_bytes(buffer).await
+    }
+
+    async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
+        (**self).read_u8_varbyte().await
+    }
+
+    async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
+        (**self).read_u16_varbyte().await
+    }
+
+    async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>> {
+        (**self).read_varchar_u16_length().await
+    }
+
+    async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
+        (**self).read_varchar_u8_length().await
+    }
+
+    async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
+        (**self).read_varchar_byte_len().await
+    }
+
+    async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String> {
+        (**self).read_unicode(string_length).await
+    }
+
+    async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String> {
+        (**self).read_unicode_with_byte_length(byte_length).await
+    }
+
+    async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()> {
+        (**self).skip_bytes(skip_count).await
+    }
+
+    async fn cancel_read_stream(&mut self) -> TdsResult<()> {
+        (**self).cancel_read_stream().await
+    }
+
+    fn reset_reader(&mut self) {
+        (**self).reset_reader()
     }
 }
 

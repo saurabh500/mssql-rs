@@ -156,6 +156,32 @@ impl SessionSettings {
     }
 }
 
+// Helper function for fuzzing to create test settings
+#[cfg(fuzzing)]
+pub(crate) fn create_test_negotiated_settings_internal() -> NegotiatedSettings {
+    let session_settings = SessionSettings {
+        packet_size: 4096,
+        user_name: "test".to_string(),
+        supported_features: Vec::new(),
+        mars_enabled: false,
+        pre_login_has_fedauth_supported: false,
+        negotiated_encryption_settings: NegotiatedEncryptionSetting::NoEncryption,
+    };
+
+    NegotiatedSettings {
+        session_settings,
+        database_collation: SqlCollation {
+            info: 0,
+            lcid_language_id: 0x0409,
+            col_flags: 0,
+            sort_id: 0,
+        },
+        language: "us_english".to_string(),
+        database: "master".to_string(),
+        char_set: None,
+    }
+}
+
 pub(crate) struct SessionHandler<'a, 'b> {
     pub(crate) factory: &'a HandlerFactory,
     pub(crate) transport_context: &'b TransportContext,

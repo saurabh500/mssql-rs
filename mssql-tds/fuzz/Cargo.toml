@@ -31,3 +31,10 @@ path = "fuzz_targets/fuzz_token_stream.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_tds_client"
+path = "fuzz_targets/fuzz_tds_client.rs"
+test = false
+doc = false
+bench = false

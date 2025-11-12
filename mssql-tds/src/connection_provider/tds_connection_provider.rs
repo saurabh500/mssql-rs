@@ -9,6 +9,7 @@ use tracing::info;
 use crate::connection::client_context::{ClientContext, TransportContext};
 use crate::connection::tds_client::TdsClient;
 use crate::connection::transport::network_transport;
+use crate::connection::transport::tds_transport::TdsTransport;
 use crate::core::{CancelHandle, TdsResult};
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::{Error, TimeoutErrorType};
@@ -23,7 +24,7 @@ pub(crate) static PARSER_REGISTRY: LazyLock<GenericTokenParserRegistry> =
 /// Private struct to hold the components needed to create a TdsClient.
 /// This is an internal implementation detail and not exposed publicly.
 struct ConnectionComponents {
-    transport: Box<network_transport::NetworkTransport>,
+    transport: Box<dyn TdsTransport>,
     negotiated_settings: crate::handler::handler_factory::NegotiatedSettings,
     execution_context: crate::connection::execution_context::ExecutionContext,
 }
