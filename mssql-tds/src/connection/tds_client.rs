@@ -1003,8 +1003,20 @@ SET FMTONLY OFF;"#
                         line_number: Some(error_token.line_number as i32),
                     });
                 }
+                Tokens::ColMetadata(_) => {
+                    // ColMetadata token encountered while looking for rows
+                    // This indicates incorrect API usage - likely didn't move to next result set properly
+                    return Err(crate::error::Error::UsageError(
+                        "Unexpected ColMetadata token encountered while reading rows. \
+                         This typically indicates the API was not used correctly - \
+                         you may need to call move_to_next() to advance to the next result set."
+                            .to_string(),
+                    ));
+                }
                 _ => {
-                    unreachable!("Unexpected Token while finding the next row. {:?}", token);
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "Unexpected token while finding the next row: {token:?}"
+                    )));
                 }
             }
         }
