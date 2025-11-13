@@ -232,12 +232,8 @@ impl PreloginResponse {
                     let minor = packet_reader.read_byte().await?;
                     let build = packet_reader.read_int16_big_endian().await?;
                     let revision = packet_reader.read_int16_big_endian().await?;
-                    result.server_version = Version::new(
-                        major,
-                        minor,
-                        build as u16,
-                        revision as u16,
-                    );
+                    result.server_version =
+                        Version::new(major, minor, build as u16, revision as u16);
                     result.sql_server_version = SQLServerVersion::from(major);
                 }
                 OptionType::Encryption => {
