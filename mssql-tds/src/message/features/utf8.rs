@@ -36,14 +36,18 @@ impl Feature for Utf8Feature {
         Ok(())
     }
 
-    fn deserialize(&self, data: &[u8]) {
+    fn deserialize(&self, data: &[u8]) -> TdsResult<()> {
         if data.len() != 1 {
-            unreachable!("Invalid data length for UTF-8 feature. This is unexpected.");
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Invalid data length {} for UTF-8 feature, expected 1 byte",
+                data.len()
+            )));
         }
+        Ok(())
     }
 
     fn is_acknowledged(&self) -> bool {
-        todo!()
+        self.acknowledged
     }
 
     fn set_acknowledged(&mut self, acknowledged: bool) {

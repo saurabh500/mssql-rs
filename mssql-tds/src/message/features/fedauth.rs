@@ -169,7 +169,7 @@ impl Feature for FedAuthFeature {
         Ok(())
     }
 
-    fn deserialize(&self, data: &[u8]) {
+    fn deserialize(&self, data: &[u8]) -> TdsResult<()> {
         if !data.is_empty() {
             event!(
                 tracing::Level::WARN,
@@ -177,6 +177,7 @@ impl Feature for FedAuthFeature {
                 data.len()
             );
         }
+        Ok(())
     }
 
     fn is_acknowledged(&self) -> bool {
