@@ -55,7 +55,7 @@ pub struct TdsClient {
 
     /// The cancel handle for this client. Used to cancel operations.
     cancel_handle: Option<CancelHandle>,
-    
+
     /// Empty metadata vector for returning when no metadata is available
     empty_metadata: Vec<ColumnMetadata>,
 }
