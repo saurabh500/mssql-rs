@@ -222,13 +222,10 @@ impl Connection {
         let result_set = result_set.unwrap();
         let metadata = result_set.get_metadata();
 
-        let metadata_vec: Result<Vec<Metadata>, _> = metadata
-            .iter()
-            .map(|m| Metadata::try_from(m))
-            .collect();
-        let metadata_vec = metadata_vec.map_err(|e| {
-            napi::Error::from_reason(format!("Failed to convert metadata: {}", e))
-        })?;
+        let metadata_vec: Result<Vec<Metadata>, _> =
+            metadata.iter().map(|m| Metadata::try_from(m)).collect();
+        let metadata_vec = metadata_vec
+            .map_err(|e| napi::Error::from_reason(format!("Failed to convert metadata: {}", e)))?;
         Ok(Some(metadata_vec))
     }
 

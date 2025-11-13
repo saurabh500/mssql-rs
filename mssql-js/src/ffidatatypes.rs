@@ -260,10 +260,12 @@ impl TryFrom<&ColumnMetadata> for Metadata {
                     TdsDataType::DateTimeN => match column_metadata.type_info.length {
                         4 => SqlDataTypes::SmallDateTime,
                         8 => SqlDataTypes::DateTime,
-                        _ => return Err(format!(
-                            "Unsupported DateTimeN length from server: {}",
-                            column_metadata.type_info.length
-                        )),
+                        _ => {
+                            return Err(format!(
+                                "Unsupported DateTimeN length from server: {}",
+                                column_metadata.type_info.length
+                            ));
+                        }
                     },
                     TdsDataType::DateTime2N => SqlDataTypes::DateTime2,
                     TdsDataType::DateTimeOffsetN => SqlDataTypes::DateTimeOffset,
@@ -273,17 +275,35 @@ impl TryFrom<&ColumnMetadata> for Metadata {
                     TdsDataType::MoneyN => match column_metadata.type_info.length {
                         4 => SqlDataTypes::Money4,
                         8 => SqlDataTypes::Money,
-                        _ => return Err(format!("Unsupported MoneyN length from server: {}", column_metadata.type_info.length)),
+                        _ => {
+                            return Err(format!(
+                                "Unsupported MoneyN length from server: {}",
+                                column_metadata.type_info.length
+                            ));
+                        }
                     },
                     TdsDataType::FltN => match column_metadata.type_info.length {
                         4 => SqlDataTypes::Flt4,
                         8 => SqlDataTypes::Flt8,
-                        _ => return Err(format!("Unsupported FltN length from server: {}", column_metadata.type_info.length)),
+                        _ => {
+                            return Err(format!(
+                                "Unsupported FltN length from server: {}",
+                                column_metadata.type_info.length
+                            ));
+                        }
                     },
                     TdsDataType::Flt4 => SqlDataTypes::Flt4,
                     TdsDataType::Flt8 => SqlDataTypes::Flt8,
-                    TdsDataType::None => return Err("Received TdsDataType::None from server - invalid data type".to_string()),
-                    _ => return Err(format!("Unsupported SQL data type from server: {:?}", column_metadata.data_type)),
+                    TdsDataType::None => {
+                        return Err("Received TdsDataType::None from server - invalid data type"
+                            .to_string());
+                    }
+                    _ => {
+                        return Err(format!(
+                            "Unsupported SQL data type from server: {:?}",
+                            column_metadata.data_type
+                        ));
+                    }
                 },
             }
         };
@@ -485,8 +505,7 @@ impl TryFrom<Parameter> for SqlType {
                 }
                 Err(Error::from_reason(format!(
                     "u32 value {} conversion for data_type {:?} not supported.",
-                    v,
-                    param.data_type
+                    v, param.data_type
                 )))
             }
             RowDataType::I(napi_sql_time) => {
