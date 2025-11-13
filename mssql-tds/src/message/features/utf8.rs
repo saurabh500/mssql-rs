@@ -38,12 +38,16 @@ impl Feature for Utf8Feature {
 
     fn deserialize(&self, data: &[u8]) {
         if data.len() != 1 {
-            unreachable!("Invalid data length for UTF-8 feature. This is unexpected.");
+            // Log warning but don't panic - server may send unexpected data
+            tracing::warn!(
+                "Invalid data length {} for UTF-8 feature, expected 1 byte",
+                data.len()
+            );
         }
     }
 
     fn is_acknowledged(&self) -> bool {
-        todo!()
+        self.acknowledged
     }
 
     fn set_acknowledged(&mut self, acknowledged: bool) {

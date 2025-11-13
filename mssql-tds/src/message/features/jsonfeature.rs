@@ -43,21 +43,27 @@ impl Feature for JsonFeature {
 
     fn deserialize(&self, data: &[u8]) {
         if data.len() != 1 {
-            unreachable!("Invalid data length for JSON feature. This is unexpected.");
+            // Log warning but don't panic - server may send unexpected data
+            tracing::warn!(
+                "Invalid data length {} for JSON feature, expected 1 byte",
+                data.len()
+            );
+            return;
         }
         let server_supported_version = data[0];
 
         // Validate that the server supports the expected version or is 0 (indicating no support)
         if server_supported_version != Self::VERSION && server_supported_version != 0 {
-            unreachable!(
-                "Unsupported JSON feature version: {}. This is unexpected.",
-                server_supported_version
+            tracing::warn!(
+                "Unsupported JSON feature version: {}, expected {} or 0",
+                server_supported_version,
+                Self::VERSION
             );
         }
     }
 
     fn is_acknowledged(&self) -> bool {
-        todo!()
+        self.acknowledged
     }
 
     fn set_acknowledged(&mut self, acknowledged: bool) {
