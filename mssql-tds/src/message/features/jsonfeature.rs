@@ -41,25 +41,24 @@ impl Feature for JsonFeature {
         Ok(())
     }
 
-    fn deserialize(&self, data: &[u8]) {
+    fn deserialize(&self, data: &[u8]) -> TdsResult<()> {
         if data.len() != 1 {
-            // Log warning but don't panic - server may send unexpected data
-            tracing::warn!(
+            return Err(crate::error::Error::ProtocolError(format!(
                 "Invalid data length {} for JSON feature, expected 1 byte",
                 data.len()
-            );
-            return;
+            )));
         }
         let server_supported_version = data[0];
 
         // Validate that the server supports the expected version or is 0 (indicating no support)
         if server_supported_version != Self::VERSION && server_supported_version != 0 {
-            tracing::warn!(
+            return Err(crate::error::Error::ProtocolError(format!(
                 "Unsupported JSON feature version: {}, expected {} or 0",
                 server_supported_version,
                 Self::VERSION
-            );
+            )));
         }
+        Ok(())
     }
 
     fn is_acknowledged(&self) -> bool {
