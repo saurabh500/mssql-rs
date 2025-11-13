@@ -228,15 +228,15 @@ impl PreloginResponse {
 
             match context.option {
                 OptionType::Version => {
-                    let major = packet_reader.read_byte().await.unwrap();
-                    let minor = packet_reader.read_byte().await;
-                    let build = packet_reader.read_int16_big_endian().await;
-                    let revision = packet_reader.read_int16_big_endian().await;
+                    let major = packet_reader.read_byte().await?;
+                    let minor = packet_reader.read_byte().await?;
+                    let build = packet_reader.read_int16_big_endian().await?;
+                    let revision = packet_reader.read_int16_big_endian().await?;
                     result.server_version = Version::new(
                         major,
-                        minor.unwrap(),
-                        build.unwrap() as u16,
-                        revision.unwrap() as u16,
+                        minor,
+                        build as u16,
+                        revision as u16,
                     );
                     result.sql_server_version = SQLServerVersion::from(major);
                 }

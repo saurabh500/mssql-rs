@@ -138,14 +138,22 @@ impl TdsPacketReader for FuzzReader {
     }
 
     async fn read_bytes(&mut self, buf: &mut [u8]) -> TdsResult<usize> {
-        if self.position + buf.len() > self.data.len() {
+        // Use checked arithmetic to prevent overflow
+        let end_position = self.position.checked_add(buf.len()).ok_or_else(|| {
+            mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidInput,
+                "buffer length causes position overflow",
+            ))
+        })?;
+        
+        if end_position > self.data.len() {
             return Err(mssql_tds::error::Error::Io(Error::new(
                 ErrorKind::UnexpectedEof,
                 "EOF",
             )));
         }
-        buf.copy_from_slice(&self.data[self.position..self.position + buf.len()]);
-        self.position += buf.len();
+        buf.copy_from_slice(&self.data[self.position..end_position]);
+        self.position = end_position;
         Ok(buf.len())
     }
 
@@ -258,13 +266,21 @@ impl TdsPacketReader for FuzzReader {
     }
 
     async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()> {
-        if self.position + skip_count > self.data.len() {
+        // Use checked arithmetic to prevent overflow
+        let new_position = self.position.checked_add(skip_count).ok_or_else(|| {
+            mssql_tds::error::Error::Io(Error::new(
+                ErrorKind::InvalidInput,
+                "skip_count causes position overflow",
+            ))
+        })?;
+        
+        if new_position > self.data.len() {
             return Err(mssql_tds::error::Error::Io(Error::new(
                 ErrorKind::UnexpectedEof,
                 "EOF",
             )));
         }
-        self.position += skip_count;
+        self.position = new_position;
         Ok(())
     }
 
