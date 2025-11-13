@@ -113,16 +113,66 @@ impl ExecutionContext {
             EnvChangeTokenSubType::PacketSize => Err(crate::error::Error::ProtocolError(
                 "packet_size change unexpected".to_string(),
             )),
-            EnvChangeTokenSubType::CharacterSet => todo!(),
-            EnvChangeTokenSubType::UnicodeDataSortingLocalId => todo!(),
-            EnvChangeTokenSubType::UnicodeDataSortingComparisonFlags => todo!(),
-            EnvChangeTokenSubType::DatabaseMirroringPartner => todo!(),
-            EnvChangeTokenSubType::PromoteTransaction => todo!(),
-            EnvChangeTokenSubType::TransactionManagerAddress => todo!(),
-            EnvChangeTokenSubType::TransactionEnded => todo!(),
-            EnvChangeTokenSubType::ResetConnection => todo!(),
-            EnvChangeTokenSubType::UserInstanceName => todo!(),
-            EnvChangeTokenSubType::Routing => todo!(),
+            EnvChangeTokenSubType::CharacterSet => {
+                Err(crate::error::Error::UnimplementedFeature {
+                    feature: "CharacterSet environment change".to_string(),
+                    context: "capture_change_property".to_string(),
+                })
+            }
+            EnvChangeTokenSubType::UnicodeDataSortingLocalId => {
+                Err(crate::error::Error::UnimplementedFeature {
+                    feature: "UnicodeDataSortingLocalId environment change".to_string(),
+                    context: "capture_change_property".to_string(),
+                })
+            }
+            EnvChangeTokenSubType::UnicodeDataSortingComparisonFlags => {
+                Err(crate::error::Error::UnimplementedFeature {
+                    feature: "UnicodeDataSortingComparisonFlags environment change".to_string(),
+                    context: "capture_change_property".to_string(),
+                })
+            }
+            EnvChangeTokenSubType::DatabaseMirroringPartner => {
+                Err(crate::error::Error::UnimplementedFeature {
+                    feature: "DatabaseMirroringPartner environment change".to_string(),
+                    context: "capture_change_property".to_string(),
+                })
+            }
+            EnvChangeTokenSubType::PromoteTransaction => {
+                Err(crate::error::Error::UnimplementedFeature {
+                    feature: "PromoteTransaction environment change".to_string(),
+                    context: "capture_change_property".to_string(),
+                })
+            }
+            EnvChangeTokenSubType::TransactionManagerAddress => {
+                Err(crate::error::Error::UnimplementedFeature {
+                    feature: "TransactionManagerAddress environment change".to_string(),
+                    context: "capture_change_property".to_string(),
+                })
+            }
+            EnvChangeTokenSubType::TransactionEnded => {
+                Err(crate::error::Error::UnimplementedFeature {
+                    feature: "TransactionEnded environment change".to_string(),
+                    context: "capture_change_property".to_string(),
+                })
+            }
+            EnvChangeTokenSubType::ResetConnection => {
+                Err(crate::error::Error::UnimplementedFeature {
+                    feature: "ResetConnection environment change".to_string(),
+                    context: "capture_change_property".to_string(),
+                })
+            }
+            EnvChangeTokenSubType::UserInstanceName => {
+                Err(crate::error::Error::UnimplementedFeature {
+                    feature: "UserInstanceName environment change".to_string(),
+                    context: "capture_change_property".to_string(),
+                })
+            }
+            EnvChangeTokenSubType::Routing => {
+                Err(crate::error::Error::UnimplementedFeature {
+                    feature: "Routing environment change".to_string(),
+                    context: "capture_change_property".to_string(),
+                })
+            }
             EnvChangeTokenSubType::Unknown(value) => {
                 // Log unknown environment change subtypes but don't fail
                 info!("Unknown environment change subtype: {}", value);
