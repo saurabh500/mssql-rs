@@ -113,12 +113,10 @@ impl ExecutionContext {
             EnvChangeTokenSubType::PacketSize => Err(crate::error::Error::ProtocolError(
                 "packet_size change unexpected".to_string(),
             )),
-            EnvChangeTokenSubType::CharacterSet => {
-                Err(crate::error::Error::UnimplementedFeature {
-                    feature: "CharacterSet environment change".to_string(),
-                    context: "capture_change_property".to_string(),
-                })
-            }
+            EnvChangeTokenSubType::CharacterSet => Err(crate::error::Error::UnimplementedFeature {
+                feature: "CharacterSet environment change".to_string(),
+                context: "capture_change_property".to_string(),
+            }),
             EnvChangeTokenSubType::UnicodeDataSortingLocalId => {
                 Err(crate::error::Error::UnimplementedFeature {
                     feature: "UnicodeDataSortingLocalId environment change".to_string(),
@@ -167,12 +165,10 @@ impl ExecutionContext {
                     context: "capture_change_property".to_string(),
                 })
             }
-            EnvChangeTokenSubType::Routing => {
-                Err(crate::error::Error::UnimplementedFeature {
-                    feature: "Routing environment change".to_string(),
-                    context: "capture_change_property".to_string(),
-                })
-            }
+            EnvChangeTokenSubType::Routing => Err(crate::error::Error::UnimplementedFeature {
+                feature: "Routing environment change".to_string(),
+                context: "capture_change_property".to_string(),
+            }),
             EnvChangeTokenSubType::Unknown(value) => {
                 // Log unknown environment change subtypes but don't fail
                 info!("Unknown environment change subtype: {}", value);
