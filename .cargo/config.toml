@@ -1,4 +1,4 @@
 [alias]
-bfmt = "fmt --workspace -- --check"
+bfmt = "fmt -- --check"
 bclippy = "clippy --workspace --frozen --all-features --all-targets -- -D warnings"
 btest = "llvm-cov nextest --workspace --frozen --no-report --all-targets --no-fail-fast --profile ci --success-output immediate"
