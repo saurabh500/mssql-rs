@@ -55,6 +55,9 @@ pub struct TdsClient {
 
     /// The cancel handle for this client. Used to cancel operations.
     cancel_handle: Option<CancelHandle>,
+    
+    /// Empty metadata vector for returning when no metadata is available
+    empty_metadata: Vec<ColumnMetadata>,
 }
 
 impl TdsClient {
@@ -73,6 +76,7 @@ impl TdsClient {
             current_result_set_has_been_read_till_end: false,
             remaining_request_timeout: None,
             cancel_handle: None,
+            empty_metadata: Vec::new(),
         }
     }
 
@@ -1228,10 +1232,9 @@ SET FMTONLY OFF;"#
                     continue;
                 }
                 _ => {
-                    unreachable!(
-                        "Unexpected token while reading transaction request response. {:?}",
-                        token
-                    );
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "Unexpected token while reading transaction request response: {token:?}"
+                    )));
                 }
             }
         }
@@ -1243,10 +1246,13 @@ SET FMTONLY OFF;"#
 #[async_trait]
 impl ResultSet for TdsClient {
     fn get_metadata(&self) -> &Vec<ColumnMetadata> {
-        if self.current_metadata.is_none() {
-            unreachable!("No metadata found. Is there a query executed?");
-        }
-        &self.current_metadata.as_ref().unwrap().columns
+        // If no metadata is available, return an empty vector
+        // This can happen if get_metadata is called before executing a query
+        // or if the query didn't return any result sets
+        self.current_metadata
+            .as_ref()
+            .map(|m| &m.columns)
+            .unwrap_or(&self.empty_metadata)
     }
 
     #[instrument(skip(self), level = "info")]
