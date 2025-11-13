@@ -253,7 +253,7 @@ impl TryFrom<&ColumnMetadata> for Metadata {
                         2 => SqlDataTypes::Int2,
                         4 => SqlDataTypes::Int4,
                         8 => SqlDataTypes::Int8,
-                        len => return Err(format!("Unsupported IntN length from server: {}", len)),
+                        len => return Err(format!("Unsupported IntN length from server: {len}")),
                     },
                     TdsDataType::DateN => SqlDataTypes::Date,
                     TdsDataType::TimeN => SqlDataTypes::Time,

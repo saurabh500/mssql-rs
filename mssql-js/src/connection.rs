@@ -223,9 +223,9 @@ impl Connection {
         let metadata = result_set.get_metadata();
 
         let metadata_vec: Result<Vec<Metadata>, _> =
-            metadata.iter().map(|m| Metadata::try_from(m)).collect();
+            metadata.iter().map(Metadata::try_from).collect();
         let metadata_vec = metadata_vec
-            .map_err(|e| napi::Error::from_reason(format!("Failed to convert metadata: {}", e)))?;
+            .map_err(|e| napi::Error::from_reason(format!("Failed to convert metadata: {e}")))?;
         Ok(Some(metadata_vec))
     }
 
@@ -252,7 +252,7 @@ impl Connection {
             .map(OutputParams::try_from)
             .collect();
         let output_params = output_params.map_err(|e| {
-            napi::Error::from_reason(format!("Failed to convert return values: {}", e))
+            napi::Error::from_reason(format!("Failed to convert return values: {e}"))
         })?;
         Ok(Some(output_params))
     }
