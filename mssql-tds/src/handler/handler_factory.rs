@@ -479,7 +479,10 @@ impl LoginHandler<'_> {
         let request_model: &LoginRequestModel = &request.model;
 
         if request_model.user_input.integrated_security() {
-            todo!("Integrated security is not supported yet");
+            return Err(Error::UnimplementedFeature {
+                feature: "Integrated security".to_string(),
+                context: "Integrated security authentication is not supported yet".to_string(),
+            });
         }
 
         // Note that the login process uses a timeout at a higher level than the request.
