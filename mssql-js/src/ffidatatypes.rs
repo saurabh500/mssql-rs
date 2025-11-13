@@ -138,7 +138,7 @@ impl TryFrom<TdsDataType> for SqlDataTypes {
             TdsDataType::DecimalN => Err(()),
             TdsDataType::NumericN => Err(()),
             TdsDataType::MoneyN => Err(()),
-            TdsDataType::None => unreachable!(),
+            TdsDataType::None => Err(()),
         }
     }
 
@@ -209,14 +209,16 @@ pub struct OutputParams {
     pub metadata: Metadata,
 }
 
-impl From<ReturnValue> for OutputParams {
-    fn from(return_value: ReturnValue) -> Self {
-        OutputParams {
+impl TryFrom<ReturnValue> for OutputParams {
+    type Error = String;
+
+    fn try_from(return_value: ReturnValue) -> Result<Self, Self::Error> {
+        Ok(OutputParams {
             ordinal: return_value.param_ordinal,
             name: return_value.param_name,
             value: transform_col(return_value.value),
-            metadata: Metadata::from(return_value.column_metadata.as_ref()),
-        }
+            metadata: Metadata::try_from(return_value.column_metadata.as_ref())?,
+        })
     }
 }
 
@@ -237,14 +239,10 @@ impl Clone for Metadata {
     }
 }
 
-impl From<ColumnMetadata> for Metadata {
-    fn from(column_metadata: ColumnMetadata) -> Self {
-        From::from(&column_metadata)
-    }
-}
+impl TryFrom<&ColumnMetadata> for Metadata {
+    type Error = String;
 
-impl From<&ColumnMetadata> for Metadata {
-    fn from(column_metadata: &ColumnMetadata) -> Self {
+    fn try_from(column_metadata: &ColumnMetadata) -> Result<Self, Self::Error> {
         let sql_type = {
             let tried_type = column_metadata.data_type.try_into();
             match tried_type {
@@ -255,17 +253,17 @@ impl From<&ColumnMetadata> for Metadata {
                         2 => SqlDataTypes::Int2,
                         4 => SqlDataTypes::Int4,
                         8 => SqlDataTypes::Int8,
-                        len => unreachable!("Unsupported IntN length: {}", len),
+                        len => return Err(format!("Unsupported IntN length from server: {}", len)),
                     },
                     TdsDataType::DateN => SqlDataTypes::Date,
                     TdsDataType::TimeN => SqlDataTypes::Time,
                     TdsDataType::DateTimeN => match column_metadata.type_info.length {
                         4 => SqlDataTypes::SmallDateTime,
                         8 => SqlDataTypes::DateTime,
-                        _ => unreachable!(
-                            "Unsupported DateTimeN length: {}",
+                        _ => return Err(format!(
+                            "Unsupported DateTimeN length from server: {}",
                             column_metadata.type_info.length
-                        ),
+                        )),
                     },
                     TdsDataType::DateTime2N => SqlDataTypes::DateTime2,
                     TdsDataType::DateTimeOffsetN => SqlDataTypes::DateTimeOffset,
@@ -275,26 +273,26 @@ impl From<&ColumnMetadata> for Metadata {
                     TdsDataType::MoneyN => match column_metadata.type_info.length {
                         4 => SqlDataTypes::Money4,
                         8 => SqlDataTypes::Money,
-                        _ => unreachable!(),
+                        _ => return Err(format!("Unsupported MoneyN length from server: {}", column_metadata.type_info.length)),
                     },
                     TdsDataType::FltN => match column_metadata.type_info.length {
                         4 => SqlDataTypes::Flt4,
                         8 => SqlDataTypes::Flt8,
-                        _ => unreachable!(),
+                        _ => return Err(format!("Unsupported FltN length from server: {}", column_metadata.type_info.length)),
                     },
                     TdsDataType::Flt4 => SqlDataTypes::Flt4,
                     TdsDataType::Flt8 => SqlDataTypes::Flt8,
-                    TdsDataType::None => unreachable!(),
-                    _ => panic!("Unsupported SQL data type: {:?}", column_metadata.data_type),
+                    TdsDataType::None => return Err("Received TdsDataType::None from server - invalid data type".to_string()),
+                    _ => return Err(format!("Unsupported SQL data type from server: {:?}", column_metadata.data_type)),
                 },
             }
         };
 
-        Metadata {
+        Ok(Metadata {
             name: column_metadata.column_name.clone(),
             data_type: sql_type,
             encoding: column_metadata.get_collation().map(Into::into),
-        }
+        })
     }
 }
 
@@ -455,10 +453,10 @@ impl TryFrom<Parameter> for SqlType {
                     })?);
                         Ok(SqlType::Float(Some(float_value)))
                     }
-                    _ => todo!(
-                        "Buffer subtype not implemeted for data_type: {:?}",
+                    _ => Err(Error::from_reason(format!(
+                        "Buffer conversion not implemented for data_type: {:?}",
                         param.data_type
-                    ),
+                    ))),
                 }
             }
             RowDataType::F(_) => get_null_sql_type(&param),
@@ -485,11 +483,11 @@ impl TryFrom<Parameter> for SqlType {
                     })?;
                     return Ok(SqlType::Date(Some(sql_date)));
                 }
-                todo!(
-                    "u32 {} value conversion for {:?} not supported.",
+                Err(Error::from_reason(format!(
+                    "u32 value {} conversion for data_type {:?} not supported.",
                     v,
                     param.data_type
-                );
+                )))
             }
             RowDataType::I(napi_sql_time) => {
                 if !matches!(param.data_type, SqlDataTypes::Time) {

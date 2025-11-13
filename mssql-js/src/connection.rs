@@ -222,7 +222,13 @@ impl Connection {
         let result_set = result_set.unwrap();
         let metadata = result_set.get_metadata();
 
-        let metadata_vec: Vec<Metadata> = metadata.iter().map(|m| m.into()).collect();
+        let metadata_vec: Result<Vec<Metadata>, _> = metadata
+            .iter()
+            .map(|m| Metadata::try_from(m))
+            .collect();
+        let metadata_vec = metadata_vec.map_err(|e| {
+            napi::Error::from_reason(format!("Failed to convert metadata: {}", e))
+        })?;
         Ok(Some(metadata_vec))
     }
 
@@ -244,8 +250,13 @@ impl Connection {
     pub async fn get_return_values(&self) -> napi::Result<Option<Vec<OutputParams>>> {
         let client = self.tds_client.lock().await;
         let return_values = client.get_return_values();
-        let output_params: Vec<OutputParams> =
-            return_values.into_iter().map(OutputParams::from).collect();
+        let output_params: Result<Vec<OutputParams>, _> = return_values
+            .into_iter()
+            .map(OutputParams::try_from)
+            .collect();
+        let output_params = output_params.map_err(|e| {
+            napi::Error::from_reason(format!("Failed to convert return values: {}", e))
+        })?;
         Ok(Some(output_params))
     }
 
