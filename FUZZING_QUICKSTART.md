@@ -1,4 +1,4 @@
-# Quick Start: Fuzzing TdsClient
+# Quick Start: Fuzzing mssql-tds
 
 ## Prerequisites
 ```bash
@@ -6,12 +6,32 @@ rustup install nightly
 cargo install cargo-fuzz
 ```
 
+## Available Fuzz Targets
+
+We have three fuzz targets that test different parts of the TDS protocol:
+
+1. **fuzz_token_stream**: Low-level token parsing
+2. **fuzz_tds_client**: Query execution and result processing
+3. **fuzz_connection_provider**: Connection establishment and authentication
+
 ## Run Fuzzing
 
-### Basic Run (recommended to start)
+### Fuzz Connection Provider (connection/authentication testing)
+```bash
+cd /home/saurabh/work/mssql-tds/mssql-tds
+RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz run fuzz_connection_provider
+```
+
+### Fuzz TdsClient (recommended for query execution testing)
 ```bash
 cd /home/saurabh/work/mssql-tds/mssql-tds
 RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz run fuzz_tds_client
+```
+
+### Fuzz Token Stream (low-level protocol testing)
+```bash
+cd /home/saurabh/work/mssql-tds/mssql-tds
+RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz run fuzz_token_stream
 ```
 
 ### Run for 1 Hour

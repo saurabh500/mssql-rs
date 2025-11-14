@@ -30,4 +30,10 @@ name = "fuzz_tds_client"
 path = "fuzz_targets/fuzz_tds_client.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_connection_provider"
+path = "fuzz_targets/fuzz_connection_provider.rs"
+test = false
+doc = false
 bench = false
