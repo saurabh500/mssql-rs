@@ -195,10 +195,7 @@ impl RpcParameter {
 /// Builds a comma-separated list of parameter names and types for the RPC call.
 /// This is used to construct the parameter declaration string for sp_executesql.
 #[cfg(fuzzing)]
-pub fn build_parameter_list_string(
-    named_params: &Vec<RpcParameter>,
-    params_list: &mut String,
-) {
+pub fn build_parameter_list_string(named_params: &Vec<RpcParameter>, params_list: &mut String) {
     build_parameter_list_string_impl(named_params, params_list)
 }
 
@@ -210,10 +207,7 @@ pub(crate) fn build_parameter_list_string(
     build_parameter_list_string_impl(named_params, params_list)
 }
 
-fn build_parameter_list_string_impl(
-    named_params: &Vec<RpcParameter>,
-    params_list: &mut String,
-) {
+fn build_parameter_list_string_impl(named_params: &Vec<RpcParameter>, params_list: &mut String) {
     let mut first_param = true;
     for param in named_params {
         if let Some(param_name) = &param.name {
