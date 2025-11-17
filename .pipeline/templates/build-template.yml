@@ -71,8 +71,8 @@ steps:
  
 - script: |
       export CERT_HOST_NAME="sql1"
-      cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets -p mssql-tds --no-fail-fast --profile ci --success-output immediate
-  displayName: Run tests
+      cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets --package mssql-tds --no-fail-fast --profile ci --success-output immediate
+  displayName: Run tests (mssql-tds package only)
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
   env:
     SQL_PASSWORD: $(SQL_PASSWORD)
@@ -86,10 +86,10 @@ steps:
     testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
     testRunTitle: $(System.PhaseName)
 
-- script: cargo llvm-cov report --lcov --output-path "$(Build.SourcesDirectory)/target/lcov.info"
+- script: cargo llvm-cov report --package mssql-tds --lcov --output-path "$(Build.SourcesDirectory)/target/lcov.info"
   condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
   workingDirectory: "$(Build.SourcesDirectory)"
-  displayName: Save code coverage in lcov format
+  displayName: Save code coverage in lcov format (mssql-tds package only)
 
 - ${{ if eq(parameters.osType, 'Windows') }}:
   - task: PublishCodeCoverageResults@2
