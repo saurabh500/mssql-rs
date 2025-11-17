@@ -35,7 +35,7 @@ where
 #[cfg(test)]
 pub(crate) mod test_utils {
     use super::*;
-    use byteorder::{BigEndian, ByteOrder, LittleEndian};
+    use byteorder::{ByteOrder, LittleEndian};
 
     /// Mock reader for testing token parsers
     /// Provides a simple byte buffer implementation of TdsPacketReader
@@ -95,48 +95,48 @@ pub(crate) mod test_utils {
 
         async fn read_int16(&mut self) -> TdsResult<i16> {
             let mut buf = [0u8; 2];
-            for i in 0..2 {
-                buf[i] = self.read_byte().await?;
+            for item in &mut buf {
+                *item = self.read_byte().await?;
             }
             Ok(LittleEndian::read_i16(&buf))
         }
 
         async fn read_uint16(&mut self) -> TdsResult<u16> {
             let mut buf = [0u8; 2];
-            for i in 0..2 {
-                buf[i] = self.read_byte().await?;
+            for item in &mut buf {
+                *item = self.read_byte().await?;
             }
             Ok(LittleEndian::read_u16(&buf))
         }
 
         async fn read_int32(&mut self) -> TdsResult<i32> {
             let mut buf = [0u8; 4];
-            for i in 0..4 {
-                buf[i] = self.read_byte().await?;
+            for item in &mut buf {
+                *item = self.read_byte().await?;
             }
             Ok(LittleEndian::read_i32(&buf))
         }
 
         async fn read_uint32(&mut self) -> TdsResult<u32> {
             let mut buf = [0u8; 4];
-            for i in 0..4 {
-                buf[i] = self.read_byte().await?;
+            for item in &mut buf {
+                *item = self.read_byte().await?;
             }
             Ok(LittleEndian::read_u32(&buf))
         }
 
         async fn read_int64(&mut self) -> TdsResult<i64> {
             let mut buf = [0u8; 8];
-            for i in 0..8 {
-                buf[i] = self.read_byte().await?;
+            for item in &mut buf {
+                *item = self.read_byte().await?;
             }
             Ok(LittleEndian::read_i64(&buf))
         }
 
         async fn read_uint64(&mut self) -> TdsResult<u64> {
             let mut buf = [0u8; 8];
-            for i in 0..8 {
-                buf[i] = self.read_byte().await?;
+            for item in &mut buf {
+                *item = self.read_byte().await?;
             }
             Ok(LittleEndian::read_u64(&buf))
         }
@@ -151,7 +151,7 @@ pub(crate) mod test_utils {
                 utf16_units.push(self.read_uint16().await?);
             }
             String::from_utf16(&utf16_units).map(Some).map_err(|e| {
-                crate::error::Error::ProtocolError(format!("UTF-16 decoding error: {}", e))
+                crate::error::Error::ProtocolError(format!("UTF-16 decoding error: {e}"))
             })
         }
 
@@ -162,7 +162,7 @@ pub(crate) mod test_utils {
                 utf16_units.push(self.read_uint16().await?);
             }
             String::from_utf16(&utf16_units).map_err(|e| {
-                crate::error::Error::ProtocolError(format!("UTF-16 decoding error: {}", e))
+                crate::error::Error::ProtocolError(format!("UTF-16 decoding error: {e}"))
             })
         }
 
