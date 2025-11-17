@@ -138,6 +138,12 @@ impl<'a> PacketReader<'a> {
         Ok(())
     }
 
+    /// Public test helper to read TDS packets in unit tests
+    #[cfg(test)]
+    pub(crate) async fn read_tds_packet_for_test(&mut self) -> TdsResult<()> {
+        self.read_tds_packet().await
+    }
+
     async fn get_new_tds_packet(&mut self) -> TdsResult<usize> {
         let packet_buffer: &mut Vec<u8> = &mut self.working_buffer;
         let base_offset_to_write = self.buffer_length;

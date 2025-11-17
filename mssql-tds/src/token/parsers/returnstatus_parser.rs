@@ -91,3 +91,84 @@ where
         Ok(Tokens::from(ReturnStatusToken { value }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::common::test_utils::MockReader;
+    use super::*;
+
+    #[tokio::test]
+    async fn test_parse_returnstatus_success() {
+        let mut reader = MockReader::from_i32(0);
+        let parser = ReturnStatusTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::ReturnStatus(token) => {
+                assert_eq!(token.value, 0);
+            }
+            _ => panic!("Expected ReturnStatus token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_returnstatus_error() {
+        let mut reader = MockReader::from_i32(-1);
+        let parser = ReturnStatusTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::ReturnStatus(token) => {
+                assert_eq!(token.value, -1);
+            }
+            _ => panic!("Expected ReturnStatus token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_returnstatus_positive() {
+        let mut reader = MockReader::from_i32(42);
+        let parser = ReturnStatusTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::ReturnStatus(token) => {
+                assert_eq!(token.value, 42);
+            }
+            _ => panic!("Expected ReturnStatus token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_returnstatus_max_int() {
+        let mut reader = MockReader::from_i32(i32::MAX);
+        let parser = ReturnStatusTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::ReturnStatus(token) => {
+                assert_eq!(token.value, i32::MAX);
+            }
+            _ => panic!("Expected ReturnStatus token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_returnstatus_min_int() {
+        let mut reader = MockReader::from_i32(i32::MIN);
+        let parser = ReturnStatusTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::ReturnStatus(token) => {
+                assert_eq!(token.value, i32::MIN);
+            }
+            _ => panic!("Expected ReturnStatus token"),
+        }
+    }
+}
