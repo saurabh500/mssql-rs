@@ -37,3 +37,31 @@ path = "fuzz_targets/fuzz_connection_provider.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_api_inputs"
+path = "fuzz_targets/fuzz_api_inputs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parameter_encoding"
+path = "fuzz_targets/fuzz_parameter_encoding.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_connection_provider_network"
+path = "fuzz_targets/fuzz_connection_provider_network.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_connection_provider_context"
+path = "fuzz_targets/fuzz_connection_provider_context.rs"
+test = false
+doc = false
+bench = false
