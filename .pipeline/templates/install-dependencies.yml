@@ -151,6 +151,7 @@ steps:
                 Write-Host "Found yarn at: $yarnPath"
                 $yarnVersion = & $yarnPath -v
                 Write-Host "Yarn version: $yarnVersion"
+                Write-Host "##vso[task.prependpath]$npmPrefix"
             } else {
                 Write-Host "Trying yarn from refreshed PATH..."
                 $yarnVersion = yarn -v
