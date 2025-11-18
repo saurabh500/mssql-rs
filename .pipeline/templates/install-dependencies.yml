@@ -69,10 +69,12 @@ steps:
     displayName: "Install JS dependencies for MacOS"
 
 - ${{ if eq(parameters.osType, 'Windows') }}:
-  - script: |
-      python --version
-      pip && pip install pipenv
-    displayName: "Check if python is installed"
+  - task: PowerShell@2
+    displayName: "Install Python 3.12 if not installed"
+    inputs:
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/InstallPython.ps1'
+      arguments: '-Version "3.12.*"'
 
   - task: PowerShell@2
     displayName: 'Install Rustup toolchain '
