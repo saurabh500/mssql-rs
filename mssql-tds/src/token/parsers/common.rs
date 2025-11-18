@@ -191,8 +191,25 @@ pub(crate) mod test_utils {
         async fn read_uint24(&mut self) -> TdsResult<u32> {
             unimplemented!()
         }
-        async fn read_bytes(&mut self, _buffer: &mut [u8]) -> TdsResult<usize> {
-            unimplemented!()
+        async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
+            // If buffer is empty, return 0 (successfully read 0 bytes)
+            if buffer.is_empty() {
+                return Ok(0);
+            }
+
+            let available = self.data.len().saturating_sub(self.position);
+            let to_read = available.min(buffer.len());
+
+            if to_read == 0 {
+                return Err(crate::error::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "No more data to read",
+                )));
+            }
+
+            buffer[..to_read].copy_from_slice(&self.data[self.position..self.position + to_read]);
+            self.position += to_read;
+            Ok(to_read)
         }
         async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
             unimplemented!()
