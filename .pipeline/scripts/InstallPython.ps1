@@ -45,6 +45,40 @@ if (-not $pythonInstalled) {
         
         Remove-Item -Path $extractPath -Recurse -Force -ErrorAction SilentlyContinue
         
+        # Add Python to PATH
+        Write-Host "Adding Python to PATH..."
+        $pythonPath = $null
+        
+        # Common Python installation locations
+        $possiblePaths = @(
+            "$env:AGENT_TOOLSDIRECTORY\Python\3.12.*\x64",
+            "$env:RUNNER_TOOL_CACHE\Python\3.12.*\x64",
+        )
+        
+        foreach ($path in $possiblePaths) {
+            $resolvedPaths = Get-Item $path -ErrorAction SilentlyContinue
+            if ($resolvedPaths) {
+                $pythonPath = $resolvedPaths | Select-Object -First 1 | Select-Object -ExpandProperty FullName
+                Write-Host "Found Python installation at: $pythonPath"
+                break
+            }
+        }
+        
+        if ($pythonPath) {
+            $scriptsPath = Join-Path $pythonPath "Scripts"
+            
+            # Add to current session PATH
+            $env:Path = "$pythonPath;$scriptsPath;$env:Path"
+            Write-Host "Added to PATH: $pythonPath"
+            Write-Host "Added to PATH: $scriptsPath"
+            
+            # Set Azure DevOps pipeline variable for subsequent tasks
+            Write-Host "##vso[task.setvariable variable=PATH;]$pythonPath;$scriptsPath;$env:Path"
+        }
+        else {
+            Write-Warning "Could not find Python installation directory to add to PATH"
+        }
+        
         # Verify installation
         $pythonVersion = python --version
         Write-Host "Python installed successfully: $pythonVersion"
