@@ -52,7 +52,7 @@ if (-not $pythonInstalled) {
         # Common Python installation locations
         $possiblePaths = @(
             "$env:AGENT_TOOLSDIRECTORY\Python\3.12.*\x64",
-            "$env:RUNNER_TOOL_CACHE\Python\3.12.*\x64",
+            "$env:RUNNER_TOOL_CACHE\Python\3.12.*\x64"
         )
         
         foreach ($path in $possiblePaths) {
