@@ -113,37 +113,27 @@ steps:
         $InstallLocation = "C:\Program Files\nodejs"
         scripts/InstallNode.ps1 -Version $Version -InstallLocation $InstallLocation
 
-  
   - task: PowerShell@2
-    displayName: 'Check node installation and install yarn'
+    displayName: 'Install Yarn'
     condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
     inputs:
       targetType: 'inline'
       script: |
         $nodeVersion = node -v
         Write-Host "Node.js version: $nodeVersion"
+        
         if (-not (Get-Command yarn -ErrorAction SilentlyContinue)) {
-            Write-Host "Installing Yarn..."
+            Write-Host "Installing Yarn globally..."
             npm install --global yarn
-            
-            # Refresh PATH to pick up yarn
-            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-            
-            # Also try to find yarn in npm's global prefix
-            $npmPrefix = npm config get prefix
-            $yarnPath = Join-Path $npmPrefix "yarn.cmd"
-            
-            if (Test-Path $yarnPath) {
-                Write-Host "Found yarn at: $yarnPath"
-                $yarnVersion = & $yarnPath -v
-                Write-Host "Yarn version: $yarnVersion"
-            } else {
-                Write-Host "Trying yarn from refreshed PATH..."
-                $yarnVersion = yarn -v
-                Write-Host "Yarn version: $yarnVersion"
-            }
         } else {
             Write-Host "Yarn is already installed."
-            $yarnVersion = yarn -v
-            Write-Host "Yarn version: $yarnVersion"
         }
+
+  - task: PowerShell@2
+    displayName: 'Verify Yarn installation'
+    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+    inputs:
+      targetType: 'inline'
+      script: |
+        $yarnVersion = yarn -v
+        Write-Host "Yarn version: $yarnVersion"
