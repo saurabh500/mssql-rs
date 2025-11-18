@@ -107,11 +107,11 @@ steps:
             $env:Path = "$cargoPath;$env:Path"
             
             # Set Azure DevOps pipeline variable for subsequent tasks
-            Write-Host "##vso[task.setvariable variable=PATH;]$cargoPath;$env:Path"
-            
+            Write-Host "##vso[task.prependpath]$cargoPath"
+
             # Verify cargo is accessible
             Start-Sleep -Seconds 2
-            & "$cargoPath\cargo.exe" --version
+            & cargo --version
             Write-Host "Cargo is now available"
         }
         catch {
