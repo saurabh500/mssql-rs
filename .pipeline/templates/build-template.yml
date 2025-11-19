@@ -57,7 +57,7 @@ steps:
   displayName: Install llvm-cov and nextest 
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
-- bash: cargo llvm-cov clean --workspace
+- script: cargo llvm-cov clean --workspace
   displayName: Clean up old coverage files
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
