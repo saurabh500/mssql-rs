@@ -71,30 +71,11 @@ steps:
 - ${{ if eq(parameters.osType, 'Windows') }}:
   
   - task: PowerShell@2
-    displayName: 'Print PATH and check Python directory'
+    displayName: 'Print debug information about agent'
     condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
     inputs:
-      targetType: 'inline'
-      script: |
-        Write-Host "Current PATH:"
-        Write-Host $env:Path
-        Write-Host ""
-        
-        $pythonDir = "C:\ProgramData\Tools\Python\3.12.10\x64"
-        if (Test-Path $pythonDir) {
-            Write-Host "Directory $pythonDir exists"
-            Write-Host "Recursive directory tree:"
-            Get-ChildItem -Path $pythonDir -Recurse -Force | ForEach-Object {
-                $relativePath = $_.FullName.Substring($pythonDir.Length)
-                if ($_.PSIsContainer) {
-                    Write-Host "[DIR]  $relativePath"
-                } else {
-                    Write-Host "[FILE] $relativePath ($($_.Length) bytes)"
-                }
-            }
-        } else {
-            Write-Host "Directory $pythonDir does NOT exist"
-        }
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/PrintAgentDebugInfo.ps1'
 
   - task: PowerShell@2
     displayName: "Install Python 3.12 if not installed"
@@ -104,91 +85,18 @@ steps:
       arguments: '-Version "3.12.*"'
 
   - task: PowerShell@2
-    displayName: 'Install Rustup toolchain '
+    displayName: 'Install Rustup toolchain'
     condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
     inputs:
-      targetType: 'inline'
-      script: |
-        $URL = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe";
-        $FileName = [System.IO.Path]::GetFileName($URL)
-        $DestinationFile = Join-Path $env:Temp $FileName
-
-        try {
-            Write-Host "Downloading rustup from $URL"
-            $wc = New-Object -TypeName System.Net.WebClient
-            $wc.DownloadFile($URL, $DestinationFile)}
-        catch {
-            Write-Error -Message "Failed to download rustup: $_.Message"
-        }
-
-        try{
-            Write-Host "Begin installation of rustup"
-            Start-Process "$DestinationFile" -ArgumentList @("-y") -Wait -NoNewWindow
-            Write-Host "End installation of rustup"
-            
-            # Add Cargo bin directory to PATH for subsequent tasks
-            $cargoPath = "$env:USERPROFILE\.cargo\bin"
-            Write-Host "Adding $cargoPath to PATH for subsequent tasks"
-            
-            # Update PATH for current session
-            $env:Path = "$cargoPath;$env:Path"
-            
-            # Set Azure DevOps pipeline variable for subsequent tasks
-            Write-Host "##vso[task.prependpath]$cargoPath"
-
-            # Verify cargo is accessible
-            Start-Sleep -Seconds 2
-            & cargo --version
-            Write-Host "Cargo is now available"
-        }
-        catch {
-            Write-Host "`nException while installing rustup, Error Message: " $_.Exception.Message
-        }
-
-  # - task: PowerShell@2
-  #   displayName: 'Install Node.js'
-  #   condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
-  #   inputs:
-  #     targetType: 'inline'
-  #     script: |
-  #       $Version = "20.19.3"
-  #       $InstallLocation = "C:\Program Files\nodejs"
-  #       scripts/InstallNode.ps1 -Version $Version -InstallLocation $InstallLocation
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/InstallRustup.ps1'
 
   - task: PowerShell@2
     displayName: 'Install Yarn'
     condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
     inputs:
-      targetType: 'inline'
-      script: |
-        $nodeVersion = node -v
-        Write-Host "Node.js version: $nodeVersion"
-        if (-not (Get-Command yarn -ErrorAction SilentlyContinue)) {
-            Write-Host "Installing Yarn..."
-            npm install --global yarn
-            
-            # Refresh PATH to pick up yarn
-            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-            
-            # Also try to find yarn in npm's global prefix
-            $npmPrefix = npm config get prefix
-            $yarnPath = Join-Path $npmPrefix "yarn.cmd"
-            
-            if (Test-Path $yarnPath) {
-                Write-Host "Found yarn at: $yarnPath"
-                $yarnVersion = & $yarnPath -v
-                Write-Host "Yarn version: $yarnVersion"
-                Write-Host "##vso[task.prependpath]$npmPrefix"
-            } else {
-                Write-Host "Trying yarn from refreshed PATH..."
-                $yarnVersion = yarn -v
-                Write-Host "Yarn version: $yarnVersion"
-            }
-        } else {
-            Write-Host "Yarn is already installed."
-            $yarnVersion = yarn -v
-            Write-Host "Yarn version: $yarnVersion"
-        }
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/InstallYarn.ps1'
 
   - task: PowerShell@2
     displayName: 'Verify Yarn installation'
