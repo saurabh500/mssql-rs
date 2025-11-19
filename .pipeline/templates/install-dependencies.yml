@@ -53,7 +53,7 @@ steps:
       fi
 
       # Install Rustup
-      scripts/install-rustup.sh
+      .pipeline/scripts/install-rustup.sh
     displayName: "Install MacOS dependencies"
 
   - script: |
