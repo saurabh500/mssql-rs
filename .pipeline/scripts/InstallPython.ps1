@@ -13,6 +13,8 @@ catch {
     Write-Host "Python is not installed"
 }
 
+# We should ideally never get to this point. The base image has Python pre-installed.
+# But in case it's not there, we install it.
 if (-not $pythonInstalled) {
     Write-Host "Installing Python $Version..."
     
@@ -89,54 +91,52 @@ if (-not $pythonInstalled) {
     }
 }
 
-# Ensure Python Scripts directory is in PATH
-$pythonLocations = @(
-    "C:\ProgramData\Tools\Python\3.12.10\x64",
-    "$env:AGENT_TOOLSDIRECTORY\Python\3.12.*\x64",
-    "$env:RUNNER_TOOL_CACHE\Python\3.12.*\x64"
-)
-
-$pythonPath = $null
-foreach ($location in $pythonLocations) {
-    if ($location -like "*`**") {
-        $resolvedPaths = Get-Item $location -ErrorAction SilentlyContinue
-        if ($resolvedPaths) {
-            $pythonPath = $resolvedPaths | Select-Object -First 1 | Select-Object -ExpandProperty FullName
-            break
-        }
-    }
-    elseif (Test-Path $location) {
-        $pythonPath = $location
-        break
-    }
-}
-
-if ($pythonPath) {
-    $scriptsPath = Join-Path $pythonPath "Scripts"
-    Write-Host "Found Python at: $pythonPath"
-    Write-Host "Scripts directory: $scriptsPath"
-    
-    # Add to current session PATH
-    $env:Path = "$pythonPath;$scriptsPath;$env:Path"
-    
-    # Set Azure DevOps pipeline variable for subsequent tasks
-    Write-Host "##vso[task.prependpath]$pythonPath"
-    Write-Host "##vso[task.prependpath]$scriptsPath"
-    Write-Host "Added Python and Scripts to PATH"
-}
-else {
-    Write-Warning "Could not find Python installation directory"
-}
-
-# Verify pip is accessible
-Write-Host "Verifying pip installation..."
+# Check if pip is accessible
+Write-Host "Checking if pip is accessible..."
+$pipAccessible = $false
 try {
-    $pipVersion = pip --version
+    $pipVersion = pip --version 2>&1
     Write-Host "pip is available: $pipVersion"
+    $pipAccessible = $true
 }
 catch {
-    Write-Error "pip is not accessible. Please check Python installation."
-    exit 1
+    Write-Host "pip is not accessible on PATH"
+}
+
+# If pip is not accessible, find Python location and add Scripts to PATH
+if (-not $pipAccessible) {
+    Write-Host "Locating python.exe to find Scripts directory..."
+    
+    try {
+        $pythonExePath = (Get-Command python -ErrorAction Stop).Source
+        $pythonDir = Split-Path $pythonExePath -Parent
+        $scriptsPath = Join-Path $pythonDir "Scripts"
+        
+        Write-Host "Found Python at: $pythonDir"
+        Write-Host "Scripts directory: $scriptsPath"
+        
+        if (Test-Path $scriptsPath) {
+            # Add to current session PATH
+            $env:Path = "$scriptsPath;$env:Path"
+            
+            # Set Azure DevOps pipeline variable for subsequent tasks
+            Write-Host "##vso[task.prependpath]$scriptsPath"
+            Write-Host "Added Scripts directory to PATH"
+            
+            # Verify pip is now accessible
+            Start-Sleep -Seconds 1
+            $pipVersion = pip --version
+            Write-Host "pip is now available: $pipVersion"
+        }
+        else {
+            Write-Error "Scripts directory does not exist at $scriptsPath"
+            exit 1
+        }
+    }
+    catch {
+        Write-Error "Could not locate python.exe: $($_.Exception.Message)"
+        exit 1
+    }
 }
 
 # Install pipenv
