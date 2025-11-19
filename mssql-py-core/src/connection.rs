@@ -25,7 +25,7 @@ pub struct DdbcConnection {
 #[pymethods]
 impl DdbcConnection {
     #[new]
-    fn new(client_context_dict: &PyDict) -> PyResult<Self> {
+    fn new(client_context_dict: &Bound<'_, PyDict>) -> PyResult<Self> {
         let runtime = Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
         
@@ -105,7 +105,7 @@ impl DdbcConnection {
 
 impl DdbcConnection {
     /// Convert Python dict (ClientContext fields) to Rust ClientContext
-    fn dict_to_client_context(dict: &PyDict) -> PyResult<ClientContext> {
+    fn dict_to_client_context(dict: &Bound<'_, PyDict>) -> PyResult<ClientContext> {
         // Extract required fields with defaults
         let server = dict.get_item("server")?
             .and_then(|v| v.extract::<String>().ok())
