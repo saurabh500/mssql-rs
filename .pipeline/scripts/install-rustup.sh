@@ -1,6 +1,12 @@
 #!/bin/bash
 
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y      
-
-echo "##vso[task.prependpath]$HOME/.local/bin"
-echo "##vso[task.prependpath]$HOME/.cargo/bin"
+if command -v cargo &> /dev/null; then
+    echo "Cargo is already installed, skipping Rust installation"
+    cargo --version
+    rustc --version
+else
+    echo "Installing Rust..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    echo "##vso[task.prependpath]$HOME/.local/bin"
+    echo "##vso[task.prependpath]$HOME/.cargo/bin"
+fi
