@@ -33,3 +33,25 @@ done
 echo "Vulnerable version: 2.38-4ubuntu2.8"
 echo "Fixed version: 2.38-4ubuntu2.10"
 
+echo ""
+echo "libssh-4 package information:"
+if dpkg -l | grep -q "^ii  libssh-4 "; then
+    version=$(dpkg -s libssh-4 2>/dev/null | grep "^Version:" | awk '{print $2}')
+    echo "libssh-4: $version"
+    echo "Vulnerable version: 0.9.6-2ubuntu0.22.04.4"
+    echo "Fixed version: 0.9.6-2ubuntu0.22.04.5"
+else
+    echo "libssh-4 package is not installed"
+fi
+
+echo ""
+echo "libxml2 package information:"
+if dpkg -l | grep -q "^ii  libxml2 "; then
+    version=$(dpkg -s libxml2 2>/dev/null | grep "^Version:" | awk '{print $2}')
+    echo "libxml2: $version"
+    echo "Vulnerable version: 2.9.13+dfsg-1ubuntu0.9"
+    echo "Fixed version: 2.9.13+dfsg-1ubuntu0.10"
+else
+    echo "libxml2 package is not installed"
+fi
+
