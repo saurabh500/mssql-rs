@@ -1,7 +1,3 @@
-param(
-    [string]$Version = "3.12.*"
-)
-
 # Check if Python is already installed
 $pythonInstalled = $false
 try {

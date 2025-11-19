@@ -78,11 +78,10 @@ steps:
       filePath: '.pipeline/scripts/PrintAgentDebugInfo.ps1'
 
   - task: PowerShell@2
-    displayName: "Install Python 3.12 if not installed"
+    displayName: 'Setup Python Paths'
     inputs:
       targetType: 'filePath'
-      filePath: '.pipeline/scripts/InstallPython.ps1'
-      arguments: '-Version "3.12.*"'
+      filePath: '.pipeline/scripts/SetupPythonPaths.ps1'
 
   - task: PowerShell@2
     displayName: 'Install Rustup toolchain'
