@@ -2,7 +2,7 @@
 resolver = "2"
 members = [ 
     "mssql-tds", "mssql-js"
-, "mssql-tds-cli", "mssql-mock-tds"]
+, "mssql-tds-cli", "mssql-mock-tds", "mssql-py-core"]
 
 [profile.release]
 lto = true
