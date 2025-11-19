@@ -26,13 +26,13 @@ steps:
 
   - script: |
       scripts/install-deps.sh ${{ parameters.installdepsparams }}
-      # This is a workaround for the fact that the PATH variable is not updated in the same shell.
-      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
     displayName: "Install linux dependencies"
 
   - script: |
-      # This is a workaround for the fact that the PATH variable is not updated in the same shell.
-      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/share/fnm:$PATH"
+      .pipeline/scripts/install-rustup.sh
+    displayName: "Install Rustup"
+
+  - script: |
       scripts/install-jsdeps.sh
     displayName: "Install JS dependencies"
 

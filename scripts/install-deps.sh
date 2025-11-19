@@ -119,16 +119,6 @@ else
     echo "Azure CLI is already installed"
 fi
 
-install_rustup() {
-    # Install Rustup
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-}
-
-if [[ "$1" != "--skip-rustup" ]]; then
-    echo "Installing Rustup..."
-    install_rustup
-fi
-
 # Download and install fnm:
 if ! command -v fnm &> /dev/null
 then
@@ -138,6 +128,8 @@ then
 else
     echo "fnm is already installed"
 fi
+
+echo "##vso[task.prependpath]$HOME/.local/share/fnm"
 
 cat /home/cloudtest/.bashrc
 cat $HOME/.bashrc
