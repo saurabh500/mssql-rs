@@ -4,7 +4,7 @@ export FNM_PATH="$HOME/.local/share/fnm"
 
 export PATH="$FNM_PATH:$PATH"
 
-eval "`fnm env`"
+eval "`fnm env --shell bash`"
 
 echo $PATH
 
