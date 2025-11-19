@@ -82,12 +82,15 @@ steps:
         
         $pythonDir = "C:\ProgramData\Tools\Python\3.12.10\x64"
         if (Test-Path $pythonDir) {
-            $items = Get-ChildItem -Path $pythonDir -Force
-            if ($items.Count -eq 0) {
-                Write-Host "Directory $pythonDir exists but is EMPTY"
-            } else {
-                Write-Host "Directory $pythonDir exists and contains $($items.Count) items:"
-                $items | ForEach-Object { Write-Host "  - $($_.Name)" }
+            Write-Host "Directory $pythonDir exists"
+            Write-Host "Recursive directory tree:"
+            Get-ChildItem -Path $pythonDir -Recurse -Force | ForEach-Object {
+                $relativePath = $_.FullName.Substring($pythonDir.Length)
+                if ($_.PSIsContainer) {
+                    Write-Host "[DIR]  $relativePath"
+                } else {
+                    Write-Host "[FILE] $relativePath ($($_.Length) bytes)"
+                }
             }
         } else {
             Write-Host "Directory $pythonDir does NOT exist"
