@@ -110,15 +110,11 @@ echo "INFO: Docker group created"
 sudo usermod -aG docker $USER
 echo "INFO: User $USER added to docker group. You may need to log out and back in for this to take effect."
 
-# Install az cli
+# Check az cli
 if ! command -v az &> /dev/null
 then
-    echo "Azure CLI not found, installing..."
-    for i in {1..5}; do
-        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash && break
-        echo "Az Cli install failed, retrying in 5 seconds... (attempt $i/5)"
-        sleep 5
-    done
+    echo "ERROR: Az CLI is expected to be pre-installed in the build image. If this is a developer machine, then install az cli using \`curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash\`"
+    exit 1
 else
     echo "Azure CLI is already installed"
 fi
