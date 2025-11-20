@@ -14,12 +14,11 @@ use crate::connection::transport::ssl_handler::SslHandler;
 use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
 use std::time::Duration;
 use tokio::net::windows::named_pipe::NamedPipeClient;
-use tracing::debug;
+use tracing::{debug, info, warn};
 
-#[cfg(windows)]
 use std::ffi::OsStr;
-#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
+use winapi::shared::winerror::ERROR_PIPE_BUSY;
 
 /// Timeout for Named Pipe connection attempts (matching ODBC's NP_OPEN_TIMEOUT)
 pub(crate) const NAMED_PIPE_OPEN_TIMEOUT_MS: u32 = 5000;
@@ -37,16 +36,21 @@ pub(crate) async fn open_named_pipe_with_retry(
     use std::time::Instant;
     use tokio::net::windows::named_pipe::ClientOptions;
 
+    info!(pipe_path, "Opening named pipe connection");
     let start_time = Instant::now();
     let timeout_duration = Duration::from_millis(NAMED_PIPE_OPEN_TIMEOUT_MS as u64);
 
     loop {
         match ClientOptions::new().open(pipe_path) {
-            Ok(client) => return Ok(client),
+            Ok(client) => {
+                debug!(pipe_path, elapsed_ms = ?start_time.elapsed().as_millis(), "Named pipe connection established");
+                return Ok(client);
+            }
             Err(e) => {
-                // ERROR_PIPE_BUSY = 231 (0xE7) - All pipe instances are busy
-                if e.raw_os_error() == Some(231) {
+                // ERROR_PIPE_BUSY - All pipe instances are busy
+                if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) {
                     let elapsed = start_time.elapsed();
+                    warn!(pipe_path, elapsed_ms = ?elapsed.as_millis(), "Named pipe busy, waiting for available instance");
                     if elapsed >= timeout_duration {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::TimedOut,
@@ -117,6 +121,8 @@ pub(crate) async fn open_named_pipe_with_retry(
 fn wait_for_named_pipe(pipe_path: &str, timeout_ms: u32) -> std::io::Result<()> {
     use winapi::um::namedpipeapi::WaitNamedPipeW;
 
+    debug!(pipe_path, timeout_ms, "Calling WaitNamedPipeW");
+
     // Convert pipe path to wide string (UTF-16)
     let wide_path: Vec<u16> = OsStr::new(pipe_path)
         .encode_wide()
@@ -152,8 +158,9 @@ pub(crate) async fn create_named_pipe_transport(
     let base_stream: Box<dyn Stream> = Box::new(pipe_client);
 
     // Extract server name from the transport context
-    // This handles both local (\\.\\..) and remote (\\\\server\\...) pipe paths
+    // This handles both local (\\.\\...) and remote (\\\\server\\...) pipe paths
     let server_host_name = transport_context.get_server_name();
+    info!(server_host_name, ?encryption_mode, "Creating named pipe transport");
 
     Ok(Box::new(NetworkTransport::new(
         base_stream,
