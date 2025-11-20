@@ -280,18 +280,18 @@ mod transport_protocols {
         let np_local_context = TransportContext::NamedPipe {
             pipe_name: r"\\.\pipe\sql\query".to_string(),
         };
-        assert_eq!(np_local_context.get_server_name(), ".");
+        assert_eq!(np_local_context.get_server_name(), "localhost");
 
         // Shared Memory
         let sm_context = TransportContext::SharedMemory {
             instance_name: String::new(),
         };
-        assert_eq!(sm_context.get_server_name(), ".");
+        assert_eq!(sm_context.get_server_name(), "localhost");
 
         let sm_named_context = TransportContext::SharedMemory {
             instance_name: "SQLEXPRESS".to_string(),
         };
-        assert_eq!(sm_named_context.get_server_name(), ".");
+        assert_eq!(sm_named_context.get_server_name(), "localhost");
     }
 
     #[test]
