@@ -137,7 +137,35 @@ pub(crate) async fn create_transport(
                 "Named Pipes are only supported on Windows",
             )));
         }
-        _ => unimplemented!("Only TCP and Named Pipe transports are supported"),
+        #[cfg(windows)]
+        TransportContext::SharedMemory { instance_name } => {
+            info!("Connecting to Shared Memory instance: {}", instance_name);
+
+            // Shared Memory uses a special Named Pipe format: \\.\pipe\LOCALDB#<hash>\tsql\query
+            // For SQL Server instances, the format is: \\.\pipe\sql\query or \\.\pipe\MSSQL$<instance>\sql\query
+            let pipe_name = if instance_name.is_empty() || instance_name == "MSSQLSERVER" {
+                "\\\\.\\pipe\\sql\\query".to_string()
+            } else {
+                format!("\\\\.\\pipe\\MSSQL${}\\sql\\query", instance_name)
+            };
+
+            info!("Using pipe name for Shared Memory: {}", pipe_name);
+
+            // Create a Named Pipe client for Shared Memory
+            use tokio::net::windows::named_pipe::ClientOptions;
+            let pipe_client = ClientOptions::new().open(&pipe_name)?;
+
+            info!("Connected to Shared Memory via pipe: {}", pipe_name);
+            return create_named_pipe_transport(pipe_client, encryption_options, encryption_mode)
+                .await;
+        }
+        #[cfg(not(windows))]
+        TransportContext::SharedMemory { .. } => {
+            return Err(crate::error::Error::from(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "Shared Memory is only supported on Windows",
+            )));
+        }
     };
 
     match tds_version {
