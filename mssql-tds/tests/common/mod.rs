@@ -226,12 +226,12 @@ pub fn create_named_pipe_context() -> ClientContext {
 
     let pipe_name = if let Some(inst) = instance {
         if inst.is_empty() || inst.eq_ignore_ascii_case("MSSQLSERVER") {
-            format!(r"\\{}\pipe\sql\query", host)
+            format!(r"\\{host}\pipe\sql\query")
         } else {
-            format!(r"\\{}\pipe\MSSQL${}\sql\query", host, inst)
+            format!(r"\\{host}\pipe\MSSQL${inst}\sql\query")
         }
     } else {
-        format!(r"\\{}\pipe\sql\query", host)
+        format!(r"\\{host}\pipe\sql\query")
     };
 
     ClientContext {
@@ -261,7 +261,7 @@ pub fn create_named_pipe_context() -> ClientContext {
 pub fn create_shared_memory_context() -> ClientContext {
     dotenv().ok();
     let instance = env::var("DB_INSTANCE").unwrap_or_else(|_| String::new());
-    
+
     // Normalize MSSQLSERVER to empty string (default instance)
     let instance_name = if instance.eq_ignore_ascii_case("MSSQLSERVER") {
         String::new()

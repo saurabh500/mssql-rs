@@ -35,7 +35,9 @@ use tokio::time::timeout;
 use tracing::{debug, event, info, trace};
 
 #[cfg(windows)]
-use tokio::net::windows::named_pipe::NamedPipeClient;
+use crate::connection::transport::named_pipes::{
+    create_named_pipe_transport, open_named_pipe_with_retry,
+};
 
 pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
 
@@ -122,9 +124,8 @@ pub(crate) async fn create_transport(
         TransportContext::NamedPipe { pipe_name } => {
             info!("Connecting to Named Pipe: {}", pipe_name);
 
-            // Create a Named Pipe client
-            use tokio::net::windows::named_pipe::ClientOptions;
-            let pipe_client = ClientOptions::new().open(pipe_name)?;
+            // Open Named Pipe with retry logic for ERROR_PIPE_BUSY
+            let pipe_client = open_named_pipe_with_retry(pipe_name).await?;
 
             info!("Connected to Named Pipe: {}", pipe_name);
             return create_named_pipe_transport(pipe_client, encryption_options, encryption_mode)
@@ -139,23 +140,33 @@ pub(crate) async fn create_transport(
         }
         #[cfg(windows)]
         TransportContext::SharedMemory { instance_name } => {
-            info!("Connecting to Shared Memory instance: {}", instance_name);
+            // Shared Memory protocol is implemented as Named Pipes with a special path format.
+            // For SQL Server 2005+, SharedMemory is actually LPC-over-Named-Pipes using the path:
+            // \\.\pipe\SQLLocal\<INSTANCE_NAME>
+            //
+            // This only works for localhost connections and does not support clustered instances.
 
-            // Shared Memory uses a special Named Pipe format: \\.\pipe\LOCALDB#<hash>\tsql\query
-            // For SQL Server instances, the format is: \\.\pipe\sql\query or \\.\pipe\MSSQL$<instance>\sql\query
-            let pipe_name = if instance_name.is_empty() || instance_name == "MSSQLSERVER" {
-                "\\\\.\\pipe\\sql\\query".to_string()
+            // Default to MSSQLSERVER for empty instance name (matching SQL Server behavior)
+            let actual_instance = if instance_name.is_empty() {
+                "MSSQLSERVER"
             } else {
-                format!("\\\\.\\pipe\\MSSQL${}\\sql\\query", instance_name)
+                instance_name.as_str()
             };
 
-            info!("Using pipe name for Shared Memory: {}", pipe_name);
+            info!(
+                "Connecting via Shared Memory (LPC-over-Named-Pipes) to instance: {}",
+                actual_instance
+            );
 
-            // Create a Named Pipe client for Shared Memory
-            use tokio::net::windows::named_pipe::ClientOptions;
-            let pipe_client = ClientOptions::new().open(&pipe_name)?;
+            // Construct the pipe path: \\.\.\pipe\SQLLocal\<instance>
+            let pipe_name = format!(r"\\.\pipe\SQLLocal\{actual_instance}");
 
-            info!("Connected to Shared Memory via pipe: {}", pipe_name);
+            info!("Connecting to Shared Memory pipe: {}", pipe_name);
+
+            // Open Named Pipe with retry logic for ERROR_PIPE_BUSY
+            let pipe_client = open_named_pipe_with_retry(&pipe_name).await?;
+
+            info!("Connected to Shared Memory (LPC-over-NP): {}", pipe_name);
             return create_named_pipe_transport(pipe_client, encryption_options, encryption_mode)
                 .await;
         }
@@ -206,28 +217,6 @@ pub(crate) async fn create_transport(
     }
 }
 
-#[cfg(windows)]
-async fn create_named_pipe_transport(
-    pipe_client: NamedPipeClient,
-    encryption_options: EncryptionOptions,
-    encryption_mode: EncryptionSetting,
-) -> TdsResult<Box<NetworkTransport>> {
-    // Named Pipes support TLS encryption
-    let base_stream: Box<dyn Stream> = Box::new(pipe_client);
-
-    // For Named Pipes, we'll use the pipe name as the server hostname for TLS
-    // In practice, Named Pipes are local connections, so TLS validation may need special handling
-    Ok(Box::new(NetworkTransport::new(
-        base_stream,
-        SslHandler {
-            server_host_name: "localhost".to_string(), // Named Pipes are always local
-            encryption_options,
-        },
-        PRE_NEGOTIATED_PACKET_SIZE,
-        encryption_mode,
-    )))
-}
-
 #[async_trait]
 pub trait TransportSslHandler {
     async fn enable_ssl(&mut self) -> TdsResult<()>;
@@ -246,17 +235,6 @@ impl Stream for TcpStream {
 
     fn tls_handshake_completed(&mut self) {
         // No-op for plain TCP streams
-    }
-}
-
-#[cfg(windows)]
-impl Stream for NamedPipeClient {
-    fn tls_handshake_starting(&mut self) {
-        // No-op for named pipe streams
-    }
-
-    fn tls_handshake_completed(&mut self) {
-        // No-op for named pipe streams
     }
 }
 

@@ -24,6 +24,9 @@ pretty-hex = "0.4"
 socket2 = { version = "0.5", features = ["all"] }
 hostname = "0.4.1"
 
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["namedpipeapi"] }
+
 [dependencies.uuid]
 version = "1.17.0"
 features = [

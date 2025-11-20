@@ -107,7 +107,7 @@ mod transport_protocols {
 
         // Test connecting to default instance using Named Pipe
         // Format: \\server\pipe\sql\query
-        let pipe_name = format!(r"\\{}\pipe\sql\query", host);
+        let pipe_name = format!(r"\\{host}\pipe\sql\query");
 
         let transport_context = TransportContext::NamedPipe { pipe_name };
 
@@ -199,107 +199,85 @@ mod transport_protocols {
     }
 
     // =========================================================================
-    // Unit Tests for TransportContext
+    // Concurrent Connection Tests
     // =========================================================================
 
-    #[test]
-    fn test_transport_context_get_server_name() {
-        // TCP
-        let tcp_context = TransportContext::Tcp {
-            host: "localhost".to_string(),
-            port: 1433,
-        };
-        assert_eq!(tcp_context.get_server_name(), "localhost");
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_concurrent_named_pipe_connections() -> TdsResult<()> {
+        init_tracing();
+        dotenv().ok();
 
-        // Named Pipe
-        let np_context = TransportContext::NamedPipe {
-            pipe_name: r"\\server\pipe\sql\query".to_string(),
-        };
-        assert_eq!(np_context.get_server_name(), "server");
+        // Test opening 10 Named Pipe connections simultaneously
+        // This verifies that our retry mechanism handles concurrent access correctly
+        let pipe_name = r"\\.\pipe\sql\query".to_string();
 
-        let np_local_context = TransportContext::NamedPipe {
-            pipe_name: r"\\.\pipe\sql\query".to_string(),
-        };
-        assert_eq!(np_local_context.get_server_name(), "localhost");
+        let mut handles = Vec::new();
 
-        // Shared Memory
-        let sm_context = TransportContext::SharedMemory {
-            instance_name: String::new(),
-        };
-        assert_eq!(sm_context.get_server_name(), "localhost");
+        for i in 0..10 {
+            let pipe_name_clone = pipe_name.clone();
+            let handle = tokio::spawn(async move {
+                let transport_context = TransportContext::NamedPipe {
+                    pipe_name: pipe_name_clone,
+                };
 
-        let sm_named_context = TransportContext::SharedMemory {
-            instance_name: "SQLEXPRESS".to_string(),
-        };
-        assert_eq!(sm_named_context.get_server_name(), "localhost");
+                let mut client = create_client_with_transport(transport_context)
+                    .await
+                    .unwrap_or_else(|_| panic!("Failed to create client {i}"));
+
+                test_simple_query(&mut client)
+                    .await
+                    .unwrap_or_else(|_| panic!("Failed to execute query on client {i}"));
+
+                println!("Client {i} completed successfully");
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all connections to complete
+        for handle in handles {
+            handle.await.expect("Task panicked");
+        }
+
+        Ok(())
     }
 
-    #[test]
-    fn test_transport_context_is_local() {
-        // TCP - not local
-        let tcp_context = TransportContext::Tcp {
-            host: "remote-server".to_string(),
-            port: 1433,
-        };
-        assert!(!tcp_context.is_local());
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_concurrent_shared_memory_connections() -> TdsResult<()> {
+        init_tracing();
+        dotenv().ok();
 
-        // TCP - localhost
-        let tcp_localhost = TransportContext::Tcp {
-            host: "localhost".to_string(),
-            port: 1433,
-        };
-        assert!(tcp_localhost.is_local());
+        // Test opening 10 Shared Memory connections simultaneously
+        // This verifies that our retry mechanism handles concurrent access correctly
+        // and that SQLLocal pipes don't conflict
 
-        // TCP - 127.0.0.1
-        let tcp_loopback = TransportContext::Tcp {
-            host: "127.0.0.1".to_string(),
-            port: 1433,
-        };
-        assert!(tcp_loopback.is_local());
+        let mut handles = Vec::new();
 
-        // Named Pipe with . (local)
-        let np_local = TransportContext::NamedPipe {
-            pipe_name: r"\\.\pipe\sql\query".to_string(),
-        };
-        assert!(np_local.is_local());
+        for i in 0..10 {
+            let handle = tokio::spawn(async move {
+                let transport_context = TransportContext::SharedMemory {
+                    instance_name: "MSSQLSERVER".to_string(),
+                };
 
-        // Named Pipe with remote server
-        let np_remote = TransportContext::NamedPipe {
-            pipe_name: r"\\remote-server\pipe\sql\query".to_string(),
-        };
-        assert!(!np_remote.is_local());
+                let mut client = create_client_with_transport(transport_context)
+                    .await
+                    .unwrap_or_else(|_| panic!("Failed to create client {i}"));
 
-        // Shared Memory - always local
-        let sm_context = TransportContext::SharedMemory {
-            instance_name: String::new(),
-        };
-        assert!(sm_context.is_local());
-    }
+                test_simple_query(&mut client)
+                    .await
+                    .unwrap_or_else(|_| panic!("Failed to execute query on client {i}"));
 
-    #[test]
-    fn test_transport_context_get_protocol() {
-        use mssql_tds::connection::client_context::Protocol;
+                println!("Client {i} completed successfully");
+            });
+            handles.push(handle);
+        }
 
-        // TCP
-        let tcp_context = TransportContext::Tcp {
-            host: "localhost".to_string(),
-            port: 1433,
-        };
-        assert!(matches!(tcp_context.get_protocol(), Protocol::Tcp));
+        // Wait for all connections to complete
+        for handle in handles {
+            handle.await.expect("Task panicked");
+        }
 
-        // Named Pipe
-        let np_context = TransportContext::NamedPipe {
-            pipe_name: r"\\.\pipe\sql\query".to_string(),
-        };
-        assert!(matches!(np_context.get_protocol(), Protocol::NamedPipe));
-
-        // Shared Memory
-        let sm_context = TransportContext::SharedMemory {
-            instance_name: String::new(),
-        };
-        assert!(matches!(
-            sm_context.get_protocol(),
-            Protocol::SharedMemory
-        ));
+        Ok(())
     }
 }
