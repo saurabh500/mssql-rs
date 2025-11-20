@@ -128,8 +128,13 @@ pub(crate) async fn create_transport(
             let pipe_client = open_named_pipe_with_retry(pipe_name).await?;
 
             info!("Connected to Named Pipe: {}", pipe_name);
-            return create_named_pipe_transport(pipe_client, encryption_options, encryption_mode)
-                .await;
+            return create_named_pipe_transport(
+                pipe_client,
+                transport_context,
+                encryption_options,
+                encryption_mode,
+            )
+            .await;
         }
         #[cfg(not(windows))]
         TransportContext::NamedPipe { .. } => {
@@ -167,8 +172,13 @@ pub(crate) async fn create_transport(
             let pipe_client = open_named_pipe_with_retry(&pipe_name).await?;
 
             info!("Connected to Shared Memory (LPC-over-NP): {}", pipe_name);
-            return create_named_pipe_transport(pipe_client, encryption_options, encryption_mode)
-                .await;
+            return create_named_pipe_transport(
+                pipe_client,
+                transport_context,
+                encryption_options,
+                encryption_mode,
+            )
+            .await;
         }
         #[cfg(not(windows))]
         TransportContext::SharedMemory { .. } => {

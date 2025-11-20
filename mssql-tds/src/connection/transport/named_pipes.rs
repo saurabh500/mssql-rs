@@ -6,6 +6,7 @@
 //! This module provides Windows-specific functionality for connecting to SQL Server
 //! via Named Pipes, including retry logic for busy pipe instances.
 
+use crate::connection::client_context::TransportContext;
 use crate::connection::transport::network_transport::{
     NetworkTransport, PRE_NEGOTIATED_PACKET_SIZE, Stream,
 };
@@ -139,21 +140,25 @@ fn wait_for_named_pipe(pipe_path: &str, timeout_ms: u32) -> std::io::Result<()> 
 /// Creates a NetworkTransport for Named Pipe connections.
 ///
 /// Named Pipes support TLS encryption, and this function sets up the transport
-/// with appropriate SSL handling for local connections.
+/// with appropriate SSL handling. Uses the transport context to extract the
+/// server name for TLS certificate validation.
 pub(crate) async fn create_named_pipe_transport(
     pipe_client: NamedPipeClient,
+    transport_context: &TransportContext,
     encryption_options: EncryptionOptions,
     encryption_mode: EncryptionSetting,
 ) -> TdsResult<Box<NetworkTransport>> {
     // Named Pipes support TLS encryption
     let base_stream: Box<dyn Stream> = Box::new(pipe_client);
 
-    // For Named Pipes, we'll use the pipe name as the server hostname for TLS
-    // In practice, Named Pipes are local connections, so TLS validation may need special handling
+    // Extract server name from the transport context
+    // This handles both local (\\.\\..) and remote (\\\\server\\...) pipe paths
+    let server_host_name = transport_context.get_server_name();
+
     Ok(Box::new(NetworkTransport::new(
         base_stream,
         SslHandler {
-            server_host_name: "localhost".to_string(), // Named Pipes are always local
+            server_host_name,
             encryption_options,
         },
         PRE_NEGOTIATED_PACKET_SIZE,
