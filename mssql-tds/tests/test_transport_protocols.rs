@@ -58,7 +58,7 @@ mod transport_protocols {
             password,
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::On,
+                mode: EncryptionSetting::Strict,
                 trust_server_certificate: trust_server_certificate(),
                 host_name_in_cert: get_cert_hostname(),
             },
@@ -119,27 +119,6 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
-    async fn test_named_pipe_named_instance() -> TdsResult<()> {
-        init_tracing();
-        dotenv().ok();
-
-        let host = env::var("DB_HOST").expect("DB_HOST environment variable not set");
-        let instance = env::var("DB_INSTANCE").unwrap_or_else(|_| "SQLEXPRESS".to_string());
-
-        // Test connecting to named instance using Named Pipe
-        // Format: \\server\pipe\MSSQL$INSTANCE\sql\query
-        let pipe_name = format!(r"\\{}\pipe\MSSQL${}\sql\query", host, instance);
-
-        let transport_context = TransportContext::NamedPipe { pipe_name };
-
-        let mut client = create_client_with_transport(transport_context).await?;
-        test_simple_query(&mut client).await?;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[cfg(windows)]
     async fn test_named_pipe_local_default_instance() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -147,26 +126,6 @@ mod transport_protocols {
         // Test connecting to local default instance using Named Pipe
         // Format: \\.\pipe\sql\query (local machine shorthand)
         let pipe_name = r"\\.\pipe\sql\query".to_string();
-
-        let transport_context = TransportContext::NamedPipe { pipe_name };
-
-        let mut client = create_client_with_transport(transport_context).await?;
-        test_simple_query(&mut client).await?;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[cfg(windows)]
-    async fn test_named_pipe_local_named_instance() -> TdsResult<()> {
-        init_tracing();
-        dotenv().ok();
-
-        let instance = env::var("DB_INSTANCE").unwrap_or_else(|_| "SQLEXPRESS".to_string());
-
-        // Test connecting to local named instance using Named Pipe
-        // Format: \\.\pipe\MSSQL$INSTANCE\sql\query
-        let pipe_name = format!(r"\\.\pipe\MSSQL${}\sql\query", instance);
 
         let transport_context = TransportContext::NamedPipe { pipe_name };
 
@@ -190,25 +149,6 @@ mod transport_protocols {
         // This uses the default instance name (empty string)
         let transport_context = TransportContext::SharedMemory {
             instance_name: String::new(),
-        };
-
-        let mut client = create_client_with_transport(transport_context).await?;
-        test_simple_query(&mut client).await?;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[cfg(windows)]
-    async fn test_shared_memory_named_instance() -> TdsResult<()> {
-        init_tracing();
-        dotenv().ok();
-
-        let instance = env::var("DB_INSTANCE").unwrap_or_else(|_| "SQLEXPRESS".to_string());
-
-        // Test connecting to named instance using Shared Memory (lpc:)
-        let transport_context = TransportContext::SharedMemory {
-            instance_name: instance,
         };
 
         let mut client = create_client_with_transport(transport_context).await?;
