@@ -50,11 +50,8 @@ mod transport_protocols {
     async fn create_client_with_transport(
         transport_context: TransportContext,
     ) -> TdsResult<TdsClient> {
-        create_client_with_transport_and_encryption(
-            transport_context,
-            EncryptionSetting::Strict,
-        )
-        .await
+        create_client_with_transport_and_encryption(transport_context, EncryptionSetting::Strict)
+            .await
     }
 
     /// Create a client with the specified transport context and encryption mode
@@ -160,11 +157,9 @@ mod transport_protocols {
 
         let transport_context = TransportContext::NamedPipe { pipe_name };
 
-        let mut client = create_client_with_transport_and_encryption(
-            transport_context,
-            EncryptionSetting::On,
-        )
-        .await?;
+        let mut client =
+            create_client_with_transport_and_encryption(transport_context, EncryptionSetting::On)
+                .await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -223,11 +218,9 @@ mod transport_protocols {
             instance_name: "MSSQLSERVER".to_string(),
         };
 
-        let mut client = create_client_with_transport_and_encryption(
-            transport_context,
-            EncryptionSetting::On,
-        )
-        .await?;
+        let mut client =
+            create_client_with_transport_and_encryption(transport_context, EncryptionSetting::On)
+                .await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -273,11 +266,9 @@ mod transport_protocols {
 
         let transport_context = TransportContext::Tcp { host, port };
 
-        let mut client = create_client_with_transport_and_encryption(
-            transport_context,
-            EncryptionSetting::On,
-        )
-        .await?;
+        let mut client =
+            create_client_with_transport_and_encryption(transport_context, EncryptionSetting::On)
+                .await?;
         test_simple_query(&mut client).await?;
 
         Ok(())

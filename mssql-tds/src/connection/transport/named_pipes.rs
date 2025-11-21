@@ -163,7 +163,11 @@ pub(crate) async fn create_named_pipe_transport(
     // Extract server name from the transport context
     // This handles both local (\\.\\...) and remote (\\\\server\\...) pipe paths
     let server_host_name = transport_context.get_server_name();
-    info!(server_host_name, ?encryption_mode, "Creating named pipe transport");
+    info!(
+        server_host_name,
+        ?encryption_mode,
+        "Creating named pipe transport"
+    );
 
     Ok(Box::new(NetworkTransport::new(
         base_stream,

@@ -116,7 +116,7 @@ async fn create_base_stream(
             if tcp_stream.is_none() {
                 return Err(crate::error::Error::from(last_error.unwrap()));
             }
-            
+
             Ok(Box::new(tcp_stream.unwrap()))
         }
         #[cfg(windows)]
@@ -130,12 +130,10 @@ async fn create_base_stream(
             Ok(Box::new(pipe_client))
         }
         #[cfg(not(windows))]
-        TransportContext::NamedPipe { .. } => {
-            Err(crate::error::Error::from(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "Named Pipes are only supported on Windows",
-            )))
-        }
+        TransportContext::NamedPipe { .. } => Err(crate::error::Error::from(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Named Pipes are only supported on Windows",
+        ))),
         #[cfg(windows)]
         TransportContext::SharedMemory { instance_name } => {
             // Shared Memory protocol is implemented as Named Pipes with a special path format.
@@ -196,7 +194,7 @@ async fn create_transport_for_version(
             // TDS 7.4 starts with unencrypted streams that could get encrypted as part of prelogin
             // negotiation. TLS must be wrapped in TDS packets for this version.
             info!("Creating NetworkTransport for TDS 7.4 with TLS wrapping");
-            
+
             Ok(Box::new(NetworkTransport::new_with_tls_mode(
                 stream,
                 ssl_handler,
@@ -208,7 +206,7 @@ async fn create_transport_for_version(
         TdsVersion::V8_0 => {
             // Enable TLS immediately for TDS 8.0 (before any TDS packets are exchanged)
             info!("Creating NetworkTransport for TDS 8.0 with immediate TLS");
-            
+
             let encrypted_stream = ssl_handler.enable_ssl_async(stream).await?;
 
             Ok(Box::new(NetworkTransport::new(
@@ -231,10 +229,10 @@ pub(crate) async fn create_transport(
     encryption_options: EncryptionOptions,
 ) -> TdsResult<Box<NetworkTransport>> {
     let encryption_mode = encryption_options.mode;
-    
+
     // Step 1: Create the base stream (transport-specific)
     let stream = create_base_stream(ipaddress_preference, transport_context).await?;
-    
+
     // Step 2: Apply TDS version-specific wrapping (uniform for all transports)
     create_transport_for_version(
         stream,
