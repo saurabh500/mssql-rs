@@ -15,26 +15,61 @@ const ENV_TRACE: &str = "MSSQLJS_TRACE";
 const ENV_TRACE_OUTPUTS: &str = "MSSQLJS_TRACE_OUTPUTS";
 const ENV_TRACE_DIR: &str = "MSSQLJS_TRACE_DIR";
 const ENV_TRACE_LEVEL: &str = "MSSQLJS_TRACE_LEVEL";
-const DEFAULT_TRACE_OUTPUTS: &str = "file";
+const DEFAULT_TRACE_OUTPUTS: &str = "console";
 const DEFAULT_TRACE_LEVEL: &str = "info";
 const TRACE_LOG_FILENAME: &str = "mssqljs_trace.log";
-const TRACE_TEMP_SUBDIR: &str = "mssql-js";
 
-fn get_trace_log_path() -> PathBuf {
+fn is_insecure_path(path: &PathBuf) -> bool {
+    let path_str = path.to_string_lossy().to_lowercase();
+    
+    // Unix temporary directories
+    if path_str.starts_with("/tmp") || path_str.starts_with("/var/tmp") {
+        return true;
+    }
+    
+    // Windows temporary directories
+    if path_str.contains("\\temp\\") || path_str.contains("\\tmp\\") {
+        return true;
+    }
+    
+    // Check if it's exactly the system temp directory
+    let system_temp = std::env::temp_dir().to_string_lossy().to_lowercase();
+    if path_str.starts_with(&system_temp) {
+        return true;
+    }
+    
+    false
+}
+
+fn get_trace_log_path() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var(ENV_TRACE_DIR) {
         let path = PathBuf::from(dir);
-        if !path.exists() {
-            let _ = create_dir_all(&path);
+        
+        // Security check: warn about insecure paths but allow them
+        if is_insecure_path(&path) {
+            eprintln!("[mssql-js] WARNING: Insecure log directory detected: '{}'", path.display());
+            eprintln!("[mssql-js] WARNING: Logs may contain sensitive data (connection strings, passwords, queries).");
+            eprintln!("[mssql-js] WARNING: Logging to /tmp, /var/tmp, or system temp directories is not recommended.");
+            eprintln!("[mssql-js] WARNING: These directories may be world-readable and inappropriate for sensitive data.");
+            eprintln!("[mssql-js] WARNING: Consider using a secure, application-controlled directory with proper permissions.");
+            eprintln!("[mssql-js] WARNING: Example: /var/log/myapp or /app/logs");
+            eprintln!("[mssql-js] WARNING: Proceeding with logging to the specified directory...");
         }
-        return path.join(TRACE_LOG_FILENAME);
+        
+        if !path.exists() {
+            if let Err(e) = create_dir_all(&path) {
+                eprintln!(
+                    "[mssql-js] ERROR: Could not create log directory '{}': {}",
+                    path.display(), e
+                );
+                return None;
+            }
+        }
+        return Some(path.join(TRACE_LOG_FILENAME));
     }
-    let mut temp_dir = std::env::temp_dir();
-    temp_dir.push(TRACE_TEMP_SUBDIR);
-    if !temp_dir.exists() {
-        let _ = create_dir_all(&temp_dir);
-    }
-    temp_dir.push(TRACE_LOG_FILENAME);
-    temp_dir
+    
+    // No MSSQLJS_TRACE_DIR set - this is now required for file logging
+    None
 }
 
 fn get_trace_filter() -> EnvFilter {
@@ -88,20 +123,30 @@ pub fn init_tracing() {
             let mut guard = None;
             let mut file_layer = None;
             if file_enabled {
-                let log_path = get_trace_log_path();
-                match OpenOptions::new().create(true).append(true).open(&log_path) {
-                    Ok(f) => {
-                        let (file_writer, g) = non_blocking(f);
-                        file_layer = Some(tracing_subscriber::fmt::layer()
-                            .with_writer(file_writer)
-                            .with_ansi(false));
-                        guard = Some(g);
-                    },
-                    Err(e) => {
-                        eprintln!(
-                            "[mssql-js] WARNING: Could not create trace log file '{}': {}. File logging will be disabled.",
-                            log_path.display(), e
-                        );
+                match get_trace_log_path() {
+                    Some(log_path) => {
+                        match OpenOptions::new().create(true).append(true).open(&log_path) {
+                            Ok(f) => {
+                                let (file_writer, g) = non_blocking(f);
+                                file_layer = Some(tracing_subscriber::fmt::layer()
+                                    .with_writer(file_writer)
+                                    .with_ansi(false));
+                                guard = Some(g);
+                            },
+                            Err(e) => {
+                                eprintln!(
+                                    "[mssql-js] ERROR: Could not create trace log file '{}': {}. File logging will be disabled.",
+                                    log_path.display(), e
+                                );
+                            }
+                        }
+                    }
+                    None => {
+                        eprintln!("[mssql-js] ERROR: File logging is enabled but {ENV_TRACE_DIR} is not set.");
+                        eprintln!("[mssql-js] ERROR: For security reasons, you must explicitly specify a secure log directory.");
+                        eprintln!("[mssql-js] ERROR: Set {ENV_TRACE_DIR} to a secure, application-controlled directory.");
+                        eprintln!("[mssql-js] ERROR: Example: export {ENV_TRACE_DIR}=/var/log/myapp");
+                        eprintln!("[mssql-js] ERROR: File logging will be disabled. Console logging may still be active.");
                     }
                 }
             }
@@ -154,7 +199,10 @@ mod tests {
 
     #[test]
     fn test_get_trace_filter_valid() {
-        unsafe { env::set_var(ENV_TRACE_LEVEL, "debug") };
+        unsafe { 
+            env::remove_var(ENV_TRACE_LEVEL);
+            env::set_var(ENV_TRACE_LEVEL, "debug");
+        }
         let filter = get_trace_filter();
         assert_eq!(filter.to_string(), "debug");
         unsafe { env::remove_var(ENV_TRACE_LEVEL) };
@@ -166,5 +214,74 @@ mod tests {
         let filter = get_trace_filter();
         assert_eq!(filter.to_string(), "banana=trace");
         unsafe { env::remove_var(ENV_TRACE_LEVEL) };
+    }
+
+    #[test]
+    fn test_insecure_path_unix_tmp() {
+        let path = PathBuf::from("/tmp/logs");
+        assert!(is_insecure_path(&path));
+    }
+
+    #[test]
+    fn test_insecure_path_var_tmp() {
+        let path = PathBuf::from("/var/tmp/logs");
+        assert!(is_insecure_path(&path));
+    }
+
+    #[test]
+    fn test_insecure_path_windows_temp() {
+        let path = PathBuf::from("C:\\Windows\\Temp\\logs");
+        assert!(is_insecure_path(&path));
+    }
+
+    #[test]
+    fn test_secure_path_var_log() {
+        let path = PathBuf::from("/var/log/myapp");
+        assert!(!is_insecure_path(&path));
+    }
+
+    #[test]
+    fn test_secure_path_app_logs() {
+        let path = PathBuf::from("/app/logs");
+        assert!(!is_insecure_path(&path));
+    }
+
+    #[test]
+    fn test_get_trace_log_path_without_env() {
+        unsafe { env::remove_var(ENV_TRACE_DIR) };
+        let result = get_trace_log_path();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_trace_log_path_with_insecure_path() {
+        unsafe { env::set_var(ENV_TRACE_DIR, "/tmp") };
+        let result = get_trace_log_path();
+        // Should still return a path but with warnings printed
+        assert!(result.is_some());
+        assert!(result.unwrap().to_string_lossy().contains("/tmp"));
+        unsafe { env::remove_var(ENV_TRACE_DIR) };
+    }
+
+    #[test]
+    fn test_default_trace_outputs_is_console() {
+        assert_eq!(DEFAULT_TRACE_OUTPUTS, "console");
+    }
+
+    #[test]
+    fn test_get_trace_outputs_default() {
+        unsafe { env::remove_var(ENV_TRACE_OUTPUTS) };
+        let (file, console) = get_trace_outputs();
+        assert!(!file);
+        assert!(console);
+    }
+
+    #[test]
+    fn test_get_trace_outputs_file_requires_explicit() {
+        unsafe { env::set_var(ENV_TRACE_OUTPUTS, "file") };
+        let (file, console) = get_trace_outputs();
+        assert!(file);
+        assert!(!console);
+        unsafe { env::remove_var(ENV_TRACE_OUTPUTS) };
     }
 }
