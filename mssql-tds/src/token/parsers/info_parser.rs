@@ -123,3 +123,183 @@ where
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::packet_reader::PacketReader;
+    use crate::io::packet_reader::tests::MockNetworkReaderWriter;
+    use crate::io::packet_reader::tests::TestPacketBuilder;
+    use crate::message::messages::PacketType;
+
+    fn encode_utf16_string(s: &str) -> Vec<u8> {
+        let utf16_units: Vec<u16> = s.encode_utf16().collect();
+        let mut bytes = Vec::with_capacity(utf16_units.len() * 2);
+        for unit in utf16_units {
+            bytes.push((unit & 0xFF) as u8);
+            bytes.push((unit >> 8) as u8);
+        }
+        bytes
+    }
+
+    #[tokio::test]
+    async fn test_parse_info_token_basic() {
+        // Test parsing basic INFO token
+        let mut builder = TestPacketBuilder::new(PacketType::PreLogin);
+
+        // Build the token manually
+        let message = "Test info message";
+        let server_name = "TestServer";
+        let proc_name = "";
+
+        let message_bytes = encode_utf16_string(message);
+        let server_bytes = encode_utf16_string(server_name);
+        let proc_bytes = encode_utf16_string(proc_name);
+
+        // Calculate total length
+        let length = 4 + 1 + 1 // number, state, severity
+            + 2 + message_bytes.len() // message length + message
+            + 1 + server_bytes.len() // server name length + server name
+            + 1 + proc_bytes.len() // proc name length + proc name
+            + 4; // line number
+
+        builder.append_u16(length as u16); // token length
+        builder.append_u32(5701); // number (database context change)
+        builder.append_byte(1); // state
+        builder.append_byte(0); // severity (informational)
+
+        // Message with 2-byte length prefix (character count)
+        builder.append_u16(message.len() as u16);
+        builder.append_bytes(&message_bytes);
+
+        // Server name with 1-byte length prefix (character count)
+        builder.append_byte(server_name.len() as u8);
+        builder.append_bytes(&server_bytes);
+
+        // Proc name with 1-byte length prefix (character count)
+        builder.append_byte(proc_name.len() as u8);
+        builder.append_bytes(&proc_bytes);
+
+        // Line number
+        builder.append_u32(1);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
+        packet_reader.read_tds_packet_for_test().await.unwrap();
+
+        let parser = InfoTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut packet_reader, &context).await.unwrap();
+
+        match result {
+            Tokens::Info(token) => {
+                assert_eq!(token.number, 5701);
+                assert_eq!(token.state, 1);
+                assert_eq!(token.severity, 0);
+                assert_eq!(token.message, message);
+                assert_eq!(token.server_name, server_name);
+                assert_eq!(token.proc_name, proc_name);
+                assert_eq!(token.line_number, 1);
+            }
+            _ => panic!("Expected Info token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_info_token_with_proc() {
+        // Test parsing INFO token with procedure name
+        let mut builder = TestPacketBuilder::new(PacketType::PreLogin);
+
+        let message = "Info from proc";
+        let server_name = "Server";
+        let proc_name = "sp_test";
+
+        let message_bytes = encode_utf16_string(message);
+        let server_bytes = encode_utf16_string(server_name);
+        let proc_bytes = encode_utf16_string(proc_name);
+
+        let length =
+            4 + 1 + 1 + 2 + message_bytes.len() + 1 + server_bytes.len() + 1 + proc_bytes.len() + 4;
+
+        builder.append_u16(length as u16);
+        builder.append_u32(0); // generic info
+        builder.append_byte(1);
+        builder.append_byte(10); // severity 10
+
+        builder.append_u16(message.len() as u16);
+        builder.append_bytes(&message_bytes);
+
+        builder.append_byte(server_name.len() as u8);
+        builder.append_bytes(&server_bytes);
+
+        builder.append_byte(proc_name.len() as u8);
+        builder.append_bytes(&proc_bytes);
+
+        builder.append_u32(42); // line number
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
+        packet_reader.read_tds_packet_for_test().await.unwrap();
+
+        let parser = InfoTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut packet_reader, &context).await.unwrap();
+
+        match result {
+            Tokens::Info(token) => {
+                assert_eq!(token.number, 0);
+                assert_eq!(token.state, 1);
+                assert_eq!(token.severity, 10);
+                assert_eq!(token.message, message);
+                assert_eq!(token.server_name, server_name);
+                assert_eq!(token.proc_name, proc_name);
+                assert_eq!(token.line_number, 42);
+            }
+            _ => panic!("Expected Info token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_info_token_empty_message() {
+        // Test parsing INFO token with empty message
+        let mut builder = TestPacketBuilder::new(PacketType::PreLogin);
+
+        let message = "";
+        let server_name = "";
+        let proc_name = "";
+
+        let message_bytes = encode_utf16_string(message);
+        let server_bytes = encode_utf16_string(server_name);
+        let proc_bytes = encode_utf16_string(proc_name);
+
+        let length =
+            4 + 1 + 1 + 2 + message_bytes.len() + 1 + server_bytes.len() + 1 + proc_bytes.len() + 4;
+
+        builder.append_u16(length as u16);
+        builder.append_u32(0);
+        builder.append_byte(0);
+        builder.append_byte(0);
+
+        builder.append_u16(0); // empty message
+        builder.append_byte(0); // empty server name
+        builder.append_byte(0); // empty proc name
+        builder.append_u32(0);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
+        packet_reader.read_tds_packet_for_test().await.unwrap();
+
+        let parser = InfoTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut packet_reader, &context).await.unwrap();
+
+        match result {
+            Tokens::Info(token) => {
+                assert_eq!(token.message, "");
+                assert_eq!(token.server_name, "");
+                assert_eq!(token.proc_name, "");
+            }
+            _ => panic!("Expected Info token"),
+        }
+    }
+}

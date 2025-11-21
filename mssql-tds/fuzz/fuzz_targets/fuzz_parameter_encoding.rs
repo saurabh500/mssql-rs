@@ -45,6 +45,18 @@ enum FuzzSqlValue {
 }
 
 impl FuzzSqlValue {
+    /// Sanitizes fuzzer-generated values to prevent timeouts and focus on semantic bugs.
+    ///
+    /// This method serves two critical purposes:
+    /// 1. **Performance**: Caps data sizes to prevent the fuzzer from wasting time on
+    ///    unrealistically large inputs (e.g., gigabyte-sized strings) that would cause
+    ///    timeouts without revealing meaningful bugs.
+    /// 2. **Realism**: Enforces SQL Server's actual constraints (VARCHAR(4000), NVARCHAR(4000))
+    ///    to make fuzz tests reflect real-world usage patterns.
+    ///
+    /// The string truncation logic carefully respects UTF-8 character boundaries to avoid
+    /// panics - a critical fix after the fuzzer discovered the original naive truncation
+    /// would split multi-byte characters and crash.
     fn sanitize(&mut self) {
         match self {
             FuzzSqlValue::NVarchar(s, len) 
@@ -53,7 +65,12 @@ impl FuzzSqlValue {
             | FuzzSqlValue::Char(s, len) => {
                 if let Some(string) = s {
                     if string.len() > MAX_STRING_LEN {
-                        string.truncate(MAX_STRING_LEN);
+                        // Truncate at a valid UTF-8 character boundary
+                        let mut truncate_pos = MAX_STRING_LEN;
+                        while truncate_pos > 0 && !string.is_char_boundary(truncate_pos) {
+                            truncate_pos -= 1;
+                        }
+                        string.truncate(truncate_pos);
                     }
                 }
                 if *len > 4000 {
@@ -84,10 +101,25 @@ struct FuzzParameter {
 }
 
 impl FuzzParameter {
+    /// Sanitizes parameter names and delegates value sanitization.
+    ///
+    /// Parameter names are limited to 128 bytes to match SQL Server's identifier length
+    /// limits and prevent excessive processing time. Like value sanitization, this uses
+    /// UTF-8-aware truncation by walking backward to find a valid character boundary,
+    /// preventing panics that would occur if we naively truncated in the middle of a
+    /// multi-byte character (emoji, CJK characters, etc.).
+    ///
+    /// This ensures the fuzzer explores diverse code paths efficiently rather than
+    /// getting stuck processing pathological edge cases.
     fn sanitize(&mut self) {
         if let Some(name) = &mut self.name {
             if name.len() > 128 {
-                name.truncate(128);
+                // Truncate at a valid UTF-8 character boundary
+                let mut truncate_pos = 128;
+                while truncate_pos > 0 && !name.is_char_boundary(truncate_pos) {
+                    truncate_pos -= 1;
+                }
+                name.truncate(truncate_pos);
             }
         }
         self.value.sanitize();

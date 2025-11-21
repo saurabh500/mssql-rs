@@ -123,3 +123,234 @@ where
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::packet_reader::PacketReader;
+    use crate::io::packet_reader::tests::MockNetworkReaderWriter;
+    use crate::io::packet_reader::tests::TestPacketBuilder;
+    use crate::message::messages::PacketType;
+
+    fn encode_utf16_string(s: &str) -> Vec<u8> {
+        let utf16_units: Vec<u16> = s.encode_utf16().collect();
+        let mut bytes = Vec::with_capacity(utf16_units.len() * 2);
+        for unit in utf16_units {
+            bytes.push((unit & 0xFF) as u8);
+            bytes.push((unit >> 8) as u8);
+        }
+        bytes
+    }
+
+    #[tokio::test]
+    async fn test_parse_error_token_basic() {
+        // Test parsing basic ERROR token
+        let mut builder = TestPacketBuilder::new(PacketType::PreLogin);
+
+        let message = "Invalid object name";
+        let server_name = "TestServer";
+        let proc_name = "";
+
+        let message_bytes = encode_utf16_string(message);
+        let server_bytes = encode_utf16_string(server_name);
+        let proc_bytes = encode_utf16_string(proc_name);
+
+        // Calculate total length
+        let length = 4 + 1 + 1 // number, state, severity
+            + 2 + message_bytes.len() // message length + message
+            + 1 + server_bytes.len() // server name length + server name
+            + 1 + proc_bytes.len() // proc name length + proc name
+            + 4; // line number
+
+        builder.append_u16(length as u16); // token length
+        builder.append_u32(208); // error number (object not found)
+        builder.append_byte(1); // state
+        builder.append_byte(16); // severity (user error)
+
+        // Message with 2-byte length prefix (character count)
+        builder.append_u16(message.len() as u16);
+        builder.append_bytes(&message_bytes);
+
+        // Server name with 1-byte length prefix (character count)
+        builder.append_byte(server_name.len() as u8);
+        builder.append_bytes(&server_bytes);
+
+        // Proc name with 1-byte length prefix (character count)
+        builder.append_byte(proc_name.len() as u8);
+        builder.append_bytes(&proc_bytes);
+
+        // Line number
+        builder.append_u32(1);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
+        packet_reader.read_tds_packet_for_test().await.unwrap();
+
+        let parser = ErrorTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut packet_reader, &context).await.unwrap();
+
+        match result {
+            Tokens::Error(token) => {
+                assert_eq!(token.number, 208);
+                assert_eq!(token.state, 1);
+                assert_eq!(token.severity, 16);
+                assert_eq!(token.message, message);
+                assert_eq!(token.server_name, server_name);
+                assert_eq!(token.proc_name, proc_name);
+                assert_eq!(token.line_number, 1);
+            }
+            _ => panic!("Expected Error token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_error_token_with_proc() {
+        // Test parsing ERROR token from stored procedure
+        let mut builder = TestPacketBuilder::new(PacketType::PreLogin);
+
+        let message = "Error in stored procedure";
+        let server_name = "ProdServer";
+        let proc_name = "sp_GetUserData";
+
+        let message_bytes = encode_utf16_string(message);
+        let server_bytes = encode_utf16_string(server_name);
+        let proc_bytes = encode_utf16_string(proc_name);
+
+        let length =
+            4 + 1 + 1 + 2 + message_bytes.len() + 1 + server_bytes.len() + 1 + proc_bytes.len() + 4;
+
+        builder.append_u16(length as u16);
+        builder.append_u32(50000); // custom error number
+        builder.append_byte(2);
+        builder.append_byte(17); // severity 17 (resource/hardware error)
+
+        builder.append_u16(message.len() as u16);
+        builder.append_bytes(&message_bytes);
+
+        builder.append_byte(server_name.len() as u8);
+        builder.append_bytes(&server_bytes);
+
+        builder.append_byte(proc_name.len() as u8);
+        builder.append_bytes(&proc_bytes);
+
+        builder.append_u32(123); // line number in proc
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
+        packet_reader.read_tds_packet_for_test().await.unwrap();
+
+        let parser = ErrorTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut packet_reader, &context).await.unwrap();
+
+        match result {
+            Tokens::Error(token) => {
+                assert_eq!(token.number, 50000);
+                assert_eq!(token.state, 2);
+                assert_eq!(token.severity, 17);
+                assert_eq!(token.message, message);
+                assert_eq!(token.server_name, server_name);
+                assert_eq!(token.proc_name, proc_name);
+                assert_eq!(token.line_number, 123);
+            }
+            _ => panic!("Expected Error token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_error_token_constraint_violation() {
+        // Test parsing ERROR token for constraint violation
+        let mut builder = TestPacketBuilder::new(PacketType::PreLogin);
+
+        let message = "Violation of PRIMARY KEY constraint";
+        let server_name = "DB1";
+        let proc_name = "";
+
+        let message_bytes = encode_utf16_string(message);
+        let server_bytes = encode_utf16_string(server_name);
+        let proc_bytes = encode_utf16_string(proc_name);
+
+        let length =
+            4 + 1 + 1 + 2 + message_bytes.len() + 1 + server_bytes.len() + 1 + proc_bytes.len() + 4;
+
+        builder.append_u16(length as u16);
+        builder.append_u32(2627); // primary key violation
+        builder.append_byte(1);
+        builder.append_byte(14);
+
+        builder.append_u16(message.len() as u16);
+        builder.append_bytes(&message_bytes);
+
+        builder.append_byte(server_name.len() as u8);
+        builder.append_bytes(&server_bytes);
+
+        builder.append_byte(0); // no proc name
+        builder.append_u32(5);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
+        packet_reader.read_tds_packet_for_test().await.unwrap();
+
+        let parser = ErrorTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut packet_reader, &context).await.unwrap();
+
+        match result {
+            Tokens::Error(token) => {
+                assert_eq!(token.number, 2627);
+                assert_eq!(token.severity, 14);
+                assert_eq!(token.message, message);
+                assert_eq!(token.proc_name, "");
+            }
+            _ => panic!("Expected Error token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_error_token_fatal() {
+        // Test parsing ERROR token with fatal severity
+        let mut builder = TestPacketBuilder::new(PacketType::PreLogin);
+
+        let message = "Fatal error";
+        let server_name = "SQL";
+        let proc_name = "";
+
+        let message_bytes = encode_utf16_string(message);
+        let server_bytes = encode_utf16_string(server_name);
+        let proc_bytes = encode_utf16_string(proc_name);
+
+        let length =
+            4 + 1 + 1 + 2 + message_bytes.len() + 1 + server_bytes.len() + 1 + proc_bytes.len() + 4;
+
+        builder.append_u16(length as u16);
+        builder.append_u32(9999);
+        builder.append_byte(1);
+        builder.append_byte(25); // fatal severity
+
+        builder.append_u16(message.len() as u16);
+        builder.append_bytes(&message_bytes);
+
+        builder.append_byte(server_name.len() as u8);
+        builder.append_bytes(&server_bytes);
+
+        builder.append_byte(0);
+        builder.append_u32(0);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::new(builder.build(), 0);
+        let mut packet_reader = PacketReader::new(&mut mock_reader_writer);
+        packet_reader.read_tds_packet_for_test().await.unwrap();
+
+        let parser = ErrorTokenParser::default();
+        let context = ParserContext::default();
+        let result = parser.parse(&mut packet_reader, &context).await.unwrap();
+
+        match result {
+            Tokens::Error(token) => {
+                assert_eq!(token.severity, 25);
+                assert_eq!(token.message, message);
+            }
+            _ => panic!("Expected Error token"),
+        }
+    }
+}

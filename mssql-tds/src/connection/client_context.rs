@@ -207,20 +207,71 @@ impl Clone for ClientContext {
     }
 }
 
-#[derive(PartialEq, Clone)]
-pub enum TransportContext {
-    Tcp { host: String, port: u16 },
-    NamedPipe { pipe_name: String },
+/// Protocol types for SQL Server connections
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Protocol {
+    /// TCP/IP protocol (default)
+    Tcp,
+    /// Named Pipes protocol
+    NamedPipe,
+    /// Shared Memory protocol (local only)
     SharedMemory,
 }
 
+#[derive(PartialEq, Clone, Debug)]
+pub enum TransportContext {
+    /// TCP/IP connection with host and port
+    Tcp { host: String, port: u16 },
+    /// Named Pipe connection with pipe path
+    /// Format: \\server\pipe\sql\query or \\server\pipe\MSSQL$INSTANCE\sql\query
+    NamedPipe { pipe_name: String },
+    /// Shared Memory connection (local only) with optional instance name
+    SharedMemory { instance_name: String },
+}
+
 impl TransportContext {
-    pub fn get_server_name(&self) -> &String {
+    /// Get the server name from the transport context
+    pub fn get_server_name(&self) -> String {
         match self {
-            TransportContext::Tcp { host, .. } => host,
-            _ => {
-                unimplemented!("Transport is not TCP");
+            TransportContext::Tcp { host, .. } => host.clone(),
+            TransportContext::NamedPipe { pipe_name } => {
+                // Extract server name from pipe path like \\.\pipe\sql\query or \\server\pipe\sql\query
+                if pipe_name.starts_with("\\\\.\\") {
+                    "localhost".to_string()
+                } else if let Some(rest) = pipe_name.strip_prefix("\\\\") {
+                    if let Some(idx) = rest.find('\\') {
+                        rest[..idx].to_string()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
             }
+            TransportContext::SharedMemory { .. } => "localhost".to_string(),
+        }
+    }
+
+    /// Get the protocol type for this transport context
+    pub fn get_protocol(&self) -> Protocol {
+        match self {
+            TransportContext::Tcp { .. } => Protocol::Tcp,
+            TransportContext::NamedPipe { .. } => Protocol::NamedPipe,
+            TransportContext::SharedMemory { .. } => Protocol::SharedMemory,
+        }
+    }
+
+    /// Check if the connection is local
+    pub fn is_local(&self) -> bool {
+        match self {
+            TransportContext::Tcp { host, .. } => {
+                matches!(
+                    host.to_lowercase().as_str(),
+                    "." | "(local)" | "localhost" | "127.0.0.1" | "::1"
+                )
+            }
+            TransportContext::NamedPipe { pipe_name } => pipe_name.starts_with("\\\\.\\"),
+            TransportContext::SharedMemory { .. } => true,
         }
     }
 }
@@ -240,5 +291,170 @@ mod tests {
             Ok(std::ffi::OsString::from(long_hostname.clone()))
         });
         assert_eq!(result, truncated_hostname);
+    }
+
+    #[test]
+    fn test_tcp_transport_get_server_name() {
+        let ctx = TransportContext::Tcp {
+            host: "myserver.example.com".to_string(),
+            port: 1433,
+        };
+        assert_eq!(ctx.get_server_name(), "myserver.example.com");
+        assert_eq!(ctx.get_protocol(), Protocol::Tcp);
+        assert!(!ctx.is_local());
+    }
+
+    #[test]
+    fn test_tcp_transport_localhost() {
+        let ctx = TransportContext::Tcp {
+            host: "localhost".to_string(),
+            port: 1433,
+        };
+        assert_eq!(ctx.get_server_name(), "localhost");
+        assert!(ctx.is_local());
+    }
+
+    #[test]
+    fn test_named_pipe_local() {
+        let ctx = TransportContext::NamedPipe {
+            pipe_name: "\\\\.\\pipe\\sql\\query".to_string(),
+        };
+        assert_eq!(ctx.get_server_name(), "localhost");
+        assert_eq!(ctx.get_protocol(), Protocol::NamedPipe);
+        assert!(ctx.is_local());
+    }
+
+    #[test]
+    fn test_named_pipe_remote() {
+        let ctx = TransportContext::NamedPipe {
+            pipe_name: "\\\\myserver\\pipe\\sql\\query".to_string(),
+        };
+        assert_eq!(ctx.get_server_name(), "myserver");
+        assert_eq!(ctx.get_protocol(), Protocol::NamedPipe);
+        assert!(!ctx.is_local());
+    }
+
+    #[test]
+    fn test_named_pipe_with_instance() {
+        let ctx = TransportContext::NamedPipe {
+            pipe_name: "\\\\myserver\\pipe\\MSSQL$SQLEXPRESS\\sql\\query".to_string(),
+        };
+        assert_eq!(ctx.get_server_name(), "myserver");
+        assert_eq!(ctx.get_protocol(), Protocol::NamedPipe);
+    }
+
+    #[test]
+    fn test_shared_memory() {
+        let ctx = TransportContext::SharedMemory {
+            instance_name: "MSSQLSERVER".to_string(),
+        };
+        assert_eq!(ctx.get_server_name(), "localhost");
+        assert_eq!(ctx.get_protocol(), Protocol::SharedMemory);
+        assert!(ctx.is_local());
+    }
+
+    #[test]
+    fn test_shared_memory_with_instance() {
+        let ctx = TransportContext::SharedMemory {
+            instance_name: "SQLEXPRESS".to_string(),
+        };
+        assert_eq!(ctx.get_server_name(), "localhost");
+        assert!(ctx.is_local());
+    }
+
+    #[test]
+    fn test_transport_context_get_server_name() {
+        // TCP
+        let tcp_context = TransportContext::Tcp {
+            host: "localhost".to_string(),
+            port: 1433,
+        };
+        assert_eq!(tcp_context.get_server_name(), "localhost");
+
+        // Named Pipe
+        let np_context = TransportContext::NamedPipe {
+            pipe_name: r"\\server\pipe\sql\query".to_string(),
+        };
+        assert_eq!(np_context.get_server_name(), "server");
+
+        let np_local_context = TransportContext::NamedPipe {
+            pipe_name: r"\\.\pipe\sql\query".to_string(),
+        };
+        assert_eq!(np_local_context.get_server_name(), "localhost");
+
+        // Shared Memory
+        let sm_context = TransportContext::SharedMemory {
+            instance_name: String::new(),
+        };
+        assert_eq!(sm_context.get_server_name(), "localhost");
+
+        let sm_named_context = TransportContext::SharedMemory {
+            instance_name: "SQLEXPRESS".to_string(),
+        };
+        assert_eq!(sm_named_context.get_server_name(), "localhost");
+    }
+
+    #[test]
+    fn test_transport_context_is_local() {
+        // TCP - not local
+        let tcp_context = TransportContext::Tcp {
+            host: "remote-server".to_string(),
+            port: 1433,
+        };
+        assert!(!tcp_context.is_local());
+
+        // TCP - localhost
+        let tcp_localhost = TransportContext::Tcp {
+            host: "localhost".to_string(),
+            port: 1433,
+        };
+        assert!(tcp_localhost.is_local());
+
+        // TCP - 127.0.0.1
+        let tcp_loopback = TransportContext::Tcp {
+            host: "127.0.0.1".to_string(),
+            port: 1433,
+        };
+        assert!(tcp_loopback.is_local());
+
+        // Named Pipe with . (local)
+        let np_local = TransportContext::NamedPipe {
+            pipe_name: r"\\.\pipe\sql\query".to_string(),
+        };
+        assert!(np_local.is_local());
+
+        // Named Pipe with remote server
+        let np_remote = TransportContext::NamedPipe {
+            pipe_name: r"\\remote-server\pipe\sql\query".to_string(),
+        };
+        assert!(!np_remote.is_local());
+
+        // Shared Memory - always local
+        let sm_context = TransportContext::SharedMemory {
+            instance_name: String::new(),
+        };
+        assert!(sm_context.is_local());
+    }
+
+    #[test]
+    fn test_transport_context_get_protocol() {
+        // TCP
+        let tcp_context = TransportContext::Tcp {
+            host: "localhost".to_string(),
+            port: 1433,
+        };
+        assert!(matches!(tcp_context.get_protocol(), Protocol::Tcp));
+
+        // Named Pipe
+        let np_context = TransportContext::NamedPipe {
+            pipe_name: r"\\.\pipe\sql\query".to_string(),
+        };
+        assert!(matches!(np_context.get_protocol(), Protocol::NamedPipe));
+
+        // Shared Memory
+        let sm_context = TransportContext::SharedMemory {
+            instance_name: String::new(),
+        };
+        assert!(matches!(sm_context.get_protocol(), Protocol::SharedMemory));
     }
 }

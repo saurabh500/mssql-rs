@@ -746,12 +746,7 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
                         .await?;
                 }
                 LoginDeferredPayload::ServerName => {
-                    let server_name = match &self.model.transport_context {
-                        TransportContext::Tcp { host, port: _ } => host,
-                        _ => {
-                            unimplemented!("Transport type not supported")
-                        }
-                    };
+                    let server_name = self.model.transport_context.get_server_name();
                     // let server_name = self
                     //     .model
                     //     .user_input

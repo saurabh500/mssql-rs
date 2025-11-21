@@ -98,7 +98,7 @@ where
                         "FedAuth option offset out of bounds",
                     )
                 })?;
-            let mut option_data_offset =
+            let option_data_offset_raw =
                 u32::from_le_bytes(offset_slice.try_into().map_err(|_| {
                     Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -106,7 +106,16 @@ where
                     )
                 })?);
 
-            option_data_offset -= size_of::<u32>() as u32;
+            // Check for underflow before subtraction
+            let option_data_offset = option_data_offset_raw
+                .checked_sub(size_of::<u32>() as u32)
+                .ok_or_else(|| {
+                    Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "FedAuth option offset too small (underflow)",
+                    )
+                })?;
+
             let string_bytes: &[u8] = token_data
                 .get(
                     option_data_offset as usize..(option_data_offset + option_data_length) as usize,
@@ -149,5 +158,445 @@ where
         }
 
         Ok(Tokens::from(FedAuthInfoToken { spn, sts_url }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::common::test_utils::MockReader;
+    use super::*;
+    use crate::token::fed_auth_info::FedAuthInfoId;
+    use byteorder::{ByteOrder, LittleEndian};
+
+    /// Helper to build FedAuth token data
+    fn build_fedauth_token(options: &[(u8, &str)]) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Calculate total size
+        let options_size = (options.len() as u32) * FedAuthInfoTokenParser::FEDAUTH_OPTIONS_SIZE;
+        let mut string_data = Vec::new();
+
+        for (_, value) in options {
+            let utf16_bytes = MockReader::encode_utf16(value);
+            string_data.push(utf16_bytes);
+        }
+
+        let total_string_size: usize = string_data.iter().map(|d| d.len()).sum();
+        let total_size = options_size + total_string_size as u32;
+
+        // Write length (total size + size of options_count field)
+        let mut buf = [0u8; 4];
+        LittleEndian::write_i32(&mut buf, (total_size + 4) as i32);
+        data.extend_from_slice(&buf);
+
+        // Write options_count
+        LittleEndian::write_u32(&mut buf, options.len() as u32);
+        data.extend_from_slice(&buf);
+
+        // Write option headers
+        let mut current_offset = options_size + 4; // +4 for options_count
+        for (i, (option_id, _)) in options.iter().enumerate() {
+            data.push(*option_id);
+
+            let string_len = string_data[i].len() as u32;
+            LittleEndian::write_u32(&mut buf, string_len);
+            data.extend_from_slice(&buf);
+
+            LittleEndian::write_u32(&mut buf, current_offset);
+            data.extend_from_slice(&buf);
+
+            current_offset += string_len;
+        }
+
+        // Write string data
+        for utf16_bytes in string_data {
+            data.extend_from_slice(&utf16_bytes);
+        }
+
+        data
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_with_spn_and_sts_url() {
+        let options = vec![
+            (FedAuthInfoId::STSUrl.as_u8(), "https://sts.example.com"),
+            (FedAuthInfoId::SPN.as_u8(), "MSSQLSvc/server.example.com"),
+        ];
+        let data = build_fedauth_token(&options);
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::FedAuthInfo(token) => {
+                assert_eq!(token.sts_url, "https://sts.example.com");
+                assert_eq!(token.spn, "MSSQLSvc/server.example.com");
+            }
+            _ => panic!("Expected FedAuthInfo token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_with_only_sts_url() {
+        let options = vec![(
+            FedAuthInfoId::STSUrl.as_u8(),
+            "https://login.microsoftonline.com",
+        )];
+        let data = build_fedauth_token(&options);
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::FedAuthInfo(token) => {
+                assert_eq!(token.sts_url, "https://login.microsoftonline.com");
+                assert_eq!(token.spn, "");
+            }
+            _ => panic!("Expected FedAuthInfo token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_with_only_spn() {
+        let options = vec![(FedAuthInfoId::SPN.as_u8(), "MSSQLSvc/myserver:1433")];
+        let data = build_fedauth_token(&options);
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::FedAuthInfo(token) => {
+                assert_eq!(token.spn, "MSSQLSvc/myserver:1433");
+                assert_eq!(token.sts_url, "");
+            }
+            _ => panic!("Expected FedAuthInfo token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_with_unknown_option() {
+        let options = vec![
+            (FedAuthInfoId::STSUrl.as_u8(), "https://sts.example.com"),
+            (0xFF, "unknown_value"),
+            (FedAuthInfoId::SPN.as_u8(), "MSSQLSvc/server"),
+        ];
+        let data = build_fedauth_token(&options);
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::FedAuthInfo(token) => {
+                assert_eq!(token.sts_url, "https://sts.example.com");
+                assert_eq!(token.spn, "MSSQLSvc/server");
+            }
+            _ => panic!("Expected FedAuthInfo token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_empty_options() {
+        let options: Vec<(u8, &str)> = vec![];
+        let data = build_fedauth_token(&options);
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::FedAuthInfo(token) => {
+                assert_eq!(token.sts_url, "");
+                assert_eq!(token.spn, "");
+            }
+            _ => panic!("Expected FedAuthInfo token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_length_overflow() {
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4];
+
+        // Write a length that would underflow when subtracting size_of::<u32>()
+        LittleEndian::write_i32(&mut buf, 2);
+        data.extend_from_slice(&buf);
+
+        LittleEndian::write_u32(&mut buf, 0);
+        data.extend_from_slice(&buf);
+
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await;
+        assert!(result.is_err());
+        if let Err(e) = result {
+            // Verify error contains message about invalid data size (negative values cause overflow)
+            assert!(
+                e.to_string()
+                    .contains("Invalid FedAuthInfo token data size")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_negative_length() {
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4];
+
+        // Write negative length
+        LittleEndian::write_i32(&mut buf, -1);
+        data.extend_from_slice(&buf);
+
+        LittleEndian::write_u32(&mut buf, 0);
+        data.extend_from_slice(&buf);
+
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_excessive_length() {
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4];
+
+        // Write length exceeding MAX_TOKEN_DATA_SIZE
+        LittleEndian::write_i32(&mut buf, 2 * 1024 * 1024); // 2MB
+        data.extend_from_slice(&buf);
+
+        LittleEndian::write_u32(&mut buf, 0);
+        data.extend_from_slice(&buf);
+
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid FedAuthInfo token data size")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_options_count_overflow() {
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4];
+
+        // Write valid length
+        LittleEndian::write_i32(&mut buf, 100);
+        data.extend_from_slice(&buf);
+
+        // Write options_count that would overflow when multiplied
+        LittleEndian::write_u32(&mut buf, u32::MAX / 8);
+        data.extend_from_slice(&buf);
+
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("overflow"));
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_options_exceed_available_data() {
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4];
+
+        // Write length for 20 bytes of data (after header)
+        LittleEndian::write_i32(&mut buf, 24);
+        data.extend_from_slice(&buf);
+
+        // Write options_count that requires more than available data
+        LittleEndian::write_u32(&mut buf, 10); // 10 options * 9 bytes = 90 bytes, but only 20 available
+        data.extend_from_slice(&buf);
+
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("requires"));
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_invalid_option_data_bounds() {
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4];
+
+        // Write length
+        LittleEndian::write_i32(&mut buf, 50);
+        data.extend_from_slice(&buf);
+
+        // Write options_count
+        LittleEndian::write_u32(&mut buf, 1);
+        data.extend_from_slice(&buf);
+
+        // Write option header with invalid offset/length
+        data.push(FedAuthInfoId::STSUrl.as_u8());
+
+        // Data length pointing beyond available data
+        LittleEndian::write_u32(&mut buf, 1000);
+        data.extend_from_slice(&buf);
+
+        // Offset
+        LittleEndian::write_u32(&mut buf, 100);
+        data.extend_from_slice(&buf);
+
+        // Add some filler data
+        data.extend_from_slice(&[0u8; 37]);
+
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_invalid_utf16() {
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4];
+
+        // Write length
+        LittleEndian::write_i32(&mut buf, 17);
+        data.extend_from_slice(&buf);
+
+        // Write options_count
+        LittleEndian::write_u32(&mut buf, 1);
+        data.extend_from_slice(&buf);
+
+        // Write option header
+        data.push(FedAuthInfoId::STSUrl.as_u8());
+
+        // Data length (4 bytes for invalid UTF-16)
+        LittleEndian::write_u32(&mut buf, 4);
+        data.extend_from_slice(&buf);
+
+        // Offset (after options header)
+        LittleEndian::write_u32(&mut buf, 13);
+        data.extend_from_slice(&buf);
+
+        // Add invalid UTF-16 sequence (unpaired surrogate)
+        data.extend_from_slice(&[0x00, 0xD8, 0x00, 0x00]); // High surrogate without low surrogate
+
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_empty_strings() {
+        let options = vec![
+            (FedAuthInfoId::STSUrl.as_u8(), ""),
+            (FedAuthInfoId::SPN.as_u8(), ""),
+        ];
+        let data = build_fedauth_token(&options);
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::FedAuthInfo(token) => {
+                assert_eq!(token.sts_url, "");
+                assert_eq!(token.spn, "");
+            }
+            _ => panic!("Expected FedAuthInfo token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_long_strings() {
+        let long_url = "https://".to_string() + &"a".repeat(1000) + ".example.com";
+        let long_spn = "MSSQLSvc/".to_string() + &"server".repeat(100);
+
+        let options = vec![
+            (FedAuthInfoId::STSUrl.as_u8(), long_url.as_str()),
+            (FedAuthInfoId::SPN.as_u8(), long_spn.as_str()),
+        ];
+        let data = build_fedauth_token(&options);
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::FedAuthInfo(token) => {
+                assert_eq!(token.sts_url, long_url);
+                assert_eq!(token.spn, long_spn);
+            }
+            _ => panic!("Expected FedAuthInfo token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_unicode_strings() {
+        let options = vec![
+            (FedAuthInfoId::STSUrl.as_u8(), "https://例え.com/認証"),
+            (FedAuthInfoId::SPN.as_u8(), "MSSQLSvc/сервер:1433"),
+        ];
+        let data = build_fedauth_token(&options);
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::FedAuthInfo(token) => {
+                assert_eq!(token.sts_url, "https://例え.com/認証");
+                assert_eq!(token.spn, "MSSQLSvc/сервер:1433");
+            }
+            _ => panic!("Expected FedAuthInfo token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_multiple_same_options() {
+        // Test that last value wins for duplicate options
+        let options = vec![
+            (FedAuthInfoId::STSUrl.as_u8(), "https://first.com"),
+            (FedAuthInfoId::STSUrl.as_u8(), "https://second.com"),
+            (FedAuthInfoId::STSUrl.as_u8(), "https://third.com"),
+        ];
+        let data = build_fedauth_token(&options);
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::FedAuthInfo(token) => {
+                assert_eq!(token.sts_url, "https://third.com");
+            }
+            _ => panic!("Expected FedAuthInfo token"),
+        }
     }
 }
