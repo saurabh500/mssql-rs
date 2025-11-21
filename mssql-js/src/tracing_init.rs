@@ -48,7 +48,7 @@ fn get_trace_log_path() -> Option<PathBuf> {
         // Security check: warn about insecure paths but allow them
         if is_insecure_path(&path) {
             eprintln!("[mssql-js] WARNING: Insecure log directory detected: '{}'", path.display());
-            eprintln!("[mssql-js] WARNING: Logs may contain sensitive data (connection strings, passwords, queries).");
+            eprintln!("[mssql-js] WARNING: Logs may contain sensitive data (queries, data etc).");
             eprintln!("[mssql-js] WARNING: Logging to /tmp, /var/tmp, or system temp directories is not recommended.");
             eprintln!("[mssql-js] WARNING: These directories may be world-readable and inappropriate for sensitive data.");
             eprintln!("[mssql-js] WARNING: Consider using a secure, application-controlled directory with proper permissions.");
