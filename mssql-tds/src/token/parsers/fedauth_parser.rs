@@ -115,7 +115,7 @@ where
                         "FedAuth option offset too small (underflow)",
                     )
                 })?;
-            
+
             let string_bytes: &[u8] = token_data
                 .get(
                     option_data_offset as usize..(option_data_offset + option_data_length) as usize,
