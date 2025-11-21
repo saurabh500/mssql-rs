@@ -50,6 +50,18 @@ mod transport_protocols {
     async fn create_client_with_transport(
         transport_context: TransportContext,
     ) -> TdsResult<TdsClient> {
+        create_client_with_transport_and_encryption(
+            transport_context,
+            EncryptionSetting::Strict,
+        )
+        .await
+    }
+
+    /// Create a client with the specified transport context and encryption mode
+    async fn create_client_with_transport_and_encryption(
+        transport_context: TransportContext,
+        encryption_mode: EncryptionSetting,
+    ) -> TdsResult<TdsClient> {
         let (username, password) = get_db_credentials();
 
         let client_context = ClientContext {
@@ -58,7 +70,7 @@ mod transport_protocols {
             password,
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::Strict,
+                mode: encryption_mode,
                 trust_server_certificate: trust_server_certificate(),
                 host_name_in_cert: get_cert_hostname(),
             },
@@ -135,6 +147,28 @@ mod transport_protocols {
         Ok(())
     }
 
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_named_pipe_with_encryption_on() -> TdsResult<()> {
+        init_tracing();
+        dotenv().ok();
+
+        // Test Named Pipe with Encryption=On (TDS 7.4, negotiated encryption)
+        // This should use TLS wrapping within TDS packets
+        let pipe_name = r"\\.\pipe\sql\query".to_string();
+
+        let transport_context = TransportContext::NamedPipe { pipe_name };
+
+        let mut client = create_client_with_transport_and_encryption(
+            transport_context,
+            EncryptionSetting::On,
+        )
+        .await?;
+        test_simple_query(&mut client).await?;
+
+        Ok(())
+    }
+
     // =========================================================================
     // Shared Memory Tests
     // =========================================================================
@@ -175,6 +209,28 @@ mod transport_protocols {
         Ok(())
     }
 
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_shared_memory_with_encryption_on() -> TdsResult<()> {
+        init_tracing();
+        dotenv().ok();
+
+        // Test Shared Memory with Encryption=On (TDS 7.4, negotiated encryption)
+        // This should use TLS wrapping within TDS packets
+        let transport_context = TransportContext::SharedMemory {
+            instance_name: "MSSQLSERVER".to_string(),
+        };
+
+        let mut client = create_client_with_transport_and_encryption(
+            transport_context,
+            EncryptionSetting::On,
+        )
+        .await?;
+        test_simple_query(&mut client).await?;
+
+        Ok(())
+    }
+
     // =========================================================================
     // TCP Tests (for comparison and to ensure TCP still works)
     // =========================================================================
@@ -193,6 +249,33 @@ mod transport_protocols {
         let transport_context = TransportContext::Tcp { host, port };
 
         let mut client = create_client_with_transport(transport_context).await?;
+        test_simple_query(&mut client).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tcp_with_encryption_on() -> TdsResult<()> {
+        init_tracing();
+        dotenv().ok();
+
+        // Test TCP with Encryption=On (TDS 7.4, negotiated encryption)
+        // This should use TLS wrapping within TDS packets
+        // If this test fails the same way as Named Pipes, it proves the issue
+        // is in the TDS 7.4 SSL handling, not transport-specific
+        let host = env::var("DB_HOST").expect("DB_HOST environment variable not set");
+        let port = env::var("DB_PORT")
+            .ok()
+            .map(|v| v.parse::<u16>().expect("DB_PORT must be a valid u16"))
+            .unwrap_or(1433);
+
+        let transport_context = TransportContext::Tcp { host, port };
+
+        let mut client = create_client_with_transport_and_encryption(
+            transport_context,
+            EncryptionSetting::On,
+        )
+        .await?;
         test_simple_query(&mut client).await?;
 
         Ok(())

@@ -41,7 +41,10 @@ pub(crate) async fn open_named_pipe_with_retry(
     let timeout_duration = Duration::from_millis(NAMED_PIPE_OPEN_TIMEOUT_MS as u64);
 
     loop {
-        match ClientOptions::new().open(pipe_path) {
+        match ClientOptions::new()
+            .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Message)
+            .open(pipe_path)
+        {
             Ok(client) => {
                 debug!(pipe_path, elapsed_ms = ?start_time.elapsed().as_millis(), "Named pipe connection established");
                 return Ok(client);

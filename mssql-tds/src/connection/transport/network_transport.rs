@@ -35,20 +35,18 @@ use tokio::time::timeout;
 use tracing::{debug, event, info, trace};
 
 #[cfg(windows)]
-use crate::connection::transport::named_pipes::{
-    create_named_pipe_transport, open_named_pipe_with_retry,
-};
+use crate::connection::transport::named_pipes::open_named_pipe_with_retry;
 
 pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
 
-pub(crate) async fn create_transport(
+/// Creates a base stream for the specified transport context.
+/// This function handles the transport-specific connection logic (TCP, Named Pipe, Shared Memory)
+/// and returns a boxed Stream that can be used with any TDS version.
+async fn create_base_stream(
     ipaddress_preference: IPAddressPreference,
-    tds_version: TdsVersion,
     transport_context: &TransportContext,
-    encryption_options: EncryptionOptions,
-) -> TdsResult<Box<NetworkTransport>> {
-    let encryption_mode = encryption_options.mode;
-    let stream = match &transport_context {
+) -> TdsResult<Box<dyn Stream>> {
+    match transport_context {
         TransportContext::Tcp { host, port } => {
             info!("Connecting to TCP transport: {}:{}", host, port);
 
@@ -118,7 +116,8 @@ pub(crate) async fn create_transport(
             if tcp_stream.is_none() {
                 return Err(crate::error::Error::from(last_error.unwrap()));
             }
-            tcp_stream.unwrap()
+            
+            Ok(Box::new(tcp_stream.unwrap()))
         }
         #[cfg(windows)]
         TransportContext::NamedPipe { pipe_name } => {
@@ -128,20 +127,14 @@ pub(crate) async fn create_transport(
             let pipe_client = open_named_pipe_with_retry(pipe_name).await?;
 
             info!("Connected to Named Pipe: {}", pipe_name);
-            return create_named_pipe_transport(
-                pipe_client,
-                transport_context,
-                encryption_options,
-                encryption_mode,
-            )
-            .await;
+            Ok(Box::new(pipe_client))
         }
         #[cfg(not(windows))]
         TransportContext::NamedPipe { .. } => {
-            return Err(crate::error::Error::from(std::io::Error::new(
+            Err(crate::error::Error::from(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "Named Pipes are only supported on Windows",
-            )));
+            )))
         }
         #[cfg(windows)]
         TransportContext::SharedMemory { instance_name } => {
@@ -163,7 +156,7 @@ pub(crate) async fn create_transport(
                 actual_instance
             );
 
-            // Construct the pipe path: \\.\.\pipe\SQLLocal\<instance>
+            // Construct the pipe path: \\.\pipe\SQLLocal\<instance>
             let pipe_name = format!(r"\\.\pipe\SQLLocal\{actual_instance}");
 
             info!("Connecting to Shared Memory pipe: {}", pipe_name);
@@ -172,47 +165,51 @@ pub(crate) async fn create_transport(
             let pipe_client = open_named_pipe_with_retry(&pipe_name).await?;
 
             info!("Connected to Shared Memory (LPC-over-NP): {}", pipe_name);
-            return create_named_pipe_transport(
-                pipe_client,
-                transport_context,
-                encryption_options,
-                encryption_mode,
-            )
-            .await;
+            Ok(Box::new(pipe_client))
         }
         #[cfg(not(windows))]
         TransportContext::SharedMemory { .. } => {
-            return Err(crate::error::Error::from(std::io::Error::new(
+            Err(crate::error::Error::from(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "Shared Memory is only supported on Windows",
-            )));
+            )))
         }
+    }
+}
+
+/// Creates a NetworkTransport configured for the specified TDS version.
+/// This function applies TDS version-specific logic uniformly across all transport types.
+async fn create_transport_for_version(
+    stream: Box<dyn Stream>,
+    tds_version: TdsVersion,
+    transport_context: &TransportContext,
+    encryption_options: EncryptionOptions,
+    encryption_mode: EncryptionSetting,
+) -> TdsResult<Box<NetworkTransport>> {
+    let ssl_handler = SslHandler {
+        server_host_name: transport_context.get_server_name().to_string(),
+        encryption_options,
     };
 
     match tds_version {
         TdsVersion::V7_4 => {
             // TDS 7.4 starts with unencrypted streams that could get encrypted as part of prelogin
             // negotiation. TLS must be wrapped in TDS packets for this version.
-            let base_stream: Box<dyn Stream> = Box::new(stream);
-
+            info!("Creating NetworkTransport for TDS 7.4 with TLS wrapping");
+            
             Ok(Box::new(NetworkTransport::new_with_tls_mode(
-                base_stream,
-                SslHandler {
-                    server_host_name: transport_context.get_server_name().to_string(),
-                    encryption_options,
-                },
+                stream,
+                ssl_handler,
                 PRE_NEGOTIATED_PACKET_SIZE,
                 encryption_mode,
                 true, // Use TDS 7.4 TLS wrapping
             )))
         }
         TdsVersion::V8_0 => {
-            // Enable TLS over TCP immediately in TDS 8.0
-            let ssl_handler = SslHandler {
-                server_host_name: transport_context.get_server_name().to_string(),
-                encryption_options,
-            };
-            let encrypted_stream = ssl_handler.enable_ssl_async(Box::new(stream)).await?;
+            // Enable TLS immediately for TDS 8.0 (before any TDS packets are exchanged)
+            info!("Creating NetworkTransport for TDS 8.0 with immediate TLS");
+            
+            let encrypted_stream = ssl_handler.enable_ssl_async(stream).await?;
 
             Ok(Box::new(NetworkTransport::new(
                 encrypted_stream,
@@ -225,6 +222,28 @@ pub(crate) async fn create_transport(
             "Unsupported TDS version: 0x{version_value:08X}. Only TDS 7.4 and TDS 8.0 are supported."
         ))),
     }
+}
+
+pub(crate) async fn create_transport(
+    ipaddress_preference: IPAddressPreference,
+    tds_version: TdsVersion,
+    transport_context: &TransportContext,
+    encryption_options: EncryptionOptions,
+) -> TdsResult<Box<NetworkTransport>> {
+    let encryption_mode = encryption_options.mode;
+    
+    // Step 1: Create the base stream (transport-specific)
+    let stream = create_base_stream(ipaddress_preference, transport_context).await?;
+    
+    // Step 2: Apply TDS version-specific wrapping (uniform for all transports)
+    create_transport_for_version(
+        stream,
+        tds_version,
+        transport_context,
+        encryption_options,
+        encryption_mode,
+    )
+    .await
 }
 
 #[async_trait]
