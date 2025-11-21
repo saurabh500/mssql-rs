@@ -3,7 +3,7 @@
 
 use once_cell::sync::OnceCell;
 use std::fs::{OpenOptions, create_dir_all};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Once;
 use tracing_appender::non_blocking;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt};
@@ -19,55 +19,65 @@ const DEFAULT_TRACE_OUTPUTS: &str = "console";
 const DEFAULT_TRACE_LEVEL: &str = "info";
 const TRACE_LOG_FILENAME: &str = "mssqljs_trace.log";
 
-fn is_insecure_path(path: &PathBuf) -> bool {
+fn is_insecure_path(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
-    
+
     // Unix temporary directories
     if path_str.starts_with("/tmp") || path_str.starts_with("/var/tmp") {
         return true;
     }
-    
+
     // Windows temporary directories
     if path_str.contains("\\temp\\") || path_str.contains("\\tmp\\") {
         return true;
     }
-    
+
     // Check if it's exactly the system temp directory
     let system_temp = std::env::temp_dir().to_string_lossy().to_lowercase();
     if path_str.starts_with(&system_temp) {
         return true;
     }
-    
+
     false
 }
 
 fn get_trace_log_path() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var(ENV_TRACE_DIR) {
         let path = PathBuf::from(dir);
-        
+
         // Security check: warn about insecure paths but allow them
         if is_insecure_path(&path) {
-            eprintln!("[mssql-js] WARNING: Insecure log directory detected: '{}'", path.display());
+            eprintln!(
+                "[mssql-js] WARNING: Insecure log directory detected: '{}'",
+                path.display()
+            );
             eprintln!("[mssql-js] WARNING: Logs may contain sensitive data (queries, data etc).");
-            eprintln!("[mssql-js] WARNING: Logging to /tmp, /var/tmp, or system temp directories is not recommended.");
-            eprintln!("[mssql-js] WARNING: These directories may be world-readable and inappropriate for sensitive data.");
-            eprintln!("[mssql-js] WARNING: Consider using a secure, application-controlled directory with proper permissions.");
+            eprintln!(
+                "[mssql-js] WARNING: Logging to /tmp, /var/tmp, or system temp directories is not recommended."
+            );
+            eprintln!(
+                "[mssql-js] WARNING: These directories may be world-readable and inappropriate for sensitive data."
+            );
+            eprintln!(
+                "[mssql-js] WARNING: Consider using a secure, application-controlled directory with proper permissions."
+            );
             eprintln!("[mssql-js] WARNING: Example: /var/log/myapp or /app/logs");
             eprintln!("[mssql-js] WARNING: Proceeding with logging to the specified directory...");
         }
-        
+
         if !path.exists() {
             if let Err(e) = create_dir_all(&path) {
                 eprintln!(
                     "[mssql-js] ERROR: Could not create log directory '{}': {}",
-                    path.display(), e
+                    path.display(),
+                    e
                 );
                 return None;
             }
         }
         return Some(path.join(TRACE_LOG_FILENAME));
     }
-    
+
     // No MSSQLJS_TRACE_DIR set - this is now required for file logging
     None
 }
@@ -199,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_get_trace_filter_valid() {
-        unsafe { 
+        unsafe {
             env::remove_var(ENV_TRACE_LEVEL);
             env::set_var(ENV_TRACE_LEVEL, "debug");
         }
