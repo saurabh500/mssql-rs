@@ -98,7 +98,7 @@ where
                         "FedAuth option offset out of bounds",
                     )
                 })?;
-            let mut option_data_offset =
+            let option_data_offset_raw =
                 u32::from_le_bytes(offset_slice.try_into().map_err(|_| {
                     Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -106,7 +106,16 @@ where
                     )
                 })?);
 
-            option_data_offset -= size_of::<u32>() as u32;
+            // Check for underflow before subtraction
+            let option_data_offset = option_data_offset_raw
+                .checked_sub(size_of::<u32>() as u32)
+                .ok_or_else(|| {
+                    Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "FedAuth option offset too small (underflow)",
+                    )
+                })?;
+            
             let string_bytes: &[u8] = token_data
                 .get(
                     option_data_offset as usize..(option_data_offset + option_data_length) as usize,
