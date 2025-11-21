@@ -6,7 +6,7 @@ use tracing::event;
 
 use crate::connection::client_context::TdsAuthenticationMethod;
 use crate::core::TdsResult;
-use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
+use crate::io::packet_writer::{PacketWriter, TdsPacketWriter};
 
 use crate::message::login::{Feature, FeatureExtension};
 
@@ -169,7 +169,7 @@ impl Feature for FedAuthFeature {
         Ok(())
     }
 
-    fn deserialize(&self, data: &[u8]) {
+    fn deserialize(&self, data: &[u8]) -> TdsResult<()> {
         if !data.is_empty() {
             event!(
                 tracing::Level::WARN,
@@ -177,6 +177,7 @@ impl Feature for FedAuthFeature {
                 data.len()
             );
         }
+        Ok(())
     }
 
     fn is_acknowledged(&self) -> bool {

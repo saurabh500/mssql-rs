@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 
 use crate::{
-    core::TdsResult, datatypes::sqltypes::SqlType, read_write::packet_writer::PacketWriter,
+    core::TdsResult, datatypes::sqltypes::SqlType, io::packet_writer::PacketWriter,
     token::tokens::SqlCollation,
 };
 

@@ -7,9 +7,9 @@ use tracing::event;
 
 use super::packet_writer::PacketWriter;
 use crate::core::TdsResult;
+use crate::io::reader_writer::NetworkReaderWriter;
 use crate::message::attention::AttentionRequest;
 use crate::message::messages::Request;
-use crate::read_write::reader_writer::NetworkReaderWriter;
 use std::{
     cmp::min,
     io::{Error, ErrorKind},
@@ -136,6 +136,12 @@ impl<'a> PacketReader<'a> {
             self.buffer_length = new_packet_size - 8;
         }
         Ok(())
+    }
+
+    /// Public test helper to read TDS packets in unit tests
+    #[cfg(test)]
+    pub(crate) async fn read_tds_packet_for_test(&mut self) -> TdsResult<()> {
+        self.read_tds_packet().await
     }
 
     async fn get_new_tds_packet(&mut self) -> TdsResult<usize> {
@@ -629,7 +635,7 @@ pub(crate) mod tests {
     use crate::connection::transport::network_transport::TransportSslHandler;
     use crate::core::NegotiatedEncryptionSetting;
     use crate::handler::handler_factory::SessionSettings;
-    use crate::read_write::reader_writer::{NetworkReader, NetworkWriter};
+    use crate::io::reader_writer::{NetworkReader, NetworkWriter};
     use async_trait::async_trait;
     use rand::Rng;
 

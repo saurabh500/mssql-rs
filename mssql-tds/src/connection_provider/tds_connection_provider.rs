@@ -14,24 +14,52 @@ use crate::core::{CancelHandle, TdsResult};
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::{Error, TimeoutErrorType};
 use crate::handler::handler_factory::HandlerFactory;
-use crate::read_write::token_stream::GenericTokenParserRegistry;
+use crate::io::token_stream::GenericTokenParserRegistry;
+
+#[cfg(fuzzing)]
+use crate::io::token_stream::TdsTokenStreamReader;
 
 use std::sync::LazyLock;
 
 pub(crate) static PARSER_REGISTRY: LazyLock<GenericTokenParserRegistry> =
     LazyLock::new(GenericTokenParserRegistry::default);
 
-/// Private struct to hold the components needed to create a TdsClient.
-/// This is an internal implementation detail and not exposed publicly.
-struct ConnectionComponents {
-    transport: Box<dyn TdsTransport>,
-    negotiated_settings: crate::handler::handler_factory::NegotiatedSettings,
-    execution_context: crate::connection::execution_context::ExecutionContext,
+pub struct TdsConnectionProvider;
+
+impl Default for TdsConnectionProvider {
+    fn default() -> Self {
+        Self
+    }
 }
 
-pub struct TdsConnectionProvider {}
-
 impl TdsConnectionProvider {
+    /// Create a new TdsConnectionProvider
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Create a client with a custom transport (used for fuzzing)
+    #[cfg(fuzzing)]
+    pub async fn create_client_with_transport<T>(
+        context: ClientContext,
+        transport: T,
+    ) -> TdsResult<TdsClient>
+    where
+        T: TdsTransport
+            + crate::io::reader_writer::NetworkReaderWriter
+            + TdsTokenStreamReader
+            + crate::io::packet_reader::TdsPacketReader
+            + 'static,
+    {
+        let (transport, negotiated_settings, execution_context) =
+            Self::connect_with_transport(&context, &context.transport_context, transport).await?;
+        Ok(TdsClient::new(
+            transport,
+            negotiated_settings,
+            execution_context,
+        ))
+    }
+
     pub async fn create_client(
         &self,
         context: ClientContext,
@@ -49,16 +77,16 @@ impl TdsConnectionProvider {
                 Some(timeout_duration) => {
                     match timeout(
                         *timeout_duration,
-                        self.create_connection_internal(&context, cancellation_token),
+                        Self::create_connection_internal(&context, cancellation_token),
                     )
                     .await
                     {
                         Ok(result) => {
-                            let result = result?;
+                            let (transport, negotiated_settings, execution_context) = result?;
                             Ok(TdsClient::new(
-                                result.transport,
-                                result.negotiated_settings,
-                                result.execution_context,
+                                transport,
+                                negotiated_settings,
+                                execution_context,
                             ))
                         }
                         Err(_) => Err(TimeoutError(TimeoutErrorType::String(
@@ -67,13 +95,12 @@ impl TdsConnectionProvider {
                     }
                 }
                 None => {
-                    let connection = self
-                        .create_connection_internal(&context, cancellation_token)
-                        .await?;
+                    let (transport, negotiated_settings, execution_context) =
+                        Self::create_connection_internal(&context, cancellation_token).await?;
                     Ok(TdsClient::new(
-                        connection.transport,
-                        connection.negotiated_settings,
-                        connection.execution_context,
+                        transport,
+                        negotiated_settings,
+                        execution_context,
                     ))
                 }
             }
@@ -82,15 +109,17 @@ impl TdsConnectionProvider {
     }
 
     async fn create_connection_internal(
-        &self,
         context: &ClientContext,
         cancellation_token: Option<CancellationToken>,
-    ) -> TdsResult<ConnectionComponents> {
+    ) -> TdsResult<(
+        Box<dyn TdsTransport>,
+        crate::handler::handler_factory::NegotiatedSettings,
+        crate::connection::execution_context::ExecutionContext,
+    )> {
         let mut redirect_count = 0;
         let max_redirects = 10;
-        let mut connection_result = self
-            .connect_with_transport_context(context, &context.transport_context)
-            .await;
+        let mut connection_result =
+            Self::connect_with_transport_context(context, &context.transport_context).await;
 
         // Loop until we either get a successful connection or we hit the max redirects
         // or an error that is not a redirection
@@ -124,9 +153,9 @@ impl TdsConnectionProvider {
                         }
 
                         let tcp_transport_context = TransportContext::Tcp { host, port };
-                        connection_result = self
-                            .connect_with_transport_context(context, &tcp_transport_context)
-                            .await;
+                        connection_result =
+                            Self::connect_with_transport_context(context, &tcp_transport_context)
+                                .await;
                     }
                     _ => return Err(err),
                 },
@@ -140,11 +169,14 @@ impl TdsConnectionProvider {
     /// If the session handler returns a successful connection, this method will return the connection.
     /// If the session handler returns an error, this method will return the error.
     async fn connect_with_transport_context(
-        &self,
         context: &ClientContext,
         transport_context: &TransportContext,
-    ) -> TdsResult<ConnectionComponents> {
-        // Create transport
+    ) -> TdsResult<(
+        Box<dyn TdsTransport>,
+        crate::handler::handler_factory::NegotiatedSettings,
+        crate::connection::execution_context::ExecutionContext,
+    )> {
+        // Create network transport directly
         let mut transport = network_transport::create_transport(
             context.ipaddress_preference,
             context.tds_version(),
@@ -158,7 +190,7 @@ impl TdsConnectionProvider {
         };
         let session_result = factory
             .session_handler(transport_context)
-            .execute(transport.as_mut())
+            .execute(&mut *transport)
             .await;
 
         match session_result {
@@ -167,14 +199,62 @@ impl TdsConnectionProvider {
                 let execution_context =
                     crate::connection::execution_context::ExecutionContext::new();
 
-                Ok(ConnectionComponents {
-                    transport,
+                Ok((
+                    transport as Box<dyn TdsTransport>,
                     negotiated_settings,
                     execution_context,
-                })
+                ))
             }
             Err(err) => {
-                transport.close_transport().await?;
+                let _ = transport.close_transport().await;
+                Err(err)
+            }
+        }
+    }
+
+    /// Internal generic method that works with a concrete transport type.
+    /// This is separated out to allow working with specific transport implementations
+    /// (NetworkTransport, MockTransport, etc.) without boxing overhead.
+    /// Only exposed for fuzzing.
+    #[cfg(fuzzing)]
+    async fn connect_with_transport<T>(
+        context: &ClientContext,
+        transport_context: &TransportContext,
+        mut transport: T,
+    ) -> TdsResult<(
+        Box<dyn TdsTransport>,
+        crate::handler::handler_factory::NegotiatedSettings,
+        crate::connection::execution_context::ExecutionContext,
+    )>
+    where
+        T: TdsTransport
+            + crate::io::reader_writer::NetworkReaderWriter
+            + TdsTokenStreamReader
+            + crate::io::packet_reader::TdsPacketReader
+            + 'static,
+    {
+        let factory = HandlerFactory {
+            context: context.clone(),
+        };
+        let session_result = factory
+            .session_handler(transport_context)
+            .execute(&mut transport)
+            .await;
+
+        match session_result {
+            Ok(negotiated_settings) => {
+                // Create execution context for the new connection
+                let execution_context =
+                    crate::connection::execution_context::ExecutionContext::new();
+
+                Ok((
+                    Box::new(transport) as Box<dyn TdsTransport>,
+                    negotiated_settings,
+                    execution_context,
+                ))
+            }
+            Err(err) => {
+                let _ = transport.close_transport().await;
                 Err(err)
             }
         }

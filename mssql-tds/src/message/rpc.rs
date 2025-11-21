@@ -8,8 +8,8 @@ use crate::{
     connection::execution_context::ExecutionContext,
     core::TdsResult,
     datatypes::encoder::GenericEncoder,
+    io::packet_writer::{PacketWriter, TdsPacketWriter},
     message::messages::PacketType,
-    read_write::packet_writer::{PacketWriter, TdsPacketWriter},
     token::tokens::SqlCollation,
 };
 

@@ -14,6 +14,11 @@ parameters:
  
 steps:
 - ${{ if eq(parameters.osType, 'Linux') }}:
+
+  - script: |
+      .pipeline/scripts/printinfo.sh
+    displayName: "Print Linux Agent info"
+
   - script: |
       # This causes unexpected failures in APT package installation.
       sudo systemctl disable unattended-upgrades
@@ -21,13 +26,13 @@ steps:
 
   - script: |
       scripts/install-deps.sh ${{ parameters.installdepsparams }}
-      # This is a workaround for the fact that the PATH variable is not updated in the same shell.
-      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
     displayName: "Install linux dependencies"
 
   - script: |
-      # This is a workaround for the fact that the PATH variable is not updated in the same shell.
-      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/share/fnm:$PATH"
+      .pipeline/scripts/install-rustup.sh
+    displayName: "Install Rustup"
+
+  - script: |
       scripts/install-jsdeps.sh
     displayName: "Install JS dependencies"
 
@@ -48,7 +53,7 @@ steps:
       fi
 
       # Install Rustup
-      scripts/install-rustup.sh
+      .pipeline/scripts/install-rustup.sh
     displayName: "Install MacOS dependencies"
 
   - script: |
@@ -69,62 +74,39 @@ steps:
     displayName: "Install JS dependencies for MacOS"
 
 - ${{ if eq(parameters.osType, 'Windows') }}:
-  - script: |
-      python --version
-      pip && pip install pipenv
-    displayName: "Check if python is installed"
-
-  - task: PowerShell@2
-    displayName: 'Install Rustup toolchain '
-    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
-    inputs:
-      targetType: 'inline'
-      script: |
-        $URL = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe";
-        $FileName = [System.IO.Path]::GetFileName($URL)
-        $DestinationFile = Join-Path $env:Temp $FileName
-
-        try {
-            Write-Host "Downloading rustup from $URL"
-            $wc = New-Object -TypeName System.Net.WebClient
-            $wc.DownloadFile($URL, $DestinationFile)}
-        catch {
-            Write-Error -Message "Failed to download rustup: $_.Message"
-        }
-
-        try{
-            Write-Host "Begin installation of rustup"
-            Start-Process "$DestinationFile" -ArgumentList @("-y") -Wait -NoNewWindow
-            Write-Host "End installation of rustup"
-        }
-        catch {
-            Write-Host "`nException while installing rustup, Error Message: " $_.Exception.Message
-        }
-
-  - task: PowerShell@2
-    displayName: 'Install Node.js'
-    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
-    inputs:
-      targetType: 'inline'
-      script: |
-        $Version = "20.19.3"
-        $InstallLocation = "C:\Program Files\nodejs"
-        scripts/InstallNode.ps1 -Version $Version -InstallLocation $InstallLocation
-
   
   - task: PowerShell@2
-    displayName: 'Check node installation and install yarn'
+    displayName: 'Print debug information about agent'
+    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+    inputs:
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/PrintAgentDebugInfo.ps1'
+
+  - task: PowerShell@2
+    displayName: 'Setup Python Paths'
+    inputs:
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/SetupPythonPaths.ps1'
+
+  - task: PowerShell@2
+    displayName: 'Install Rustup toolchain'
+    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+    inputs:
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/InstallRustup.ps1'
+
+  - task: PowerShell@2
+    displayName: 'Install Yarn'
+    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+    inputs:
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/InstallYarn.ps1'
+
+  - task: PowerShell@2
+    displayName: 'Verify Yarn installation'
     condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
     inputs:
       targetType: 'inline'
       script: |
-        $nodeVersion = node -v
-        Write-Host "Node.js version: $nodeVersion"
-        if (-not (Get-Command yarn -ErrorAction SilentlyContinue)) {
-            Write-Host "Installing Yarn..."
-            npm install --global yarn
-            $yarnVersion = yarn -v
-            Write-Host "Yarn version: $yarnVersion"
-        } else {
-            Write-Host "Yarn is already installed."
-        }
+        $yarnVersion = yarn -v
+        Write-Host "Yarn version: $yarnVersion"

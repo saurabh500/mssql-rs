@@ -2,11 +2,11 @@
 // Licensed under the MIT License.
 
 use crate::core::{EncryptionSetting, TdsResult};
+use crate::io::packet_reader::TdsPacketReader;
 use crate::message::messages::{PacketType, Request};
-use crate::read_write::packet_reader::TdsPacketReader;
 use crate::{
     core::{SQLServerVersion, Version},
-    read_write::packet_writer::{PacketWriter, TdsPacketWriter},
+    io::packet_writer::{PacketWriter, TdsPacketWriter},
 };
 use async_trait::async_trait;
 use std::collections::VecDeque;
@@ -228,16 +228,12 @@ impl PreloginResponse {
 
             match context.option {
                 OptionType::Version => {
-                    let major = packet_reader.read_byte().await.unwrap();
-                    let minor = packet_reader.read_byte().await;
-                    let build = packet_reader.read_int16_big_endian().await;
-                    let revision = packet_reader.read_int16_big_endian().await;
-                    result.server_version = Version::new(
-                        major,
-                        minor.unwrap(),
-                        build.unwrap() as u16,
-                        revision.unwrap() as u16,
-                    );
+                    let major = packet_reader.read_byte().await?;
+                    let minor = packet_reader.read_byte().await?;
+                    let build = packet_reader.read_int16_big_endian().await?;
+                    let revision = packet_reader.read_int16_big_endian().await?;
+                    result.server_version =
+                        Version::new(major, minor, build as u16, revision as u16);
                     result.sql_server_version = SQLServerVersion::from(major);
                 }
                 OptionType::Encryption => {
@@ -437,9 +433,9 @@ pub(crate) mod tests {
         OptionType, PreloginRequestModel, PreloginResponse, Serializer,
     };
 
-    use crate::read_write::packet_reader::TdsPacketReader;
-    use crate::read_write::packet_writer::PacketWriter;
-    use crate::read_write::packet_writer::tests::MockNetworkWriter;
+    use crate::io::packet_reader::TdsPacketReader;
+    use crate::io::packet_writer::PacketWriter;
+    use crate::io::packet_writer::tests::MockNetworkWriter;
     use async_trait::async_trait;
     use byteorder::{BigEndian, ReadBytesExt};
     use futures::executor::block_on;

@@ -19,7 +19,7 @@ use crate::{
         ColumnValues, SqlDate, SqlDateTime, SqlDateTime2, SqlDateTimeOffset, SqlMoney,
         SqlSmallDateTime, SqlSmallMoney, SqlTime, SqlXml,
     },
-    read_write::packet_reader::TdsPacketReader,
+    io::packet_reader::TdsPacketReader,
 };
 use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 
@@ -1088,7 +1088,10 @@ where
 mod test {
     use crate::datatypes::{
         column_values::ColumnValues,
-        decoder::{DecimalParts, GenericDecoder, StringDecoder},
+        decoder::{
+            DecimalParts, GenericDecoder, MAX_ALLOC_SIZE, StringDecoder, validate_alloc_size,
+        },
+        sqldatatypes::TdsDataType,
     };
 
     #[test]
@@ -1323,5 +1326,344 @@ mod test {
             ColumnValues::Int(v) => assert_eq!(v, i32::MIN),
             _ => panic!("Expected Int variant"),
         }
+    }
+
+    #[test]
+    fn test_validate_alloc_size_within_limit() {
+        let result = validate_alloc_size(1024, "test_allocation");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_alloc_size_at_limit() {
+        let result = validate_alloc_size(MAX_ALLOC_SIZE, "test_at_limit");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_alloc_size_exceeds_limit() {
+        let result = validate_alloc_size(MAX_ALLOC_SIZE + 1, "test_exceeds");
+        assert!(result.is_err());
+        if let Err(e) = result {
+            let error_msg = format!("{e:?}");
+            assert!(error_msg.contains("exceeds maximum allowed"));
+        }
+    }
+
+    #[test]
+    fn test_validate_alloc_size_zero() {
+        let result = validate_alloc_size(0, "test_zero");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_decimal_parts_equality_same() {
+        let parts1 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![100, 200],
+        };
+        let parts2 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![100, 200],
+        };
+        assert_eq!(parts1, parts2);
+    }
+
+    #[test]
+    fn test_decimal_parts_equality_different_sign() {
+        let parts1 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![100],
+        };
+        let parts2 = DecimalParts {
+            is_positive: false,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![100],
+        };
+        assert_ne!(parts1, parts2);
+    }
+
+    #[test]
+    fn test_decimal_parts_equality_different_scale() {
+        let parts1 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![100],
+        };
+        let parts2 = DecimalParts {
+            is_positive: true,
+            scale: 3,
+            precision: 10,
+            int_parts: vec![100],
+        };
+        assert_ne!(parts1, parts2);
+    }
+
+    #[test]
+    fn test_decimal_parts_equality_different_precision() {
+        let parts1 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![100],
+        };
+        let parts2 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 12,
+            int_parts: vec![100],
+        };
+        assert_ne!(parts1, parts2);
+    }
+
+    #[test]
+    fn test_decimal_parts_equality_different_length_with_zeros() {
+        let parts1 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![100, 0, 0],
+        };
+        let parts2 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![100],
+        };
+        assert_eq!(parts1, parts2);
+    }
+
+    #[test]
+    fn test_decimal_parts_equality_different_length_with_nonzeros() {
+        let parts1 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![100, 200],
+        };
+        let parts2 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![100],
+        };
+        assert_ne!(parts1, parts2);
+    }
+
+    #[test]
+    fn test_decimal_parts_debug_format_positive() {
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![12345],
+        };
+        let debug_str = format!("{parts:?}");
+        assert!(debug_str.contains("Decimal:"));
+        assert!(debug_str.contains("12345"));
+        assert!(debug_str.contains("Precision 10"));
+        assert!(debug_str.contains("Scale 2"));
+        assert!(!debug_str.starts_with("Decimal: -"));
+    }
+
+    #[test]
+    fn test_decimal_parts_debug_format_negative() {
+        let parts = DecimalParts {
+            is_positive: false,
+            scale: 3,
+            precision: 15,
+            int_parts: vec![54321],
+        };
+        let debug_str = format!("{parts:?}");
+        assert!(debug_str.contains("Decimal: -"));
+        assert!(debug_str.contains("54321"));
+        assert!(debug_str.contains("Precision 15"));
+        assert!(debug_str.contains("Scale 3"));
+    }
+
+    #[test]
+    fn test_decimal_parts_debug_format_multiple_parts() {
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 20,
+            int_parts: vec![100, 200, 300],
+        };
+        let debug_str = format!("{parts:?}");
+        assert!(debug_str.contains("100"));
+        assert!(debug_str.contains("200"));
+        assert!(debug_str.contains("300"));
+    }
+
+    #[test]
+    fn test_f64_conversion_high_scale() {
+        let int_parts = vec![12345];
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 10,
+            precision: 15,
+            int_parts,
+        };
+        let result = parts.to_f64();
+        // With scale of 10, 12345 should become 0.0000012345
+        assert!((result - 0.0000012345).abs() < 0.0000000001);
+    }
+
+    #[test]
+    fn test_f64_conversion_single_zero() {
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 5,
+            precision: 10,
+            int_parts: vec![0],
+        };
+        let result = parts.to_f64();
+        assert_eq!(result, 0.0);
+    }
+
+    #[test]
+    fn test_f64_conversion_negative_zero() {
+        let parts = DecimalParts {
+            is_positive: false,
+            scale: 0,
+            precision: 1,
+            int_parts: vec![0],
+        };
+        let result = parts.to_f64();
+        assert_eq!(result, -0.0);
+    }
+
+    #[test]
+    fn test_string_decoder_new() {
+        let decoder = StringDecoder::new();
+        assert!(decoder.db_collation.is_none());
+    }
+
+    #[test]
+    fn test_string_decoder_is_long_len_type_ntext() {
+        assert!(StringDecoder::is_long_len_type(TdsDataType::NText));
+    }
+
+    #[test]
+    fn test_string_decoder_is_long_len_type_text() {
+        assert!(StringDecoder::is_long_len_type(TdsDataType::Text));
+    }
+
+    #[test]
+    fn test_string_decoder_is_long_len_type_not_long() {
+        assert!(!StringDecoder::is_long_len_type(TdsDataType::NVarChar));
+        assert!(!StringDecoder::is_long_len_type(TdsDataType::BigVarChar));
+        assert!(!StringDecoder::is_long_len_type(TdsDataType::Int4));
+    }
+
+    #[test]
+    fn test_decimal_parts_f64_conversion_with_many_int_parts() {
+        // Test with 3 int parts
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 30,
+            int_parts: vec![1, 2, 3],
+        };
+        let result = parts.to_f64();
+        // Just verify it doesn't panic and produces a value
+        assert!(result > 0.0);
+    }
+
+    #[test]
+    fn test_decimal_parts_equality_reversed_order() {
+        // Test that order matters for trailing zeros
+        let parts1 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![100],
+        };
+        let parts2 = DecimalParts {
+            is_positive: true,
+            scale: 2,
+            precision: 10,
+            int_parts: vec![0, 100],
+        };
+        // These should not be equal as trailing zeros are in different positions
+        assert_ne!(parts1, parts2);
+    }
+
+    #[test]
+    fn test_decimal_parts_equality_both_empty() {
+        let parts1 = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 1,
+            int_parts: vec![],
+        };
+        let parts2 = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 1,
+            int_parts: vec![],
+        };
+        assert_eq!(parts1, parts2);
+    }
+
+    #[test]
+    fn test_validate_alloc_size_mid_range() {
+        // Test allocation in the middle range
+        let result = validate_alloc_size(MAX_ALLOC_SIZE / 2, "test_mid_range");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_decimal_parts_f64_negative_with_scale() {
+        // Test negative number with scale
+        let parts = DecimalParts {
+            is_positive: false,
+            scale: 3,
+            precision: 10,
+            int_parts: vec![123456],
+        };
+        let result = parts.to_f64();
+        assert!((result + 123.456).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_decimal_parts_equality_one_empty_one_zero() {
+        // Test equality between empty vec and vec with zero
+        let parts1 = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 1,
+            int_parts: vec![],
+        };
+        let parts2 = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 1,
+            int_parts: vec![0],
+        };
+        // Empty should equal to [0]
+        assert_eq!(parts1, parts2);
+    }
+
+    #[test]
+    fn test_decimal_parts_debug_with_zero() {
+        // Test Debug formatting with zero value
+        let parts = DecimalParts {
+            is_positive: true,
+            scale: 0,
+            precision: 1,
+            int_parts: vec![0],
+        };
+        let debug_str = format!("{parts:?}");
+        assert!(debug_str.contains("0"));
+        assert!(debug_str.contains("F64 value: 0"));
     }
 }

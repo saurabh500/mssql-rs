@@ -8,7 +8,7 @@ use crate::message::login_options::{
 };
 use crate::message::messages::{PacketType, Request, TdsError};
 
-use crate::read_write::packet_writer::{PacketWriter, TdsPacketWriter};
+use crate::io::packet_writer::{PacketWriter, TdsPacketWriter};
 use crate::token::fed_auth_info::FedAuthInfoToken;
 use crate::token::login_ack::LoginAckToken;
 use crate::token::tokens::{
@@ -21,7 +21,7 @@ use std::fmt::Debug;
 use super::features::fedauth::FedAuthFeature;
 use super::features::utf8::Utf8Feature;
 use crate::core::TdsResult;
-use crate::read_write::token_stream::{ParserContext, TdsTokenStreamReader};
+use crate::io::token_stream::{ParserContext, TdsTokenStreamReader};
 use tracing::{Level, debug, event, info, trace};
 
 pub(crate) const FIXED_LOGIN_RECORD_LENGTH: i32 = 94;
@@ -100,7 +100,7 @@ pub(crate) trait Feature: Send + Sync + Debug {
     fn is_requested(&self) -> bool;
     fn data_length(&self) -> i32;
     async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()>;
-    fn deserialize(&self, data: &[u8]);
+    fn deserialize(&self, data: &[u8]) -> TdsResult<()>;
     fn is_acknowledged(&self) -> bool;
     fn set_acknowledged(&mut self, _acknowledged: bool);
     fn clone_box(&self) -> Box<dyn Feature>;
@@ -183,12 +183,17 @@ impl FeaturesRequest {
         }
     }
 
-    pub fn set_acknowledged(&mut self, _feature_extension: FeatureExtension, _data: &[u8]) {
+    pub fn set_acknowledged(
+        &mut self,
+        _feature_extension: FeatureExtension,
+        _data: &[u8],
+    ) -> TdsResult<()> {
         let feature = self.features.get_mut(&_feature_extension);
         match feature {
             Some(f) => {
                 f.set_acknowledged(true);
-                f.deserialize(_data);
+                f.deserialize(_data)?;
+                Ok(())
             }
             None => {
                 event!(
@@ -196,6 +201,7 @@ impl FeaturesRequest {
                     "Feature {:?} not found in the features request when setting acknowledged",
                     _feature_extension
                 );
+                Ok(())
             }
         }
     }
@@ -512,11 +518,11 @@ impl LoginResponse {
                             // Decide if you want to break here, or keep looping.
                         }
                         Tokens::FeatureExtAck(_t) => {
-                            _t.acknowledged_features().iter().for_each(|f| {
+                            for f in _t.acknowledged_features().iter() {
                                 response_model
                                     .features
-                                    .set_acknowledged(f.0, f.1.as_slice());
-                            });
+                                    .set_acknowledged(f.0, f.1.as_slice())?;
+                            }
                         }
                         Tokens::FedAuthInfo(fed_auth_info_token) => {
                             response_model.fed_auth_info = Some(fed_auth_info_token);
@@ -740,12 +746,7 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
                         .await?;
                 }
                 LoginDeferredPayload::ServerName => {
-                    let server_name = match &self.model.transport_context {
-                        TransportContext::Tcp { host, port: _ } => host,
-                        _ => {
-                            unimplemented!("Transport type not supported")
-                        }
-                    };
+                    let server_name = self.model.transport_context.get_server_name();
                     // let server_name = self
                     //     .model
                     //     .user_input

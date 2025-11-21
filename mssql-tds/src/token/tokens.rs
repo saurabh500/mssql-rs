@@ -732,14 +732,52 @@ pub static CODE_PAGE_FROM_SORT_ID: [Option<u16>; 256] = [
     None,       // 255
 ];
 
+/// ERROR Token - SQL Server error message
+///
+/// Reports errors that occur during statement execution. These errors
+/// typically have severity >= 11 and may cause statement failure.
+///
+/// ## Structure
+/// ```text
+/// ┌──────────────────────────────────────────────────────────┐
+/// │ Number (4) | State (1) | Severity (1) | Message (var)   │
+/// │ ServerName (var) | ProcName (var) | LineNumber (4)     │
+/// └──────────────────────────────────────────────────────────┘
+/// ```
+///
+/// ## Severity Levels
+/// - 0-9: Informational (shouldn't appear in ERROR tokens)
+/// - 10: Status information
+/// - 11-16: User errors (correctable by user)
+/// - 17-19: Software/hardware errors
+/// - 20-25: Fatal errors (connection terminated)
+///
+/// ## Common Error Numbers
+/// - 208: Invalid object name
+/// - 515: Cannot insert NULL
+/// - 547: Foreign key violation
+/// - 2601: Duplicate key
 #[derive(Debug)]
 pub(crate) struct ErrorToken {
+    /// SQL Server error number (e.g., 208 for "invalid object name")
     pub number: u32,
+
+    /// Internal state code (indicates position in SQL Server's state machine)
     pub state: u8,
+
+    /// Error severity (11-25 for errors, typically 16 for user errors)
     pub severity: u8,
+
+    /// Human-readable error message
     pub message: String,
+
+    /// Name of the SQL Server instance that generated the error
     pub server_name: String,
+
+    /// Name of stored procedure where error occurred (empty if not in proc)
     pub proc_name: String,
+
+    /// Line number in batch or procedure where error occurred
     pub line_number: u32,
 }
 
@@ -749,14 +787,51 @@ impl Token for ErrorToken {
     }
 }
 
+/// INFO Token - SQL Server informational message
+///
+/// Reports informational messages, warnings, and PRINT output.
+/// Identical structure to ERROR token but with lower severity (< 11).
+///
+/// ## Structure (same as ERROR token)
+/// ```text
+/// ┌──────────────────────────────────────────────────────────┐
+/// │ Number (4) | State (1) | Severity (1) | Message (var)   │
+/// │ ServerName (var) | ProcName (var) | LineNumber (4)     │
+/// └──────────────────────────────────────────────────────────┘
+/// ```
+///
+/// ## Common Uses
+/// - PRINT statements (severity 0)
+/// - Database context changes (severity 10, number 5701)
+/// - Language setting changes (severity 10, number 5703)
+/// - Warnings and informational messages
+///
+/// ## Difference from ERROR
+/// - Token type is 0xAB (INFO) vs 0xAA (ERROR)
+/// - Severity typically < 11
+/// - Don't cause statement failure
+/// - Execution continues normally
 #[derive(Debug)]
 pub(crate) struct InfoToken {
+    /// Message number (informational code, e.g., 5701 for database change)
     pub number: u32,
+
+    /// Internal state code
     pub state: u8,
+
+    /// Message severity (typically 0-10 for INFO tokens)
     pub severity: u8,
+
+    /// Human-readable message text
     pub message: String,
+
+    /// Name of the SQL Server instance
     pub server_name: String,
+
+    /// Name of stored procedure if applicable
     pub proc_name: String,
+
+    /// Line number where message originated
     pub line_number: u32,
 }
 
@@ -766,10 +841,39 @@ impl Token for InfoToken {
     }
 }
 
+/// DONE Token - Indicates completion of a SQL statement
+///
+/// Sent when a SQL statement completes execution. Contains status flags,
+/// the command type that completed, and the number of rows affected.
+///
+/// ## Structure
+/// ```text
+/// ┌─────────────────────────────────────────┐
+/// │ Status (2 bytes) | CurCmd (2 bytes)     │
+/// │ RowCount (8 bytes)                      │
+/// └─────────────────────────────────────────┘
+/// ```
+///
+/// ## Example
+/// After `DELETE FROM Users WHERE Age > 100`:
+/// - status: DONE_COUNT (0x10) - row count is valid
+/// - cur_cmd: DELETE (0xC3)
+/// - row_count: 5 (deleted 5 rows)
 #[derive(Debug)]
 pub(crate) struct DoneToken {
+    /// Status flags indicating completion state (bitmask)
+    /// - DONE_MORE (0x01): More results coming
+    /// - DONE_ERROR (0x02): Error occurred
+    /// - DONE_COUNT (0x10): Row count is valid
+    /// - DONE_ATTN (0x20): Attention acknowledgment
     pub status: DoneStatus,
+
+    /// The type of SQL command that completed
+    /// (SELECT, INSERT, UPDATE, DELETE, etc.)
     pub cur_cmd: CurrentCommand,
+
+    /// Number of rows affected by the statement
+    /// Only valid if DONE_COUNT flag is set in status
     pub row_count: u64,
 }
 
@@ -789,8 +893,40 @@ impl DoneToken {
     }
 }
 
+/// RETURNSTATUS Token - Return value from a stored procedure
+///
+/// Contains the integer value returned by a stored procedure's RETURN statement.
+/// This token appears after all result sets and output parameters, but before DONEPROC.
+///
+/// ## Structure
+/// ```text
+/// ┌──────────────────────┐
+/// │ Value (4 bytes)      │
+/// │ INT32                │
+/// └──────────────────────┘
+/// ```
+///
+/// ## Conventions
+/// - 0: Success (by convention)
+/// - -1: General failure
+/// - Other: Application-specific codes
+///
+/// ## Example
+/// ```sql
+/// CREATE PROCEDURE spCheckUser @userId INT
+/// AS
+/// BEGIN
+///     IF EXISTS (SELECT 1 FROM Users WHERE Id = @userId)
+///         RETURN 0;  -- Success
+///     ELSE
+///         RETURN -1; -- Not found
+/// END
+/// ```
+/// Executing this proc sends a RETURNSTATUS token with value 0 or -1.
 #[derive(Debug)]
 pub(crate) struct ReturnStatusToken {
+    /// Return value from the stored procedure's RETURN statement
+    /// Convention: 0 = success, negative = error, positive = application-specific
     pub value: i32,
 }
 
@@ -800,12 +936,53 @@ impl Token for ReturnStatusToken {
     }
 }
 
+/// RETURNVALUE Token - Output parameter value from stored procedure
+///
+/// Contains the value of an OUTPUT parameter returned from a stored procedure.
+/// Multiple RETURNVALUE tokens may appear for procedures with multiple OUTPUT parameters.
+///
+/// ## Structure
+/// ```text
+/// ┌─────────────────────────────────────────────────────────────┐
+/// │ ParamOrdinal (2) | ParamName (var) | Status (1) | Metadata  │
+/// │ Value (variable based on data type)                         │
+/// └─────────────────────────────────────────────────────────────┘
+/// ```
+///
+/// ## Token Flow Example
+/// ```sql
+/// CREATE PROCEDURE spGetUserCount
+///     @count INT OUTPUT
+/// AS
+/// BEGIN
+///     SELECT @count = COUNT(*) FROM Users;
+/// END
+///
+/// -- Execution:
+/// DECLARE @c INT;
+/// EXEC spGetUserCount @count = @c OUTPUT;
+/// ```
+///
+/// Server sends (in order):
+/// 1. RETURNVALUE token (for @count parameter)
+/// 2. RETURNSTATUS token (procedure return value)
+/// 3. DONEPROC token (procedure completion)
 #[derive(Debug)]
 pub(crate) struct ReturnValueToken {
+    /// Ordinal position of the parameter (0-based)
     pub param_ordinal: u16,
+
+    /// Name of the OUTPUT parameter (e.g., "@count")
     pub param_name: String,
+
+    /// The actual value being returned
     pub value: ColumnValues,
+
+    /// Metadata describing the parameter's data type
     pub column_metadata: Box<ColumnMetadata>,
+
+    /// Status of the return value
+    /// (indicates if value is default, NULL, etc.)
     pub status: ReturnValueStatus,
 }
 

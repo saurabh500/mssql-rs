@@ -20,9 +20,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use mssql_tds::core::TdsResult;
-use mssql_tds::fuzz_support::{
-    create_fuzz_tds_client, TdsPacketReader,
-};
+use mssql_tds::fuzz_support::{TdsPacketReader, create_fuzz_tds_client};
 use std::io::{Error, ErrorKind};
 
 /// Simple reader that wraps fuzz input data
@@ -366,30 +364,27 @@ fuzz_target!(|data: &[u8]| {
             1 => {
                 // Fuzz execute() followed by close_query()
                 // This tests the full query -> response -> close flow
-                if client.execute("SELECT 1".to_string(), None, None).await.is_ok() {
+                if client
+                    .execute("SELECT 1".to_string(), None, None)
+                    .await
+                    .is_ok()
+                {
                     let _ = client.close_query().await;
                 }
             }
             2 => {
                 // Fuzz execute_sp_executesql()
                 // This tests parameterized query execution
-                let _ = client.execute_sp_executesql(
-                    "SELECT @p1".to_string(),
-                    vec![],
-                    None,
-                    None,
-                ).await;
+                let _ = client
+                    .execute_sp_executesql("SELECT @p1".to_string(), vec![], None, None)
+                    .await;
             }
             3 => {
                 // Fuzz execute_stored_procedure()
                 // This tests stored procedure execution
-                let _ = client.execute_stored_procedure(
-                    "sp_test".to_string(),
-                    None,
-                    None,
-                    None,
-                    None,
-                ).await;
+                let _ = client
+                    .execute_stored_procedure("sp_test".to_string(), None, None, None, None)
+                    .await;
             }
             _ => {}
         }

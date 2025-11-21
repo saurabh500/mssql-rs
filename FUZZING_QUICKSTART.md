@@ -1,4 +1,4 @@
-# Quick Start: Fuzzing TdsClient
+# Quick Start: Fuzzing mssql-tds
 
 ## Prerequisites
 ```bash
@@ -6,12 +6,54 @@ rustup install nightly
 cargo install cargo-fuzz
 ```
 
+## Available Fuzz Targets
+
+We have seven fuzz targets that test different parts of the TDS protocol:
+
+1. **fuzz_token_stream**: Low-level token parsing
+2. **fuzz_tds_client**: Query execution and result processing
+3. **fuzz_connection_provider**: Connection establishment (original, mixed testing)
+4. **fuzz_connection_provider_network**: Server response handling with fixed ClientContext
+5. **fuzz_connection_provider_context**: ClientContext variations with minimal server responses
+6. **fuzz_api_inputs**: RpcParameter API functions (get_sql_name, build_parameter_list)
+7. **fuzz_parameter_encoding**: Parameter value encoding and serialization
+
 ## Run Fuzzing
 
-### Basic Run (recommended to start)
+### Fuzz Connection Provider (original - mixed testing)
+```bash
+cd /home/saurabh/work/mssql-tds/mssql-tds
+RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz run fuzz_connection_provider
+```
+
+### Fuzz Connection Provider Network (server response handling)
+```bash
+cd /home/saurabh/work/mssql-tds/mssql-tds
+RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz run fuzz_connection_provider_network
+```
+
+### Fuzz Connection Provider Context (client configuration)
+```bash
+cd /home/saurabh/work/mssql-tds/mssql-tds
+RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz run fuzz_connection_provider_context
+```
+
+### Fuzz TdsClient (query execution testing)
 ```bash
 cd /home/saurabh/work/mssql-tds/mssql-tds
 RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz run fuzz_tds_client
+```
+
+### Fuzz API Inputs (RpcParameter functions)
+```bash
+cd /home/saurabh/work/mssql-tds/mssql-tds
+RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz run fuzz_api_inputs
+```
+
+### Fuzz Token Stream (low-level protocol)
+```bash
+cd /home/saurabh/work/mssql-tds/mssql-tds
+RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz run fuzz_token_stream
 ```
 
 ### Run for 1 Hour

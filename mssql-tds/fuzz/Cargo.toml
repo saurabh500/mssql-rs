@@ -19,13 +19,6 @@ async-trait = "0.1"
 members = ["."]
 
 [[bin]]
-name = "fuzz_done_token"
-path = "fuzz_targets/fuzz_done_token.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "fuzz_token_stream"
 path = "fuzz_targets/fuzz_token_stream.rs"
 test = false
@@ -35,6 +28,40 @@ bench = false
 [[bin]]
 name = "fuzz_tds_client"
 path = "fuzz_targets/fuzz_tds_client.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_connection_provider"
+path = "fuzz_targets/fuzz_connection_provider.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_inputs"
+path = "fuzz_targets/fuzz_api_inputs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parameter_encoding"
+path = "fuzz_targets/fuzz_parameter_encoding.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_connection_provider_network"
+path = "fuzz_targets/fuzz_connection_provider_network.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_connection_provider_context"
+path = "fuzz_targets/fuzz_connection_provider_context.rs"
 test = false
 doc = false
 bench = false
