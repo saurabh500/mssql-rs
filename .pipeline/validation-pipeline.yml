@@ -237,7 +237,6 @@ stages:
 - stage: Test_alpine
   dependsOn: 
     - Build
-    - Fuzz
   condition: and(ne(variables['Build.Reason'], 'PullRequest'), eq('${{ parameters.RunFuzz }}', 'false'))
   displayName: Test Alpine
   jobs:
@@ -287,7 +286,6 @@ stages:
 - stage: Test_amd64
   dependsOn: 
     - Build
-    - Fuzz
   condition: and(ne(variables['Build.Reason'], 'PullRequest'), eq('${{ parameters.RunFuzz }}', 'false'))
   displayName: Test Linux amd64
   jobs:
@@ -320,7 +318,6 @@ stages:
 - stage: Test_arm64
   dependsOn: 
     - Build
-    - Fuzz
   condition: and(ne(variables['Build.Reason'], 'PullRequest'), eq('${{ parameters.RunFuzz }}', 'false'))
   displayName: Test Linux arm64
   jobs:
