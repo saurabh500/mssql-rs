@@ -214,3 +214,79 @@ pub fn trust_server_certificate() -> bool {
         .map(|v| v.parse().unwrap_or(false))
         .unwrap_or(false)
 }
+
+// Helper functions for creating different transport contexts
+
+#[allow(dead_code)]
+#[cfg(windows)]
+pub fn create_named_pipe_context() -> ClientContext {
+    dotenv().ok();
+    let host = env::var("DB_HOST").expect("DB_HOST environment variable not set");
+    let instance = env::var("DB_INSTANCE").ok();
+
+    let pipe_name = if let Some(inst) = instance {
+        if inst.is_empty() || inst.eq_ignore_ascii_case("MSSQLSERVER") {
+            format!(r"\\{host}\pipe\sql\query")
+        } else {
+            format!(r"\\{host}\pipe\MSSQL${inst}\sql\query")
+        }
+    } else {
+        format!(r"\\{host}\pipe\sql\query")
+    };
+
+    ClientContext {
+        transport_context: TransportContext::NamedPipe { pipe_name },
+        user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
+        password: env::var("SQL_PASSWORD")
+            .or_else(|_| {
+                std::fs::read_to_string("/tmp/password")
+                    .map(|s| s.trim().to_string())
+                    .map_err(|_| std::env::VarError::NotPresent)
+            })
+            .expect(
+                "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+            ),
+        database: "master".to_string(),
+        encryption_options: EncryptionOptions {
+            mode: EncryptionSetting::On,
+            trust_server_certificate: trust_server_certificate(),
+            host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+        },
+        ..Default::default()
+    }
+}
+
+#[allow(dead_code)]
+#[cfg(windows)]
+pub fn create_shared_memory_context() -> ClientContext {
+    dotenv().ok();
+    let instance = env::var("DB_INSTANCE").unwrap_or_else(|_| String::new());
+
+    // Normalize MSSQLSERVER to empty string (default instance)
+    let instance_name = if instance.eq_ignore_ascii_case("MSSQLSERVER") {
+        String::new()
+    } else {
+        instance
+    };
+
+    ClientContext {
+        transport_context: TransportContext::SharedMemory { instance_name },
+        user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
+        password: env::var("SQL_PASSWORD")
+            .or_else(|_| {
+                std::fs::read_to_string("/tmp/password")
+                    .map(|s| s.trim().to_string())
+                    .map_err(|_| std::env::VarError::NotPresent)
+            })
+            .expect(
+                "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+            ),
+        database: "master".to_string(),
+        encryption_options: EncryptionOptions {
+            mode: EncryptionSetting::On,
+            trust_server_certificate: trust_server_certificate(),
+            host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+        },
+        ..Default::default()
+    }
+}

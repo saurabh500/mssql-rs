@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 pub(crate) mod buffers;
+#[cfg(windows)]
+pub(crate) mod named_pipes;
 pub mod network_transport;
 pub mod ssl_handler;
 pub mod tds_transport;
