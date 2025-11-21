@@ -112,6 +112,15 @@ mod transport_protocols {
         init_tracing();
         dotenv().ok();
 
+        // Skip this test if TRUST_SERVER_CERTIFICATE=true because Strict encryption
+        // enforces certificate validation even with trust_server_certificate=true
+        if trust_server_certificate() {
+            println!(
+                "Skipping test_named_pipe_default_instance: TRUST_SERVER_CERTIFICATE=true is incompatible with Strict encryption mode"
+            );
+            return Ok(());
+        }
+
         let host = env::var("DB_HOST").expect("DB_HOST environment variable not set");
 
         // Test connecting to default instance using Named Pipe
@@ -131,6 +140,15 @@ mod transport_protocols {
     async fn test_named_pipe_local_default_instance() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
+
+        // Skip this test if TRUST_SERVER_CERTIFICATE=true because Strict encryption
+        // enforces certificate validation even with trust_server_certificate=true
+        if trust_server_certificate() {
+            println!(
+                "Skipping test_named_pipe_local_default_instance: TRUST_SERVER_CERTIFICATE=true is incompatible with Strict encryption mode"
+            );
+            return Ok(());
+        }
 
         // Test connecting to local default instance using Named Pipe
         // Format: \\.\pipe\sql\query (local machine shorthand)
@@ -175,6 +193,15 @@ mod transport_protocols {
         init_tracing();
         dotenv().ok();
 
+        // Skip this test if TRUST_SERVER_CERTIFICATE=true because Strict encryption
+        // enforces certificate validation even with trust_server_certificate=true
+        if trust_server_certificate() {
+            println!(
+                "Skipping test_shared_memory_default_instance: TRUST_SERVER_CERTIFICATE=true is incompatible with Strict encryption mode"
+            );
+            return Ok(());
+        }
+
         // Test connecting to default instance using Shared Memory (lpc:)
         // This uses the default instance name (empty string)
         let transport_context = TransportContext::SharedMemory {
@@ -192,6 +219,15 @@ mod transport_protocols {
     async fn test_shared_memory_mssqlserver_instance() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
+
+        // Skip this test if TRUST_SERVER_CERTIFICATE=true because Strict encryption
+        // enforces certificate validation even with trust_server_certificate=true
+        if trust_server_certificate() {
+            println!(
+                "Skipping test_shared_memory_mssqlserver_instance: TRUST_SERVER_CERTIFICATE=true is incompatible with Strict encryption mode"
+            );
+            return Ok(());
+        }
 
         // Test connecting using explicit MSSQLSERVER instance name
         // (which is the default instance)
@@ -234,6 +270,15 @@ mod transport_protocols {
     async fn test_tcp_connection() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
+
+        // Skip this test if TRUST_SERVER_CERTIFICATE=true because Strict encryption
+        // enforces certificate validation even with trust_server_certificate=true
+        if trust_server_certificate() {
+            println!(
+                "Skipping test_tcp_connection: TRUST_SERVER_CERTIFICATE=true is incompatible with Strict encryption mode"
+            );
+            return Ok(());
+        }
 
         let host = env::var("DB_HOST").expect("DB_HOST environment variable not set");
         let port = env::var("DB_PORT")
@@ -284,6 +329,15 @@ mod transport_protocols {
         init_tracing();
         dotenv().ok();
 
+        // Skip this test if TRUST_SERVER_CERTIFICATE=true because Strict encryption
+        // enforces certificate validation even with trust_server_certificate=true
+        if trust_server_certificate() {
+            println!(
+                "Skipping test_concurrent_named_pipe_connections: TRUST_SERVER_CERTIFICATE=true is incompatible with Strict encryption mode"
+            );
+            return Ok(());
+        }
+
         // Test opening 10 Named Pipe connections simultaneously
         // This verifies that our retry mechanism handles concurrent access correctly
         let pipe_name = r"\\.\pipe\sql\query".to_string();
@@ -323,6 +377,15 @@ mod transport_protocols {
     async fn test_concurrent_shared_memory_connections() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
+
+        // Skip this test if TRUST_SERVER_CERTIFICATE=true because Strict encryption
+        // enforces certificate validation even with trust_server_certificate=true
+        if trust_server_certificate() {
+            println!(
+                "Skipping test_concurrent_shared_memory_connections: TRUST_SERVER_CERTIFICATE=true is incompatible with Strict encryption mode"
+            );
+            return Ok(());
+        }
 
         // Test opening 10 Shared Memory connections simultaneously
         // This verifies that our retry mechanism handles concurrent access correctly
