@@ -13,14 +13,15 @@ parameters:
   - Release
   default: Both
 
-- name: enableFuzzTesting
-  displayName: Enable Fuzz Testing
+- name: RunFuzz
+  displayName: Run Fuzz Tests (30 min)
   type: boolean
-  default: true
+  default: false
 
 stages:
 - stage: Build
   displayName: Build Stage
+  condition: eq('${{ parameters.RunFuzz }}', 'false')
   jobs:
   - job: Build_Windows
     displayName: Build Windows
@@ -156,50 +157,11 @@ stages:
 
 - stage: Fuzz
   displayName: Fuzz Testing Stage
-  dependsOn: Build
-  condition: and(succeeded(), eq('${{ parameters.enableFuzzTesting }}', 'true'))
+  dependsOn: []
+  condition: eq('${{ parameters.RunFuzz }}', 'true')
   jobs:
-  - job: Fuzz_TokenStream_Linux_PR
-    displayName: Fuzz Test Token Stream Linux (PR - 5 min)
-    condition: eq(variables['Build.Reason'], 'PullRequest')
-    pool:
-      name: RUST-1ES-POOL-WUS3
-      demands:
-        - imageOverride -equals RUST-1ES-UBUSLIM
-    variables:
-      CARGO_TARGET_DIR: $(Build.SourcesDirectory)
-    steps:
-      - template: templates/install-dependencies.yml
-        parameters:
-          osType: Linux
-      - template: templates/fuzz-template.yml
-        parameters:
-          osType: Linux
-          fuzzDurationSeconds: 300
-          fuzzTarget: fuzz_token_stream
-
-  - job: Fuzz_TdsClient_Linux_PR
-    displayName: Fuzz Test TdsClient Linux (PR - 5 min)
-    condition: eq(variables['Build.Reason'], 'PullRequest')
-    pool:
-      name: RUST-1ES-POOL-WUS3
-      demands:
-        - imageOverride -equals RUST-1ES-UBUSLIM
-    variables:
-      CARGO_TARGET_DIR: $(Build.SourcesDirectory)
-    steps:
-      - template: templates/install-dependencies.yml
-        parameters:
-          osType: Linux
-      - template: templates/fuzz-template.yml
-        parameters:
-          osType: Linux
-          fuzzDurationSeconds: 300
-          fuzzTarget: fuzz_tds_client
-
-  - job: Fuzz_TokenStream_Linux_CI
-    displayName: Fuzz Test Token Stream Linux (CI - 30 min)
-    condition: ne(variables['Build.Reason'], 'PullRequest')
+  - job: Fuzz_TokenStream_Linux
+    displayName: Fuzz Test Token Stream Linux (30 min)
     pool:
       name: RUST-1ES-POOL-WUS3
       demands:
@@ -216,9 +178,8 @@ stages:
           fuzzDurationSeconds: 1800
           fuzzTarget: fuzz_token_stream
 
-  - job: Fuzz_TdsClient_Linux_CI
-    displayName: Fuzz Test TdsClient Linux (CI - 30 min)
-    condition: ne(variables['Build.Reason'], 'PullRequest')
+  - job: Fuzz_TdsClient_Linux
+    displayName: Fuzz Test TdsClient Linux (30 min)
     pool:
       name: RUST-1ES-POOL-WUS3
       demands:
@@ -237,7 +198,6 @@ stages:
 
   - job: Fuzz_Additional_Targets_Linux
     displayName: Fuzz Additional Targets Linux (Serial - 5 min each)
-    condition: ne(variables['Build.Reason'], 'PullRequest')
     pool:
       name: RUST-1ES-POOL-WUS3
       demands:
@@ -277,8 +237,7 @@ stages:
 - stage: Test_alpine
   dependsOn: 
     - Build
-    - Fuzz
-  condition: ne(variables['Build.Reason'], 'PullRequest')
+  condition: and(ne(variables['Build.Reason'], 'PullRequest'), eq('${{ parameters.RunFuzz }}', 'false'))
   displayName: Test Alpine
   jobs:
     - template: templates/test-matrix-template-alpine.yml
@@ -301,8 +260,7 @@ stages:
 - stage: Test_alpine_arm64
   dependsOn: 
     - Build
-    - Fuzz
-  condition: ne(variables['Build.Reason'], 'PullRequest')
+  condition: and(ne(variables['Build.Reason'], 'PullRequest'), eq('${{ parameters.RunFuzz }}', 'false'))
   displayName: Test Alpine arm64
   jobs:
     - template: templates/test-matrix-template-alpine_arm64.yml
@@ -327,8 +285,7 @@ stages:
 - stage: Test_amd64
   dependsOn: 
     - Build
-    - Fuzz
-  condition: ne(variables['Build.Reason'], 'PullRequest')
+  condition: and(ne(variables['Build.Reason'], 'PullRequest'), eq('${{ parameters.RunFuzz }}', 'false'))
   displayName: Test Linux amd64
   jobs:
     - template: templates/test-matrix-template.yml
@@ -360,8 +317,7 @@ stages:
 - stage: Test_arm64
   dependsOn: 
     - Build
-    - Fuzz
-  condition: ne(variables['Build.Reason'], 'PullRequest')
+  condition: and(ne(variables['Build.Reason'], 'PullRequest'), eq('${{ parameters.RunFuzz }}', 'false'))
   displayName: Test Linux arm64
   jobs:
     - template: templates/test-matrix-template-arm64.yml

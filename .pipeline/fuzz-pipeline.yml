@@ -1,0 +1,16 @@
+name: Rust TDS Lib Fuzz Testing
+trigger: none
+
+schedules:
+- cron: "0 */3 * * *"
+  displayName: Fuzz Testing Every 3 Hours
+  branches:
+    include:
+    - main
+  always: true
+
+extends:
+  template: validation-pipeline.yml
+  parameters:
+    buildType: Release
+    RunFuzz: true
