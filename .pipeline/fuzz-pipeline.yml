@@ -1,4 +1,4 @@
-name: Rust TDS Lib Fuzz Testing
+# name: Rust TDS Lib Fuzz Testing
 trigger: none
 
 schedules:
