@@ -1,4 +1,4 @@
-name: Rust TDS Lib ${{parameters.buildType}}
+# name: Rust TDS Lib ${{parameters.buildType}}
 trigger: 
 - main
 - development
