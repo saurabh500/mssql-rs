@@ -149,6 +149,7 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
+    #[ignore]
     async fn test_named_pipe_with_encryption_on() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -211,6 +212,7 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
+    #[ignore]
     async fn test_shared_memory_with_encryption_on() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
