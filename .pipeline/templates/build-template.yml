@@ -53,6 +53,23 @@ steps:
   displayName: Check Format
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
 
+- ${{ if eq(parameters.osType, 'Linux') }}:
+  - bash: |
+      echo "Installing Rust nightly toolchain..."
+      rustup toolchain install nightly --profile minimal
+      echo "Installing cargo-fuzz..."
+      cargo +nightly install cargo-fuzz --locked
+    displayName: Install Fuzz Dependencies
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+
+  - bash: |
+      cd mssql-tds/fuzz
+      echo "Building all fuzz targets to verify they compile..."
+      RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz build
+      echo "Fuzz targets built successfully"
+    displayName: Build Fuzz Targets
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+
 - script: cargo install cargo-llvm-cov --version 0.6.16 --locked && cargo install cargo-nextest --version 0.9.99 --locked
   displayName: Install llvm-cov and nextest 
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
