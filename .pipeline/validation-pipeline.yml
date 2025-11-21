@@ -260,7 +260,6 @@ stages:
 - stage: Test_alpine_arm64
   dependsOn: 
     - Build
-    - Fuzz
   condition: and(ne(variables['Build.Reason'], 'PullRequest'), eq('${{ parameters.RunFuzz }}', 'false'))
   displayName: Test Alpine arm64
   jobs:
