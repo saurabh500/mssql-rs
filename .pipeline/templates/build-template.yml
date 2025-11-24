@@ -45,12 +45,12 @@ steps:
   displayName: Rust Release Build
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
 
-- script: cargo bclippy
-  displayName: Rust Clippy Lint
+- script: ./scripts/bclippy.sh
+  displayName: Rust Clippy Lint (workspace + mssql-py-core)
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
 
-- script: cargo bfmt
-  displayName: Check Format
+- script: ./scripts/bfmt.sh
+  displayName: Check Format (workspace + mssql-py-core)
   condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
 
 - ${{ if eq(parameters.osType, 'Linux') }}:

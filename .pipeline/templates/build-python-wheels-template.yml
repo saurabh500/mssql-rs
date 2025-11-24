@@ -1,0 +1,157 @@
+parameters:
+- name: osType  # defaults for any parameters that aren't specified
+  default: Linux
+  type: string
+  values:
+  - Windows
+  - Linux
+  - MacOS
+  - Alpine
+- name: architecture
+  default: x64
+  type: string
+- name: pythonVersions
+  type: object
+  default:
+  - '3.10'
+  - '3.11'
+  - '3.12'
+  - '3.13'
+  - '3.14'
+
+steps:
+- ${{ if eq(parameters.osType, 'Linux') }}:
+  - script: |
+      echo "Installing maturin via pipx..."
+      python3 -m pip install --user pipx
+      python3 -m pipx ensurepath
+      export PATH="$HOME/.local/bin:$PATH"
+      pipx install maturin
+    displayName: Install maturin
+
+  - ${{ each pythonVersion in parameters.pythonVersions }}:
+    - task: UsePythonVersion@0
+      displayName: 'Use Python ${{ pythonVersion }}'
+      inputs:
+        versionSpec: '${{ pythonVersion }}'
+        addToPath: true
+    
+    - script: |
+        echo "Building Python wheel for Python ${{ pythonVersion }}..."
+        export PATH="$HOME/.local/bin:$PATH"
+        python${{ pythonVersion }} --version
+        cd mssql-py-core
+        maturin build --release --interpreter python${{ pythonVersion }} --out $(Build.ArtifactStagingDirectory)/wheels
+        echo "Wheel built successfully for Python ${{ pythonVersion }}"
+      displayName: 'Build wheel for Python ${{ pythonVersion }} (Linux)'
+  
+  - script: |
+      echo "All wheels built:"
+      ls -lh $(Build.ArtifactStagingDirectory)/wheels
+    displayName: List all wheels
+
+- ${{ if eq(parameters.osType, 'MacOS') }}:
+  - script: |
+      echo "Installing maturin via pipx..."
+      python3 -m pip install --user pipx
+      python3 -m pipx ensurepath
+      export PATH="$HOME/.local/bin:$PATH"
+      pipx install maturin
+    displayName: Install maturin
+
+  - ${{ each pythonVersion in parameters.pythonVersions }}:
+    - task: UsePythonVersion@0
+      displayName: 'Use Python ${{ pythonVersion }}'
+      inputs:
+        versionSpec: '${{ pythonVersion }}'
+        addToPath: true
+    
+    - script: |
+        echo "Building Python wheel for Python ${{ pythonVersion }}..."
+        export PATH="$HOME/.local/bin:$PATH"
+        python${{ pythonVersion }} --version
+        cd mssql-py-core
+        maturin build --release --interpreter python${{ pythonVersion }} --out $(Build.ArtifactStagingDirectory)/wheels
+        echo "Wheel built successfully for Python ${{ pythonVersion }}"
+      displayName: 'Build wheel for Python ${{ pythonVersion }} (MacOS)'
+  
+  - script: |
+      echo "All wheels built:"
+      ls -lh $(Build.ArtifactStagingDirectory)/wheels
+    displayName: List all wheels
+
+- ${{ if eq(parameters.osType, 'Windows') }}:
+  - task: PowerShell@2
+    displayName: Install maturin
+    inputs:
+      targetType: 'inline'
+      script: |
+        Write-Host "Installing maturin via pipx..."
+        python -m pip install --user pipx
+        python -m pipx ensurepath
+        $env:PATH = "$env:USERPROFILE\.local\bin;$env:PATH"
+        pipx install maturin
+
+  - ${{ each pythonVersion in parameters.pythonVersions }}:
+    - task: UsePythonVersion@0
+      displayName: 'Use Python ${{ pythonVersion }}'
+      inputs:
+        versionSpec: '${{ pythonVersion }}'
+        addToPath: true
+
+    - task: PowerShell@2
+      displayName: 'Build wheel for Python ${{ pythonVersion }} (Windows)'
+      inputs:
+        targetType: 'inline'
+        script: |
+          Write-Host "Building Python wheel for Python ${{ pythonVersion }}..."
+          $env:PATH = "$env:USERPROFILE\.local\bin;$env:PATH"
+          python --version
+          cd mssql-py-core
+          maturin build --release --interpreter python --out $(Build.ArtifactStagingDirectory)/wheels
+          Write-Host "Wheel built successfully for Python ${{ pythonVersion }}"
+  
+  - task: PowerShell@2
+    displayName: List all wheels
+    inputs:
+      targetType: 'inline'
+      script: |
+        Write-Host "All wheels built:"
+        Get-ChildItem $(Build.ArtifactStagingDirectory)/wheels
+
+- ${{ if eq(parameters.osType, 'Alpine') }}:
+  - script: |
+      echo "Installing maturin via pipx for Alpine (musl)..."
+      python3 -m pip install --user pipx
+      python3 -m pipx ensurepath
+      export PATH="$HOME/.local/bin:$PATH"
+      pipx install maturin
+    displayName: Install maturin (Alpine)
+
+  - ${{ each pythonVersion in parameters.pythonVersions }}:
+    - task: UsePythonVersion@0
+      displayName: 'Use Python ${{ pythonVersion }}'
+      inputs:
+        versionSpec: '${{ pythonVersion }}'
+        addToPath: true
+    
+    - script: |
+        echo "Building Python wheel for Python ${{ pythonVersion }} (musl)..."
+        export PATH="$HOME/.local/bin:$PATH"
+        python${{ pythonVersion }} --version
+        cd mssql-py-core
+        maturin build --release --interpreter python${{ pythonVersion }} --out $(Build.ArtifactStagingDirectory)/wheels
+        echo "Wheel built successfully for Python ${{ pythonVersion }}"
+      displayName: 'Build wheel for Python ${{ pythonVersion }} (Alpine/musl)'
+  
+  - script: |
+      echo "All wheels built:"
+      ls -lh $(Build.ArtifactStagingDirectory)/wheels
+    displayName: List all wheels (Alpine)
+
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish Python Wheels'
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)/wheels'
+    ArtifactName: 'python-wheels-${{ parameters.osType }}-${{ parameters.architecture }}'
+    publishLocation: 'Container'

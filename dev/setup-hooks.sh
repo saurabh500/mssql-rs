@@ -35,7 +35,7 @@ fi
 echo "🎉 Git hooks setup complete!"
 echo ""
 echo "The pre-commit hook will now:"
-echo "  - Run 'cargo fmt' before each commit"
+echo "  - Run 'cargo fmt' on both workspace and mssql-py-core before each commit"
 echo "  - Prevent commits if code formatting changes are needed"
 echo ""
 echo "To disable the hook temporarily, use: git commit --no-verify"
