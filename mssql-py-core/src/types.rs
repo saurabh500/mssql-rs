@@ -11,7 +11,7 @@ pub fn py_to_sql(_obj: &PyAny) -> PyResult<()> {
 
 /// Convert SQL Server type to Python object
 #[allow(dead_code)] // Will be used for result set conversion
-pub fn sql_to_py(py: Python) -> PyResult<PyObject> {
+pub fn sql_to_py(py: Python) -> PyResult<Py<PyAny>> {
     // TODO: Implement type conversions
     Ok(py.None())
 }

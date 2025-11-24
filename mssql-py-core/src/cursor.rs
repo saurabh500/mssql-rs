@@ -12,22 +12,22 @@ pub struct DdbcCursor {
 
 #[pymethods]
 impl DdbcCursor {
-    fn execute(&mut self, _query: String, _params: Option<Vec<PyObject>>) -> PyResult<()> {
+    fn execute(&mut self, _query: String, _params: Option<Vec<Py<PyAny>>>) -> PyResult<()> {
         // TODO: Implement execute with actual TDS query execution
         Ok(())
     }
 
-    fn fetchone(&mut self) -> PyResult<Option<PyObject>> {
+    fn fetchone(&mut self) -> PyResult<Option<Py<PyAny>>> {
         // TODO: Implement fetchone
         Ok(None)
     }
 
-    fn fetchall(&mut self) -> PyResult<Vec<PyObject>> {
+    fn fetchall(&mut self) -> PyResult<Vec<Py<PyAny>>> {
         // TODO: Implement fetchall
         Ok(vec![])
     }
 
-    fn fetchmany(&mut self, _size: Option<usize>) -> PyResult<Vec<PyObject>> {
+    fn fetchmany(&mut self, _size: Option<usize>) -> PyResult<Vec<Py<PyAny>>> {
         // TODO: Implement fetchmany
         Ok(vec![])
     }

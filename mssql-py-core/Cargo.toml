@@ -8,11 +8,11 @@ name = "mssql_core_tds"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.21", features = ["extension-module"] }
+pyo3 = { version = "0.27.1", features = ["extension-module"] }
 mssql-tds = { path = "../mssql-tds" }
 tokio = { version = "1", features = ["full", "rt-multi-thread"] }
 anyhow = "1.0"
 hostname = "0.4"
 
 [build-dependencies]
-pyo3-build-config = "0.21"
+pyo3-build-config = "0.27.1"
