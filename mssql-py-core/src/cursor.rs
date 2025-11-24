@@ -1,12 +1,12 @@
+use mssql_tds::connection::tds_client::TdsClient;
 use pyo3::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use mssql_tds::connection::tds_client::TdsClient;
 
 /// Python Cursor class for Core TDS backend
 #[pyclass]
 pub struct DdbcCursor {
-    #[allow(dead_code)]  // Will be used for query execution
+    #[allow(dead_code)] // Will be used for query execution
     tds_client: Arc<Mutex<TdsClient>>,
 }
 

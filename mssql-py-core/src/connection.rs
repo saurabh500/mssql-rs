@@ -1,12 +1,12 @@
-use pyo3::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
+use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use tokio::runtime::Runtime;
 use std::sync::Arc;
+use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
 use mssql_tds::{
-    connection::client_context::{ClientContext, TransportContext, TdsAuthenticationMethod},
+    connection::client_context::{ClientContext, TdsAuthenticationMethod, TransportContext},
     connection::tds_client::TdsClient,
     connection_provider::tds_connection_provider::TdsConnectionProvider,
     core::{EncryptionOptions, EncryptionSetting},
@@ -16,7 +16,7 @@ use mssql_tds::{
 /// Python Connection class for Core TDS backend
 #[pyclass]
 pub struct DdbcConnection {
-    #[allow(dead_code)]  // Used for async operations in cursor execute
+    #[allow(dead_code)] // Used for async operations in cursor execute
     runtime: Runtime,
     tds_client: Option<Arc<Mutex<TdsClient>>>,
     is_closed: bool,
@@ -28,27 +28,24 @@ impl DdbcConnection {
     fn new(client_context_dict: &Bound<'_, PyDict>) -> PyResult<Self> {
         let runtime = Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
-        
+
         // Convert PyDict to ClientContext
         let client_context = Self::dict_to_client_context(client_context_dict)?;
-        
+
         // Connect using TdsConnectionProvider
         let provider = TdsConnectionProvider {};
-        let tds_client = runtime.block_on(async {
-            provider.create_client(client_context, None).await
-        });
-        
+        let tds_client =
+            runtime.block_on(async { provider.create_client(client_context, None).await });
+
         match tds_client {
-            Ok(client) => {
-                Ok(DdbcConnection {
-                    runtime,
-                    tds_client: Some(Arc::new(Mutex::new(client))),
-                    is_closed: false,
-                })
-            }
-            Err(e) => {
-                Err(PyRuntimeError::new_err(format!("Failed to connect to SQL Server: {e}")))
-            }
+            Ok(client) => Ok(DdbcConnection {
+                runtime,
+                tds_client: Some(Arc::new(Mutex::new(client))),
+                is_closed: false,
+            }),
+            Err(e) => Err(PyRuntimeError::new_err(format!(
+                "Failed to connect to SQL Server: {e}"
+            ))),
         }
     }
 
@@ -64,7 +61,7 @@ impl DdbcConnection {
         if self.is_closed {
             return Err(PyRuntimeError::new_err("Connection is closed"));
         }
-        
+
         if let Some(client) = &self.tds_client {
             Ok(crate::cursor::DdbcCursor::new(client.clone()))
         } else {
@@ -76,7 +73,7 @@ impl DdbcConnection {
         if self.is_closed {
             return Err(PyRuntimeError::new_err("Connection is closed"));
         }
-        
+
         // TODO: Implement transaction commit
         Ok(())
     }
@@ -85,7 +82,7 @@ impl DdbcConnection {
         if self.is_closed {
             return Err(PyRuntimeError::new_err("Connection is closed"));
         }
-        
+
         // TODO: Implement transaction rollback
         Ok(())
     }
@@ -107,73 +104,85 @@ impl DdbcConnection {
     /// Convert Python dict (ClientContext fields) to Rust ClientContext
     fn dict_to_client_context(dict: &Bound<'_, PyDict>) -> PyResult<ClientContext> {
         // Extract required fields with defaults
-        let server = dict.get_item("server")?
+        let server = dict
+            .get_item("server")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| "localhost".to_string());
-        
+
         let port: u16 = 1433; // Default port, could be extracted from server string if it contains :port
-        
-        let user_name = dict.get_item("user_name")?
+
+        let user_name = dict
+            .get_item("user_name")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_default();
-        
-        let password = dict.get_item("password")?
+
+        let password = dict
+            .get_item("password")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_default();
-        
-        let database = dict.get_item("database")?
+
+        let database = dict
+            .get_item("database")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_default();
-        
-        let application_name = dict.get_item("application_name")?
+
+        let application_name = dict
+            .get_item("application_name")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| "mssql-python".to_string());
-        
-        let connect_timeout = dict.get_item("connect_timeout")?
+
+        let connect_timeout = dict
+            .get_item("connect_timeout")?
             .and_then(|v| v.extract::<u32>().ok())
             .unwrap_or(15);
-        
-        let packet_size = dict.get_item("packet_size")?
+
+        let packet_size = dict
+            .get_item("packet_size")?
             .and_then(|v| v.extract::<i16>().ok())
             .unwrap_or(4096);
-        
-        let mars_enabled = dict.get_item("mars_enabled")?
+
+        let mars_enabled = dict
+            .get_item("mars_enabled")?
             .and_then(|v| v.extract::<bool>().ok())
             .unwrap_or(false);
-        
-        let trust_server_certificate = dict.get_item("trust_server_certificate")?
+
+        let trust_server_certificate = dict
+            .get_item("trust_server_certificate")?
             .and_then(|v| v.extract::<bool>().ok())
             .unwrap_or(false);
-        
+
         // Parse encryption setting
-        let encryption_str = dict.get_item("encryption")?
+        let encryption_str = dict
+            .get_item("encryption")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| "Optional".to_string());
-        
+
         let encryption_mode = match encryption_str.as_str() {
             "Mandatory" | "Required" => EncryptionSetting::Required,
             "Disabled" => EncryptionSetting::PreferOff,
             "Strict" => EncryptionSetting::Strict,
-            _ => EncryptionSetting::On,  // Default to On (encryption after prelogin)
+            _ => EncryptionSetting::On, // Default to On (encryption after prelogin)
         };
-        
+
         let encryption_options = EncryptionOptions {
             mode: encryption_mode,
             trust_server_certificate,
             host_name_in_cert: None,
         };
-        
+
         // Parse application intent
-        let application_intent_str = dict.get_item("application_intent")?
+        let application_intent_str = dict
+            .get_item("application_intent")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| "ReadWrite".to_string());
-        
+
         let application_intent = match application_intent_str.as_str() {
             "ReadOnly" => ApplicationIntent::ReadOnly,
             _ => ApplicationIntent::ReadWrite,
         };
-        
-        let workstation_id = dict.get_item("workstation_id")?
+
+        let workstation_id = dict
+            .get_item("workstation_id")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| {
                 hostname::get()
@@ -181,13 +190,10 @@ impl DdbcConnection {
                     .to_string_lossy()
                     .to_string()
             });
-        
+
         // Create ClientContext
         let mut context = ClientContext::new();
-        context.transport_context = TransportContext::Tcp {
-            host: server,
-            port,
-        };
+        context.transport_context = TransportContext::Tcp { host: server, port };
         context.user_name = user_name;
         context.password = password;
         context.database = database;
@@ -199,7 +205,7 @@ impl DdbcConnection {
         context.application_intent = application_intent;
         context.workstation_id = workstation_id;
         context.tds_authentication_method = TdsAuthenticationMethod::Password;
-        
+
         Ok(context)
     }
 }
