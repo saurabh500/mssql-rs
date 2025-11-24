@@ -34,6 +34,7 @@ steps:
       displayName: 'Use Python ${{ pythonVersion }}'
       inputs:
         versionSpec: '${{ pythonVersion }}'
+        architecture: '${{ parameters.architecture }}'
         addToPath: true
     
     - script: |
@@ -64,6 +65,7 @@ steps:
       displayName: 'Use Python ${{ pythonVersion }}'
       inputs:
         versionSpec: '${{ pythonVersion }}'
+        architecture: '${{ parameters.architecture }}'
         addToPath: true
     
     - script: |
@@ -97,6 +99,7 @@ steps:
       displayName: 'Use Python ${{ pythonVersion }}'
       inputs:
         versionSpec: '${{ pythonVersion }}'
+        architecture: '${{ parameters.architecture }}'
         addToPath: true
 
     - task: PowerShell@2
@@ -133,6 +136,7 @@ steps:
       displayName: 'Use Python ${{ pythonVersion }}'
       inputs:
         versionSpec: '${{ pythonVersion }}'
+        architecture: '${{ parameters.architecture }}'
         addToPath: true
     
     - script: |
