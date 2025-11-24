@@ -15,10 +15,53 @@ echo "Output directory: $OUTPUT_DIR"
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
+# Find a Python binary for installing tools
+FIRST_PYTHON=""
+for py_path in /opt/python/cp312-cp312/bin/python /opt/python/cp3*/bin/python /usr/local/bin/python3 /usr/bin/python3; do
+    if [ -x "$py_path" ]; then
+        FIRST_PYTHON="$py_path"
+        break
+    fi
+done
+
+if [ -z "$FIRST_PYTHON" ]; then
+    echo "Error: No Python installation found in container!"
+    exit 1
+fi
+
+echo "Using Python: $FIRST_PYTHON"
+
+# Install required system dependencies for building
+echo ""
+echo "==> Installing system dependencies..."
+if command -v yum &> /dev/null; then
+    # RHEL/CentOS based (manylinux)
+    yum install -y openssl-devel pkgconfig || true
+elif command -v apk &> /dev/null; then
+    # Alpine based (musllinux)
+    apk add --no-cache openssl-dev pkgconfig || true
+fi
+
+# Install Rust if not already installed
+if ! command -v cargo &> /dev/null; then
+    echo ""
+    echo "==> Installing Rust toolchain..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    export PATH="$HOME/.cargo/bin:$PATH"
+    echo "Rust installed successfully"
+    rustc --version
+    cargo --version
+else
+    echo "Rust already installed"
+    export PATH="$HOME/.cargo/bin:$PATH"
+fi
+
 # Install maturin if not already installed
-if ! command -v maturin &> /dev/null; then
-    echo "Installing maturin..."
-    pip3 install maturin
+if ! $FIRST_PYTHON -m pip show maturin &> /dev/null; then
+    echo ""
+    echo "==> Installing maturin..."
+    $FIRST_PYTHON -m pip install maturin
+    echo "Maturin installed successfully"
 fi
 
 cd "$WORKSPACE_DIR/mssql-py-core"
@@ -45,7 +88,7 @@ for PY_VERSION in "${PYTHON_VERSIONS[@]}"; do
     echo "==> Building wheel for Python $PY_VERSION using $PYTHON_BIN"
     $PYTHON_BIN --version
     
-    maturin build --release \
+    $FIRST_PYTHON -m maturin build --release \
         --interpreter "$PYTHON_BIN" \
         --out "$OUTPUT_DIR" \
         --manifest-path "$WORKSPACE_DIR/mssql-py-core/Cargo.toml"
