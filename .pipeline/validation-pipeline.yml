@@ -43,10 +43,7 @@ stages:
           osType: Windows
           buildType: ${{ parameters.buildType }}
           testFilter: -E "not (test(connectivity))"
-      - template: templates/build-python-wheels-template.yml
-        parameters:
-          osType: Windows
-          architecture: x64
+      # Note: Windows Python wheel builds are not supported - use Linux/Alpine/MacOS only
 
   # - job: Build_Windows_Arm
   #   displayName: Build Windows ARM
