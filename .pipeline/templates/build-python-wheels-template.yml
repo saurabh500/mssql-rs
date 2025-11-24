@@ -19,6 +19,10 @@ parameters:
   - '3.14'
 
 steps:
+# Login to Azure Container Registry for container-based builds
+- ${{ if or(eq(parameters.osType, 'Linux'), eq(parameters.osType, 'Alpine')) }}:
+  - template: azure-cli-login-template.yml
+
 # Container-based builds for Linux (glibc - manylinux)
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - script: |
