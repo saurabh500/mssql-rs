@@ -3,7 +3,6 @@ parameters:
   default: Linux
   type: string
   values:
-  - Windows
   - Linux
   - MacOS
   - Alpine
@@ -20,37 +19,44 @@ parameters:
   - '3.14'
 
 steps:
+# Container-based builds for Linux (glibc - manylinux)
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - script: |
-      echo "Installing maturin via pipx..."
-      python3 -m pip install --user pipx
-      python3 -m pipx ensurepath
-      export PATH="$HOME/.local/bin:$PATH"
-      pipx install maturin
-    displayName: Install maturin
-
-  - ${{ each pythonVersion in parameters.pythonVersions }}:
-    - task: UsePythonVersion@0
-      displayName: 'Use Python ${{ pythonVersion }}'
-      inputs:
-        versionSpec: '${{ pythonVersion }}'
-        architecture: '${{ parameters.architecture }}'
-        addToPath: true
-    
-    - script: |
-        echo "Building Python wheel for Python ${{ pythonVersion }}..."
-        export PATH="$HOME/.local/bin:$PATH"
-        python${{ pythonVersion }} --version
-        cd mssql-py-core
-        maturin build --release --interpreter python${{ pythonVersion }} --out $(Build.ArtifactStagingDirectory)/wheels
-        echo "Wheel built successfully for Python ${{ pythonVersion }}"
-      displayName: 'Build wheel for Python ${{ pythonVersion }} (Linux)'
-  
-  - script: |
-      echo "All wheels built:"
+      echo "Building Python wheels in manylinux container..."
+      
+      # Determine container image based on architecture
+      if [ "${{ parameters.architecture }}" = "x64" ]; then
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64:latest"
+      elif [ "${{ parameters.architecture }}" = "ARM64" ] || [ "${{ parameters.architecture }}" = "arm64" ]; then
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_28_aarch64:latest"
+      else
+        echo "Unsupported architecture: ${{ parameters.architecture }}"
+        exit 1
+      fi
+      
+      echo "Using container: $CONTAINER_IMAGE"
+      
+      # Login to ACR
+      az acr login -n tdslibrs
+      
+      # Create output directory
+      mkdir -p $(Build.ArtifactStagingDirectory)/wheels
+      
+      # Run build in container
+      docker run --rm \
+        -v "$(Build.SourcesDirectory):/workspace" \
+        -v "$(Build.ArtifactStagingDirectory)/wheels:/workspace/target/wheels" \
+        -e "WORKSPACE_DIR=/workspace" \
+        -e "OUTPUT_DIR=/workspace/target/wheels" \
+        $CONTAINER_IMAGE \
+        bash /workspace/scripts/build-python-wheels-in-container.sh
+      
+      echo "Wheels built successfully!"
       ls -lh $(Build.ArtifactStagingDirectory)/wheels
-    displayName: List all wheels
+    displayName: 'Build Python wheels in manylinux container (${{ parameters.architecture }})'
 
+# Native builds for MacOS (no Windows support)
+# Native builds for MacOS (no Windows support)
 - ${{ if eq(parameters.osType, 'MacOS') }}:
   - script: |
       echo "Installing maturin via pipx..."
@@ -67,6 +73,7 @@ steps:
         versionSpec: '${{ pythonVersion }}'
         architecture: '${{ parameters.architecture }}'
         addToPath: true
+        githubToken: $(GITHUB_TOKEN)
     
     - script: |
         echo "Building Python wheel for Python ${{ pythonVersion }}..."
@@ -82,76 +89,41 @@ steps:
       ls -lh $(Build.ArtifactStagingDirectory)/wheels
     displayName: List all wheels
 
-- ${{ if eq(parameters.osType, 'Windows') }}:
-  - task: PowerShell@2
-    displayName: Install maturin
-    inputs:
-      targetType: 'inline'
-      script: |
-        Write-Host "Installing maturin via pipx..."
-        python -m pip install --user pipx
-        python -m pipx ensurepath
-        $env:PATH = "$env:USERPROFILE\.local\bin;$env:PATH"
-        pipx install maturin
-
-  - ${{ each pythonVersion in parameters.pythonVersions }}:
-    - task: UsePythonVersion@0
-      displayName: 'Use Python ${{ pythonVersion }}'
-      inputs:
-        versionSpec: '${{ pythonVersion }}'
-        architecture: '${{ parameters.architecture }}'
-        addToPath: true
-
-    - task: PowerShell@2
-      displayName: 'Build wheel for Python ${{ pythonVersion }} (Windows)'
-      inputs:
-        targetType: 'inline'
-        script: |
-          Write-Host "Building Python wheel for Python ${{ pythonVersion }}..."
-          $env:PATH = "$env:USERPROFILE\.local\bin;$env:PATH"
-          python --version
-          cd mssql-py-core
-          maturin build --release --interpreter python --out $(Build.ArtifactStagingDirectory)/wheels
-          Write-Host "Wheel built successfully for Python ${{ pythonVersion }}"
-  
-  - task: PowerShell@2
-    displayName: List all wheels
-    inputs:
-      targetType: 'inline'
-      script: |
-        Write-Host "All wheels built:"
-        Get-ChildItem $(Build.ArtifactStagingDirectory)/wheels
-
+# Container-based builds for Alpine (musl - musllinux)
 - ${{ if eq(parameters.osType, 'Alpine') }}:
   - script: |
-      echo "Installing maturin via pipx for Alpine (musl)..."
-      python3 -m pip install --user pipx
-      python3 -m pipx ensurepath
-      export PATH="$HOME/.local/bin:$PATH"
-      pipx install maturin
-    displayName: Install maturin (Alpine)
-
-  - ${{ each pythonVersion in parameters.pythonVersions }}:
-    - task: UsePythonVersion@0
-      displayName: 'Use Python ${{ pythonVersion }}'
-      inputs:
-        versionSpec: '${{ pythonVersion }}'
-        architecture: '${{ parameters.architecture }}'
-        addToPath: true
-    
-    - script: |
-        echo "Building Python wheel for Python ${{ pythonVersion }} (musl)..."
-        export PATH="$HOME/.local/bin:$PATH"
-        python${{ pythonVersion }} --version
-        cd mssql-py-core
-        maturin build --release --interpreter python${{ pythonVersion }} --out $(Build.ArtifactStagingDirectory)/wheels
-        echo "Wheel built successfully for Python ${{ pythonVersion }}"
-      displayName: 'Build wheel for Python ${{ pythonVersion }} (Alpine/musl)'
-  
-  - script: |
-      echo "All wheels built:"
+      echo "Building Python wheels in musllinux container..."
+      
+      # Determine container image based on architecture
+      if [ "${{ parameters.architecture }}" = "x64" ]; then
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64:latest"
+      elif [ "${{ parameters.architecture }}" = "ARM64" ] || [ "${{ parameters.architecture }}" = "arm64" ]; then
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/musllinux_1_2_aarch64:latest"
+      else
+        echo "Unsupported architecture: ${{ parameters.architecture }}"
+        exit 1
+      fi
+      
+      echo "Using container: $CONTAINER_IMAGE"
+      
+      # Login to ACR
+      az acr login -n tdslibrs
+      
+      # Create output directory
+      mkdir -p $(Build.ArtifactStagingDirectory)/wheels
+      
+      # Run build in container
+      docker run --rm \
+        -v "$(Build.SourcesDirectory):/workspace" \
+        -v "$(Build.ArtifactStagingDirectory)/wheels:/workspace/target/wheels" \
+        -e "WORKSPACE_DIR=/workspace" \
+        -e "OUTPUT_DIR=/workspace/target/wheels" \
+        $CONTAINER_IMAGE \
+        sh /workspace/scripts/build-python-wheels-in-container.sh
+      
+      echo "Wheels built successfully!"
       ls -lh $(Build.ArtifactStagingDirectory)/wheels
-    displayName: List all wheels (Alpine)
+    displayName: 'Build Python wheels in musllinux container (${{ parameters.architecture }})'
 
 - task: PublishBuildArtifacts@1
   displayName: 'Publish Python Wheels'
