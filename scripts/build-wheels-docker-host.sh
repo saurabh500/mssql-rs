@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -eu
 
 # Script to build Python wheels using Docker containers on the pipeline host

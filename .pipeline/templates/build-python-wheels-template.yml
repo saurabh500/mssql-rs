@@ -25,8 +25,8 @@ steps:
 
 # Container-based builds for Linux (glibc - manylinux)
 - ${{ if eq(parameters.osType, 'Linux') }}:
-  - script: |
-      sh $(Build.SourcesDirectory)/scripts/build-wheels-docker-host.sh \
+  - bash: |
+      bash $(Build.SourcesDirectory)/scripts/build-wheels-docker-host.sh \
         "Linux" \
         "${{ parameters.architecture }}" \
         "$(Build.SourcesDirectory)" \
@@ -69,8 +69,8 @@ steps:
 
 # Container-based builds for Alpine (musl - musllinux)
 - ${{ if eq(parameters.osType, 'Alpine') }}:
-  - script: |
-      sh $(Build.SourcesDirectory)/scripts/build-wheels-docker-host.sh \
+  - bash: |
+      bash $(Build.SourcesDirectory)/scripts/build-wheels-docker-host.sh \
         "Alpine" \
         "${{ parameters.architecture }}" \
         "$(Build.SourcesDirectory)" \
