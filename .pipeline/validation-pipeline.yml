@@ -170,10 +170,10 @@ stages:
           buildType: ${{ parameters.buildType }}
           testFilter: -E 'not (test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout) | test(rpc_datatypes) | test(client_based_iterators) | test(connect_fetch_multiple_packets) | test(bulk_copy) | test(transport_protocols))'
           enableJsBuild: true
-      - template: templates/build-python-wheels-template.yml
-        parameters:
-          osType: MacOS
-          architecture: universal2
+      # - template: templates/build-python-wheels-template.yml
+      #   parameters:
+      #     osType: MacOS
+      #     architecture: universal2
 
 - stage: Fuzz
   displayName: Fuzz Testing Stage
