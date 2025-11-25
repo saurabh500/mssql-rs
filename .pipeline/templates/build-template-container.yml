@@ -51,10 +51,7 @@ steps:
     scriptLocation: 'inlineScript'
     inlineScript: |
       az acr login --name tdslibrs
-      ${{ if eq(parameters.architecture, 'x64') }}:
-        docker pull tdslibrs.azurecr.io/ubuntu-build:latest-x64
-      ${{ if eq(parameters.architecture, 'ARM64') }}:
-        docker pull tdslibrs.azurecr.io/ubuntu-build:latest-arm64
+      docker pull tdslibrs.azurecr.io/ubuntu-build:latest-${{ parameters.architecture }}
 
 - script: |
     set -euo pipefail
