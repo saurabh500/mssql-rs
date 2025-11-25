@@ -84,6 +84,13 @@ steps:
 - script: |
     BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${{ parameters.architecture }}"
     
+    # Set IS_PR_BUILD flag
+    if [ "$(Build.Reason)" = "PullRequest" ]; then
+      IS_PR_BUILD="true"
+    else
+      IS_PR_BUILD="false"
+    fi
+    
     # Run build container with access to workspace and SQL network
     docker run --rm \
       --network testnet \
@@ -94,6 +101,7 @@ steps:
       -e CERT_HOST_NAME="sql1" \
       -e RUST_BACKTRACE=full \
       -e BUILD_TYPE="${{ parameters.buildType }}" \
+      -e IS_PR_BUILD="$IS_PR_BUILD" \
       -w /workspace \
       $BUILD_IMAGE \
       bash -c "
@@ -122,20 +130,21 @@ steps:
         fi
         
         # Run clippy if PR
-        if [ \"\$BUILD_REASON\" = \"PullRequest\" ]; then
+        if [ \"\$IS_PR_BUILD\" = \"true\" ]; then
           echo '==> Running clippy...'
           ./scripts/bclippy.sh
         fi
         
         # Run format check if PR
-        if [ \"\$BUILD_REASON\" = \"PullRequest\" ]; then
+        if [ \"\$IS_PR_BUILD\" = \"true\" ]; then
           echo '==> Checking format...'
           ./scripts/bfmt.sh
         fi
         
         # Run tests if PR
-        if [ \"\$BUILD_REASON\" = \"PullRequest\" ]; then
+        if [ \"\$IS_PR_BUILD\" = \"true\" ]; then
           echo '==> Running tests...'
+          mkdir -p /workspace/target/nextest/ci
           cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets --package mssql-tds --no-fail-fast --profile ci --success-output immediate
           
           # Generate coverage report
@@ -146,7 +155,6 @@ steps:
   displayName: Build and Test in Container
   env:
     SQL_PASSWORD: $(SQL_PASSWORD)
-    BUILD_REASON: $(Build.Reason)
 
 - task: PublishTestResults@2
   condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
@@ -155,6 +163,8 @@ steps:
     testResultsFormat: JUnit
     testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
     testRunTitle: $(System.PhaseName)
+    failTaskOnFailedTests: false
+    publishRunAttachments: true
 
 - task: PublishCodeCoverageResults@2
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
