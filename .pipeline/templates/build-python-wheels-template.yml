@@ -48,6 +48,9 @@ steps:
         "$CONTAINER_IMAGE" \
         bash /workspace/scripts/build-python-wheels-in-container.sh
       
+      # Fix permissions on any files created by the container
+      sudo chown -R $(whoami):$(whoami) "$(Build.SourcesDirectory)/mssql-py-core/target" || true
+      
       echo "✅ Wheels built successfully!"
       ls -lh "$(Build.ArtifactStagingDirectory)/wheels"
     displayName: 'Build Python wheels in manylinux container (${{ parameters.architecture }})'
@@ -112,6 +115,9 @@ steps:
         -e "OUTPUT_DIR=/workspace/target/wheels" \
         "$CONTAINER_IMAGE" \
         sh /workspace/scripts/build-python-wheels-in-container.sh
+      
+      # Fix permissions on any files created by the container
+      sudo chown -R $(whoami):$(whoami) "$(Build.SourcesDirectory)/mssql-py-core/target" || true
       
       echo "✅ Wheels built successfully!"
       ls -lh "$(Build.ArtifactStagingDirectory)/wheels"

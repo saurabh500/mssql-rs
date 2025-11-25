@@ -79,10 +79,6 @@ stages:
       - template: templates/install-dependencies.yml
         parameters:
           osType: Linux
-      - template: templates/build-python-wheels-template.yml
-        parameters:
-          osType: Linux
-          architecture: x64
       - template: templates/build-template.yml
         parameters:
           osType: Linux
@@ -90,6 +86,10 @@ stages:
           testFilter: -E 'not (test(connectivity))'
           enableJsBuild: true
           enableJsTest: true
+      - template: templates/build-python-wheels-template.yml
+        parameters:
+          osType: Linux
+          architecture: x64
 
   - job: Build_Linux_ARM
     displayName: Build Linux ARM
@@ -104,14 +104,6 @@ stages:
       - template: templates/install-dependencies.yml
         parameters:
           osType: Linux
-      - template: templates/build-python-wheels-template.yml
-        parameters:
-          osType: Linux
-          architecture: ARM64
-      - template: templates/build-python-wheels-template.yml
-        parameters:
-          osType: Alpine
-          architecture: ARM64
       - template: templates/build-template.yml
         parameters:
           osType: Linux
@@ -123,6 +115,14 @@ stages:
           buildType: ${{ parameters.buildType }}
           testFilter: -E 'not (test(connectivity))'
           alpineimagetag: 'tdslibrs.azurecr.io/build/arm64/alpine:3.18'
+      - template: templates/build-python-wheels-template.yml
+        parameters:
+          osType: Linux
+          architecture: ARM64
+      - template: templates/build-python-wheels-template.yml
+        parameters:
+          osType: Alpine
+          architecture: ARM64
   - job: Build_Alpine
     displayName: Build Alpine
     pool:
@@ -140,15 +140,15 @@ stages:
         parameters:
           installAzCli: true
           installDocker: true
-      - template: templates/build-python-wheels-template.yml
-        parameters:
-          osType: Alpine
-          architecture: x64
       - template: templates/build-template-alpine.yml
         parameters:
           osType: Linux
           buildType: ${{ parameters.buildType }}
           testFilter: -E 'not (test(connectivity))'
+      - template: templates/build-python-wheels-template.yml
+        parameters:
+          osType: Alpine
+          architecture: x64
   - job: Build_MacOS
     displayName: Build MacOS
     pool:
@@ -164,16 +164,16 @@ stages:
       - template: templates/install-dependencies.yml
         parameters:
           osType: MacOS 
-      - template: templates/build-python-wheels-template.yml
-        parameters:
-          osType: MacOS
-          architecture: universal2
       - template: templates/build-template.yml
         parameters:
           osType: MacOS
           buildType: ${{ parameters.buildType }}
           testFilter: -E 'not (test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout) | test(rpc_datatypes) | test(client_based_iterators) | test(connect_fetch_multiple_packets) | test(bulk_copy) | test(transport_protocols))'
           enableJsBuild: true
+      - template: templates/build-python-wheels-template.yml
+        parameters:
+          osType: MacOS
+          architecture: universal2
 
 - stage: Fuzz
   displayName: Fuzz Testing Stage
