@@ -25,7 +25,7 @@ steps:
 
 # Container-based builds for Linux (glibc - manylinux)
 - ${{ if eq(parameters.osType, 'Linux') }}:
-  - bash: |
+  - script: |
       set -eu
       
       # Determine container image based on architecture
@@ -93,7 +93,7 @@ steps:
 
 # Container-based builds for Alpine (musl - musllinux)
 - ${{ if eq(parameters.osType, 'Alpine') }}:
-  - bash: |
+  - script: |
       set -eu
       
       # Determine container image based on architecture
