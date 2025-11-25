@@ -99,6 +99,16 @@ stages:
     - checkout: self
       displayName: Checkout repository
 
+    - task: DockerInstaller@0
+      displayName: 'Install Docker'
+      inputs:
+        dockerVersion: '17.09.0-ce'
+
+    - template: templates/install-ubuntu-dependency.yaml
+      parameters:
+        installAzCli: false
+        installDocker: true
+
     - task: AzureCLI@2
       displayName: 'Build custom ARM64 Python build images with Rust pre-installed'
       inputs:
