@@ -26,8 +26,6 @@ steps:
 # Container-based builds for Linux (glibc - manylinux)
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - script: |
-      set -eu
-      
       # Determine container image based on architecture
       if [ "${{ parameters.architecture }}" = "x64" ]; then
         CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64:latest"
@@ -39,9 +37,6 @@ steps:
       fi
       
       echo "Building Python wheels in container: $CONTAINER_IMAGE"
-      
-      # Login to ACR and run build in the same session
-      az acr login -n tdslibrs
       
       mkdir -p "$(Build.ArtifactStagingDirectory)/wheels"
       
@@ -94,7 +89,6 @@ steps:
 # Container-based builds for Alpine (musl - musllinux)
 - ${{ if eq(parameters.osType, 'Alpine') }}:
   - script: |
-      set -eu
       
       # Determine container image based on architecture
       if [ "${{ parameters.architecture }}" = "x64" ]; then
@@ -109,7 +103,6 @@ steps:
       echo "Building Python wheels in container: $CONTAINER_IMAGE"
       
       # Login to ACR and run build in the same session
-      az acr login -n tdslibrs
       
       mkdir -p "$(Build.ArtifactStagingDirectory)/wheels"
       
