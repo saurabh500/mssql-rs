@@ -37,18 +37,11 @@ steps:
     dockerVersion: '17.09.0-ce'
   displayName: Install Docker
 
-- script: |
-    ARCH=$(arch)
-    if [ "$ARCH" = "aarch64" ]; then
-        export DEBIAN_FRONTEND=noninteractive
-        echo "Docker not found, installing..."
-        sudo apt-get update
-        sudo apt-get install docker.io -y
-        sudo usermod -aG docker $USER
-        sudo groupadd docker
-    fi
-    sudo chmod 666 /var/run/docker.sock
-  displayName: Setup Docker socket permissions
+
+- template: templates/install-ubuntu-dependency.yaml
+  parameters:
+    installAzCli: false
+    installDocker: true
 
 - template: azure-cli-login-template.yml
 
