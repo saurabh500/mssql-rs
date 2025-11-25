@@ -95,7 +95,7 @@ stages:
     steps:
       - template: templates/build-template-container.yml
         parameters:
-          architecture: arm64
+          architecture: ARM64
           buildType: ${{ parameters.buildType }}
           testFilter: -E 'not (test(query_processing_driver) | test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout_and_cancel) | test(rpc_datatypes) | test(client_based_iterators) | test(connect_fetch_multiple_packets) | test(bulk_copy) | test(transport_protocols))'
       - template: templates/build-template-alpine.yml
