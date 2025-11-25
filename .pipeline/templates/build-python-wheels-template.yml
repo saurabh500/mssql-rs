@@ -26,11 +26,35 @@ steps:
 # Container-based builds for Linux (glibc - manylinux)
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - bash: |
-      bash $(Build.SourcesDirectory)/scripts/build-wheels-docker-host.sh \
-        "Linux" \
-        "${{ parameters.architecture }}" \
-        "$(Build.SourcesDirectory)" \
-        "$(Build.ArtifactStagingDirectory)/wheels"
+      set -eu
+      
+      # Determine container image based on architecture
+      if [ "${{ parameters.architecture }}" = "x64" ]; then
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64:latest"
+      elif [ "${{ parameters.architecture }}" = "ARM64" ] || [ "${{ parameters.architecture }}" = "arm64" ]; then
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_28_aarch64:latest"
+      else
+        echo "ERROR: Unsupported architecture: ${{ parameters.architecture }}"
+        exit 1
+      fi
+      
+      echo "Building Python wheels in container: $CONTAINER_IMAGE"
+      
+      # Login to ACR and run build in the same session
+      az acr login -n tdslibrs
+      
+      mkdir -p "$(Build.ArtifactStagingDirectory)/wheels"
+      
+      docker run --rm \
+        -v "$(Build.SourcesDirectory):/workspace" \
+        -v "$(Build.ArtifactStagingDirectory)/wheels:/workspace/target/wheels" \
+        -e "WORKSPACE_DIR=/workspace" \
+        -e "OUTPUT_DIR=/workspace/target/wheels" \
+        "$CONTAINER_IMAGE" \
+        bash /workspace/scripts/build-python-wheels-in-container.sh
+      
+      echo "✅ Wheels built successfully!"
+      ls -lh "$(Build.ArtifactStagingDirectory)/wheels"
     displayName: 'Build Python wheels in manylinux container (${{ parameters.architecture }})'
 
 # Native builds for MacOS (no Windows support)
@@ -70,11 +94,35 @@ steps:
 # Container-based builds for Alpine (musl - musllinux)
 - ${{ if eq(parameters.osType, 'Alpine') }}:
   - bash: |
-      bash $(Build.SourcesDirectory)/scripts/build-wheels-docker-host.sh \
-        "Alpine" \
-        "${{ parameters.architecture }}" \
-        "$(Build.SourcesDirectory)" \
-        "$(Build.ArtifactStagingDirectory)/wheels"
+      set -eu
+      
+      # Determine container image based on architecture
+      if [ "${{ parameters.architecture }}" = "x64" ]; then
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64:latest"
+      elif [ "${{ parameters.architecture }}" = "ARM64" ] || [ "${{ parameters.architecture }}" = "arm64" ]; then
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/musllinux_1_2_aarch64:latest"
+      else
+        echo "ERROR: Unsupported architecture: ${{ parameters.architecture }}"
+        exit 1
+      fi
+      
+      echo "Building Python wheels in container: $CONTAINER_IMAGE"
+      
+      # Login to ACR and run build in the same session
+      az acr login -n tdslibrs
+      
+      mkdir -p "$(Build.ArtifactStagingDirectory)/wheels"
+      
+      docker run --rm \
+        -v "$(Build.SourcesDirectory):/workspace" \
+        -v "$(Build.ArtifactStagingDirectory)/wheels:/workspace/target/wheels" \
+        -e "WORKSPACE_DIR=/workspace" \
+        -e "OUTPUT_DIR=/workspace/target/wheels" \
+        "$CONTAINER_IMAGE" \
+        sh /workspace/scripts/build-python-wheels-in-container.sh
+      
+      echo "✅ Wheels built successfully!"
+      ls -lh "$(Build.ArtifactStagingDirectory)/wheels"
     displayName: 'Build Python wheels in musllinux container (${{ parameters.architecture }})'
 
 - task: PublishBuildArtifacts@1
