@@ -82,10 +82,7 @@ steps:
     SQL_PASSWORD: $(SQL_PASSWORD)
 
 - script: |
-    ${{ if eq(parameters.architecture, 'x64') }}:
-      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-x64"
-    ${{ if eq(parameters.architecture, 'ARM64') }}:
-      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-arm64"
+    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${{ parameters.architecture }}"
     
     # Run build container with access to workspace and SQL network
     docker run --rm \
@@ -96,6 +93,7 @@ steps:
       -e DB_HOST="sql1" \
       -e CERT_HOST_NAME="sql1" \
       -e RUST_BACKTRACE=full \
+      -e BUILD_TYPE="${{ parameters.buildType }}" \
       -w /workspace \
       $BUILD_IMAGE \
       bash -c "
@@ -112,14 +110,16 @@ steps:
         echo '==> Fetching crates...'
         cargo fetch
         
-        ${{ if or(eq(parameters.buildType, 'Debug'), eq(parameters.buildType, 'Both')) }}:
-          # Debug build
+        # Build based on BUILD_TYPE
+        if [ \"\$BUILD_TYPE\" = \"Debug\" ] || [ \"\$BUILD_TYPE\" = \"Both\" ]; then
           echo '==> Building debug...'
           cargo build --frozen
-        ${{ if or(eq(parameters.buildType, 'Release'), eq(parameters.buildType, 'Both')) }}:
-          # Release build
+        fi
+        
+        if [ \"\$BUILD_TYPE\" = \"Release\" ] || [ \"\$BUILD_TYPE\" = \"Both\" ]; then
           echo '==> Building release...'
           cargo build --frozen --release
+        fi
         
         # Run clippy if PR
         if [ \"\$BUILD_REASON\" = \"PullRequest\" ]; then
@@ -190,12 +190,9 @@ steps:
       !.cargo-lock
     TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
 
-${{ if eq(parameters.enableJsBuild, true) }}:
+- ${{ if eq(parameters.enableJsBuild, true) }}:
   - script: |
-      ${{ if eq(parameters.architecture, 'x64') }}:
-        BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-x64"
-      ${{ if eq(parameters.architecture, 'ARM64') }}:
-        BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-arm64"
+      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${{ parameters.architecture }}"
       
       docker run --rm \
         -v $PWD:/workspace \
@@ -211,12 +208,9 @@ ${{ if eq(parameters.enableJsBuild, true) }}:
     displayName: Build JavaScript bindings
     condition: succeeded()
 
-${{ if eq(parameters.enableJsTest, true) }}:
+- ${{ if eq(parameters.enableJsTest, true) }}:
   - script: |
-      ${{ if eq(parameters.architecture, 'x64') }}:
-        BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-x64"
-      ${{ if eq(parameters.architecture, 'ARM64') }}:
-        BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-arm64"
+      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${{ parameters.architecture }}"
       
       docker run --rm \
         --network testnet \
