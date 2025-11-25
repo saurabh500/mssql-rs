@@ -29,8 +29,8 @@ stages:
 - stage: BuildAndPushImages
   displayName: Build and Push Python Build Images
   jobs:
-  - job: ImportVanillaImages
-    displayName: Import Vanilla PyPA Base Images
+  - job: BuildAndPushAllImages
+    displayName: Import, Build, and Push Python Images
     steps:
     - checkout: self
       displayName: Checkout repository
@@ -43,13 +43,6 @@ stages:
         scriptLocation: 'scriptPath'
         scriptPath: '$(Build.SourcesDirectory)/containers/import-python-build-images.sh'
       retryCountOnTaskFailure: 3
-
-  - job: BuildCustomImages
-    displayName: Build Custom Images with Rust
-    dependsOn: ImportVanillaImages
-    steps:
-    - checkout: self
-      displayName: Checkout repository
 
     - task: AzureCLI@2
       displayName: 'Build custom Python build images with Rust pre-installed'
