@@ -1,12 +1,15 @@
-# Weekly scheduled pipeline to sync Python build images from PyPA to Azure Container Registry
-# This ensures we have the latest Python wheel build images available in our internal ACR
+# Weekly scheduled pipeline to sync and build Python wheel build images
+# This pipeline:
+# 1. Imports vanilla PyPA base images to ACR (for reference)
+# 2. Builds custom images with Rust and maturin pre-installed
+# 3. Pushes custom images to ACR for use in CI/CD
 # Runs every Monday at 3:00 AM UTC
 
 trigger: none
 
 schedules:
 - cron: "0 3 * * 1"
-  displayName: Weekly Python image sync (Monday 3 AM UTC)
+  displayName: Weekly Python image build (Monday 3 AM UTC)
   branches:
     include:
     - main
@@ -23,17 +26,17 @@ variables:
   ACR_REGISTRY: 'tdslibrs.azurecr.io'
 
 stages:
-- stage: SyncImages
-  displayName: Sync Python Build Images
+- stage: BuildAndPushImages
+  displayName: Build and Push Python Build Images
   jobs:
-  - job: ImportImages
-    displayName: Import Python Build Images to ACR
+  - job: ImportVanillaImages
+    displayName: Import Vanilla PyPA Base Images
     steps:
     - checkout: self
       displayName: Checkout repository
 
     - task: AzureCLI@2
-      displayName: 'Sync Python build images to ACR'
+      displayName: 'Import vanilla PyPA images to ACR'
       inputs:
         azureSubscription: 'Magnitude Test'
         scriptType: 'bash'
@@ -41,25 +44,79 @@ stages:
         scriptPath: '$(Build.SourcesDirectory)/containers/import-python-build-images.sh'
       retryCountOnTaskFailure: 3
 
+  - job: BuildCustomImages
+    displayName: Build Custom Images with Rust
+    dependsOn: ImportVanillaImages
+    steps:
+    - checkout: self
+      displayName: Checkout repository
+
     - task: AzureCLI@2
-      displayName: 'Verify imported images'
+      displayName: 'Build custom Python build images with Rust pre-installed'
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'scriptPath'
+        scriptPath: '$(Build.SourcesDirectory)/containers/build-python-images.sh'
+
+    - task: AzureCLI@2
+      displayName: 'Push custom images to ACR'
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'scriptPath'
+        scriptPath: '$(Build.SourcesDirectory)/containers/push-python-images.sh'
+
+    - task: AzureCLI@2
+      displayName: 'Verify all images in ACR'
       inputs:
         azureSubscription: 'Magnitude Test'
         scriptType: 'bash'
         scriptLocation: 'inlineScript'
         inlineScript: |
-          echo "Listing Python build images in ACR..."
+          echo "======================================================"
+          echo "Listing all Python build images in ACR"
+          echo "======================================================"
           az acr repository list --name $(ACR_NAME) --output table | grep python-build || true
           
           echo ""
-          echo "Image details:"
+          echo "======================================================"
+          echo "Vanilla PyPA Base Images:"
+          echo "======================================================"
           for image in python-build/manylinux_2_28_x86_64 python-build/manylinux_2_28_aarch64 python-build/musllinux_1_2_x86_64 python-build/musllinux_1_2_aarch64; do
             echo ""
             echo "==> $image"
-            az acr repository show-tags --name $(ACR_NAME) --repository $image --output table --orderby time_desc --top 5 || echo "  (not found)"
+            az acr repository show-tags --name $(ACR_NAME) --repository $image --output table --orderby time_desc --top 3 || echo "  (not found)"
+          done
+          
+          echo ""
+          echo "======================================================"
+          echo "Custom Images with Rust Pre-installed (Recommended):"
+          echo "======================================================"
+          for image in python-build/manylinux_2_28_x86_64_rust python-build/manylinux_2_28_aarch64_rust python-build/musllinux_1_2_x86_64_rust python-build/musllinux_1_2_aarch64_rust; do
+            echo ""
+            echo "==> $image"
+            az acr repository show-tags --name $(ACR_NAME) --repository $image --output table --orderby time_desc --top 3 || echo "  (not found)"
           done
 
     - script: |
-        echo "Python build image sync completed successfully!"
-        echo "Next scheduled sync: Next Monday at 3:00 AM UTC"
+        echo ""
+        echo "======================================================"
+        echo "✅ Python build images updated successfully!"
+        echo "======================================================"
+        echo ""
+        echo "Available images in ACR:"
+        echo "  Vanilla PyPA base images:"
+        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_28_x86_64:latest"
+        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_28_aarch64:latest"
+        echo "    - $(ACR_REGISTRY)/python-build/musllinux_1_2_x86_64:latest"
+        echo "    - $(ACR_REGISTRY)/python-build/musllinux_1_2_aarch64:latest"
+        echo ""
+        echo "  Custom images with Rust (RECOMMENDED FOR CI/CD):"
+        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_28_x86_64_rust:latest"
+        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_28_aarch64_rust:latest"
+        echo "    - $(ACR_REGISTRY)/python-build/musllinux_1_2_x86_64_rust:latest"
+        echo "    - $(ACR_REGISTRY)/python-build/musllinux_1_2_aarch64_rust:latest"
+        echo ""
+        echo "Next scheduled build: Next Monday at 3:00 AM UTC"
       displayName: 'Summary'

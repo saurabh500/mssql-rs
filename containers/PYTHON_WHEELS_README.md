@@ -15,11 +15,33 @@ We build Python wheels inside **manylinux** and **musllinux** containers to:
 
 All images are hosted in your Azure Container Registry (`tdslibrs.azurecr.io`) to avoid Docker Hub rate limits.
 
-### Linux (glibc-based - Ubuntu, RHEL, Debian, etc.)
+### 🚀 Pre-built Images with Rust (Recommended for CI/CD)
+These custom images extend official PyPA images with **Rust toolchain and maturin pre-installed** for faster builds.
+
+#### Linux (glibc-based - Ubuntu, RHEL, Debian, etc.)
+- **x64**: `tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64_rust:latest`
+- **ARM64**: `tdslibrs.azurecr.io/python-build/manylinux_2_28_aarch64_rust:latest`
+
+#### Alpine (musl-based)
+- **x64**: `tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64_rust:latest`
+- **ARM64**: `tdslibrs.azurecr.io/python-build/musllinux_1_2_aarch64_rust:latest`
+
+**Pre-installed software:**
+- ✅ Rust toolchain (stable, via rustup)
+- ✅ maturin (Python-to-Rust build tool)
+- ✅ OpenSSL development libraries
+- ✅ pkg-config
+- ✅ All Python versions (3.10-3.14)
+- ✅ Build tools and compilers
+
+### Vanilla PyPA Images (Base images without Rust)
+Use these only if you need stock PyPA images without customization.
+
+#### Linux (glibc-based)
 - **x64**: `tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64:latest`
 - **ARM64**: `tdslibrs.azurecr.io/python-build/manylinux_2_28_aarch64:latest`
 
-### Alpine (musl-based)
+#### Alpine (musl-based)
 - **x64**: `tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64:latest`
 - **ARM64**: `tdslibrs.azurecr.io/python-build/musllinux_1_2_aarch64:latest`
 
@@ -31,9 +53,40 @@ All images are hosted in your Azure Container Registry (`tdslibrs.azurecr.io`) t
 
 ## Setup Instructions
 
-### 1. Import Container Images to ACR
+### Option 1: Build Custom Images with Rust (Recommended)
 
-Run this **once** to pull official PyPA images and push them to your ACR:
+Build the pre-configured images with Rust and maturin pre-installed for **faster CI/CD pipelines**:
+
+```bash
+cd containers
+
+# Build all 4 images (manylinux + musllinux, x64 + ARM64)
+./build-python-images.sh
+
+# Push images to Azure Container Registry
+./push-python-images.sh
+```
+
+**What gets pre-installed:**
+- Rust toolchain (stable)
+- maturin (Python wheel builder)
+- OpenSSL development libraries
+- pkg-config
+- All system dependencies needed for building
+
+**Benefits:**
+- ⚡ **5-10x faster builds** - no runtime installation of Rust/maturin
+- 🔒 **More reliable** - no dependency on rustup.rs availability
+- 📦 **Better caching** - dependencies baked into image layers
+
+**When to rebuild:**
+- When you need to update Rust version
+- When new Python versions are added to base PyPA images (quarterly)
+- When you want to update maturin
+
+### Option 2: Import Vanilla PyPA Images (Base Images Only)
+
+Run this to pull official PyPA images without customization:
 
 ```bash
 cd containers
@@ -41,31 +94,27 @@ chmod +x import-python-build-images.sh
 ./import-python-build-images.sh
 ```
 
-This script:
-1. Logs into Azure Container Registry
-2. Pulls official images from `quay.io/pypa`
-3. Tags them for your ACR
-4. Pushes them to `tdslibrs.azurecr.io`
+This imports stock images from `quay.io/pypa` without pre-installed Rust/maturin. The build script will install these at runtime (slower).
 
-**Note**: These are official, maintained images. You should periodically re-run this script to get updates (monthly is recommended).
+**Note**: Recommended to re-import monthly to get PyPA updates.
 
 ### 2. Build Wheels Locally (Optional)
 
-To test wheel building locally:
+To test wheel building locally using the pre-built Rust images:
 
 ```bash
-# For x64 Linux (manylinux)
+# For x64 Linux (manylinux with Rust pre-installed)
 docker run --rm \
   -v "$(pwd):/workspace" \
   -v "$(pwd)/target/wheels:/workspace/target/wheels" \
-  tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64:latest \
+  tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64_rust:latest \
   bash /workspace/scripts/build-python-wheels-in-container.sh
 
-# For x64 Alpine (musllinux)
+# For x64 Alpine (musllinux with Rust pre-installed)
 docker run --rm \
   -v "$(pwd):/workspace" \
   -v "$(pwd)/target/wheels:/workspace/target/wheels" \
-  tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64:latest \
+  tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64_rust:latest \
   sh /workspace/scripts/build-python-wheels-in-container.sh
 ```
 
@@ -112,13 +161,49 @@ The Azure DevOps pipeline automatically builds wheels in containers:
 
 ## Maintenance
 
-### Update Container Images
+### Update Custom Build Images
 
-Re-import images monthly or when new Python versions are released:
+When you need to refresh the Rust toolchain, maturin, or base PyPA images:
+
+```bash
+cd containers
+
+# Rebuild all custom images with latest base images and tools
+./build-python-images.sh
+
+# Push updated images to ACR
+./push-python-images.sh
+```
+
+**When to update:**
+- Quarterly - to get latest Python versions from PyPA base images
+- When new Rust version is needed
+- When maturin needs updating
+- After security patches in base images
+
+### Update Vanilla PyPA Images
+
+Re-import stock PyPA images monthly or when new Python versions are released:
 
 ```bash
 cd containers
 ./import-python-build-images.sh
+```
+
+### Image Architecture
+
+```
+Custom Images (_rust suffix):
+  ├── Base: quay.io/pypa/manylinux_2_28_x86_64:latest
+  └── Adds:
+      ├── Rust toolchain (stable)
+      ├── maturin
+      ├── OpenSSL dev libraries
+      └── pkg-config
+
+Vanilla Images (no suffix):
+  └── Direct import from quay.io/pypa
+      └── No customization
 ```
 
 ### Modify Python Versions
@@ -140,11 +225,26 @@ parameters:
 ## Troubleshooting
 
 ### Container image not found
+
+**For custom Rust images:**
 ```bash
-# Re-import images
+# Build the custom images locally
 cd containers
-./import-python-wheel-build-images.sh
+./build-python-images.sh
+./push-python-images.sh
 ```
+
+**For vanilla PyPA images:**
+```bash
+# Re-import base images
+cd containers
+./import-python-build-images.sh
+```
+
+### Rust installation is slow in CI
+Switch to using the custom `_rust` images which have Rust pre-installed:
+- Use: `manylinux_2_28_x86_64_rust:latest` 
+- Instead of: `manylinux_2_28_x86_64:latest`
 
 ### Python version not building
 Check the container has that Python version:

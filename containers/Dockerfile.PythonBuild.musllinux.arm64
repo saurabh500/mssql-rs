@@ -1,0 +1,37 @@
+# Pre-built Python wheel build image for musllinux (ARM64)
+# This image extends the official PyPA musllinux image with pre-installed Rust and maturin
+# to speed up CI builds by avoiding runtime installation of these tools.
+# Base image is synced from quay.io/pypa to ACR via sync-container-images.yml pipeline
+
+FROM tdslibrs.azurecr.io/python-build/musllinux_1_2_aarch64:latest
+
+# Install system dependencies required for building Python wheels with Rust extensions
+RUN apk add --no-cache \
+    openssl-dev \
+    pkgconfig
+
+# Install Rust toolchain (stable)
+# This is installed system-wide so all Python versions can use it
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:$PATH"
+
+# Verify Rust installation
+RUN rustc --version && cargo --version
+
+# Find a Python installation to use for installing maturin
+# musllinux images have multiple Python versions in /opt/python/
+RUN PYTHON_BIN=$(ls /opt/python/cp312-*/bin/python 2>/dev/null | head -n1) && \
+    if [ -z "$PYTHON_BIN" ]; then \
+        PYTHON_BIN=$(ls /opt/python/cp311-*/bin/python 2>/dev/null | head -n1); \
+    fi && \
+    if [ -z "$PYTHON_BIN" ]; then \
+        PYTHON_BIN=$(ls /opt/python/cp310-*/bin/python 2>/dev/null | head -n1); \
+    fi && \
+    echo "Installing maturin using: $PYTHON_BIN" && \
+    $PYTHON_BIN -m pip install --no-cache-dir maturin && \
+    $PYTHON_BIN -m pip show maturin
+
+WORKDIR /workspace
+
+# Default command
+CMD ["sh"]
