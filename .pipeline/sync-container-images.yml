@@ -49,6 +49,15 @@ stages:
       retryCountOnTaskFailure: 3
 
     - task: AzureCLI@2
+      displayName: 'Import Ubuntu base images to ACR'
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'scriptPath'
+        scriptPath: '$(Build.SourcesDirectory)/containers/import-ubuntu-images.sh'
+      retryCountOnTaskFailure: 3
+
+    - task: AzureCLI@2
       displayName: 'Build custom x64 Python build images with Rust pre-installed'
       inputs:
         azureSubscription: 'Magnitude Test'
@@ -76,6 +85,15 @@ stages:
               -t tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64_rust:latest \
               .
           echo "✅ musllinux x64 image built successfully"
+          
+          # Build Ubuntu x64 image
+          echo "==> Building Ubuntu x64 build image..."
+          docker build \
+              -f Dockerfile.Ubuntu.Build \
+              -t tdslibrs.azurecr.io/ubuntu-build:22.04-x64 \
+              -t tdslibrs.azurecr.io/ubuntu-build:latest-x64 \
+              .
+          echo "✅ Ubuntu x64 build image built successfully"
 
     - task: AzureCLI@2
       displayName: 'Push x64 images to ACR'
@@ -87,6 +105,8 @@ stages:
           az acr login --name tdslibrs
           docker push tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64_rust:latest
           docker push tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64_rust:latest
+          docker push tdslibrs.azurecr.io/ubuntu-build:22.04-x64
+          docker push tdslibrs.azurecr.io/ubuntu-build:latest-x64
 
   - job: BuildARM64Images
     displayName: Build ARM64 Images
@@ -137,6 +157,15 @@ stages:
               -t tdslibrs.azurecr.io/python-build/musllinux_1_2_aarch64_rust:latest \
               .
           echo "✅ musllinux ARM64 image built successfully"
+          
+          # Build Ubuntu ARM64 image
+          echo "==> Building Ubuntu ARM64 build image..."
+          docker build \
+              -f Dockerfile.Ubuntu.Build.arm64 \
+              -t tdslibrs.azurecr.io/ubuntu-build:22.04-arm64 \
+              -t tdslibrs.azurecr.io/ubuntu-build:latest-arm64 \
+              .
+          echo "✅ Ubuntu ARM64 build image built successfully"
 
     - task: AzureCLI@2
       displayName: 'Push ARM64 images to ACR'
@@ -148,6 +177,8 @@ stages:
           az acr login --name tdslibrs
           docker push tdslibrs.azurecr.io/python-build/manylinux_2_28_aarch64_rust:latest
           docker push tdslibrs.azurecr.io/python-build/musllinux_1_2_aarch64_rust:latest
+          docker push tdslibrs.azurecr.io/ubuntu-build:22.04-arm64
+          docker push tdslibrs.azurecr.io/ubuntu-build:latest-arm64
 
   - job: VerifyAllImages
     displayName: Verify All Images in ACR
@@ -192,11 +223,19 @@ stages:
             echo "==> $image"
             az acr repository show-tags --name $(ACR_NAME) --repository $image --output table --orderby time_desc --top 3 || echo "  (not found)"
           done
+          
+          echo ""
+          echo "======================================================"
+          echo "Ubuntu Build Images:"
+          echo "======================================================"
+          echo ""
+          echo "==> ubuntu-build"
+          az acr repository show-tags --name $(ACR_NAME) --repository ubuntu-build --output table --orderby time_desc --top 5 || echo "  (not found)"
 
     - script: |
         echo ""
         echo "======================================================"
-        echo "Python build images updated successfully"
+        echo "All build images updated successfully"
         echo "======================================================"
         echo ""
         echo "Available images in ACR:"
@@ -211,6 +250,12 @@ stages:
         echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_28_aarch64_rust:latest"
         echo "    - $(ACR_REGISTRY)/python-build/musllinux_1_2_x86_64_rust:latest"
         echo "    - $(ACR_REGISTRY)/python-build/musllinux_1_2_aarch64_rust:latest"
+        echo ""
+        echo "  Ubuntu build images (RECOMMENDED FOR GENERAL BUILDS):"
+        echo "    - $(ACR_REGISTRY)/ubuntu-build:22.04-x64"
+        echo "    - $(ACR_REGISTRY)/ubuntu-build:latest-x64"
+        echo "    - $(ACR_REGISTRY)/ubuntu-build:22.04-arm64"
+        echo "    - $(ACR_REGISTRY)/ubuntu-build:latest-arm64"
         echo ""
         echo "Next scheduled build: Next Monday at 3:00 AM UTC"
       displayName: 'Summary'
