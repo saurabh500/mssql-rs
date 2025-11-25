@@ -27,10 +27,11 @@ steps:
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - script: |
       # Determine container image based on architecture
+      # Using pre-built images with Rust and maturin pre-installed for faster builds
       if [ "${{ parameters.architecture }}" = "x64" ]; then
-        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64:latest"
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64_rust:latest"
       elif [ "${{ parameters.architecture }}" = "ARM64" ] || [ "${{ parameters.architecture }}" = "arm64" ]; then
-        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_28_aarch64:latest"
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_28_aarch64_rust:latest"
       else
         echo "ERROR: Unsupported architecture: ${{ parameters.architecture }}"
         exit 1
@@ -93,10 +94,11 @@ steps:
   - script: |
       
       # Determine container image based on architecture
+      # Using pre-built images with Rust and maturin pre-installed for faster builds
       if [ "${{ parameters.architecture }}" = "x64" ]; then
-        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64:latest"
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64_rust:latest"
       elif [ "${{ parameters.architecture }}" = "ARM64" ] || [ "${{ parameters.architecture }}" = "arm64" ]; then
-        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/musllinux_1_2_aarch64:latest"
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/musllinux_1_2_aarch64_rust:latest"
       else
         echo "ERROR: Unsupported architecture: ${{ parameters.architecture }}"
         exit 1

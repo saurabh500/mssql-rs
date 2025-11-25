@@ -31,38 +31,25 @@ fi
 
 echo "Using Python: $FIRST_PYTHON"
 
-# Install required system dependencies for building
+# Verify Rust toolchain is available (pre-installed in _rust images)
 echo ""
-echo "==> Installing system dependencies..."
-if command -v yum &> /dev/null; then
-    # RHEL/CentOS based (manylinux)
-    yum install -y openssl-devel pkgconfig || true
-elif command -v apk &> /dev/null; then
-    # Alpine based (musllinux)
-    apk add --no-cache openssl-dev pkgconfig || true
-fi
-
-# Install Rust if not already installed
+echo "==> Verifying Rust toolchain..."
+export PATH="$HOME/.cargo/bin:$PATH"
 if ! command -v cargo &> /dev/null; then
-    echo ""
-    echo "==> Installing Rust toolchain..."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-    export PATH="$HOME/.cargo/bin:$PATH"
-    echo "Rust installed successfully"
-    rustc --version
-    cargo --version
-else
-    echo "Rust already installed"
-    export PATH="$HOME/.cargo/bin:$PATH"
+    echo "❌ Error: Rust not found! Ensure you're using a *_rust container image."
+    exit 1
 fi
+rustc --version
+cargo --version
 
-# Install maturin if not already installed
+# Verify maturin is available (pre-installed in _rust images)
+echo ""
+echo "==> Verifying maturin..."
 if ! $FIRST_PYTHON -m pip show maturin &> /dev/null; then
-    echo ""
-    echo "==> Installing maturin..."
-    $FIRST_PYTHON -m pip install maturin
-    echo "Maturin installed successfully"
+    echo "❌ Error: maturin not found! Ensure you're using a *_rust container image."
+    exit 1
 fi
+echo "Maturin is available"
 
 cd "$WORKSPACE_DIR/mssql-py-core"
 
