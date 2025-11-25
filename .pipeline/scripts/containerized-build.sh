@@ -1,0 +1,24 @@
+#!/bin/bash
+set -e
+source ~/.cargo/env
+
+# Update CA certificates in container
+update-ca-certificates
+
+# Verify certificate
+openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt /workspace/mssql.crt || true
+
+# Fetch dependencies
+echo '==> Fetching crates...'
+cargo fetch
+
+# Build based on BUILD_TYPE
+if [ "$BUILD_TYPE" = "Debug" ] || [ "$BUILD_TYPE" = "Both" ]; then
+  echo '==> Building debug...'
+  cargo build --frozen
+fi
+
+if [ "$BUILD_TYPE" = "Release" ] || [ "$BUILD_TYPE" = "Both" ]; then
+  echo '==> Building release...'
+  cargo build --frozen --release
+fi

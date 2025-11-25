@@ -53,7 +53,8 @@ steps:
     scriptLocation: 'inlineScript'
     inlineScript: |
       az acr login --name tdslibrs
-      docker pull tdslibrs.azurecr.io/ubuntu-build:latest-${{ parameters.architecture }}
+      ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
+      docker pull tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}
 
 - script: |
     set -euo pipefail
@@ -84,7 +85,8 @@ steps:
     SQL_PASSWORD: $(SQL_PASSWORD)
 
 - script: |
-    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${{ parameters.architecture }}"
+    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
+    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
     
     # Set IS_PR_BUILD flag
     if [ "$(Build.Reason)" = "PullRequest" ]; then
@@ -93,10 +95,16 @@ steps:
       IS_PR_BUILD="false"
     fi
     
+    # Create cargo cache directory if it doesn't exist
+    mkdir -p $HOME/.cargo/registry
+    mkdir -p $HOME/.cargo/git
+    
     # Run build container with access to workspace and SQL network
     docker run --rm \
       --network testnet \
       -v $PWD:/workspace \
+      -v $HOME/.cargo/registry:/root/.cargo/registry \
+      -v $HOME/.cargo/git:/root/.cargo/git \
       -v $PWD/ca.crt:/usr/local/share/ca-certificates/mssql-ca.crt:ro \
       -e SQL_PASSWORD="$(SQL_PASSWORD)" \
       -e DB_HOST="sql1" \
@@ -104,57 +112,79 @@ steps:
       -e RUST_BACKTRACE=full \
       -e BUILD_TYPE="${{ parameters.buildType }}" \
       -e IS_PR_BUILD="$IS_PR_BUILD" \
+      -e TEST_FILTER="${{ parameters.testFilter }}" \
+      -w /workspace \
+      $BUILD_IMAGE \
+      /workspace/.pipeline/scripts/containerized-build.sh
+  displayName: Build in Container
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+
+- script: |
+    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
+    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+    
+    docker run --rm \
+      -v $PWD:/workspace \
+      -v $HOME/.cargo/registry:/root/.cargo/registry \
+      -v $HOME/.cargo/git:/root/.cargo/git \
       -w /workspace \
       $BUILD_IMAGE \
       bash -c "
-        set -e
         source ~/.cargo/env
-        
-        # Update CA certificates in container
+        echo '==> Running clippy...'
+        ./scripts/bclippy.sh
+      "
+  displayName: Run Clippy
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+
+- script: |
+    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
+    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+    
+    docker run --rm \
+      -v $PWD:/workspace \
+      -v $HOME/.cargo/registry:/root/.cargo/registry \
+      -v $HOME/.cargo/git:/root/.cargo/git \
+      -w /workspace \
+      $BUILD_IMAGE \
+      bash -c "
+        source ~/.cargo/env
+        echo '==> Checking format...'
+        ./scripts/bfmt.sh
+      "
+  displayName: Check Format
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+
+- script: |
+    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
+    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+    
+    docker run --rm \
+      --network testnet \
+      -v $PWD:/workspace \
+      -v $HOME/.cargo/registry:/root/.cargo/registry \
+      -v $HOME/.cargo/git:/root/.cargo/git \
+      -v $PWD/ca.crt:/usr/local/share/ca-certificates/mssql-ca.crt:ro \
+      -e SQL_PASSWORD="$(SQL_PASSWORD)" \
+      -e DB_HOST="sql1" \
+      -e CERT_HOST_NAME="sql1" \
+      -e RUST_BACKTRACE=full \
+      -w /workspace \
+      $BUILD_IMAGE \
+      bash -c "
+        source ~/.cargo/env
         update-ca-certificates
         
-        # Verify certificate
-        openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt /workspace/mssql.crt || true
+        echo '==> Running tests...'
+        mkdir -p /workspace/target/nextest/ci
+        cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets --package mssql-tds --no-fail-fast --profile ci --success-output immediate
         
-        # Fetch dependencies
-        echo '==> Fetching crates...'
-        cargo fetch
-        
-        # Build based on BUILD_TYPE
-        if [ \"\$BUILD_TYPE\" = \"Debug\" ] || [ \"\$BUILD_TYPE\" = \"Both\" ]; then
-          echo '==> Building debug...'
-          cargo build --frozen
-        fi
-        
-        if [ \"\$BUILD_TYPE\" = \"Release\" ] || [ \"\$BUILD_TYPE\" = \"Both\" ]; then
-          echo '==> Building release...'
-          cargo build --frozen --release
-        fi
-        
-        # Run clippy if PR
-        if [ \"\$IS_PR_BUILD\" = \"true\" ]; then
-          echo '==> Running clippy...'
-          ./scripts/bclippy.sh
-        fi
-        
-        # Run format check if PR
-        if [ \"\$IS_PR_BUILD\" = \"true\" ]; then
-          echo '==> Checking format...'
-          ./scripts/bfmt.sh
-        fi
-        
-        # Run tests if PR
-        if [ \"\$IS_PR_BUILD\" = \"true\" ]; then
-          echo '==> Running tests...'
-          mkdir -p /workspace/target/nextest/ci
-          cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets --package mssql-tds --no-fail-fast --profile ci --success-output immediate
-          
-          # Generate coverage report
-          echo '==> Generating coverage report...'
-          cargo llvm-cov report --package mssql-tds --lcov --output-path /workspace/target/lcov.info
-        fi
+        echo '==> Generating coverage report...'
+        cargo llvm-cov report --package mssql-tds --lcov --output-path /workspace/target/lcov.info
       "
-  displayName: Build and Test in Container
+  displayName: Run Tests and Coverage
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
   env:
     SQL_PASSWORD: $(SQL_PASSWORD)
 
@@ -204,7 +234,8 @@ steps:
 
 - ${{ if eq(parameters.enableJsBuild, true) }}:
   - script: |
-      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${{ parameters.architecture }}"
+      ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
+      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
       
       docker run --rm \
         -v $PWD:/workspace \
@@ -212,17 +243,25 @@ steps:
         $BUILD_IMAGE \
         bash -c "
           source ~/.cargo/env
+          export PATH=\"/root/.local/share/fnm:\$PATH\"
           eval \"\$(fnm env)\"
+          fnm use 20
           cd mssql-js
-          npm install
-          npm run build
+          yarn install
+          yarn build
+          ls lib/generated
+          echo "Check for formatting"
+          yarn format:check
+          echo "Compiling Typescript files"
+          yarn buildapi 
         "
     displayName: Build JavaScript bindings
     condition: succeeded()
 
 - ${{ if eq(parameters.enableJsTest, true) }}:
   - script: |
-      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${{ parameters.architecture }}"
+      ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
+      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
       
       docker run --rm \
         --network testnet \
@@ -236,11 +275,21 @@ steps:
         bash -c "
           update-ca-certificates
           source ~/.cargo/env
+          export PATH=\"/root/.local/share/fnm:\$PATH\"
           eval \"\$(fnm env)\"
+          fnm use 20
           cd mssql-js
-          npm test
+          yarn testci > junit.xml
         "
     displayName: Test JavaScript bindings
-    condition: succeeded()
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
     env:
       SQL_PASSWORD: $(SQL_PASSWORD)
+
+  - task: PublishTestResults@2
+    condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
+    displayName: Publish JS test results
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: $(Build.SourcesDirectory)/mssql-js/junit.xml
+      testRunTitle: $(System.PhaseName)-Js

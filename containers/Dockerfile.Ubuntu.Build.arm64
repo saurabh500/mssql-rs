@@ -30,7 +30,9 @@ RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell && \
     eval "$(fnm env)" && \
     fnm install 20 && \
     fnm use 20 && \
-    fnm default 20
+    fnm default 20 && \
+    npm install --global yarn && \
+    corepack enable
 
 RUN export PATH="$HOME/.cargo/bin:$PATH" && \
     cargo install cargo-nextest --version 0.9.99 --locked && \
