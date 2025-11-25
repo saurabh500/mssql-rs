@@ -38,7 +38,7 @@ steps:
   displayName: Install Docker
 
 
-- template: templates/install-ubuntu-dependency.yaml
+- template: install-ubuntu-dependency.yaml
   parameters:
     installAzCli: false
     installDocker: true
