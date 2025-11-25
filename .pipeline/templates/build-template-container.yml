@@ -1,0 +1,243 @@
+parameters:
+- name: architecture
+  displayName: Architecture
+  type: string
+  values:
+  - x64
+  - ARM64
+  default: x64
+
+- name: buildType
+  displayName: Type of the build to produce
+  type: string
+  values:
+  - Both
+  - Debug
+  - Release
+  default: Both
+
+- name: testFilter
+  displayName: Optional Filter for tests
+  type: string
+  default: ''
+
+- name: enableJsBuild
+  displayName: Enable JS Build
+  type: boolean
+  default: false
+
+- name: enableJsTest
+  displayName: Enable JS Test
+  type: boolean
+  default: false
+
+steps:
+- task: DockerInstaller@0
+  inputs:
+    dockerVersion: '17.09.0-ce'
+  displayName: Install Docker
+
+- script: |
+    sudo chmod 666 /var/run/docker.sock
+  displayName: Setup Docker socket permissions
+
+- template: azure-cli-login-template.yml
+
+- task: AzureCLI@2
+  displayName: Login to ACR and pull build image
+  inputs:
+    azureSubscription: 'Magnitude Test'
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      az acr login --name tdslibrs
+      ${{ if eq(parameters.architecture, 'x64') }}:
+        docker pull tdslibrs.azurecr.io/ubuntu-build:latest-x64
+      ${{ if eq(parameters.architecture, 'ARM64') }}:
+        docker pull tdslibrs.azurecr.io/ubuntu-build:latest-arm64
+
+- script: |
+    set -euo pipefail
+    # Generate Certificate
+    bash scripts/generate_cert.sh    
+    sudo chown 10001:0 mssql.*
+
+    # Create docker network
+    docker network create testnet
+
+    # Start SQL Server
+    docker run -e "ACCEPT_EULA=Y" \
+      -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" \
+      -p 1433:1433 \
+      --hostname sql1 \
+      --network testnet \
+      --name sqlserver \
+      -v $PWD/conf/mssql.conf:/var/opt/mssql/mssql.conf \
+      -v $PWD/mssql.pem:/etc/ssl/certs/mssql.pem \
+      -v $PWD/mssql.key:/etc/ssl/private/mssql.key \
+      -u 0:0 \
+      -d mcr.microsoft.com/mssql/server:2025-latest
+
+    echo "Waiting for SQL Server to start..."
+    sleep 10
+  displayName: Setup SQL Server in Docker
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+
+- script: |
+    ${{ if eq(parameters.architecture, 'x64') }}:
+      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-x64"
+    ${{ if eq(parameters.architecture, 'ARM64') }}:
+      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-arm64"
+    
+    # Run build container with access to workspace and SQL network
+    docker run --rm \
+      --network testnet \
+      -v $PWD:/workspace \
+      -v $PWD/ca.crt:/usr/local/share/ca-certificates/mssql-ca.crt:ro \
+      -e SQL_PASSWORD="$(SQL_PASSWORD)" \
+      -e DB_HOST="sql1" \
+      -e CERT_HOST_NAME="sql1" \
+      -e RUST_BACKTRACE=full \
+      -w /workspace \
+      $BUILD_IMAGE \
+      bash -c "
+        set -e
+        source ~/.cargo/env
+        
+        # Update CA certificates in container
+        update-ca-certificates
+        
+        # Verify certificate
+        openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt /workspace/mssql.crt || true
+        
+        # Fetch dependencies
+        echo '==> Fetching crates...'
+        cargo fetch
+        
+        ${{ if or(eq(parameters.buildType, 'Debug'), eq(parameters.buildType, 'Both')) }}:
+          # Debug build
+          echo '==> Building debug...'
+          cargo build --frozen
+        ${{ if or(eq(parameters.buildType, 'Release'), eq(parameters.buildType, 'Both')) }}:
+          # Release build
+          echo '==> Building release...'
+          cargo build --frozen --release
+        
+        # Run clippy if PR
+        if [ \"\$BUILD_REASON\" = \"PullRequest\" ]; then
+          echo '==> Running clippy...'
+          ./scripts/bclippy.sh
+        fi
+        
+        # Run format check if PR
+        if [ \"\$BUILD_REASON\" = \"PullRequest\" ]; then
+          echo '==> Checking format...'
+          ./scripts/bfmt.sh
+        fi
+        
+        # Run tests if PR
+        if [ \"\$BUILD_REASON\" = \"PullRequest\" ]; then
+          echo '==> Running tests...'
+          cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets --package mssql-tds --no-fail-fast --profile ci --success-output immediate
+          
+          # Generate coverage report
+          echo '==> Generating coverage report...'
+          cargo llvm-cov report --package mssql-tds --lcov --output-path /workspace/target/lcov.info
+        fi
+      "
+  displayName: Build and Test in Container
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+    BUILD_REASON: $(Build.Reason)
+
+- task: PublishTestResults@2
+  condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
+  displayName: Publish test results
+  inputs:
+    testResultsFormat: JUnit
+    testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
+    testRunTitle: $(System.PhaseName)
+
+- task: PublishCodeCoverageResults@2
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+  displayName: Publish coverage results
+  inputs:
+    summaryFileLocation: $(Build.SourcesDirectory)/target/lcov.info
+    pathToSources: $(Build.SourcesDirectory)
+
+- script: |
+    docker stop sqlserver || true
+    docker rm sqlserver || true
+    docker network rm testnet || true
+  displayName: Cleanup Docker resources
+  condition: always()
+
+- task: CopyFiles@2
+  displayName: Copy Rust Debug Build
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+  inputs:
+    SourceFolder: '$(Build.SourcesDirectory)/target/debug'
+    Contents: |
+      *
+      !.cargo-lock
+    TargetFolder: '$(Build.ArtifactStagingDirectory)/debug'
+
+- task: CopyFiles@2
+  displayName: Copy Rust Release Build
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+  inputs:
+    SourceFolder: '$(Build.SourcesDirectory)/target/release'
+    Contents: |
+      *
+      !.cargo-lock
+    TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
+
+${{ if eq(parameters.enableJsBuild, true) }}:
+  - script: |
+      ${{ if eq(parameters.architecture, 'x64') }}:
+        BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-x64"
+      ${{ if eq(parameters.architecture, 'ARM64') }}:
+        BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-arm64"
+      
+      docker run --rm \
+        -v $PWD:/workspace \
+        -w /workspace \
+        $BUILD_IMAGE \
+        bash -c "
+          source ~/.cargo/env
+          eval \"\$(fnm env)\"
+          cd mssql-js
+          npm install
+          npm run build
+        "
+    displayName: Build JavaScript bindings
+    condition: succeeded()
+
+${{ if eq(parameters.enableJsTest, true) }}:
+  - script: |
+      ${{ if eq(parameters.architecture, 'x64') }}:
+        BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-x64"
+      ${{ if eq(parameters.architecture, 'ARM64') }}:
+        BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-arm64"
+      
+      docker run --rm \
+        --network testnet \
+        -v $PWD:/workspace \
+        -v $PWD/ca.crt:/usr/local/share/ca-certificates/mssql-ca.crt:ro \
+        -e SQL_PASSWORD="$(SQL_PASSWORD)" \
+        -e DB_HOST="sql1" \
+        -e CERT_HOST_NAME="sql1" \
+        -w /workspace \
+        $BUILD_IMAGE \
+        bash -c "
+          update-ca-certificates
+          source ~/.cargo/env
+          eval \"\$(fnm env)\"
+          cd mssql-js
+          npm test
+        "
+    displayName: Test JavaScript bindings
+    condition: succeeded()
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)
