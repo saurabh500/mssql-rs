@@ -2,14 +2,21 @@
 set -e
 
 # Build pre-configured Python wheel build images with Rust and maturin pre-installed
-# These images extend the official PyPA manylinux/musllinux images
+# These images extend the official PyPA manylinux/musllinux images from ACR
 
+ACR_NAME="tdslibrs"
 ACR_REGISTRY="tdslibrs.azurecr.io"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "======================================================"
 echo "Building Python wheel build images with Rust pre-installed"
 echo "======================================================"
+echo ""
+
+# Login to ACR to pull base images
+echo "==> Logging into Azure Container Registry..."
+az acr login --name "$ACR_NAME"
+echo "✅ ACR login successful"
 echo ""
 
 cd "$SCRIPT_DIR"
