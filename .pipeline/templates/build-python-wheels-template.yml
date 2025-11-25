@@ -70,7 +70,6 @@ steps:
         versionSpec: '${{ pythonVersion }}'
         architecture: '${{ parameters.architecture }}'
         addToPath: true
-        githubToken: $(GITHUB_TOKEN)
     
     - script: |
         echo "Building Python wheel for Python ${{ pythonVersion }}..."
