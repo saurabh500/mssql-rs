@@ -114,7 +114,7 @@ steps:
         -e "WORKSPACE_DIR=/workspace" \
         -e "OUTPUT_DIR=/workspace/target/wheels" \
         "$CONTAINER_IMAGE" \
-        sh /workspace/scripts/build-python-wheels-in-container.sh
+        bash /workspace/scripts/build-python-wheels-in-container.sh
       
       # Fix permissions on any files created by the container
       sudo chown -R $(whoami):$(whoami) "$(Build.SourcesDirectory)/mssql-py-core/target" || true
