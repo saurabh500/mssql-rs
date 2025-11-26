@@ -112,7 +112,6 @@ stages:
           osType: Linux
           buildType: ${{ parameters.buildType }}
           testFilter: -E 'not (test(connectivity))'
-          alpineimagetag: 'tdslibrs.azurecr.io/build/arm64/alpine:3.18'
       - template: templates/build-python-wheels-template.yml
         parameters:
           osType: Linux
