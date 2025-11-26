@@ -14,6 +14,51 @@ use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use tracing::event;
 
+/// Result of checking if space is available for writing
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpaceCheckResult {
+    /// Space is available and no overflow check needed (before or after write)
+    Available,
+    /// Already at/past packet boundary, needs overflow check before writing
+    NeedsOverflowCheckBefore,
+    /// Within boundary now, but will exceed after writing - needs overflow check after writing
+    NeedsOverflowCheckAfter,
+}
+
+/// Optimized batch write operations with manual overflow control.
+/// Use this for performance-critical code paths where you can batch multiple writes.
+pub(crate) trait TdsPacketWriterUnchecked {
+    /// Writes a byte without checking overflow (caller must ensure space)
+    fn write_byte_unchecked(&mut self, value: u8);
+
+    /// Writes an i32 without checking overflow (caller must ensure space)
+    fn write_i32_unchecked(&mut self, value: i32);
+
+    /// Writes a u16 without checking overflow (caller must ensure space)
+    fn write_u16_unchecked(&mut self, value: u16);
+
+    /// Writes an i64 without checking overflow (caller must ensure space)
+    fn write_i64_unchecked(&mut self, value: i64);
+
+    /// Writes a f64 without checking overflow (caller must ensure space)
+    fn write_f64_unchecked(&mut self, value: f64);
+
+    /// Writes bytes without checking overflow (caller must ensure space)
+    fn write_unchecked(&mut self, content: &[u8]);
+
+    /// Checks if there's enough space for n bytes without overflow.
+    /// Returns whether space is available and if overflow check is needed.
+    ///
+    /// # Important
+    /// This should ONLY be called with hardcoded constant values (e.g., `has_space(9)`).
+    /// The value must not exceed the overflow buffer size (8 bytes for u64).
+    /// Passing dynamic or oversized values can lead to buffer overflow.
+    fn has_space(&self, bytes: usize) -> SpaceCheckResult;
+
+    /// Manually check and handle overflow after a batch of unchecked writes
+    async fn check_overflow(&mut self) -> TdsResult<()>;
+}
+
 #[async_trait]
 pub(crate) trait TdsPacketWriter {
     /// Writes a byte to the buffer.
@@ -153,8 +198,9 @@ impl<'a> PacketWriter<'a> {
                 self.packet_size..self.packet_size + overflow_length,
                 Self::PACKET_HEADER_SIZE,
             );
+            // Position cursor at the end of the copied overflow data
             self.payload_cursor
-                .set_position(Self::PACKET_HEADER_SIZE as u64);
+                .set_position((Self::PACKET_HEADER_SIZE + overflow_length) as u64);
         }
         Ok(())
     }
@@ -364,15 +410,45 @@ impl TdsPacketWriter for PacketWriter<'_> {
     }
 
     async fn write_string_unicode_async(&mut self, value: &str) -> TdsResult<()> {
-        // TODO: The performance of this might be terrible. There are allocations happening for every string.
-        // 1. Consider using the iterator on encode_utf16 directly and writing to the output buffer,
-        // fill up the buffer, send out the packet, rinse and repeat.
-        let unicode_bytes = value
-            .encode_utf16()
-            .flat_map(|u| u.to_le_bytes())
-            .collect::<Vec<u8>>();
-        let _ = self.write_async(&unicode_bytes[0..]).await;
-        Ok(())
+        // Zero-copy UTF-16 encoding: write directly to buffer without intermediate Vec allocation
+        let mut utf16_iter = value.encode_utf16();
+
+        loop {
+            let packet_space_left = self.max_payload_size - self.position() as usize;
+
+            // How many u16 units can we write? (each u16 = 2 bytes)
+            let u16_units_available = packet_space_left / 2;
+
+            if u16_units_available == 0 {
+                // No space left, flush and continue
+                self.populate_header_and_send(false, false).await?;
+                self.payload_cursor
+                    .set_position(Self::PACKET_HEADER_SIZE as u64);
+                continue;
+            }
+
+            // Write as many u16 units as we can fit
+            let mut units_written = 0;
+            for _ in 0..u16_units_available {
+                if let Some(u16_char) = utf16_iter.next() {
+                    // Write u16 in little-endian directly to buffer
+                    self.write_u16_unchecked(u16_char);
+                    units_written += 1;
+                } else {
+                    // Finished writing all characters
+                    if units_written > 0 {
+                        // Check for overflow after batch write
+                        self.check_overflow().await?;
+                    }
+                    return Ok(());
+                }
+            }
+
+            // We filled the available space, check overflow and loop to flush
+            if units_written > 0 {
+                self.check_overflow().await?;
+            }
+        }
     }
 
     async fn write_async(&mut self, content: &[u8]) -> TdsResult<()> {
@@ -398,6 +474,77 @@ impl TdsPacketWriter for PacketWriter<'_> {
         let _ =
             WriteBytesExt::write_i32::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
         self.payload_cursor.set_position(position);
+    }
+}
+
+// Implement the unchecked write trait separately for optimized batch operations
+impl TdsPacketWriterUnchecked for PacketWriter<'_> {
+    fn write_byte_unchecked(&mut self, value: u8) {
+        let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, value);
+    }
+
+    fn write_i32_unchecked(&mut self, value: i32) {
+        let _ =
+            WriteBytesExt::write_i32::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+    }
+
+    fn write_u16_unchecked(&mut self, value: u16) {
+        let _ =
+            WriteBytesExt::write_u16::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+    }
+
+    fn write_i64_unchecked(&mut self, value: i64) {
+        let _ =
+            WriteBytesExt::write_i64::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+    }
+
+    fn write_f64_unchecked(&mut self, value: f64) {
+        let _ =
+            WriteBytesExt::write_f64::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+    }
+
+    fn write_unchecked(&mut self, content: &[u8]) {
+        let _ = std::io::Write::write_all(&mut self.payload_cursor, content);
+    }
+
+    fn has_space(&self, bytes_count: usize) -> SpaceCheckResult {
+        // Safety check: ensure requested space doesn't exceed buffer capacity.
+        // The buffer has size_of::<u64>() (8 bytes) extra space beyond packet_size.
+        let buffer_space_left =
+            self.payload_cursor.get_ref().capacity() - self.payload_cursor.position() as usize;
+
+        if bytes_count <= buffer_space_left {
+            // Safe to write - now determine overflow check requirements
+            let current_pos = self.position() as usize;
+            let position_after_write = current_pos + bytes_count;
+
+            if current_pos >= self.max_payload_size {
+                // Already at or past packet boundary - caller must check overflow before writing
+                SpaceCheckResult::NeedsOverflowCheckBefore
+            } else if position_after_write > self.max_payload_size {
+                // Within boundary now, but will exceed after write - check overflow after writing
+                SpaceCheckResult::NeedsOverflowCheckAfter
+            } else {
+                // Fully within packet boundary - no overflow check needed
+                SpaceCheckResult::Available
+            }
+        } else {
+            // Programming error: trying to write more than buffer capacity allows
+            debug_assert!(
+                false,
+                "has_space() called with {} bytes, but only {} bytes left in buffer. \
+                 This would cause buffer overflow. Use hardcoded constants only (max {} bytes).",
+                bytes_count,
+                buffer_space_left,
+                size_of::<u64>()
+            );
+            // Return NeedsOverflowCheckBefore to be safe in release builds
+            SpaceCheckResult::NeedsOverflowCheckBefore
+        }
+    }
+
+    async fn check_overflow(&mut self) -> TdsResult<()> {
+        self.handle_overflow_if_needed().await
     }
 }
 
