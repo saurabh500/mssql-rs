@@ -19,7 +19,7 @@ parameters:
   default: true
 
 - name: buildUbuntuImages
-  displayName: 'Build Ubuntu build images'
+  displayName: 'Build Rust build images'
   type: boolean
   default: true
 
