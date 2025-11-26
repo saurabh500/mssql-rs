@@ -130,11 +130,7 @@ steps:
       -v $HOME/.cargo/git:/root/.cargo/git \
       -w /workspace \
       $BUILD_IMAGE \
-      bash -c "
-        source ~/.cargo/env
-        echo '==> Running clippy...'
-        ./scripts/bclippy.sh
-      "
+      /workspace/.pipeline/scripts/containerized-clippy.sh
   displayName: Run Clippy
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
@@ -148,11 +144,7 @@ steps:
       -v $HOME/.cargo/git:/root/.cargo/git \
       -w /workspace \
       $BUILD_IMAGE \
-      bash -c "
-        source ~/.cargo/env
-        echo '==> Checking format...'
-        ./scripts/bfmt.sh
-      "
+      /workspace/.pipeline/scripts/containerized-format.sh
   displayName: Check Format
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
@@ -172,17 +164,7 @@ steps:
       -e RUST_BACKTRACE=full \
       -w /workspace \
       $BUILD_IMAGE \
-      bash -c "
-        source ~/.cargo/env
-        update-ca-certificates
-        
-        echo '==> Running tests...'
-        mkdir -p /workspace/target/nextest/ci
-        cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets --package mssql-tds --no-fail-fast --profile ci --success-output immediate
-        
-        echo '==> Generating coverage report...'
-        cargo llvm-cov report --package mssql-tds --lcov --output-path /workspace/target/lcov.info
-      "
+      /workspace/.pipeline/scripts/containerized-test.sh ${{ parameters.testFilter }}
   displayName: Run Tests and Coverage
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
   env:
@@ -234,20 +216,7 @@ steps:
         -v $PWD:/workspace \
         -w /workspace \
         $BUILD_IMAGE \
-        bash -c "
-          source ~/.cargo/env
-          export PATH=\"/root/.local/share/fnm:\$PATH\"
-          eval \"\$(fnm env)\"
-          fnm use 20
-          cd mssql-js
-          yarn install
-          yarn build
-          ls lib/generated
-          echo "Check for formatting"
-          yarn format:check
-          echo "Compiling Typescript files"
-          yarn buildapi 
-        "
+        /workspace/.pipeline/scripts/containerized-js-build.sh
     displayName: Build JavaScript bindings
     condition: succeeded()
 
@@ -265,15 +234,7 @@ steps:
         -e CERT_HOST_NAME="sql1" \
         -w /workspace \
         $BUILD_IMAGE \
-        bash -c "
-          update-ca-certificates
-          source ~/.cargo/env
-          export PATH=\"/root/.local/share/fnm:\$PATH\"
-          eval \"\$(fnm env)\"
-          fnm use 20
-          cd mssql-js
-          yarn testci > junit.xml
-        "
+        /workspace/.pipeline/scripts/containerized-js-test.sh
     displayName: Test JavaScript bindings
     condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
     env:
