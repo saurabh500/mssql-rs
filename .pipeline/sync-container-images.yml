@@ -76,6 +76,16 @@ stages:
       retryCountOnTaskFailure: 3
 
     - task: AzureCLI@2
+      displayName: 'Import Alpine base images to ACR'
+      condition: eq('${{ parameters.importBaseImages }}', 'true')
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'scriptPath'
+        scriptPath: '$(Build.SourcesDirectory)/containers/import-alpine-images.sh'
+      retryCountOnTaskFailure: 3
+
+    - task: AzureCLI@2
       displayName: 'Build custom x64 Python build images with Rust pre-installed'
       condition: eq('${{ parameters.buildPythonImages }}', 'true')
       inputs:
@@ -127,6 +137,35 @@ stages:
               -t tdslibrs.azurecr.io/ubuntu-build:latest-x64 \
               .
           echo "✅ Ubuntu x64 build image built successfully"
+
+    - task: AzureCLI@2
+      displayName: 'Build multi-arch Alpine build image with buildx'
+      condition: eq('${{ parameters.buildUbuntuImages }}', 'true')
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          cd $(Build.SourcesDirectory)/containers
+          
+          # Login to ACR
+          echo "==> Logging into Azure Container Registry..."
+          az acr login --name tdslibrs
+          
+          # Setup buildx for multi-arch builds
+          echo "==> Setting up buildx..."
+          docker buildx create --name multiarch --use || docker buildx use multiarch
+          docker buildx inspect --bootstrap
+          
+          # Build and push multi-arch Alpine image
+          echo "==> Building multi-arch Alpine build image (amd64, arm64)..."
+          docker buildx build \
+              --platform linux/amd64,linux/arm64 \
+              -f Dockerfile.Alpine.Build \
+              -t tdslibrs.azurecr.io/build/alpine:3.18 \
+              --push \
+              .
+          echo "✅ Multi-arch Alpine build image built and pushed successfully"
 
     - task: AzureCLI@2
       displayName: 'Push x64 images to ACR'
@@ -251,6 +290,7 @@ stages:
     dependsOn:
     - ImportAndBuildX64Images
     - BuildARM64Images
+    condition: always()
     pool:
       name: RUST-1ES-POOL-WUS3
       demands:
@@ -297,6 +337,14 @@ stages:
           echo ""
           echo "==> ubuntu-build"
           az acr repository show-tags --name $(ACR_NAME) --repository ubuntu-build --output table --orderby time_desc --top 5 || echo "  (not found)"
+          
+          echo ""
+          echo "======================================================"
+          echo "Alpine Build Images:"
+          echo "======================================================"
+          echo ""
+          echo "==> build/alpine"
+          az acr repository show-tags --name $(ACR_NAME) --repository build/alpine --output table --orderby time_desc --top 5 || echo "  (not found)"
 
     - script: |
         echo ""
@@ -322,6 +370,9 @@ stages:
         echo "    - $(ACR_REGISTRY)/ubuntu-build:latest-x64"
         echo "    - $(ACR_REGISTRY)/ubuntu-build:22.04-arm64"
         echo "    - $(ACR_REGISTRY)/ubuntu-build:latest-arm64"
+        echo ""
+        echo "  Alpine build images (RECOMMENDED FOR MUSL/STATIC BUILDS):"
+        echo "    - $(ACR_REGISTRY)/build/alpine:3.18 (multi-arch: amd64, arm64)"
         echo ""
         echo "Next scheduled build: Next Monday at 3:00 AM UTC"
       displayName: 'Summary'
