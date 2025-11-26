@@ -214,6 +214,8 @@ steps:
       
       docker run --rm \
         -v $PWD:/workspace \
+        -v $HOME/.cargo/registry:/root/.cargo/registry \
+        -v $HOME/.cargo/git:/root/.cargo/git \
         -w /workspace \
         $BUILD_IMAGE \
         /workspace/.pipeline/scripts/containerized-js-build.sh
