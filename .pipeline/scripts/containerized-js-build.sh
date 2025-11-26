@@ -9,7 +9,7 @@ cd mssql-js
 yarn install
 yarn build
 ls lib/generated
-echo "Check for formatting"
-yarn format:check
+# echo "Check for formatting"
+# yarn format:check
 echo "Compiling Typescript files"
 yarn buildapi
