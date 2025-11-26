@@ -11,6 +11,7 @@ pub mod handler;
 pub mod io;
 pub mod message;
 pub mod query;
+pub(crate) mod tds_value_serializer;
 pub mod token;
 
 // Expose internal APIs for fuzzing

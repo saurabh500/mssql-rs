@@ -62,6 +62,23 @@ impl SqlString {
             }
         }
     }
+
+    /// Returns true if this SqlString is already encoded as UTF-16
+    #[inline]
+    pub fn is_utf16(&self) -> bool {
+        matches!(self.encoding_type, EncodingType::Utf16)
+    }
+
+    /// Returns the raw UTF-16 bytes if already encoded, otherwise None
+    /// This avoids re-encoding strings that are already in UTF-16 format
+    #[inline]
+    pub fn as_utf16_bytes(&self) -> Option<&[u8]> {
+        if self.is_utf16() {
+            Some(&self.bytes)
+        } else {
+            None
+        }
+    }
 }
 
 impl Debug for SqlString {

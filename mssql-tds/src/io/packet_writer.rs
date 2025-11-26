@@ -14,17 +14,6 @@ use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use tracing::event;
 
-/// Result of checking if space is available for writing
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SpaceCheckResult {
-    /// Space is available and no overflow check needed (before or after write)
-    Available,
-    /// Already at/past packet boundary, needs overflow check before writing
-    NeedsOverflowCheckBefore,
-    /// Within boundary now, but will exceed after writing - needs overflow check after writing
-    NeedsOverflowCheckAfter,
-}
-
 /// Optimized batch write operations with manual overflow control.
 /// Use this for performance-critical code paths where you can batch multiple writes.
 pub(crate) trait TdsPacketWriterUnchecked {
@@ -46,14 +35,12 @@ pub(crate) trait TdsPacketWriterUnchecked {
     /// Writes bytes without checking overflow (caller must ensure space)
     fn write_unchecked(&mut self, content: &[u8]);
 
-    /// Checks if there's enough space for n bytes without overflow.
-    /// Returns whether space is available and if overflow check is needed.
+    /// Checks if there's enough space for n bytes in the current packet.
+    /// Returns true if space is available, false otherwise.
     ///
-    /// # Important
-    /// This should ONLY be called with hardcoded constant values (e.g., `has_space(9)`).
-    /// The value must not exceed the overflow buffer size (8 bytes for u64).
-    /// Passing dynamic or oversized values can lead to buffer overflow.
-    fn has_space(&self, bytes: usize) -> SpaceCheckResult;
+    /// If true: caller can use write_*_unchecked methods
+    /// If false: caller should use async write APIs
+    fn has_space(&self, bytes: usize) -> bool;
 
     /// Manually check and handle overflow after a batch of unchecked writes
     async fn check_overflow(&mut self) -> TdsResult<()>;
@@ -97,7 +84,7 @@ pub(crate) trait TdsPacketWriter {
     /// Writes a string in ASCII format.
     async fn write_string_ascii_async(&mut self, value: &str) -> TdsResult<()>;
 
-    /// Writes a string in Unicode format.
+    /// Writes a string in Unicode (UTF-16LE) format.
     async fn write_string_unicode_async(&mut self, value: &str) -> TdsResult<()>;
 
     /// Writes raw bytes to the buffer.
@@ -410,7 +397,7 @@ impl TdsPacketWriter for PacketWriter<'_> {
     }
 
     async fn write_string_unicode_async(&mut self, value: &str) -> TdsResult<()> {
-        // Zero-copy UTF-16 encoding: write directly to buffer without intermediate Vec allocation
+        // Streaming UTF-16LE encoding: encodes and writes directly to buffer without intermediate Vec allocation
         let mut utf16_iter = value.encode_utf16();
 
         loop {
@@ -420,6 +407,19 @@ impl TdsPacketWriter for PacketWriter<'_> {
             let u16_units_available = packet_space_left / 2;
 
             if u16_units_available == 0 {
+                // Check if we have exactly 1 byte left - we can write the low byte of next u16
+                if packet_space_left == 1 {
+                    if let Some(u16_char) = utf16_iter.next() {
+                        // Write the low byte of the u16
+                        self.write_byte_async(u16_char as u8).await?;
+                        // After flush, write the high byte
+                        self.write_byte_async((u16_char >> 8) as u8).await?;
+                        continue;
+                    } else {
+                        // No more characters to write
+                        return Ok(());
+                    }
+                }
                 // No space left, flush and continue
                 self.populate_header_and_send(false, false).await?;
                 self.payload_cursor
@@ -507,40 +507,10 @@ impl TdsPacketWriterUnchecked for PacketWriter<'_> {
         let _ = std::io::Write::write_all(&mut self.payload_cursor, content);
     }
 
-    fn has_space(&self, bytes_count: usize) -> SpaceCheckResult {
-        // Safety check: ensure requested space doesn't exceed buffer capacity.
-        // The buffer has size_of::<u64>() (8 bytes) extra space beyond packet_size.
-        let buffer_space_left =
-            self.payload_cursor.get_ref().capacity() - self.payload_cursor.position() as usize;
-
-        if bytes_count <= buffer_space_left {
-            // Safe to write - now determine overflow check requirements
-            let current_pos = self.position() as usize;
-            let position_after_write = current_pos + bytes_count;
-
-            if current_pos >= self.max_payload_size {
-                // Already at or past packet boundary - caller must check overflow before writing
-                SpaceCheckResult::NeedsOverflowCheckBefore
-            } else if position_after_write > self.max_payload_size {
-                // Within boundary now, but will exceed after write - check overflow after writing
-                SpaceCheckResult::NeedsOverflowCheckAfter
-            } else {
-                // Fully within packet boundary - no overflow check needed
-                SpaceCheckResult::Available
-            }
-        } else {
-            // Programming error: trying to write more than buffer capacity allows
-            debug_assert!(
-                false,
-                "has_space() called with {} bytes, but only {} bytes left in buffer. \
-                 This would cause buffer overflow. Use hardcoded constants only (max {} bytes).",
-                bytes_count,
-                buffer_space_left,
-                size_of::<u64>()
-            );
-            // Return NeedsOverflowCheckBefore to be safe in release builds
-            SpaceCheckResult::NeedsOverflowCheckBefore
-        }
+    fn has_space(&self, bytes_count: usize) -> bool {
+        // Check if there's space left in the current packet
+        let current_pos = self.position() as usize;
+        current_pos + bytes_count <= self.max_payload_size
     }
 
     async fn check_overflow(&mut self) -> TdsResult<()> {
@@ -754,14 +724,11 @@ pub(crate) mod tests {
 
         // With packet size 32 and header 8, we have 24 bytes available
         // Should have space for 8 bytes
-        match writer.has_space(8) {
-            SpaceCheckResult::Available => {}
-            _ => panic!("Expected Available"),
-        }
+        assert!(writer.has_space(8), "Should have space for 8 bytes");
     }
 
     #[test]
-    fn test_has_space_needs_overflow_check_before() {
+    fn test_has_space_within_packet() {
         let mut mock = MockNetworkWriter::new(16);
         let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
 
@@ -769,26 +736,23 @@ pub(crate) mod tests {
         block_on(writer.write_i32_async(0x1234)).unwrap();
 
         // Now we have 4 bytes remaining in the 8-byte payload.
-        // Asking for 4 bytes should be available
-        match writer.has_space(4) {
-            SpaceCheckResult::Available => {}
-            result => panic!("Expected Available, got {result:?}"),
-        }
+        // Asking for 4 bytes should return true
+        assert!(writer.has_space(4), "Should have space for 4 bytes");
     }
 
     #[test]
-    fn test_has_space_needs_overflow_check_after() {
+    fn test_has_space_exceeds_packet() {
         let mut mock = MockNetworkWriter::new(16);
         let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
 
         // Fill buffer partially (packet size 16, header 8 = 8 bytes available)
         block_on(writer.write_i32_async(0x1234)).unwrap();
 
-        // 4 bytes used, 4 remaining. Asking for 8 bytes needs overflow check after
-        match writer.has_space(8) {
-            SpaceCheckResult::NeedsOverflowCheckAfter => {}
-            result => panic!("Expected NeedsOverflowCheckAfter, got {result:?}"),
-        }
+        // 4 bytes used, 4 remaining. Asking for 8 bytes exceeds packet boundary
+        assert!(
+            !writer.has_space(8),
+            "Should not have space for 8 bytes (would exceed packet)"
+        );
     }
 
     #[test]
@@ -953,7 +917,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_zero_copy_utf16_write() {
+    fn test_streaming_utf16_write() {
         let mut mock = MockNetworkWriter::new(64);
         let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
 
@@ -971,5 +935,65 @@ pub(crate) mod tests {
 
         let decoded = String::from_utf16(&utf16_units).unwrap();
         assert_eq!(decoded, test_string);
+    }
+
+    #[test]
+    fn test_streaming_utf16_odd_byte_boundary() {
+        // Test case: packet with odd payload size (21 bytes available)
+        // Packet size 29 = 8 (header) + 21 (payload)
+        let packet_size = 29;
+        let mut mock = MockNetworkWriter::new(packet_size);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        // String with 12 characters = 24 bytes in UTF-16LE
+        // With 21 bytes available: can fit 10 units (20 bytes) + 1 byte of next unit
+        // Optimization: use the odd byte for the low byte of the 11th u16
+        let test_string = "HelloWorld12";
+        block_on(writer.write_string_unicode_async(test_string)).unwrap();
+        block_on(writer.finalize()).unwrap();
+
+        // Reconstruct the string from all packets
+        let mut string_vec: Vec<u8> = Vec::new();
+        let data = &mock.data;
+
+        // Parse packets - each packet starts with header
+        let mut offset = 0;
+        let mut first_packet_payload_len = 0;
+        while offset < data.len() {
+            if offset + 4 > data.len() {
+                break;
+            }
+            let packet_len = u16::from_be_bytes([data[offset + 2], data[offset + 3]]) as usize;
+            if offset + packet_len > data.len() {
+                break;
+            }
+            // Extract payload (skip 8-byte header)
+            let payload_len = packet_len - 8;
+            if first_packet_payload_len == 0 {
+                first_packet_payload_len = payload_len;
+            }
+            string_vec.extend_from_slice(&data[offset + 8..offset + packet_len]);
+            offset += packet_len;
+        }
+
+        let utf16_units: Vec<u16> = string_vec
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
+            .collect();
+
+        let decoded = String::from_utf16(&utf16_units).unwrap();
+        assert_eq!(decoded, test_string);
+
+        // Verify we sent multiple packets (string doesn't fit in one packet)
+        assert!(
+            mock.data.len() > packet_size as usize,
+            "Should have sent multiple packets"
+        );
+
+        // After optimization: should use all 21 bytes (10 u16 units + 1 byte)
+        assert_eq!(
+            first_packet_payload_len, 21,
+            "Should use all 21 bytes including the odd byte"
+        );
     }
 }
