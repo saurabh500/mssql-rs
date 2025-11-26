@@ -86,6 +86,28 @@ stages:
       retryCountOnTaskFailure: 3
 
     - task: AzureCLI@2
+      displayName: 'Import additional distro images to ACR'
+      condition: eq('${{ parameters.importBaseImages }}', 'true')
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          echo "==> Importing distro images..."
+          
+          # Import Debian
+          az acr import --name tdslibrs --source docker.io/library/debian:bookworm --image debian:bookworm
+          
+          # Import Red Hat UBI9
+          az acr import --name tdslibrs --source docker.io/redhat/ubi9:latest --image redhat/ubi9:latest
+          
+          # Import Oracle Linux 9
+          az acr import --name tdslibrs --source docker.io/library/oraclelinux:9 --image oraclelinux:9
+          
+          echo "✅ Additional distro images imported successfully"
+      retryCountOnTaskFailure: 3
+
+    - task: AzureCLI@2
       displayName: 'Build custom x64 Python build images with Rust pre-installed'
       condition: eq('${{ parameters.buildPythonImages }}', 'true')
       inputs:
