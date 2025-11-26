@@ -28,3 +28,10 @@ if [ "$BUILD_TYPE" = "Release" ] || [ "$BUILD_TYPE" = "Both" ]; then
   echo '==> Building release...'
   cargo build --frozen --release
 fi
+
+# Archive nextest (used by later test stages)
+echo '==> Creating nextest archive...'
+cd mssql-tds
+cargo nextest archive --archive-file tdslib-nextest.tar.zst
+mv tdslib-nextest.tar.zst /workspace/
+cd ..

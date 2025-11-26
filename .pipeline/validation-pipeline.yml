@@ -234,7 +234,7 @@ stages:
   jobs:
     - template: templates/test-matrix-template-alpine.yml
       parameters:
-        artifactName: 'Build_Alpine'
+        artifactName: 'Build_Linux'
         matrix:
           Alpine3_18:
             container: tdslibrs.azurecr.io/alpine:3.18

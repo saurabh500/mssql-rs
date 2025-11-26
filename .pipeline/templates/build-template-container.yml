@@ -207,6 +207,14 @@ steps:
       !.cargo-lock
     TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
 
+- script: |
+    if [ -f "$(Build.SourcesDirectory)/tdslib-nextest.tar.zst" ]; then
+      cp $(Build.SourcesDirectory)/tdslib-nextest.tar.zst $(Build.ArtifactStagingDirectory)/
+      echo "##vso[task.setvariable variable=ARCHIVE_NAME;isOutput=false]tdslib-nextest.tar.zst"
+    fi
+  displayName: Copy nextest archive
+  condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+
 - ${{ if eq(parameters.enableJsBuild, true) }}:
   - script: |
       ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
