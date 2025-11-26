@@ -28,7 +28,3 @@ if [ "$BUILD_TYPE" = "Release" ] || [ "$BUILD_TYPE" = "Both" ]; then
   echo '==> Building release...'
   cargo build --frozen --release
 fi
-
-# Pre-compile test dependencies to cache them
-echo '==> Pre-compiling test dependencies...'
-cargo llvm-cov nextest --no-run --frozen --all-targets --package mssql-tds 2>/dev/null || true
