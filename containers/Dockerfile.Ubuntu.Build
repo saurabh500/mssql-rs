@@ -1,4 +1,4 @@
-FROM tdslibrs.azurecr.io/ubuntu:22.04
+FROM tdslibrs.azurecr.io/import/ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 

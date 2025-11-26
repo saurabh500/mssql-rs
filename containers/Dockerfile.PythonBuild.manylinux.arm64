@@ -3,7 +3,7 @@
 # to speed up CI builds by avoiding runtime installation of these tools.
 # Base image is synced from quay.io/pypa to ACR via sync-container-images.yml pipeline
 
-FROM tdslibrs.azurecr.io/python-build/manylinux_2_28_aarch64:latest
+FROM tdslibrs.azurecr.io/import/python-build/manylinux_2_28_aarch64:latest
 
 # Install system dependencies required for building Python wheels with Rust extensions
 RUN yum install -y \

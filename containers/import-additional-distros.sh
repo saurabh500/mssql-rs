@@ -17,7 +17,7 @@ echo "==> Importing Debian Bookworm..."
 az acr import \
   --name "$ACR_NAME" \
   --source docker.io/library/debian:bookworm \
-  --image debian:bookworm \
+  --image import/debian:bookworm \
   --force
 
 # Import Red Hat UBI9
@@ -25,7 +25,7 @@ echo "==> Importing Red Hat UBI9..."
 az acr import \
   --name "$ACR_NAME" \
   --source docker.io/redhat/ubi9:latest \
-  --image redhat/ubi9:latest \
+  --image import/redhat/ubi9:latest \
   --force
 
 # Import Oracle Linux 9
@@ -33,13 +33,13 @@ echo "==> Importing Oracle Linux 9..."
 az acr import \
   --name "$ACR_NAME" \
   --source docker.io/library/oraclelinux:9 \
-  --image oraclelinux:9 \
+  --image import/oraclelinux:9 \
   --force
 
 echo ""
 echo "✅ Additional distro images imported successfully"
 echo ""
 echo "Imported images:"
-echo "  - $ACR_REGISTRY/debian:bookworm"
-echo "  - $ACR_REGISTRY/redhat/ubi9:latest"
-echo "  - $ACR_REGISTRY/oraclelinux:9"
+echo "  - $ACR_REGISTRY/import/debian:bookworm"
+echo "  - $ACR_REGISTRY/import/redhat/ubi9:latest"
+echo "  - $ACR_REGISTRY/import/oraclelinux:9"

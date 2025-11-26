@@ -19,7 +19,7 @@ echo "==> Importing Ubuntu 22.04 image..."
 az acr import \
   --name "$ACR_NAME" \
   --source docker.io/library/ubuntu:22.04 \
-  --image ubuntu:22.04 \
+  --image import/ubuntu:22.04 \
   --force
 
 # Ubuntu 24.04 image
@@ -27,12 +27,12 @@ echo "==> Importing Ubuntu 24.04 image..."
 az acr import \
   --name "$ACR_NAME" \
   --source docker.io/library/ubuntu:24.04 \
-  --image ubuntu:24.04 \
+  --image import/ubuntu:24.04 \
   --force
 
 echo ""
 echo "✅ Ubuntu base images imported successfully"
 echo ""
 echo "Imported images:"
-echo "  - $ACR_REGISTRY/ubuntu:22.04"
-echo "  - $ACR_REGISTRY/ubuntu:24.04"
+echo "  - $ACR_REGISTRY/import/ubuntu:22.04"
+echo "  - $ACR_REGISTRY/import/ubuntu:24.04"

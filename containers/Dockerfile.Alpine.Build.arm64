@@ -1,4 +1,4 @@
-FROM tdslibrs.azurecr.io/arm64/alpine:3.18
+FROM tdslibrs.azurecr.io/import/alpine:3.18
 
 
 # Install prerequisites

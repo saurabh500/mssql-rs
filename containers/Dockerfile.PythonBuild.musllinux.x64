@@ -3,7 +3,7 @@
 # to speed up CI builds by avoiding runtime installation of these tools.
 # Base image is synced from quay.io/pypa to ACR via sync-container-images.yml pipeline
 
-FROM tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64:latest
+FROM tdslibrs.azurecr.io/import/python-build/musllinux_1_2_x86_64:latest
 
 # Install system dependencies required for building Python wheels with Rust extensions
 RUN apk add --no-cache \
