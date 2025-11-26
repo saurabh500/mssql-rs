@@ -298,7 +298,7 @@ stages:
             container: registry.suse.com/suse/sle15
             entry: sles.sh
           Ubuntu22:
-            container: tdslibrs.azurecr.io/ubuntu:22.04
+            container: tdslibrs.azurecr.io/build/ubuntu:22.04
             entry: deb-bookworm.sh
           Ubuntu24:
             container: tdslibrs.azurecr.io/ubuntu:24.04
@@ -330,7 +330,7 @@ stages:
             container: registry.suse.com/suse/sle15
             entry: sles.sh
           Ubuntu22:
-            container: tdslibrs.azurecr.io/arm64/ubuntu:22.04
+            container: tdslibrs.azurecr.io/build/ubuntu:22.04
             entry: deb-bookworm.sh
           Ubuntu24:
             container: tdslibrs.azurecr.io/arm64/ubuntu:24.04

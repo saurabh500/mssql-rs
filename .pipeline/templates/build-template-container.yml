@@ -53,8 +53,7 @@ steps:
     scriptLocation: 'inlineScript'
     inlineScript: |
       az acr login --name tdslibrs
-      ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-      docker pull tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}
+      docker pull tdslibrs.azurecr.io/build/ubuntu:22.04
 
 - script: |
     set -euo pipefail
@@ -85,8 +84,7 @@ steps:
     SQL_PASSWORD: $(SQL_PASSWORD)
 
 - script: |
-    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
     # Set IS_PR_BUILD flag
     if [ "$(Build.Reason)" = "PullRequest" ]; then
@@ -135,8 +133,7 @@ steps:
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
 - script: |
-    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
     docker run --rm \
       -v $PWD:/workspace \
@@ -149,11 +146,10 @@ steps:
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
 - script: |
-    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
-    docker run --rm \
-      --network testnet \
+    docker run --rm
+      --network testnet
       -v $PWD:/workspace \
       -v $HOME/.cargo/registry:/root/.cargo/registry \
       -v $HOME/.cargo/git:/root/.cargo/git \
@@ -217,8 +213,7 @@ steps:
 
 - ${{ if eq(parameters.enableJsBuild, true) }}:
   - script: |
-      ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+      BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
       
       docker run --rm \
         -v $PWD:/workspace \
@@ -232,11 +227,10 @@ steps:
 
 - ${{ if eq(parameters.enableJsTest, true) }}:
   - script: |
-      ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+      BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
       
-      docker run --rm \
-        --network testnet \
+      docker run --rm
+        --network testnet
         -v $PWD:/workspace \
         -v $PWD/ca.crt:/usr/local/share/ca-certificates/mssql-ca.crt:ro \
         -e SQL_PASSWORD="$(SQL_PASSWORD)" \
