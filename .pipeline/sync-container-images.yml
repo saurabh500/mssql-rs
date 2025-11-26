@@ -76,6 +76,16 @@ stages:
       retryCountOnTaskFailure: 3
 
     - task: AzureCLI@2
+      displayName: 'Import Alpine base images to ACR'
+      condition: eq('${{ parameters.importBaseImages }}', 'true')
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'scriptPath'
+        scriptPath: '$(Build.SourcesDirectory)/containers/import-alpine-images.sh'
+      retryCountOnTaskFailure: 3
+
+    - task: AzureCLI@2
       displayName: 'Build custom x64 Python build images with Rust pre-installed'
       condition: eq('${{ parameters.buildPythonImages }}', 'true')
       inputs:
@@ -129,6 +139,28 @@ stages:
           echo "✅ Ubuntu x64 build image built successfully"
 
     - task: AzureCLI@2
+      displayName: 'Build Alpine x64 build image with Rust and tooling'
+      condition: eq('${{ parameters.buildUbuntuImages }}', 'true')
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          cd $(Build.SourcesDirectory)/containers
+          
+          # Login to ACR
+          echo "==> Logging into Azure Container Registry..."
+          az acr login --name tdslibrs
+          
+          # Build Alpine x64 image
+          echo "==> Building Alpine x64 build image..."
+          docker build \
+              -f Dockerfile.Alpine.Build \
+              -t tdslibrs.azurecr.io/build/alpine:3.18-amd64 \
+              .
+          echo "✅ Alpine x64 build image built successfully"
+
+    - task: AzureCLI@2
       displayName: 'Push x64 images to ACR'
       condition: or(eq('${{ parameters.buildPythonImages }}', 'true'), eq('${{ parameters.buildUbuntuImages }}', 'true'))
       inputs:
@@ -148,6 +180,7 @@ stages:
           if [ "${{ parameters.buildUbuntuImages }}" == "True" ]; then
             docker push tdslibrs.azurecr.io/ubuntu-build:22.04-x64
             docker push tdslibrs.azurecr.io/ubuntu-build:latest-x64
+            docker push tdslibrs.azurecr.io/build/alpine:3.18-amd64
           fi
 
   - job: BuildARM64Images
@@ -225,6 +258,28 @@ stages:
           echo "✅ Ubuntu ARM64 build image built successfully"
 
     - task: AzureCLI@2
+      displayName: 'Build Alpine ARM64 build image with Rust and tooling'
+      condition: eq('${{ parameters.buildUbuntuImages }}', 'true')
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          cd $(Build.SourcesDirectory)/containers
+          
+          # Login to ACR
+          echo "==> Logging into Azure Container Registry..."
+          az acr login --name tdslibrs
+          
+          # Build Alpine ARM64 image
+          echo "==> Building Alpine ARM64 build image..."
+          docker build \
+              -f Dockerfile.Alpine.Build.arm64 \
+              -t tdslibrs.azurecr.io/build/alpine:3.18-arm64 \
+              .
+          echo "✅ Alpine ARM64 build image built successfully"
+
+    - task: AzureCLI@2
       displayName: 'Push ARM64 images to ACR'
       condition: or(eq('${{ parameters.buildPythonImages }}', 'true'), eq('${{ parameters.buildUbuntuImages }}', 'true'))
       inputs:
@@ -244,13 +299,49 @@ stages:
           if [ "${{ parameters.buildUbuntuImages }}" == "True" ]; then
             docker push tdslibrs.azurecr.io/ubuntu-build:22.04-arm64
             docker push tdslibrs.azurecr.io/ubuntu-build:latest-arm64
+            docker push tdslibrs.azurecr.io/build/alpine:3.18-arm64
           fi
+
+  - job: CreateMultiArchManifests
+    displayName: Create Multi-Arch Manifests
+    dependsOn:
+    - ImportAndBuildX64Images
+    - BuildARM64Images
+    condition: eq('${{ parameters.buildUbuntuImages }}', 'true')
+    pool:
+      name: RUST-1ES-POOL-WUS3
+      demands:
+        - imageOverride -equals RUST-1ES-UBUSLIM
+    steps:
+    - checkout: none
+
+    - task: AzureCLI@2
+      displayName: 'Create multi-arch manifest for Alpine build image'
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az acr login --name tdslibrs
+          
+          echo "==> Creating multi-arch manifest for Alpine 3.18 build image..."
+          docker manifest create tdslibrs.azurecr.io/build/alpine:3.18 \
+            tdslibrs.azurecr.io/build/alpine:3.18-amd64 \
+            tdslibrs.azurecr.io/build/alpine:3.18-arm64
+          
+          echo "==> Pushing multi-arch manifest..."
+          docker manifest push tdslibrs.azurecr.io/build/alpine:3.18
+          
+          echo "✅ Multi-arch Alpine build image created"
+          echo "   Image: tdslibrs.azurecr.io/build/alpine:3.18 (amd64, arm64)"
 
   - job: VerifyAllImages
     displayName: Verify All Images in ACR
     dependsOn:
     - ImportAndBuildX64Images
     - BuildARM64Images
+    - CreateMultiArchManifests
+    condition: always()
     pool:
       name: RUST-1ES-POOL-WUS3
       demands:
@@ -297,6 +388,14 @@ stages:
           echo ""
           echo "==> ubuntu-build"
           az acr repository show-tags --name $(ACR_NAME) --repository ubuntu-build --output table --orderby time_desc --top 5 || echo "  (not found)"
+          
+          echo ""
+          echo "======================================================"
+          echo "Alpine Build Images:"
+          echo "======================================================"
+          echo ""
+          echo "==> build/alpine"
+          az acr repository show-tags --name $(ACR_NAME) --repository build/alpine --output table --orderby time_desc --top 5 || echo "  (not found)"
 
     - script: |
         echo ""
@@ -322,6 +421,9 @@ stages:
         echo "    - $(ACR_REGISTRY)/ubuntu-build:latest-x64"
         echo "    - $(ACR_REGISTRY)/ubuntu-build:22.04-arm64"
         echo "    - $(ACR_REGISTRY)/ubuntu-build:latest-arm64"
+        echo ""
+        echo "  Alpine build images (RECOMMENDED FOR MUSL/STATIC BUILDS):"
+        echo "    - $(ACR_REGISTRY)/build/alpine:3.18 (multi-arch: amd64, arm64)"
         echo ""
         echo "Next scheduled build: Next Monday at 3:00 AM UTC"
       displayName: 'Summary'

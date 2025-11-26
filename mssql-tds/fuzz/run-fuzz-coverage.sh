@@ -52,7 +52,7 @@ LLVM_PROFDATA=$(find ~/.rustup/toolchains/nightly*/lib/rustlib -name "llvm-profd
 
 if [ -z "$LLVM_COV" ] || [ -z "$LLVM_PROFDATA" ]; then
     echo -e "${RED}Error: LLVM coverage tools not found${NC}"
-    echo "Run: rustup component add llvm-tools-preview --toolchain nightly"
+    echo "Run: rustup component add llvm-tools --toolchain nightly"
     exit 1
 fi
 
