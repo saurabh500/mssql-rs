@@ -5,7 +5,7 @@ pwd
 ls
 echo $PATH
 rm -rf target
-rustup component add llvm-tools-preview
+rustup component add llvm-tools
 
 cargo fetch 
 

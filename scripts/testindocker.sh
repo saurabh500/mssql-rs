@@ -2,7 +2,7 @@
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
-rustup component add llvm-tools-preview
+rustup component add llvm-tools
 
 cargo fetch
 echo $FILTER
