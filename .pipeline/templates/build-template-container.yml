@@ -205,13 +205,6 @@ steps:
     summaryFileLocation: $(Build.SourcesDirectory)/target/lcov.info
     pathToSources: $(Build.SourcesDirectory)
 
-- script: |
-    docker stop sqlserver || true
-    docker rm sqlserver || true
-    docker network rm testnet || true
-  displayName: Cleanup Docker resources
-  condition: always()
-
 - task: CopyFiles@2
   displayName: Copy Rust Debug Build
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
@@ -293,3 +286,10 @@ steps:
       testResultsFormat: JUnit
       testResultsFiles: $(Build.SourcesDirectory)/mssql-js/junit.xml
       testRunTitle: $(System.PhaseName)-Js
+
+- script: |
+    docker stop sqlserver || true
+    docker rm sqlserver || true
+    docker network rm testnet || true
+  displayName: Cleanup Docker resources
+  condition: always()
