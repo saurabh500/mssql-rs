@@ -119,8 +119,7 @@ steps:
     SQL_PASSWORD: $(SQL_PASSWORD)
 
 - script: |
-    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
     docker run --rm \
       -v $PWD:/workspace \
