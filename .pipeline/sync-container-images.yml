@@ -284,7 +284,7 @@ stages:
           # Build Alpine ARM64 image
           echo "==> Building Alpine ARM64 build image..."
           docker build \
-              -f Dockerfile.Alpine.Build.arm64 \
+              -f Dockerfile.Alpine.Build \
               -t tdslibrs.azurecr.io/build/alpine:3.18-arm64 \
               .
           echo "✅ Alpine ARM64 build image built successfully"
