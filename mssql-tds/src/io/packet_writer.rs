@@ -767,12 +767,12 @@ pub(crate) mod tests {
 
         // Write some data first
         block_on(writer.write_i32_async(0x1234)).unwrap();
-        
+
         // Now we have 4 bytes remaining in the 8-byte payload.
         // Asking for 4 bytes should be available
         match writer.has_space(4) {
             SpaceCheckResult::Available => {}
-            result => panic!("Expected Available, got {:?}", result),
+            result => panic!("Expected Available, got {result:?}"),
         }
     }
 
@@ -787,7 +787,7 @@ pub(crate) mod tests {
         // 4 bytes used, 4 remaining. Asking for 8 bytes needs overflow check after
         match writer.has_space(8) {
             SpaceCheckResult::NeedsOverflowCheckAfter => {}
-            result => panic!("Expected NeedsOverflowCheckAfter, got {:?}", result),
+            result => panic!("Expected NeedsOverflowCheckAfter, got {result:?}"),
         }
     }
 
@@ -910,7 +910,7 @@ pub(crate) mod tests {
 
         // Drop writer to release borrow of mock, then verify data was sent
         drop(writer);
-        assert!(mock.data.is_empty() == false);
+        assert!(!mock.data.is_empty());
     }
 
     #[test]
@@ -920,17 +920,17 @@ pub(crate) mod tests {
 
         // Write data (10 bytes) that is less than payload capacity (12 bytes)
         block_on(writer.write_i16_async(0x1234)).unwrap(); // 2 bytes
-        
+
         // This i64 write (8 bytes) will cause overflow:
         // Total would be 10 bytes, which exceeds 12 byte capacity
         // After write, cursor at 18 (header 8 + 10 bytes)
         // handle_overflow triggers:
         // 1. position() = 10, which is < 12, so no overflow... wait this won't trigger!
-        
+
         // Let me use a case that actually overflows
         block_on(writer.write_i32_async(0x5678)).unwrap(); // 4 more bytes, total 6
         block_on(writer.write_i32_async(0x9ABC)).unwrap(); // 4 more bytes, total 10
-        
+
         // Now write i64 (8 bytes). Total would be 18 bytes.
         // position() after i64 write = 18, max_payload = 12
         // This triggers overflow
