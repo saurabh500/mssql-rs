@@ -228,8 +228,8 @@ steps:
   - script: |
       BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
       
-      docker run --rm
-        --network testnet
+      docker run --rm \
+        --network testnet \
         -v $PWD:/workspace \
         -v $PWD/ca.crt:/usr/local/share/ca-certificates/mssql-ca.crt:ro \
         -e SQL_PASSWORD="$(SQL_PASSWORD)" \
