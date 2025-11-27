@@ -19,7 +19,7 @@ parameters:
   default: true
 
 - name: buildUbuntuImages
-  displayName: 'Build Ubuntu build images'
+  displayName: 'Build Rust build images'
   type: boolean
   default: true
 
@@ -86,6 +86,16 @@ stages:
       retryCountOnTaskFailure: 3
 
     - task: AzureCLI@2
+      displayName: 'Import additional distro images to ACR'
+      condition: eq('${{ parameters.importBaseImages }}', 'true')
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'scriptPath'
+        scriptPath: '$(Build.SourcesDirectory)/containers/import-additional-distros.sh'
+      retryCountOnTaskFailure: 3
+
+    - task: AzureCLI@2
       displayName: 'Build custom x64 Python build images with Rust pre-installed'
       condition: eq('${{ parameters.buildPythonImages }}', 'true')
       inputs:
@@ -133,8 +143,8 @@ stages:
           echo "==> Building Ubuntu x64 build image..."
           docker build \
               -f Dockerfile.Ubuntu.Build \
-              -t tdslibrs.azurecr.io/ubuntu-build:22.04-x64 \
-              -t tdslibrs.azurecr.io/ubuntu-build:latest-x64 \
+              -t tdslibrs.azurecr.io/build/ubuntu:22.04-x64 \
+              -t tdslibrs.azurecr.io/build/ubuntu:latest-x64 \
               .
           echo "✅ Ubuntu x64 build image built successfully"
 
@@ -178,8 +188,8 @@ stages:
           
           # Push Ubuntu images if enabled
           if [ "${{ parameters.buildUbuntuImages }}" == "True" ]; then
-            docker push tdslibrs.azurecr.io/ubuntu-build:22.04-x64
-            docker push tdslibrs.azurecr.io/ubuntu-build:latest-x64
+            docker push tdslibrs.azurecr.io/build/ubuntu:22.04-x64
+            docker push tdslibrs.azurecr.io/build/ubuntu:latest-x64
             docker push tdslibrs.azurecr.io/build/alpine:3.18-amd64
           fi
 
@@ -251,9 +261,9 @@ stages:
           # Build Ubuntu ARM64 image
           echo "==> Building Ubuntu ARM64 build image..."
           docker build \
-              -f Dockerfile.Ubuntu.Build.arm64 \
-              -t tdslibrs.azurecr.io/ubuntu-build:22.04-arm64 \
-              -t tdslibrs.azurecr.io/ubuntu-build:latest-arm64 \
+              -f Dockerfile.Ubuntu.Build \
+              -t tdslibrs.azurecr.io/build/ubuntu:22.04-arm64 \
+              -t tdslibrs.azurecr.io/build/ubuntu:latest-arm64 \
               .
           echo "✅ Ubuntu ARM64 build image built successfully"
 
@@ -274,7 +284,7 @@ stages:
           # Build Alpine ARM64 image
           echo "==> Building Alpine ARM64 build image..."
           docker build \
-              -f Dockerfile.Alpine.Build.arm64 \
+              -f Dockerfile.Alpine.Build \
               -t tdslibrs.azurecr.io/build/alpine:3.18-arm64 \
               .
           echo "✅ Alpine ARM64 build image built successfully"
@@ -297,8 +307,8 @@ stages:
           
           # Push Ubuntu images if enabled
           if [ "${{ parameters.buildUbuntuImages }}" == "True" ]; then
-            docker push tdslibrs.azurecr.io/ubuntu-build:22.04-arm64
-            docker push tdslibrs.azurecr.io/ubuntu-build:latest-arm64
+            docker push tdslibrs.azurecr.io/build/ubuntu:22.04-arm64
+            docker push tdslibrs.azurecr.io/build/ubuntu:latest-arm64
             docker push tdslibrs.azurecr.io/build/alpine:3.18-arm64
           fi
 
@@ -314,6 +324,26 @@ stages:
         - imageOverride -equals RUST-1ES-UBUSLIM
     steps:
     - checkout: none
+
+    - task: AzureCLI@2
+      displayName: 'Create multi-arch manifest for Ubuntu build image'
+      inputs:
+        azureSubscription: 'Magnitude Test'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az acr login --name tdslibrs
+          
+          echo "==> Creating multi-arch manifest for Ubuntu 22.04 build image..."
+          docker manifest create tdslibrs.azurecr.io/build/ubuntu:22.04 \
+            tdslibrs.azurecr.io/build/ubuntu:22.04-x64 \
+            tdslibrs.azurecr.io/build/ubuntu:22.04-arm64
+          
+          echo "==> Pushing multi-arch manifest..."
+          docker manifest push tdslibrs.azurecr.io/build/ubuntu:22.04
+          
+          echo "✅ Multi-arch Ubuntu build image created"
+          echo "   Image: tdslibrs.azurecr.io/build/ubuntu:22.04 (amd64, arm64)"
 
     - task: AzureCLI@2
       displayName: 'Create multi-arch manifest for Alpine build image'
@@ -386,8 +416,8 @@ stages:
           echo "Ubuntu Build Images:"
           echo "======================================================"
           echo ""
-          echo "==> ubuntu-build"
-          az acr repository show-tags --name $(ACR_NAME) --repository ubuntu-build --output table --orderby time_desc --top 5 || echo "  (not found)"
+          echo "==> build/ubuntu"
+          az acr repository show-tags --name $(ACR_NAME) --repository build/ubuntu --output table --orderby time_desc --top 5 || echo "  (not found)"
           
           echo ""
           echo "======================================================"
@@ -417,10 +447,11 @@ stages:
         echo "    - $(ACR_REGISTRY)/python-build/musllinux_1_2_aarch64_rust:latest"
         echo ""
         echo "  Ubuntu build images (RECOMMENDED FOR GENERAL BUILDS):"
-        echo "    - $(ACR_REGISTRY)/ubuntu-build:22.04-x64"
-        echo "    - $(ACR_REGISTRY)/ubuntu-build:latest-x64"
-        echo "    - $(ACR_REGISTRY)/ubuntu-build:22.04-arm64"
-        echo "    - $(ACR_REGISTRY)/ubuntu-build:latest-arm64"
+        echo "    - $(ACR_REGISTRY)/build/ubuntu:22.04 (multi-arch: amd64, arm64)"
+        echo "    - $(ACR_REGISTRY)/build/ubuntu:22.04-x64"
+        echo "    - $(ACR_REGISTRY)/build/ubuntu:latest-x64"
+        echo "    - $(ACR_REGISTRY)/build/ubuntu:22.04-arm64"
+        echo "    - $(ACR_REGISTRY)/build/ubuntu:latest-arm64"
         echo ""
         echo "  Alpine build images (RECOMMENDED FOR MUSL/STATIC BUILDS):"
         echo "    - $(ACR_REGISTRY)/build/alpine:3.18 (multi-arch: amd64, arm64)"

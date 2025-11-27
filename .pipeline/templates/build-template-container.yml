@@ -53,8 +53,7 @@ steps:
     scriptLocation: 'inlineScript'
     inlineScript: |
       az acr login --name tdslibrs
-      ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-      docker pull tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}
+      docker pull tdslibrs.azurecr.io/build/ubuntu:22.04
 
 - script: |
     set -euo pipefail
@@ -85,8 +84,7 @@ steps:
     SQL_PASSWORD: $(SQL_PASSWORD)
 
 - script: |
-    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
     # Set IS_PR_BUILD flag
     if [ "$(Build.Reason)" = "PullRequest" ]; then
@@ -121,8 +119,7 @@ steps:
     SQL_PASSWORD: $(SQL_PASSWORD)
 
 - script: |
-    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
     docker run --rm \
       -v $PWD:/workspace \
@@ -135,8 +132,7 @@ steps:
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
 - script: |
-    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
     docker run --rm \
       -v $PWD:/workspace \
@@ -149,8 +145,7 @@ steps:
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
 - script: |
-    ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-    BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
     docker run --rm \
       --network testnet \
@@ -217,8 +212,7 @@ steps:
 
 - ${{ if eq(parameters.enableJsBuild, true) }}:
   - script: |
-      ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+      BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
       
       docker run --rm \
         -v $PWD:/workspace \
@@ -232,8 +226,7 @@ steps:
 
 - ${{ if eq(parameters.enableJsTest, true) }}:
   - script: |
-      ARCH_LOWER=$(echo "${{ parameters.architecture }}" | tr '[:upper:]' '[:lower:]')
-      BUILD_IMAGE="tdslibrs.azurecr.io/ubuntu-build:latest-${ARCH_LOWER}"
+      BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
       
       docker run --rm \
         --network testnet \
