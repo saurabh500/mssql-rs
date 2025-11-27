@@ -367,7 +367,7 @@ impl SqlType {
                     let part = v.int_parts.get(i).copied().unwrap_or(0);
                     packet_writer.write_i32_async(part).await?;
                 }
-                // The fourth part is always 0 as per your requirement.
+                // The fourth part is always 0.
                 packet_writer.write_i32_async(0).await?;
             }
             None => {

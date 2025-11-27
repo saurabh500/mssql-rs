@@ -13,7 +13,7 @@ use crate::datatypes::column_values::{
 };
 use crate::datatypes::decoder::DecimalParts;
 use crate::datatypes::sqldatatypes::TdsDataType;
-use crate::datatypes::sqltypes::SqlType;
+use crate::datatypes::sqltypes::{self, SqlType};
 use crate::io::packet_writer::{PacketWriter, TdsPacketWriter, TdsPacketWriterUnchecked};
 
 // NULL markers for different type classes
@@ -460,11 +460,11 @@ impl TdsValueSerializer {
         'b: 'a,
     {
         // Length byte (always 17 for max precision)
-        writer.write_byte_async(17).await?;
+        writer.write_byte_async(sqltypes::DECIMAL_FIXED_SIZE).await?;
 
         // Sign byte
         writer
-            .write_byte_async(if parts.is_positive { 1 } else { 0 })
+            .write_byte_async(if parts.is_positive { 0x01 } else { 0x00 })
             .await?;
 
         // Write up to 3 int_parts, pad with zeros if fewer
