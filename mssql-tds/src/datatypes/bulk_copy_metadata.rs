@@ -736,8 +736,10 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
                     (*max_len as i32, TypeLength::Variable(*max_len as i32), 0, 0)
                 }
             }
-            TypeInfoVariant::VarLenScale(len, scale) => {
-                (*len as i32, TypeLength::Variable(*len as i32), 0, *scale)
+            TypeInfoVariant::VarLenScale(_vlt, scale) => {
+                // Use the actual length from TypeInfo, not the VariableLengthTypes enum value
+                let len = col.type_info.length as i32;
+                (len, TypeLength::Variable(len), 0, *scale)
             }
             TypeInfoVariant::VarLenPrecisionScale(len, _max_len, precision, scale) => (
                 *len as i32,
@@ -765,7 +767,7 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
             .with_length(length, type_length)
             .with_nullable(col.is_nullable());
 
-        if precision > 0 {
+        if precision > 0 || scale > 0 {
             metadata = metadata.with_precision_scale(precision, scale);
         }
 
