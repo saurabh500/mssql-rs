@@ -352,8 +352,6 @@ mod client_based_iterators {
             _ => panic!("Expected DateTimeOffset value"),
         }
 
-        println!("✓ All date/time type metadata parsed correctly");
-
         Ok(())
     }
 }
