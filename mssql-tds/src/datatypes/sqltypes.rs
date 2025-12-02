@@ -997,22 +997,29 @@ impl SqlType {
     }
 }
 
+/// Calculate the byte length for time-based types based on scale value.
+///
+/// This mapping is defined in the TDS protocol documentation:
+/// - Scale 0-2: 3 bytes
+/// - Scale 3-4: 4 bytes  
+/// - Scale 5-7: 5 bytes
+pub(crate) fn get_time_length_from_scale(scale: u8) -> TdsResult<u8> {
+    match scale {
+        0..=2 => Ok(0x03),
+        3 | 4 => Ok(0x04),
+        5..=7 => Ok(0x05),
+        _ => Err(Error::UsageError(format!(
+            "Invalid scale for Time type: {scale}"
+        ))),
+    }
+}
+
 // We are taking the map from the protocol documentation that defines the scale.
 // However the scale essentially defines the precision of the time and
 // the length of bytes can be computed from the scale. But since
 // this is documented, we will use this map.
 fn get_scale_based_length(time: &SqlTime) -> TdsResult<u8> {
-    let scale_based_byte_length: u8 = match time.scale {
-        0..=2 => 0x03,
-        3 | 4 => 0x04,
-        5..=7 => 0x05,
-        _ => {
-            return Err(Error::UsageError(
-                format!("Invalid scale for Time type. {}", time.scale).to_string(),
-            ));
-        }
-    };
-    Ok(scale_based_byte_length)
+    get_time_length_from_scale(time.scale)
 }
 
 async fn write_default_scale_and_null(packet_writer: &mut PacketWriter<'_>) -> TdsResult<()> {
