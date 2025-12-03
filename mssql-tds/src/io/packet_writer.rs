@@ -14,6 +14,38 @@ use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use tracing::event;
 
+/// Optimized batch write operations with manual overflow control.
+/// Use this for performance-critical code paths where you can batch multiple writes.
+pub(crate) trait TdsPacketWriterUnchecked {
+    /// Writes a byte without checking overflow (caller must ensure space)
+    fn write_byte_unchecked(&mut self, value: u8);
+
+    /// Writes an i32 without checking overflow (caller must ensure space)
+    fn write_i32_unchecked(&mut self, value: i32);
+
+    /// Writes a u16 without checking overflow (caller must ensure space)
+    fn write_u16_unchecked(&mut self, value: u16);
+
+    /// Writes an i64 without checking overflow (caller must ensure space)
+    fn write_i64_unchecked(&mut self, value: i64);
+
+    /// Writes a f64 without checking overflow (caller must ensure space)
+    fn write_f64_unchecked(&mut self, value: f64);
+
+    /// Writes bytes without checking overflow (caller must ensure space)
+    fn write_unchecked(&mut self, content: &[u8]);
+
+    /// Checks if there's enough space for n bytes in the current packet.
+    /// Returns true if space is available, false otherwise.
+    ///
+    /// If true: caller can use write_*_unchecked methods
+    /// If false: caller should use async write APIs
+    fn has_space(&self, bytes: usize) -> bool;
+
+    /// Manually check and handle overflow after a batch of unchecked writes
+    async fn check_overflow(&mut self) -> TdsResult<()>;
+}
+
 #[async_trait]
 pub(crate) trait TdsPacketWriter {
     /// Writes a byte to the buffer.
@@ -52,7 +84,7 @@ pub(crate) trait TdsPacketWriter {
     /// Writes a string in ASCII format.
     async fn write_string_ascii_async(&mut self, value: &str) -> TdsResult<()>;
 
-    /// Writes a string in Unicode format.
+    /// Writes a string in Unicode (UTF-16LE) format.
     async fn write_string_unicode_async(&mut self, value: &str) -> TdsResult<()>;
 
     /// Writes raw bytes to the buffer.
@@ -153,8 +185,9 @@ impl<'a> PacketWriter<'a> {
                 self.packet_size..self.packet_size + overflow_length,
                 Self::PACKET_HEADER_SIZE,
             );
+            // Position cursor at the end of the copied overflow data
             self.payload_cursor
-                .set_position(Self::PACKET_HEADER_SIZE as u64);
+                .set_position((Self::PACKET_HEADER_SIZE + overflow_length) as u64);
         }
         Ok(())
     }
@@ -364,15 +397,58 @@ impl TdsPacketWriter for PacketWriter<'_> {
     }
 
     async fn write_string_unicode_async(&mut self, value: &str) -> TdsResult<()> {
-        // TODO: The performance of this might be terrible. There are allocations happening for every string.
-        // 1. Consider using the iterator on encode_utf16 directly and writing to the output buffer,
-        // fill up the buffer, send out the packet, rinse and repeat.
-        let unicode_bytes = value
-            .encode_utf16()
-            .flat_map(|u| u.to_le_bytes())
-            .collect::<Vec<u8>>();
-        let _ = self.write_async(&unicode_bytes[0..]).await;
-        Ok(())
+        // Streaming UTF-16LE encoding: encodes and writes directly to buffer without intermediate Vec allocation
+        let mut utf16_iter = value.encode_utf16();
+
+        loop {
+            let packet_space_left = self.max_payload_size - self.position() as usize;
+
+            // How many u16 units can we write? (each u16 = 2 bytes)
+            let u16_units_available = packet_space_left / 2;
+
+            if u16_units_available == 0 {
+                // Check if we have exactly 1 byte left - we can write the low byte of next u16
+                if packet_space_left == 1 {
+                    if let Some(u16_char) = utf16_iter.next() {
+                        // Write the low byte of the u16
+                        self.write_byte_async(u16_char as u8).await?;
+                        // After flush, write the high byte
+                        self.write_byte_async((u16_char >> 8) as u8).await?;
+                        continue;
+                    } else {
+                        // No more characters to write
+                        return Ok(());
+                    }
+                }
+                // No space left, flush and continue
+                self.populate_header_and_send(false, false).await?;
+                self.payload_cursor
+                    .set_position(Self::PACKET_HEADER_SIZE as u64);
+                continue;
+            }
+
+            // Write as many u16 units as we can fit
+            let mut units_written = 0;
+            for _ in 0..u16_units_available {
+                if let Some(u16_char) = utf16_iter.next() {
+                    // Write u16 in little-endian directly to buffer
+                    self.write_u16_unchecked(u16_char);
+                    units_written += 1;
+                } else {
+                    // Finished writing all characters
+                    if units_written > 0 {
+                        // Check for overflow after batch write
+                        self.check_overflow().await?;
+                    }
+                    return Ok(());
+                }
+            }
+
+            // We filled the available space, check overflow and loop to flush
+            if units_written > 0 {
+                self.check_overflow().await?;
+            }
+        }
     }
 
     async fn write_async(&mut self, content: &[u8]) -> TdsResult<()> {
@@ -398,6 +474,47 @@ impl TdsPacketWriter for PacketWriter<'_> {
         let _ =
             WriteBytesExt::write_i32::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
         self.payload_cursor.set_position(position);
+    }
+}
+
+// Implement the unchecked write trait separately for optimized batch operations
+impl TdsPacketWriterUnchecked for PacketWriter<'_> {
+    fn write_byte_unchecked(&mut self, value: u8) {
+        let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, value);
+    }
+
+    fn write_i32_unchecked(&mut self, value: i32) {
+        let _ =
+            WriteBytesExt::write_i32::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+    }
+
+    fn write_u16_unchecked(&mut self, value: u16) {
+        let _ =
+            WriteBytesExt::write_u16::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+    }
+
+    fn write_i64_unchecked(&mut self, value: i64) {
+        let _ =
+            WriteBytesExt::write_i64::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+    }
+
+    fn write_f64_unchecked(&mut self, value: f64) {
+        let _ =
+            WriteBytesExt::write_f64::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+    }
+
+    fn write_unchecked(&mut self, content: &[u8]) {
+        let _ = std::io::Write::write_all(&mut self.payload_cursor, content);
+    }
+
+    fn has_space(&self, bytes_count: usize) -> bool {
+        // Check if there's space left in the current packet
+        let current_pos = self.position() as usize;
+        current_pos + bytes_count <= self.max_payload_size
+    }
+
+    async fn check_overflow(&mut self) -> TdsResult<()> {
+        self.handle_overflow_if_needed().await
     }
 }
 
@@ -598,5 +715,285 @@ pub(crate) mod tests {
         let utf16_value = String::from_utf16(&utf16_units).unwrap();
 
         assert_eq!(utf16_value, str_value);
+    }
+
+    #[test]
+    fn test_has_space_available() {
+        let mut mock = MockNetworkWriter::new(32);
+        let writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        // With packet size 32 and header 8, we have 24 bytes available
+        // Should have space for 8 bytes
+        assert!(writer.has_space(8), "Should have space for 8 bytes");
+    }
+
+    #[test]
+    fn test_has_space_within_packet() {
+        let mut mock = MockNetworkWriter::new(16);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        // Write some data first
+        block_on(writer.write_i32_async(0x1234)).unwrap();
+
+        // Now we have 4 bytes remaining in the 8-byte payload.
+        // Asking for 4 bytes should return true
+        assert!(writer.has_space(4), "Should have space for 4 bytes");
+    }
+
+    #[test]
+    fn test_has_space_exceeds_packet() {
+        let mut mock = MockNetworkWriter::new(16);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        // Fill buffer partially (packet size 16, header 8 = 8 bytes available)
+        block_on(writer.write_i32_async(0x1234)).unwrap();
+
+        // 4 bytes used, 4 remaining. Asking for 8 bytes exceeds packet boundary
+        assert!(
+            !writer.has_space(8),
+            "Should not have space for 8 bytes (would exceed packet)"
+        );
+    }
+
+    #[test]
+    fn test_write_byte_unchecked() {
+        let mut mock = MockNetworkWriter::new(16);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        writer.write_byte_unchecked(0xAB);
+        writer.write_byte_unchecked(0xCD);
+
+        assert_eq!(
+            writer.payload_cursor.clone().into_inner()[8..10],
+            [0xAB, 0xCD]
+        );
+    }
+
+    #[test]
+    fn test_write_i32_unchecked() {
+        let mut mock = MockNetworkWriter::new(16);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        writer.write_i32_unchecked(0x12345678);
+
+        assert_eq!(
+            writer.payload_cursor.clone().into_inner()[8..12],
+            0x12345678i32.to_le_bytes()
+        );
+    }
+
+    #[test]
+    fn test_write_u16_unchecked() {
+        let mut mock = MockNetworkWriter::new(16);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        writer.write_u16_unchecked(0xABCD);
+
+        assert_eq!(
+            writer.payload_cursor.clone().into_inner()[8..10],
+            0xABCDu16.to_le_bytes()
+        );
+    }
+
+    #[test]
+    fn test_write_i64_unchecked() {
+        let mut mock = MockNetworkWriter::new(24);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        writer.write_i64_unchecked(0x123456789ABCDEF0);
+
+        assert_eq!(
+            writer.payload_cursor.clone().into_inner()[8..16],
+            0x123456789ABCDEF0i64.to_le_bytes()
+        );
+    }
+
+    #[test]
+    fn test_write_f64_unchecked() {
+        let mut mock = MockNetworkWriter::new(24);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        let value = 3.12312312312312;
+        writer.write_f64_unchecked(value);
+
+        assert_eq!(
+            writer.payload_cursor.clone().into_inner()[8..16],
+            value.to_le_bytes()
+        );
+    }
+
+    #[test]
+    fn test_write_unchecked() {
+        let mut mock = MockNetworkWriter::new(24);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        let data = [0x01, 0x02, 0x03, 0x04, 0x05];
+        writer.write_unchecked(&data);
+
+        assert_eq!(writer.payload_cursor.clone().into_inner()[8..13], data);
+    }
+
+    #[test]
+    fn test_unchecked_batch_writes() {
+        let mut mock = MockNetworkWriter::new(32);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        // Batch write using unchecked methods
+        writer.write_byte_unchecked(0x01);
+        writer.write_u16_unchecked(0x0203);
+        writer.write_i32_unchecked(0x04050607);
+        writer.write_i64_unchecked(0x08090A0B0C0D0E0F);
+
+        let buffer = writer.payload_cursor.clone().into_inner();
+        assert_eq!(buffer[8], 0x01);
+        assert_eq!(buffer[9..11], 0x0203u16.to_le_bytes());
+        assert_eq!(buffer[11..15], 0x04050607i32.to_le_bytes());
+        assert_eq!(buffer[15..23], 0x08090A0B0C0D0E0Fi64.to_le_bytes());
+    }
+
+    #[test]
+    fn test_check_overflow_manual() {
+        let mut mock = MockNetworkWriter::new(16);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        // Fill to capacity
+        block_on(writer.write_i32_async(0x1234)).unwrap();
+        block_on(writer.write_i32_async(0x5678)).unwrap();
+
+        // Manual overflow check
+        block_on(writer.check_overflow()).unwrap();
+
+        // Now write more data
+        writer.write_i32_unchecked(0x9ABC);
+
+        // Verify the i32 was written correctly
+        assert_eq!(
+            writer.payload_cursor.clone().into_inner()[8..12],
+            0x9ABCi32.to_le_bytes()
+        );
+
+        // Drop writer to release borrow of mock, then verify data was sent
+        drop(writer);
+        assert!(!mock.data.is_empty());
+    }
+
+    #[test]
+    fn test_cursor_position_after_overflow() {
+        let mut mock = MockNetworkWriter::new(20); // Header 8 + payload 12
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        // Write data (10 bytes) that is less than payload capacity (12 bytes)
+        block_on(writer.write_i16_async(0x1234)).unwrap(); // 2 bytes
+
+        // This i64 write (8 bytes) will cause overflow:
+        // Total would be 10 bytes, which exceeds 12 byte capacity
+        // After write, cursor at 18 (header 8 + 10 bytes)
+        // handle_overflow triggers:
+        // 1. position() = 10, which is < 12, so no overflow... wait this won't trigger!
+
+        // Let me use a case that actually overflows
+        block_on(writer.write_i32_async(0x5678)).unwrap(); // 4 more bytes, total 6
+        block_on(writer.write_i32_async(0x9ABC)).unwrap(); // 4 more bytes, total 10
+
+        // Now write i64 (8 bytes). Total would be 18 bytes.
+        // position() after i64 write = 18, max_payload = 12
+        // This triggers overflow
+        block_on(TdsPacketWriter::write_i64_async(
+            &mut writer,
+            0x123456789ABCDEF0,
+        ))
+        .unwrap();
+
+        // After overflow:
+        // 1. First packet sent (header 8 + first 12 bytes of payload)
+        // 2. Overflow = 18 - 20 = -2? No wait, cursor is at 26 (8 header + 18 payload)
+        //    packet_size = 20, so overflow_length = 26 - 20 = 6
+        // 3. Copies 6 bytes from position 20-26 to position 8-14
+        // 4. Sets cursor to 8 + 6 = 14
+        assert_eq!(
+            writer.payload_cursor.position(),
+            (PacketWriter::PACKET_HEADER_SIZE + 6) as u64
+        );
+    }
+
+    #[test]
+    fn test_streaming_utf16_write() {
+        let mut mock = MockNetworkWriter::new(64);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        let test_string = "Hello";
+        block_on(writer.write_string_unicode_async(test_string)).unwrap();
+
+        // Verify UTF-16LE encoding
+        let buffer = writer.payload_cursor.clone().into_inner();
+        let utf16_bytes = &buffer[8..18]; // "Hello" = 5 chars * 2 bytes = 10 bytes
+
+        let utf16_units: Vec<u16> = utf16_bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
+            .collect();
+
+        let decoded = String::from_utf16(&utf16_units).unwrap();
+        assert_eq!(decoded, test_string);
+    }
+
+    #[test]
+    fn test_streaming_utf16_odd_byte_boundary() {
+        // Test case: packet with odd payload size (21 bytes available)
+        // Packet size 29 = 8 (header) + 21 (payload)
+        let packet_size = 29;
+        let mut mock = MockNetworkWriter::new(packet_size);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        // String with 12 characters = 24 bytes in UTF-16LE
+        // With 21 bytes available: can fit 10 units (20 bytes) + 1 byte of next unit
+        // Optimization: use the odd byte for the low byte of the 11th u16
+        let test_string = "HelloWorld12";
+        block_on(writer.write_string_unicode_async(test_string)).unwrap();
+        block_on(writer.finalize()).unwrap();
+
+        // Reconstruct the string from all packets
+        let mut string_vec: Vec<u8> = Vec::new();
+        let data = &mock.data;
+
+        // Parse packets - each packet starts with header
+        let mut offset = 0;
+        let mut first_packet_payload_len = 0;
+        while offset < data.len() {
+            if offset + 4 > data.len() {
+                break;
+            }
+            let packet_len = u16::from_be_bytes([data[offset + 2], data[offset + 3]]) as usize;
+            if offset + packet_len > data.len() {
+                break;
+            }
+            // Extract payload (skip 8-byte header)
+            let payload_len = packet_len - 8;
+            if first_packet_payload_len == 0 {
+                first_packet_payload_len = payload_len;
+            }
+            string_vec.extend_from_slice(&data[offset + 8..offset + packet_len]);
+            offset += packet_len;
+        }
+
+        let utf16_units: Vec<u16> = string_vec
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
+            .collect();
+
+        let decoded = String::from_utf16(&utf16_units).unwrap();
+        assert_eq!(decoded, test_string);
+
+        // Verify we sent multiple packets (string doesn't fit in one packet)
+        assert!(
+            mock.data.len() > packet_size as usize,
+            "Should have sent multiple packets"
+        );
+
+        // After optimization: should use all 21 bytes (10 u16 units + 1 byte)
+        assert_eq!(
+            first_packet_payload_len, 21,
+            "Should use all 21 bytes including the odd byte"
+        );
     }
 }

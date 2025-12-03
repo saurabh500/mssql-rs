@@ -2,10 +2,12 @@
 // Licensed under the MIT License.
 
 use crate::core::TdsResult;
+use crate::datatypes::sqltypes::get_time_length_from_scale;
 use crate::error::Error;
 use crate::io::packet_reader::TdsPacketReader;
 use crate::token::tokens::SqlCollation;
 use std::fmt::format;
+use tracing::trace;
 
 // TdsDataType is a list of all the datatypes in TDS protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
@@ -432,13 +434,36 @@ where
 
     if let Ok(vdt) = var_len_type {
         let type_info = match vdt {
-            VariableLengthTypes::TimeN
-            | VariableLengthTypes::DateTime2N
-            | VariableLengthTypes::DateTimeOffsetN => {
+            VariableLengthTypes::TimeN => {
                 let scale = reader.read_byte().await?;
+                let length = get_time_length_from_scale(scale)? as usize;
+                trace!(
+                    "Parsing TimeN: scale={}, calculated length={}",
+                    scale, length
+                );
                 TypeInfo {
                     tds_type: data_type,
-                    length: 0,
+                    length,
+                    type_info_variant: TypeInfoVariant::VarLenScale(vdt, scale),
+                }
+            }
+            VariableLengthTypes::DateTime2N => {
+                let scale = reader.read_byte().await?;
+                let time_length = get_time_length_from_scale(scale)? as usize;
+                let length = time_length + 3; // time + 3 bytes for date
+                TypeInfo {
+                    tds_type: data_type,
+                    length,
+                    type_info_variant: TypeInfoVariant::VarLenScale(vdt, scale),
+                }
+            }
+            VariableLengthTypes::DateTimeOffsetN => {
+                let scale = reader.read_byte().await?;
+                let time_length = get_time_length_from_scale(scale)? as usize;
+                let length = time_length + 3 + 2; // time + 3 bytes for date + 2 bytes for offset
+                TypeInfo {
+                    tds_type: data_type,
+                    length,
                     type_info_variant: TypeInfoVariant::VarLenScale(vdt, scale),
                 }
             }
@@ -457,8 +482,8 @@ where
             }
             VariableLengthTypes::DateN => TypeInfo {
                 tds_type: data_type,
-                length: 0,
-                type_info_variant: TypeInfoVariant::VarLen(var_len_type?, 0),
+                length: 3, // DATE is always 3 bytes
+                type_info_variant: TypeInfoVariant::VarLen(var_len_type?, 3),
             },
             VariableLengthTypes::DecimalN
             | VariableLengthTypes::NumericN

@@ -68,6 +68,17 @@ where
         let mut token_data: Vec<u8> = vec![0; data_left as usize];
         reader.read_bytes(&mut token_data[0..]).await?;
 
+        // Validate that token_data has enough space for the option headers
+        // This prevents accessing out of bounds if options_count is set but data is insufficient
+        if (token_data.len() as u32) < required_size {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Invalid FedAuthInfo token: token data size ({}) is less than required size ({}) for {} options",
+                token_data.len(),
+                required_size,
+                options_count
+            )));
+        }
+
         let mut sts_url = String::new();
         let mut spn = String::new();
         for i in 0..options_count {
@@ -598,5 +609,60 @@ mod tests {
             }
             _ => panic!("Expected FedAuthInfo token"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_insufficient_token_data_for_options() {
+        // Regression test for fuzz crash: options_count > 0 but token_data is too small
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4];
+
+        // Write a small length that leaves little data after header
+        LittleEndian::write_i32(&mut buf, 13); // Just enough for header (4) + option header (9)
+        data.extend_from_slice(&buf);
+
+        // Write options_count = 1 (requires 9 bytes for header)
+        LittleEndian::write_u32(&mut buf, 1);
+        data.extend_from_slice(&buf);
+
+        // Add 9 bytes for the option header but with invalid offset/length
+        // This creates a scenario where we have the option header but not the string data
+        data.push(FedAuthInfoId::STSUrl.as_u8());
+        LittleEndian::write_u32(&mut buf, 10); // String length pointing beyond data
+        data.extend_from_slice(&buf);
+        LittleEndian::write_u32(&mut buf, 13); // Offset pointing beyond data
+        data.extend_from_slice(&buf);
+
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await;
+        assert!(result.is_err(), "Should error on insufficient token data");
+    }
+
+    #[tokio::test]
+    async fn test_parse_fedauth_zero_length_with_nonzero_options() {
+        // Edge case: data_left is 0 but options_count is non-zero
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4];
+
+        // Write length that makes data_left = 0
+        LittleEndian::write_i32(&mut buf, 4);
+        data.extend_from_slice(&buf);
+
+        // Write options_count > 0
+        LittleEndian::write_u32(&mut buf, 1);
+        data.extend_from_slice(&buf);
+
+        let mut reader = MockReader::new(data);
+        let parser = FedAuthInfoTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await;
+        assert!(
+            result.is_err(),
+            "Should error when options_count requires more data than available"
+        );
     }
 }

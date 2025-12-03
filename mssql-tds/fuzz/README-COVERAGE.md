@@ -69,7 +69,7 @@ tar -czf corpus-fuzz_tds_client.tar.gz corpus/fuzz_tds_client/
 
 - Rust nightly toolchain
 - cargo-fuzz: `cargo +nightly install cargo-fuzz`
-- LLVM tools: `rustup component add llvm-tools-preview --toolchain nightly`
+- LLVM tools: `rustup component add llvm-tools --toolchain nightly`
 
 ## Notes
 

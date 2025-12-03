@@ -10,7 +10,7 @@ jobs:
     pool:
       name: RUST-1ES-POOL-WUS3
       demands:
-        - imageOverride -equals RUST-1ES-UBU
+        - imageOverride -equals RUST-1ES-UBUSLIM
     steps:
       - task: DockerInstaller@0
         inputs:

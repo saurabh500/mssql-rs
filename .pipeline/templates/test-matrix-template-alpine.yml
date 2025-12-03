@@ -1,9 +1,9 @@
 # filepath: .pipeline/templates/test-matrix-template.yml
 parameters:
   matrix: {}
-  artifactName: 'Build_Alpine'
+  artifactName: 'Build_Linux'
   poolName: 'RUST-1ES-POOL-WUS3'
-  poolImageOverride: 'imageOverride -equals RUST-1ES-UBU'
+  poolImageOverride: 'imageOverride -equals RUST-1ES-UBUSLIM'
 
 jobs:
   - job: Test_Matrix

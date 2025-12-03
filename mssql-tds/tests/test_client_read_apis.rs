@@ -237,4 +237,121 @@ mod client_based_iterators {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_query_date_time_types_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        let context = create_context();
+
+        let provider = TdsConnectionProvider {};
+        let mut client = provider.create_client(context, None).await?;
+
+        // Query that returns various date/time types with explicit scales
+        let query = r#"
+            SELECT 
+                CAST('14:30:45.1234567' AS TIME(7)) AS time_col,
+                CAST('2024-03-15' AS DATE) AS date_col,
+                CAST('2024-03-15 14:30:45.123' AS DATETIME) AS datetime_col,
+                CAST('2024-03-15 14:30:45.1234567' AS DATETIME2(7)) AS datetime2_col,
+                CAST('2024-03-15 14:30:00' AS SMALLDATETIME) AS smalldatetime_col,
+                CAST('2024-03-15 14:30:45.1234567 +05:30' AS DATETIMEOFFSET(7)) AS datetimeoffset_col
+        "#;
+
+        client.execute(query.to_string(), None, None).await?;
+
+        // Get metadata and verify it was parsed correctly
+        let resultset = client
+            .get_current_resultset()
+            .expect("Expected a resultset");
+        let metadata = resultset.get_metadata();
+
+        // Verify we have 6 columns
+        assert_eq!(metadata.len(), 6, "Expected 6 date/time columns");
+
+        // Verify TIME(7) metadata - should have length 5 and scale 7
+        let time_col = &metadata[0];
+        assert_eq!(time_col.column_name, "time_col");
+        assert_eq!(time_col.type_info.length, 5, "TIME(7) should have length 5");
+        let time_scale = time_col.get_scale();
+        assert_eq!(time_scale, 7, "TIME(7) should have scale 7");
+
+        // Verify DATE metadata - should have length 3
+        let date_col = &metadata[1];
+        assert_eq!(date_col.column_name, "date_col");
+        assert_eq!(date_col.type_info.length, 3, "DATE should have length 3");
+
+        // Verify DATETIME metadata - should have length 8
+        let datetime_col = &metadata[2];
+        assert_eq!(datetime_col.column_name, "datetime_col");
+        assert_eq!(
+            datetime_col.type_info.length, 8,
+            "DATETIME should have length 8"
+        );
+
+        // Verify DATETIME2(7) metadata - should have length 8 (5 for time + 3 for date) and scale 7
+        let datetime2_col = &metadata[3];
+        assert_eq!(datetime2_col.column_name, "datetime2_col");
+        assert_eq!(
+            datetime2_col.type_info.length, 8,
+            "DATETIME2(7) should have length 8"
+        );
+        let datetime2_scale = datetime2_col.get_scale();
+        assert_eq!(datetime2_scale, 7, "DATETIME2(7) should have scale 7");
+
+        // Verify SMALLDATETIME metadata - should have length 4
+        let smalldatetime_col = &metadata[4];
+        assert_eq!(smalldatetime_col.column_name, "smalldatetime_col");
+        assert_eq!(
+            smalldatetime_col.type_info.length, 4,
+            "SMALLDATETIME should have length 4"
+        );
+
+        // Verify DATETIMEOFFSET(7) metadata - should have length 10 (5 for time + 3 for date + 2 for offset) and scale 7
+        let datetimeoffset_col = &metadata[5];
+        assert_eq!(datetimeoffset_col.column_name, "datetimeoffset_col");
+        assert_eq!(
+            datetimeoffset_col.type_info.length, 10,
+            "DATETIMEOFFSET(7) should have length 10"
+        );
+        let datetimeoffset_scale = datetimeoffset_col.get_scale();
+        assert_eq!(
+            datetimeoffset_scale, 7,
+            "DATETIMEOFFSET(7) should have scale 7"
+        );
+
+        // Also verify we can read the actual values
+        let row = resultset.next_row().await?.expect("Expected a row");
+
+        // Just verify we got values of the right types
+        match &row[0] {
+            mssql_tds::datatypes::column_values::ColumnValues::Time(_) => {}
+            _ => panic!("Expected Time value"),
+        }
+
+        match &row[1] {
+            mssql_tds::datatypes::column_values::ColumnValues::Date(_) => {}
+            _ => panic!("Expected Date value"),
+        }
+
+        match &row[2] {
+            mssql_tds::datatypes::column_values::ColumnValues::DateTime(_) => {}
+            _ => panic!("Expected DateTime value"),
+        }
+
+        match &row[3] {
+            mssql_tds::datatypes::column_values::ColumnValues::DateTime2(_) => {}
+            _ => panic!("Expected DateTime2 value"),
+        }
+
+        match &row[4] {
+            mssql_tds::datatypes::column_values::ColumnValues::SmallDateTime(_) => {}
+            _ => panic!("Expected SmallDateTime value"),
+        }
+
+        match &row[5] {
+            mssql_tds::datatypes::column_values::ColumnValues::DateTimeOffset(_) => {}
+            _ => panic!("Expected DateTimeOffset value"),
+        }
+
+        Ok(())
+    }
 }

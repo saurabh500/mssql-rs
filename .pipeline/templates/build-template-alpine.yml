@@ -24,7 +24,7 @@ parameters:
 - name: alpineimagetag
   displayName: Alpine Image Tag
   type: string
-  default: 'tdslibrs.azurecr.io/build/x64/alpine:3.18'
+  default: 'tdslibrs.azurecr.io/build/alpine:3.18'
 
 steps:
 - script: |
