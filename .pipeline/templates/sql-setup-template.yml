@@ -53,6 +53,9 @@ steps:
           echo "LocalDB runtime (sqluserinstance.dll) found at: $($userInstanceDll.FullName)"
           echo "LocalDB API is available - proceeding with direct sqlcmd setup"
           
+          # Set ErrorActionPreference to Continue to prevent script exit on stderr
+          $ErrorActionPreference = 'Continue'
+          
           # Configure SA login with retry loop
           $maxAttempts = 4
           $success = $false
@@ -61,8 +64,8 @@ steps:
             echo "Configuring SA login with sqlcmd (attempt $attempt/$maxAttempts)..."
             
             if ($attempt -eq 1) {
-              # First attempt - suppress errors as it typically fails during startup
-              sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" 2>&1 | Out-Null
+              # First attempt - suppress all output as it typically fails during startup
+              $null = sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" 2>&1
             } else {
               # Subsequent attempts - show errors
               sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
