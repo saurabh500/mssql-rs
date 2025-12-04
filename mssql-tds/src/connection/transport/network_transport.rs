@@ -193,11 +193,6 @@ async fn create_base_stream(
             info!("Connected to LocalDB instance: {}", instance_name);
             Ok(Box::new(pipe_client))
         }
-        #[cfg(not(windows))]
-        TransportContext::LocalDB { .. } => Err(crate::error::Error::from(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "LocalDB is only supported on Windows",
-        ))),
     }
 }
 
