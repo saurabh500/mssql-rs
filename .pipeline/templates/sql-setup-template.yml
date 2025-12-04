@@ -53,38 +53,31 @@ steps:
           echo "LocalDB runtime (sqluserinstance.dll) found at: $($userInstanceDll.FullName)"
           echo "LocalDB API is available - proceeding with direct sqlcmd setup"
           
-          # Wait for LocalDB instance to start by attempting connection with retry
-          echo "Waiting for LocalDB instance to start..."
-          $maxRetries = 10
-          $retryCount = 0
-          $connected = $false
+          # Configure SA login with retry (LocalDB instance auto-starts on first connection)
+          echo "Configuring SA login with sqlcmd..."
+          $maxRetries = 2
+          $success = $false
           
-          while ($retryCount -lt $maxRetries -and -not $connected) {
-            sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "SELECT 1" 2>&1 | Out-Null
+          for ($i = 1; $i -le $maxRetries; $i++) {
+            if ($i -gt 1) {
+              echo "Retrying SA configuration (attempt $i/$maxRetries)..."
+              Start-Sleep -Seconds 3
+            }
+            
+            sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
             
             if ($LASTEXITCODE -eq 0) {
-              $connected = $true
-              echo "LocalDB instance is ready"
-            } else {
-              $retryCount++
-              echo "Waiting for instance to start (attempt $retryCount/$maxRetries)..."
-              Start-Sleep -Seconds 2
+              $success = $true
+              break
             }
           }
           
-          if (-not $connected) {
-            echo "Failed to connect to LocalDB instance after $maxRetries attempts"
+          if (-not $success) {
+            echo "Failed to configure SA login after $maxRetries attempts"
             exit 1
           }
           
-          # Configure SA login
-          echo "Configuring SA login with sqlcmd..."
-          sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
-          
-          if ($LASTEXITCODE -ne 0) {
-            echo "Failed to configure SA login with sqlcmd (exit code: $LASTEXITCODE)"
-            exit 1
-          }
+          echo "SA login configured successfully"
           
           echo "Verifying SA login..."
           sqlcmd -S "(localdb)\MSSQLLocalDB" -U sa -P $(SQL_PASSWORD) -Q "SELECT @@VERSION"
