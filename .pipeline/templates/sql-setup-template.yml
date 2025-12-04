@@ -41,12 +41,31 @@ steps:
       script: |
         echo "Checking if SqlLocalDB is installed"
         $localDbPath = Get-Command SqlLocalDB -ErrorAction SilentlyContinue
-        if (-not $localDbPath) {
-          Write-Error "SqlLocalDB is not installed on this machine. LocalDB is required for running tests."
-          exit 1
-        }
         
-        echo "SqlLocalDB found at: $($localDbPath.Source)"
+        if (-not $localDbPath) {
+          echo "SqlLocalDB not found on PATH. Searching in Program Files..."
+          $sqlServerRoot = "C:\Program Files\Microsoft SQL Server"
+          
+          if (Test-Path $sqlServerRoot) {
+            $sqlLocalDbExe = Get-ChildItem -Path $sqlServerRoot -Recurse -Filter "SqlLocalDB.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            
+            if ($sqlLocalDbExe) {
+              $localDbPath = $sqlLocalDbExe.FullName
+              echo "SqlLocalDB found at: $localDbPath"
+              
+              # Add to PATH for this session
+              $env:PATH = "$($sqlLocalDbExe.DirectoryName);$env:PATH"
+            } else {
+              Write-Error "SqlLocalDB.exe not found in $sqlServerRoot"
+              exit 1
+            }
+          } else {
+            Write-Error "SqlLocalDB is not installed on this machine. LocalDB is required for running tests."
+            exit 1
+          }
+        } else {
+          echo "SqlLocalDB found at: $($localDbPath.Source)"
+        }
         
         # Create MSSQLLocalDB instance if it doesn't exist
         echo "Creating MSSQLLocalDB instance..."
