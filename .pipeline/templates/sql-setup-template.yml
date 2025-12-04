@@ -67,13 +67,17 @@ steps:
               # First attempt - suppress all output as it typically fails during startup
               $null = sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" 2>&1
             } else {
-              # Subsequent attempts - show errors
-              sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
+              # Subsequent attempts - capture output to check for errors
+              $output = sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" 2>&1 | Out-String
+              echo $output
               
-              if ($LASTEXITCODE -eq 0) {
+              # Check if output contains error messages
+              if ($output -notmatch "Msg \d+" -and $output -notmatch "Error:" -and $output -notmatch "failed") {
                 $success = $true
                 echo "SA login configured successfully"
                 break
+              } else {
+                echo "SA login configuration had errors, will retry..."
               }
             }
             
