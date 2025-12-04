@@ -35,6 +35,93 @@ steps:
       SQL_PASSWORD: $(SQL_PASSWORD)
 
   - task: PowerShell@2
+    displayName: 'Setup LocalDB with SA login'
+    inputs:
+      targetType: 'inline'
+      script: |
+        echo "Checking if LocalDB runtime is installed..."
+        
+        # First check if sqluserinstance.dll exists (LocalDB runtime library)
+        $sqlServerRoot = "C:\Program Files\Microsoft SQL Server"
+        $userInstanceDll = $null
+        
+        if (Test-Path $sqlServerRoot) {
+          $userInstanceDll = Get-ChildItem -Path $sqlServerRoot -Recurse -Filter "sqluserinstance.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+        
+        if ($userInstanceDll) {
+          echo "LocalDB runtime (sqluserinstance.dll) found at: $($userInstanceDll.FullName)"
+          echo "LocalDB API is available - proceeding with direct sqlcmd setup"
+          
+          # Try to connect directly using Windows Authentication and setup SA
+          echo "Configuring SA login with sqlcmd..."
+          try {
+            sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" -ErrorAction Stop
+            
+            echo "Verifying SA login..."
+            sqlcmd -S "(localdb)\MSSQLLocalDB" -U sa -P $(SQL_PASSWORD) -Q "SELECT @@VERSION"
+            
+            echo "LocalDB setup complete using direct sqlcmd connection"
+          } catch {
+            echo "Direct sqlcmd connection failed: $_"
+            echo "LocalDB instance may not be started or configured"
+            exit 1
+          }
+        } else {
+          echo "sqluserinstance.dll not found. Checking for SqlLocalDB.exe..."
+          
+          $localDbPath = Get-Command SqlLocalDB -ErrorAction SilentlyContinue
+          
+          if (-not $localDbPath) {
+            echo "SqlLocalDB not found on PATH. Searching in Program Files..."
+            
+            if (Test-Path $sqlServerRoot) {
+              $sqlLocalDbExe = Get-ChildItem -Path $sqlServerRoot -Recurse -Filter "SqlLocalDB.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+              
+              if ($sqlLocalDbExe) {
+                $localDbPath = $sqlLocalDbExe.FullName
+                echo "SqlLocalDB found at: $localDbPath"
+                
+                # Add to PATH for this session
+                $env:PATH = "$($sqlLocalDbExe.DirectoryName);$env:PATH"
+              } else {
+                Write-Error "Neither sqluserinstance.dll nor SqlLocalDB.exe found. LocalDB is required for running tests."
+                exit 1
+              }
+            } else {
+              Write-Error "SQL Server directory not found. LocalDB is required for running tests."
+              exit 1
+            }
+          } else {
+            echo "SqlLocalDB found at: $($localDbPath.Source)"
+          }
+          
+          # Create MSSQLLocalDB instance if it doesn't exist
+          echo "Creating MSSQLLocalDB instance..."
+          SqlLocalDB create "MSSQLLocalDB" 2>&1 | Out-Null
+          
+          # Start the instance
+          echo "Starting MSSQLLocalDB instance..."
+          SqlLocalDB start "MSSQLLocalDB"
+          
+          # Get instance info
+          echo "LocalDB instance info:"
+          SqlLocalDB info "MSSQLLocalDB"
+          
+          # Enable SA login and set password
+          echo "Enabling SA login with password..."
+          sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
+          
+          # Verify connection with SA
+          echo "Verifying SA login..."
+          sqlcmd -S "(localdb)\MSSQLLocalDB" -U sa -P $(SQL_PASSWORD) -Q "SELECT @@VERSION"
+          
+          echo "LocalDB setup complete"
+        }
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)
+
+  - task: PowerShell@2
     displayName: 'Enable SQL Browser service'
     inputs:
       targetType: 'filePath'
