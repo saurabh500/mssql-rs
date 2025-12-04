@@ -55,18 +55,23 @@ steps:
           
           # Try to connect directly using Windows Authentication and setup SA
           echo "Configuring SA login with sqlcmd..."
-          try {
-            sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" -ErrorAction Stop
-            
-            echo "Verifying SA login..."
-            sqlcmd -S "(localdb)\MSSQLLocalDB" -U sa -P $(SQL_PASSWORD) -Q "SELECT @@VERSION"
-            
-            echo "LocalDB setup complete using direct sqlcmd connection"
-          } catch {
-            echo "Direct sqlcmd connection failed: $_"
+          sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
+          
+          if ($LASTEXITCODE -ne 0) {
+            echo "Failed to configure SA login with sqlcmd (exit code: $LASTEXITCODE)"
             echo "LocalDB instance may not be started or configured"
             exit 1
           }
+          
+          echo "Verifying SA login..."
+          sqlcmd -S "(localdb)\MSSQLLocalDB" -U sa -P $(SQL_PASSWORD) -Q "SELECT @@VERSION"
+          
+          if ($LASTEXITCODE -ne 0) {
+            echo "Failed to verify SA login (exit code: $LASTEXITCODE)"
+            exit 1
+          }
+          
+          echo "LocalDB setup complete using direct sqlcmd connection"
         } else {
           echo "sqluserinstance.dll not found. Checking for SqlLocalDB.exe..."
           
