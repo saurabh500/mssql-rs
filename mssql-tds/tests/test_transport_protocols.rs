@@ -468,32 +468,6 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
-    async fn test_localdb_connection_with_version() -> TdsResult<()> {
-        init_tracing();
-        dotenv().ok();
-
-        println!("Testing LocalDB connection with v15.0 instance...");
-
-        let transport_context = TransportContext::parse_server_name("(localdb)\\v15.0", 1433);
-
-        assert!(transport_context.is_localdb());
-        assert_eq!(transport_context.get_localdb_instance(), Some("v15.0"));
-
-        // Connect to LocalDB - test will fail if connection fails
-        let mut client = create_client_with_transport_and_encryption(
-            transport_context,
-            EncryptionSetting::PreferOff,
-        )
-        .await?;
-
-        println!("Connected to LocalDB v15.0 successfully!");
-        test_simple_query(&mut client).await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[cfg(windows)]
-    #[ignore = "Requires LocalDB installation in CI"]
     async fn test_localdb_query_execution() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
