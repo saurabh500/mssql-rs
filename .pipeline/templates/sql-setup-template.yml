@@ -53,40 +53,36 @@ steps:
           echo "LocalDB runtime (sqluserinstance.dll) found at: $($userInstanceDll.FullName)"
           echo "LocalDB API is available - proceeding with direct sqlcmd setup"
           
-          # Find SqlLocalDB.exe in the same directory as the DLL
-          $sqlLocalDbExe = Join-Path $userInstanceDll.DirectoryName "SqlLocalDB.exe"
-          if (-not (Test-Path $sqlLocalDbExe)) {
-            echo "Warning: SqlLocalDB.exe not found at $sqlLocalDbExe, attempting without restart"
-            $sqlLocalDbExe = $null
-          } else {
-            echo "SqlLocalDB.exe found at: $sqlLocalDbExe"
+          # Configure SA login with retry loop
+          $maxAttempts = 4
+          $success = $false
+          
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            echo "Configuring SA login with sqlcmd (attempt $attempt/$maxAttempts)..."
+            
+            if ($attempt -eq 1) {
+              # First attempt - suppress errors as it typically fails during startup
+              sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" 2>&1 | Out-Null
+            } else {
+              # Subsequent attempts - show errors
+              sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
+              
+              if ($LASTEXITCODE -eq 0) {
+                $success = $true
+                echo "SA login configured successfully"
+                break
+              }
+            }
+            
+            if ($attempt -lt $maxAttempts) {
+              echo "Waiting for LocalDB to initialize..."
+              Start-Sleep -Seconds 5
+            }
           }
           
-          # Configure SA login - run twice as first attempt always fails due to LocalDB startup timing
-          echo "Configuring SA login with sqlcmd (attempt 1/2)..."
-          sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" 2>&1
-          
-          echo "Waiting for LocalDB to fully initialize..."
-          Start-Sleep -Seconds 5
-          
-          echo "Configuring SA login with sqlcmd (attempt 2/2)..."
-          sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
-          
-          if ($LASTEXITCODE -ne 0) {
-            echo "Failed to configure SA login"
+          if (-not $success) {
+            echo "Failed to configure SA login after $maxAttempts attempts"
             exit 1
-          }
-          
-          echo "SA login configured successfully"
-          
-          # Restart LocalDB instance to apply changes
-          if ($sqlLocalDbExe) {
-            echo "Restarting LocalDB instance to apply changes..."
-            & $sqlLocalDbExe stop "MSSQLLocalDB"
-            Start-Sleep -Seconds 2
-            & $sqlLocalDbExe start "MSSQLLocalDB"
-            Start-Sleep -Seconds 2
-            echo "LocalDB instance restarted"
           }
           
           echo "Verifying SA login..."
@@ -96,6 +92,8 @@ steps:
             echo "Failed to verify SA login (exit code: $LASTEXITCODE)"
             exit 1
           }
+          
+          echo "LocalDB setup complete using direct sqlcmd connection"
           
           echo "LocalDB setup complete using direct sqlcmd connection"
         } else {
