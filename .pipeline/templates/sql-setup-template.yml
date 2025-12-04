@@ -62,34 +62,22 @@ steps:
             echo "SqlLocalDB.exe found at: $sqlLocalDbExe"
           }
           
-          # Configure SA login with retry (LocalDB instance auto-starts on first connection)
-          echo "Configuring SA login with sqlcmd..."
-          $maxRetries = 3
-          $success = $false
+          # Configure SA login - run twice as first attempt always fails due to LocalDB startup timing
+          echo "Configuring SA login with sqlcmd (attempt 1/2)..."
+          sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" 2>&1
           
-          for ($i = 1; $i -le $maxRetries; $i++) {
-            if ($i -gt 1) {
-              echo "Retrying SA configuration (attempt $i/$maxRetries)..."
-              Start-Sleep -Seconds 5
-            }
-            
-            $output = sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" 2>&1 | Out-String
-            echo $output
-            
-            # Check if output contains error messages
-            if ($output -notmatch "Msg \d+, Level \d+" -and $output -notmatch "Error:") {
-              $success = $true
-              echo "SA login configuration successful"
-              break
-            } else {
-              echo "SA login configuration failed, will retry..."
-            }
-          }
+          echo "Waiting for LocalDB to fully initialize..."
+          Start-Sleep -Seconds 5
           
-          if (-not $success) {
-            echo "Failed to configure SA login after $maxRetries attempts"
+          echo "Configuring SA login with sqlcmd (attempt 2/2)..."
+          sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
+          
+          if ($LASTEXITCODE -ne 0) {
+            echo "Failed to configure SA login"
             exit 1
           }
+          
+          echo "SA login configured successfully"
           
           # Restart LocalDB instance to apply changes
           if ($sqlLocalDbExe) {
