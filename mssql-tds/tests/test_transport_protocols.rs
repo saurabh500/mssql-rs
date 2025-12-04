@@ -426,7 +426,7 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
-    #[ignore] // Requires Windows Authentication (not yet implemented)
+    #[ignore = "Requires LocalDB installation in CI"]
     async fn test_localdb_connection() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -469,7 +469,7 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
-    #[ignore] // Requires Windows Authentication (not yet implemented)
+    #[ignore = "Requires LocalDB installation in CI"]
     async fn test_localdb_connection_with_version() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -495,7 +495,7 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
-    #[ignore] // Requires Windows Authentication (not yet implemented)
+    #[ignore = "Requires LocalDB installation in CI"]
     async fn test_localdb_query_execution() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
