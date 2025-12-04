@@ -164,13 +164,16 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
-    #[ignore]
     async fn test_named_pipe_with_encryption_on() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
 
         // Test Named Pipe with Encryption=On (TDS 7.4, negotiated encryption)
-        // This should use TLS wrapping within TDS packets
+        // This now works! The key was ensuring atomic writes to the Named Pipe during TLS handshake.
+        // Named Pipes in Message mode treat each write as a complete message. Vectored I/O was
+        // writing the TDS packet header (8 bytes) and TLS payload separately, causing SQL Server
+        // to see an invalid 8-byte message and close the pipe. The fix: flatten multiple buffers
+        // into a single buffer before writing during TLS handshake.
         let pipe_name = r"\\.\pipe\sql\query".to_string();
 
         let transport_context = TransportContext::NamedPipe { pipe_name };
@@ -243,13 +246,14 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
-    #[ignore]
     async fn test_shared_memory_with_encryption_on() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
 
         // Test Shared Memory with Encryption=On (TDS 7.4, negotiated encryption)
-        // This should use TLS wrapping within TDS packets
+        // This now works! The same atomic write fix that enabled Named Pipes encryption
+        // also works for Shared Memory, since both transports have message-boundary semantics
+        // that require complete messages to be written atomically.
         let transport_context = TransportContext::SharedMemory {
             instance_name: "MSSQLSERVER".to_string(),
         };

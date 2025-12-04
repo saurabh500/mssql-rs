@@ -264,7 +264,11 @@ impl<S: Stream> AsyncRead for TlsOverTdsStream<S> {
 
                 match header_read_result {
                     Poll::Ready(Err(e)) => {
-                        error!("Read error {:?}", e.kind());
+                        error!(
+                            "Read error on wrapped_stream (named pipe): {:?}, full error: {:?}",
+                            e.kind(),
+                            e
+                        );
                         break Poll::Ready(Err(e));
                     }
                     Poll::Pending => {
@@ -394,11 +398,27 @@ impl<S: Stream> AsyncWrite for TlsOverTdsStream<S> {
                     }
                 }
 
-                let internal_result = AsyncWrite::poll_write_vectored(
-                    Pin::new(&mut self.wrapped_stream),
-                    cx,
-                    &slices,
-                );
+                // For named pipes in Message mode, vectored I/O may write header and body separately,
+                // causing the 8-byte TDS header to be treated as a complete message, which makes
+                // SQL Server close the pipe. Solution: Always flatten multiple slices into a single
+                // buffer during TLS handshake to ensure atomic writes.
+                let internal_result = if slices.len() > 1 {
+                    // Flatten all slices into a single buffer for atomic write
+                    let total_len: usize = slices.iter().map(|s| s.len()).sum();
+                    let mut flattened = Vec::with_capacity(total_len);
+                    for slice in &slices {
+                        flattened.extend_from_slice(slice);
+                    }
+                    debug!(
+                        "Flattening {} slices into single buffer of {} bytes for atomic write",
+                        slices.len(),
+                        total_len
+                    );
+                    // Write the flattened buffer as a single atomic write
+                    AsyncWrite::poll_write(Pin::new(&mut self.wrapped_stream), cx, &flattened)
+                } else {
+                    AsyncWrite::poll_write_vectored(Pin::new(&mut self.wrapped_stream), cx, &slices)
+                };
 
                 match internal_result {
                     Poll::Pending => {
@@ -411,6 +431,11 @@ impl<S: Stream> AsyncWrite for TlsOverTdsStream<S> {
                     }
                     Poll::Ready(Ok(bytes_written)) => {
                         debug!("Bytes written {:?}", bytes_written);
+                        // Log first few bytes for debugging TLS handshake
+                        if !slices.is_empty() && !slices[0].is_empty() {
+                            let preview = &slices[0][..std::cmp::min(16, slices[0].len())];
+                            debug!("Write data preview (first 16 bytes): {:02X?}", preview);
+                        }
                         if bytes_written == 0 {
                             // Notify EOF to caller.
                             error!("EOF on write.");
@@ -437,10 +462,11 @@ impl<S: Stream> AsyncWrite for TlsOverTdsStream<S> {
     }
 
     fn is_write_vectored(&self) -> bool {
-        // If our client changes to call write_vectored(), then it would make sense to have this
-        // return true and write an efficient override of poll_write_vectored.
+        // Check if the underlying stream supports vectored writes
+        // For named pipes on Windows, vectored writes may not work correctly
+        // with TLS handshake, so delegate to the wrapped stream's capability
         debug!("is_write_vectored called");
-        true
+        self.wrapped_stream.is_write_vectored()
     }
 }
 
