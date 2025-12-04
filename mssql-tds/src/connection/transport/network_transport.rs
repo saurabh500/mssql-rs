@@ -35,6 +35,8 @@ use tokio::time::timeout;
 use tracing::{debug, event, info, trace};
 
 #[cfg(windows)]
+use crate::connection::transport::localdb::resolve_localdb_instance;
+#[cfg(windows)]
 use crate::connection::transport::named_pipes::open_named_pipe_with_retry;
 
 pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
@@ -172,6 +174,30 @@ async fn create_base_stream(
                 "Shared Memory is only supported on Windows",
             )))
         }
+        #[cfg(windows)]
+        TransportContext::LocalDB { instance_name } => {
+            info!("Connecting to LocalDB instance: {}", instance_name);
+
+            // Resolve the LocalDB instance to a named pipe path
+            // This will:
+            // 1. Load the LocalDB API (sqluserinstance.dll)
+            // 2. Call LocalDBStartInstance to start the instance if needed
+            // 3. Get the named pipe path from the API
+            let pipe_name = resolve_localdb_instance(instance_name).await?;
+
+            info!("LocalDB instance resolved to pipe: {}", pipe_name);
+
+            // Connect to the named pipe
+            let pipe_client = open_named_pipe_with_retry(&pipe_name).await?;
+
+            info!("Connected to LocalDB instance: {}", instance_name);
+            Ok(Box::new(pipe_client))
+        }
+        #[cfg(not(windows))]
+        TransportContext::LocalDB { .. } => Err(crate::error::Error::from(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "LocalDB is only supported on Windows",
+        ))),
     }
 }
 

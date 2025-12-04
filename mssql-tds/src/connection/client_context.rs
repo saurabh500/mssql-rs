@@ -227,6 +227,10 @@ pub enum TransportContext {
     NamedPipe { pipe_name: String },
     /// Shared Memory connection (local only) with optional instance name
     SharedMemory { instance_name: String },
+    /// LocalDB connection (Windows only) with instance name
+    /// Format: (localdb)\InstanceName
+    #[cfg(windows)]
+    LocalDB { instance_name: String },
 }
 
 impl TransportContext {
@@ -249,6 +253,10 @@ impl TransportContext {
                 }
             }
             TransportContext::SharedMemory { .. } => "localhost".to_string(),
+            #[cfg(windows)]
+            TransportContext::LocalDB { instance_name } => {
+                format!("(localdb)\\{instance_name}")
+            }
         }
     }
 
@@ -258,6 +266,8 @@ impl TransportContext {
             TransportContext::Tcp { .. } => Protocol::Tcp,
             TransportContext::NamedPipe { .. } => Protocol::NamedPipe,
             TransportContext::SharedMemory { .. } => Protocol::SharedMemory,
+            #[cfg(windows)]
+            TransportContext::LocalDB { .. } => Protocol::NamedPipe, // LocalDB uses named pipes internally
         }
     }
 
@@ -272,6 +282,78 @@ impl TransportContext {
             }
             TransportContext::NamedPipe { pipe_name } => pipe_name.starts_with("\\\\.\\"),
             TransportContext::SharedMemory { .. } => true,
+            #[cfg(windows)]
+            TransportContext::LocalDB { .. } => true, // LocalDB is always local
+        }
+    }
+
+    /// Parse a server name string and return the appropriate TransportContext
+    ///
+    /// Supported formats:
+    /// - `(localdb)\InstanceName` or `(localdb)/InstanceName` -> LocalDB (Windows only)
+    /// - `\\server\pipe\path` -> NamedPipe
+    /// - `lpc:InstanceName` -> SharedMemory
+    /// - `hostname:port` -> Tcp
+    /// - `hostname` -> Tcp with default_port
+    pub fn parse_server_name(server_name: &str, default_port: u16) -> TransportContext {
+        let server_lower = server_name.to_lowercase();
+
+        // Check for LocalDB format: (localdb)\InstanceName or (localdb)/InstanceName
+        #[cfg(windows)]
+        if server_lower.starts_with("(localdb)\\") || server_lower.starts_with("(localdb)/") {
+            let instance_name = server_name[10..].to_string(); // Skip "(localdb)\" or "(localdb)/"
+            return TransportContext::LocalDB { instance_name };
+        }
+
+        // Check for Named Pipe format: \\server\pipe\...
+        if server_name.starts_with("\\\\") {
+            return TransportContext::NamedPipe {
+                pipe_name: server_name.to_string(),
+            };
+        }
+
+        // Check for Shared Memory format: lpc:InstanceName
+        if server_lower.starts_with("lpc:") {
+            let instance_name = server_name[4..].to_string(); // Skip "lpc:"
+            return TransportContext::SharedMemory { instance_name };
+        }
+
+        // Parse TCP format: hostname or hostname:port
+        // Be careful with IPv6 addresses (e.g., ::1) which contain colons but are not hostname:port
+
+        // Check if it looks like an IPv6 address (contains :: or multiple colons)
+        let is_ipv6 = server_name.contains("::") || server_name.matches(':').count() > 1;
+
+        if !is_ipv6 {
+            // For non-IPv6, check for port separator
+            if let Some(colon_idx) = server_name.find(':') {
+                let host = server_name[..colon_idx].to_string();
+                let port_str = &server_name[colon_idx + 1..];
+                if let Ok(port) = port_str.parse::<u16>() {
+                    return TransportContext::Tcp { host, port };
+                }
+            }
+        }
+
+        // Default: treat as hostname without port
+        TransportContext::Tcp {
+            host: server_name.to_string(),
+            port: default_port,
+        }
+    }
+
+    /// Check if this is a LocalDB connection (Windows only)
+    #[cfg(windows)]
+    pub fn is_localdb(&self) -> bool {
+        matches!(self, TransportContext::LocalDB { .. })
+    }
+
+    /// Get the LocalDB instance name if this is a LocalDB connection (Windows only)
+    #[cfg(windows)]
+    pub fn get_localdb_instance(&self) -> Option<&str> {
+        match self {
+            TransportContext::LocalDB { instance_name } => Some(instance_name.as_str()),
+            _ => None,
         }
     }
 }
@@ -456,5 +538,173 @@ mod tests {
             instance_name: String::new(),
         };
         assert!(matches!(sm_context.get_protocol(), Protocol::SharedMemory));
+    }
+
+    // LocalDB parsing tests
+    #[test]
+    #[cfg(windows)]
+    fn test_parse_server_name_localdb() {
+        // Test basic LocalDB format with backslash
+        let ctx = TransportContext::parse_server_name("(localdb)\\MSSQLLocalDB", 1433);
+        assert!(ctx.is_localdb());
+        assert_eq!(ctx.get_localdb_instance(), Some("MSSQLLocalDB"));
+        assert_eq!(ctx.get_server_name(), "(localdb)\\MSSQLLocalDB");
+        assert!(ctx.is_local());
+        assert_eq!(ctx.get_protocol(), Protocol::NamedPipe);
+
+        // Test LocalDB with forward slash
+        let ctx2 = TransportContext::parse_server_name("(localdb)/v11.0", 1433);
+        assert!(ctx2.is_localdb());
+        assert_eq!(ctx2.get_localdb_instance(), Some("v11.0"));
+
+        // Test case insensitivity
+        let ctx3 = TransportContext::parse_server_name("(LocalDB)\\MyInstance", 1433);
+        assert!(ctx3.is_localdb());
+        assert_eq!(ctx3.get_localdb_instance(), Some("MyInstance"));
+
+        // Test with uppercase
+        let ctx4 = TransportContext::parse_server_name("(LOCALDB)\\TEST", 1433);
+        assert!(ctx4.is_localdb());
+        assert_eq!(ctx4.get_localdb_instance(), Some("TEST"));
+    }
+
+    #[test]
+    fn test_parse_server_name_tcp() {
+        // Simple hostname
+        let ctx = TransportContext::parse_server_name("myserver", 1433);
+        assert_eq!(ctx.get_server_name(), "myserver");
+        assert_eq!(ctx.get_protocol(), Protocol::Tcp);
+        if let TransportContext::Tcp { host, port } = ctx {
+            assert_eq!(host, "myserver");
+            assert_eq!(port, 1433);
+        } else {
+            panic!("Expected Tcp variant");
+        }
+
+        // Hostname with port
+        let ctx2 = TransportContext::parse_server_name("myserver:1434", 1433);
+        if let TransportContext::Tcp { host, port } = ctx2 {
+            assert_eq!(host, "myserver");
+            assert_eq!(port, 1434);
+        } else {
+            panic!("Expected Tcp variant");
+        }
+
+        // Hostname with domain
+        let ctx3 = TransportContext::parse_server_name("sql.contoso.com", 1433);
+        if let TransportContext::Tcp { host, port } = ctx3 {
+            assert_eq!(host, "sql.contoso.com");
+            assert_eq!(port, 1433);
+        } else {
+            panic!("Expected Tcp variant");
+        }
+
+        // IP address
+        let ctx4 = TransportContext::parse_server_name("192.168.1.100:5000", 1433);
+        if let TransportContext::Tcp { host, port } = ctx4 {
+            assert_eq!(host, "192.168.1.100");
+            assert_eq!(port, 5000);
+        } else {
+            panic!("Expected Tcp variant");
+        }
+
+        // localhost
+        let ctx5 = TransportContext::parse_server_name("localhost", 1433);
+        assert!(ctx5.is_local());
+    }
+
+    #[test]
+    fn test_parse_server_name_named_pipe() {
+        // Local named pipe
+        let ctx = TransportContext::parse_server_name("\\\\.\\pipe\\sql\\query", 1433);
+        assert_eq!(ctx.get_protocol(), Protocol::NamedPipe);
+        assert_eq!(ctx.get_server_name(), "localhost");
+        assert!(ctx.is_local());
+        if let TransportContext::NamedPipe { pipe_name } = ctx {
+            assert_eq!(pipe_name, "\\\\.\\pipe\\sql\\query");
+        } else {
+            panic!("Expected NamedPipe variant");
+        }
+
+        // Remote named pipe
+        let ctx2 = TransportContext::parse_server_name("\\\\server\\pipe\\sql\\query", 1433);
+        assert_eq!(ctx2.get_server_name(), "server");
+        assert!(!ctx2.is_local());
+
+        // Named pipe with instance
+        let ctx3 = TransportContext::parse_server_name(
+            "\\\\server\\pipe\\MSSQL$SQLEXPRESS\\sql\\query",
+            1433,
+        );
+        assert_eq!(ctx3.get_server_name(), "server");
+        if let TransportContext::NamedPipe { pipe_name } = ctx3 {
+            assert_eq!(pipe_name, "\\\\server\\pipe\\MSSQL$SQLEXPRESS\\sql\\query");
+        } else {
+            panic!("Expected NamedPipe variant");
+        }
+    }
+
+    #[test]
+    fn test_parse_server_name_shared_memory() {
+        // Shared memory default instance
+        let ctx = TransportContext::parse_server_name("lpc:MSSQLSERVER", 1433);
+        assert_eq!(ctx.get_protocol(), Protocol::SharedMemory);
+        assert!(ctx.is_local());
+        if let TransportContext::SharedMemory { instance_name } = ctx {
+            assert_eq!(instance_name, "MSSQLSERVER");
+        } else {
+            panic!("Expected SharedMemory variant");
+        }
+
+        // Shared memory named instance
+        let ctx2 = TransportContext::parse_server_name("lpc:SQLEXPRESS", 1433);
+        if let TransportContext::SharedMemory { instance_name } = ctx2 {
+            assert_eq!(instance_name, "SQLEXPRESS");
+        } else {
+            panic!("Expected SharedMemory variant");
+        }
+
+        // Case insensitive
+        let ctx3 = TransportContext::parse_server_name("LPC:MyInstance", 1433);
+        assert_eq!(ctx3.get_protocol(), Protocol::SharedMemory);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_localdb_helper_methods() {
+        let localdb_ctx = TransportContext::LocalDB {
+            instance_name: "TestInstance".to_string(),
+        };
+        assert!(localdb_ctx.is_localdb());
+        assert_eq!(localdb_ctx.get_localdb_instance(), Some("TestInstance"));
+        assert!(localdb_ctx.is_local());
+        assert_eq!(localdb_ctx.get_protocol(), Protocol::NamedPipe);
+
+        let tcp_ctx = TransportContext::Tcp {
+            host: "localhost".to_string(),
+            port: 1433,
+        };
+        assert!(!tcp_ctx.is_localdb());
+        assert_eq!(tcp_ctx.get_localdb_instance(), None);
+    }
+
+    #[test]
+    fn test_parse_special_cases() {
+        // Dot notation (local)
+        let ctx = TransportContext::parse_server_name(".", 1433);
+        if let TransportContext::Tcp { host, .. } = &ctx {
+            assert_eq!(host, ".");
+            assert!(ctx.is_local());
+        } else {
+            panic!("Expected Tcp variant");
+        }
+
+        // (local) notation
+        let ctx2 = TransportContext::parse_server_name("(local)", 1433);
+        assert!(ctx2.is_local());
+
+        // IPv6 loopback
+        let ctx3 = TransportContext::parse_server_name("::1", 1433);
+        assert!(ctx3.is_local());
     }
 }
