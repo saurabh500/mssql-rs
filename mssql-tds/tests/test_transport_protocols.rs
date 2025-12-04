@@ -426,7 +426,6 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
-    #[ignore = "Requires LocalDB installation in CI"]
     async fn test_localdb_connection() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -469,7 +468,6 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
-    #[ignore = "Requires LocalDB installation in CI"]
     async fn test_localdb_connection_with_version() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
