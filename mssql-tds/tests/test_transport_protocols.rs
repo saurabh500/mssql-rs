@@ -423,4 +423,155 @@ mod transport_protocols {
 
         Ok(())
     }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_localdb_connection() -> TdsResult<()> {
+        init_tracing();
+        dotenv().ok();
+
+        println!("Testing LocalDB connection with MSSQLLocalDB instance...");
+
+        // Test parsing LocalDB connection string
+        let transport_context =
+            TransportContext::parse_server_name("(localdb)\\MSSQLLocalDB", 1433);
+
+        // Verify it was parsed as LocalDB
+        assert!(
+            transport_context.is_localdb(),
+            "Connection string should be detected as LocalDB"
+        );
+        assert_eq!(
+            transport_context.get_localdb_instance(),
+            Some("MSSQLLocalDB"),
+            "Instance name should be MSSQLLocalDB"
+        );
+
+        println!("LocalDB connection string parsed successfully");
+        println!("Transport context: {transport_context:?}");
+
+        // Connect to LocalDB - test will fail if connection fails
+        let mut client = create_client_with_transport_and_encryption(
+            transport_context,
+            EncryptionSetting::PreferOff,
+        )
+        .await?;
+
+        println!("Connected to LocalDB successfully!");
+
+        // Execute a simple query
+        test_simple_query(&mut client).await?;
+
+        println!("Query executed successfully on LocalDB");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_localdb_query_execution() -> TdsResult<()> {
+        init_tracing();
+        dotenv().ok();
+
+        println!("Testing LocalDB query execution...");
+
+        let transport_context =
+            TransportContext::parse_server_name("(localdb)\\MSSQLLocalDB", 1433);
+
+        // Connect to LocalDB - test will fail if connection fails
+        let mut client = create_client_with_transport_and_encryption(
+            transport_context,
+            EncryptionSetting::PreferOff,
+        )
+        .await?;
+
+        // Execute multiple queries to test stability
+        let queries = vec![
+            "SELECT @@VERSION",
+            "SELECT DB_NAME()",
+            "SELECT GETDATE()",
+            "SELECT 1 AS test_value",
+        ];
+
+        for query in queries {
+            println!("Executing: {query}");
+            client.execute(query.to_string(), None, None).await?;
+
+            while let Some(resultset) = client.get_current_resultset() {
+                while let Some(_row) = resultset.next_row().await? {}
+            }
+
+            if client.move_to_next().await? {
+                // Process any additional result sets
+            }
+
+            client.close_query().await?;
+            println!("  ✓ Success");
+        }
+
+        println!("All queries executed successfully on LocalDB");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_localdb_parsing_formats() -> TdsResult<()> {
+        init_tracing();
+
+        println!("Testing LocalDB connection string parsing variations...");
+
+        // Test backslash separator
+        let ctx1 = TransportContext::parse_server_name("(localdb)\\MSSQLLocalDB", 1433);
+        assert!(ctx1.is_localdb());
+        assert_eq!(ctx1.get_localdb_instance(), Some("MSSQLLocalDB"));
+
+        // Test forward slash separator
+        let ctx2 = TransportContext::parse_server_name("(localdb)/MSSQLLocalDB", 1433);
+        assert!(ctx2.is_localdb());
+        assert_eq!(ctx2.get_localdb_instance(), Some("MSSQLLocalDB"));
+
+        // Test case insensitivity
+        let ctx3 = TransportContext::parse_server_name("(LocalDB)\\MSSQLLocalDB", 1433);
+        assert!(ctx3.is_localdb());
+
+        let ctx4 = TransportContext::parse_server_name("(LOCALDB)\\test", 1433);
+        assert!(ctx4.is_localdb());
+        assert_eq!(ctx4.get_localdb_instance(), Some("test"));
+
+        println!("All LocalDB parsing formats validated successfully");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_localdb_connection_properties() -> TdsResult<()> {
+        init_tracing();
+
+        println!("Testing LocalDB connection properties...");
+
+        let transport_context =
+            TransportContext::parse_server_name("(localdb)\\MSSQLLocalDB", 1433);
+
+        // Verify properties
+        assert!(
+            transport_context.is_localdb(),
+            "Should be detected as LocalDB"
+        );
+        assert!(
+            transport_context.is_local(),
+            "LocalDB should be considered local"
+        );
+        assert_eq!(
+            transport_context.get_protocol(),
+            mssql_tds::connection::client_context::Protocol::NamedPipe,
+            "LocalDB should use NamedPipe protocol"
+        );
+        assert_eq!(
+            transport_context.get_server_name(),
+            "(localdb)\\MSSQLLocalDB",
+            "Server name should be formatted correctly"
+        );
+
+        println!("All LocalDB connection properties validated");
+        Ok(())
+    }
 }

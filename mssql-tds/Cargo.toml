@@ -26,6 +26,7 @@ hostname = "0.4.1"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["namedpipeapi", "winerror"] }
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Registry"] }
 
 [dependencies.uuid]
 version = "1.17.0"
