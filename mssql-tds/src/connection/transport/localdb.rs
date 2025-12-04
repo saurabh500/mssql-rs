@@ -500,7 +500,7 @@ mod tests {
                     assert!(pipe_name.starts_with(r"\\.\pipe\"));
                 }
                 Err(e) => {
-                    println!("Failed to resolve (may not be installed): {e}");
+                    panic!("Failed to resolve MSSQLLocalDB (expected to be installed): {e}");
                 }
             }
         }
