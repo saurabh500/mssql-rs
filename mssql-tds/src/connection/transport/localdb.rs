@@ -454,7 +454,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore] // This test requires LocalDB to be installed
     fn test_load_localdb_api() {
         let result = LocalDBApi::load();
         // This will fail if LocalDB is not installed, which is expected in CI
@@ -492,14 +491,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Requires LocalDB installation
     fn test_resolve_mssqllocaldb() {
         // This test will only work on machines with LocalDB installed
         if let Ok(api) = LocalDBApi::load() {
             match api.resolve_instance("MSSQLLocalDB") {
                 Ok(pipe_name) => {
                     println!("Resolved pipe: {pipe_name}");
-                    assert!(pipe_name.starts_with(r"\\\\.\\pipe\\"));
+                    assert!(pipe_name.starts_with(r"\\.\pipe\"));
                 }
                 Err(e) => {
                     println!("Failed to resolve (may not be installed): {e}");
