@@ -35,8 +35,8 @@ echo "Upgrading pip..."
 pip install --upgrade pip -q
 
 # Install dependencies
-echo "Installing dependencies (maturin, pytest, pytest-asyncio)..."
-pip install maturin pytest pytest-asyncio -q
+echo "Installing dependencies (maturin, pytest, pytest-asyncio, python-dotenv)..."
+pip install maturin pytest pytest-asyncio python-dotenv -q
 
 # Navigate to mssql-py-core directory
 cd "$PY_CORE_DIR"
@@ -47,11 +47,12 @@ maturin develop
 
 # Run tests
 echo ""
-echo "Running pytest..."
+echo "Running pytest (excluding integration tests by default)..."
 echo "==================================="
-pytest tests/ -v
+pytest tests/ -v -m "not integration"
 
 echo ""
 echo "==================================="
 echo "Tests completed successfully!"
+echo "To run integration tests: pytest tests/ -v -m integration"
 echo "==================================="
