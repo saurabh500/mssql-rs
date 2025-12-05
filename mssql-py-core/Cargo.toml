@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "mssql_core_tds"
+name = "mssql_py_core"
 crate-type = ["cdylib"]
 
 [dependencies]
