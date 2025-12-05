@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 // Type conversion utilities between Python and SQL Server types
 
 use pyo3::prelude::*;

@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use mssql_tds::connection::tds_client::TdsClient;
 use pyo3::prelude::*;
 use std::sync::Arc;

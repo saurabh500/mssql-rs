@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 // Utility functions for the PyO3 bindings
 
 use pyo3::prelude::*;

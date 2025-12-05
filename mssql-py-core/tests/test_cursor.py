@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 """Tests for PyCoreCursor functionality."""
 import pytest
 import mssql_py_core
