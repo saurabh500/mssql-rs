@@ -272,6 +272,14 @@ steps:
   env:
     SQL_PASSWORD: $(SQL_PASSWORD)
 
+- task: PublishTestResults@2
+  condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
+  displayName: Publish Python test results
+  inputs:
+    testResultsFormat: JUnit
+    testResultsFiles: $(Build.SourcesDirectory)/mssql-py-core/pytest-results.xml
+    testRunTitle: $(System.PhaseName)-Python
+
 - script: |
     docker stop sqlserver || true
     docker rm sqlserver || true

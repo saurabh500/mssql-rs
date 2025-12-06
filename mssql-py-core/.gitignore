@@ -12,6 +12,7 @@ env/
 
 # Pytest cache
 .pytest_cache/
+pytest-results.xml
 
 # Build artifacts
 *.so

@@ -47,12 +47,11 @@ maturin develop
 
 # Run tests
 echo ""
-echo "Running pytest (excluding integration tests by default)..."
+echo "Running pytest (unit and integration tests)..."
 echo "==================================="
-pytest tests/ -v -m "not integration"
+pytest tests/ -v --junitxml=pytest-results.xml
 
 echo ""
 echo "==================================="
 echo "Tests completed successfully!"
-echo "To run integration tests: pytest tests/ -v -m integration"
 echo "==================================="
