@@ -120,6 +120,15 @@ steps:
   workingDirectory: "$(Build.SourcesDirectory)"
   displayName: Save code coverage in lcov format (mssql-tds package only)
 
+- ${{ if eq(parameters.osType, 'Linux') }}:
+  - bash: |
+      echo "Running Python tests for mssql-py-core..."
+      ./dev/test-python.sh
+    displayName: Run Python Tests (mssql-py-core)
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)
+
 - ${{ if eq(parameters.osType, 'Windows') }}:
   - task: PublishCodeCoverageResults@2
     condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
