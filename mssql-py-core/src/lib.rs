@@ -9,7 +9,7 @@ mod types;
 mod utils;
 
 /// Python module for Core TDS connectivity
-#[pymodule(name="mssql_py_core")]
+#[pymodule(name = "mssql_py_core")]
 fn mssql_py_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<connection::PyCoreConnection>()?;
     m.add_class::<cursor::PyCoreCursor>()?;
