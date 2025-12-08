@@ -9,3 +9,4 @@ pub mod sql_json;
 pub mod sql_string;
 pub mod sqldatatypes;
 pub mod sqltypes;
+pub mod tds_value_serializer;
