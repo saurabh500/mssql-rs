@@ -694,7 +694,7 @@ pub(crate) mod tests {
         let mut string_vec: Vec<u8> = Vec::new();
         let data = mock.data;
         let mut chunks = data.len() / packet_size;
-        if data.len() % packet_size != 0 {
+        if !data.len().is_multiple_of(packet_size) {
             chunks += 1;
         }
         for i in 0..chunks {
