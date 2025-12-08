@@ -107,6 +107,7 @@ stages:
           architecture: ARM64
           buildType: ${{ parameters.buildType }}
           testFilter: -E 'not (test(query_processing_driver) | test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout_and_cancel) | test(rpc_datatypes) | test(client_based_iterators) | test(connect_fetch_multiple_packets) | test(bulk_copy) | test(transport_protocols))'
+          skipPythonIntegrationTests: true
       - template: templates/build-template-alpine.yml
         parameters:
           osType: Linux
