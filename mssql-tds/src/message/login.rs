@@ -1,7 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::connection::client_context::{ClientContext, TdsAuthenticationMethod, TransportContext};
+use crate::connection::client_context::{
+    ClientContext, TdsAuthenticationMethod, TransportContext, VectorVersion,
+};
 use crate::message::features::jsonfeature::JsonFeature;
 use crate::message::login_options::{
     OptionFlags1, OptionFlags2, OptionFlags3, OptionsValue, TdsVersion, TypeFlags,
@@ -20,6 +22,7 @@ use std::fmt::Debug;
 
 use super::features::fedauth::FedAuthFeature;
 use super::features::utf8::Utf8Feature;
+use super::features::vectorfeature::VectorFeature;
 use crate::core::TdsResult;
 use crate::io::token_stream::{ParserContext, TdsTokenStreamReader};
 use tracing::{Level, debug, event, info, trace};
@@ -54,6 +57,7 @@ pub(crate) enum FeatureExtension {
     Utf8Support,
     SqlDnsCaching,
     Json,
+    Vector,
     Terminator,
     Unknown(u8),
 }
@@ -70,6 +74,7 @@ impl FeatureExtension {
             FeatureExtension::Utf8Support => 0x0A,
             FeatureExtension::SqlDnsCaching => 0x0B,
             FeatureExtension::Json => 0x0D,
+            FeatureExtension::Vector => 0x0E,
             FeatureExtension::Terminator => 0xFF,
             FeatureExtension::Unknown(value) => value,
         }
@@ -88,6 +93,7 @@ impl From<u8> for FeatureExtension {
             0x0A => FeatureExtension::Utf8Support,
             0x0B => FeatureExtension::SqlDnsCaching,
             0x0D => FeatureExtension::Json,
+            0x0E => FeatureExtension::Vector,
             0xFF => FeatureExtension::Terminator,
             _ => FeatureExtension::Unknown(value),
         }
@@ -100,7 +106,7 @@ pub(crate) trait Feature: Send + Sync + Debug {
     fn is_requested(&self) -> bool;
     fn data_length(&self) -> i32;
     async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()>;
-    fn deserialize(&self, data: &[u8]) -> TdsResult<()>;
+    fn deserialize(&mut self, data: &[u8]) -> TdsResult<()>;
     fn is_acknowledged(&self) -> bool;
     fn set_acknowledged(&mut self, _acknowledged: bool);
     fn clone_box(&self) -> Box<dyn Feature>;
@@ -131,6 +137,7 @@ impl FeaturesRequest {
         authentication_options: TdsAuthenticationMethod,
         access_token: Option<String>,
         prelogin_fedauth_response: bool,
+        vector_version: VectorVersion,
     ) -> Self {
         let mut features: HashMap<FeatureExtension, Box<dyn Feature>> = HashMap::new();
         features.insert(
@@ -139,6 +146,10 @@ impl FeaturesRequest {
         );
 
         features.insert(FeatureExtension::Json, Box::new(JsonFeature::default()));
+
+        if let Some(vector_feature) = Option::<VectorFeature>::from(vector_version) {
+            features.insert(FeatureExtension::Vector, Box::new(vector_feature));
+        }
 
         if authentication_options != TdsAuthenticationMethod::SSPI
             && authentication_options != TdsAuthenticationMethod::Password
@@ -230,6 +241,7 @@ impl From<(&ClientContext, bool)> for FeaturesRequest {
             context.tds_authentication_method.clone(),
             context.access_token.clone(),
             context_and_prelogin_fedauth_flag.1,
+            context.vector_version,
         )
     }
 }

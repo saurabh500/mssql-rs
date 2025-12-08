@@ -36,7 +36,7 @@ impl Feature for Utf8Feature {
         Ok(())
     }
 
-    fn deserialize(&self, data: &[u8]) -> TdsResult<()> {
+    fn deserialize(&mut self, data: &[u8]) -> TdsResult<()> {
         if data.len() != 1 {
             return Err(crate::error::Error::ProtocolError(format!(
                 "Invalid data length {} for UTF-8 feature, expected 1 byte",

@@ -41,7 +41,7 @@ impl Feature for JsonFeature {
         Ok(())
     }
 
-    fn deserialize(&self, data: &[u8]) -> TdsResult<()> {
+    fn deserialize(&mut self, data: &[u8]) -> TdsResult<()> {
         if data.len() != 1 {
             return Err(crate::error::Error::ProtocolError(format!(
                 "Invalid data length {} for JSON feature, expected 1 byte",

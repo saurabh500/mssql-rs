@@ -14,6 +14,15 @@ pub enum IPAddressPreference {
     UsePlatformDefault = 2,
 }
 
+/// Specifies the Vector feature version support level.
+#[derive(PartialEq, Copy, Clone, Debug)]
+pub enum VectorVersion {
+    /// Vector support is disabled
+    Off,
+    /// Support Vector feature version 1 (float32 dimension type)
+    V1,
+}
+
 /// Provides a trait for creating Entra ID tokens.
 #[async_trait]
 pub trait EntraIdTokenFactory: Send + Sync {
@@ -83,6 +92,7 @@ pub struct ClientContext {
     pub workstation_id: String,
     pub access_token: Option<String>,
     pub transport_context: TransportContext,
+    pub vector_version: VectorVersion,
 }
 
 impl ClientContext {
@@ -118,6 +128,7 @@ impl ClientContext {
                 host: "localhost".to_string(),
                 port: 1433,
             },
+            vector_version: VectorVersion::V1,
         }
     }
 
@@ -203,6 +214,7 @@ impl Clone for ClientContext {
             workstation_id: self.workstation_id.clone(),
             access_token: self.access_token.clone(),
             transport_context: self.transport_context.clone(),
+            vector_version: self.vector_version,
         }
     }
 }
