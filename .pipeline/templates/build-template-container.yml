@@ -31,10 +31,10 @@ parameters:
   type: boolean
   default: false
 
-- name: skipPythonIntegrationTests
-  displayName: Skip Python Integration Tests
-  type: boolean
-  default: false
+- name: additionalPythonTestArgs
+  displayName: Additional Python Test Arguments
+  type: string
+  default: ''
 
 steps:
 - task: DockerInstaller@0
@@ -271,7 +271,7 @@ steps:
       -e TRUST_SERVER_CERTIFICATE="true" \
       -w /workspace \
       $BUILD_IMAGE \
-      /workspace/.pipeline/scripts/containerized-python-test.sh ${{ if eq(parameters.skipPythonIntegrationTests, true) }}--skip-integration{{ else }}{{ end }}
+      /workspace/.pipeline/scripts/containerized-python-test.sh ${{ parameters.additionalPythonTestArgs }}
   displayName: Test Python bindings (mssql-py-core)
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
   env:
