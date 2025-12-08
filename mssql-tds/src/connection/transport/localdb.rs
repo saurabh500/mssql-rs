@@ -148,16 +148,14 @@ impl LocalDBApi {
                     .into_owned();
 
                 // Parse version (format: "15.0" or "16.0")
-                if let Some((major_str, minor_str)) = version_str.split_once('.') {
-                    if let (Ok(major), Ok(minor)) =
+                if let Some((major_str, minor_str)) = version_str.split_once('.')
+                    && let (Ok(major), Ok(minor)) =
                         (major_str.parse::<u16>(), minor_str.parse::<u16>())
-                    {
-                        if major > latest_major || (major == latest_major && minor > latest_minor) {
-                            latest_major = major;
-                            latest_minor = minor;
-                            latest_version = Some(version_str);
-                        }
-                    }
+                    && (major > latest_major || (major == latest_major && minor > latest_minor))
+                {
+                    latest_major = major;
+                    latest_minor = minor;
+                    latest_version = Some(version_str);
                 }
 
                 index += 1;
