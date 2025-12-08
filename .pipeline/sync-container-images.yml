@@ -8,6 +8,11 @@
 trigger: none
 
 parameters:
+- name: syncExternalImages
+  displayName: 'Sync images from external repositories to ACR'
+  type: boolean
+  default: false
+
 - name: importBaseImages
   displayName: 'Import base images from public registries to ACR'
   type: boolean
@@ -57,7 +62,7 @@ stages:
 
     - task: AzureCLI@2
       displayName: 'Import vanilla PyPA images to ACR'
-      condition: eq('${{ parameters.importBaseImages }}', 'true')
+      condition: and(eq('${{ parameters.syncExternalImages }}', 'true'), eq('${{ parameters.importBaseImages }}', 'true'))
       inputs:
         azureSubscription: 'Magnitude Test'
         scriptType: 'bash'
@@ -67,7 +72,7 @@ stages:
 
     - task: AzureCLI@2
       displayName: 'Import Ubuntu base images to ACR'
-      condition: eq('${{ parameters.importBaseImages }}', 'true')
+      condition: and(eq('${{ parameters.syncExternalImages }}', 'true'), eq('${{ parameters.importBaseImages }}', 'true'))
       inputs:
         azureSubscription: 'Magnitude Test'
         scriptType: 'bash'
@@ -77,7 +82,7 @@ stages:
 
     - task: AzureCLI@2
       displayName: 'Import Alpine base images to ACR'
-      condition: eq('${{ parameters.importBaseImages }}', 'true')
+      condition: and(eq('${{ parameters.syncExternalImages }}', 'true'), eq('${{ parameters.importBaseImages }}', 'true'))
       inputs:
         azureSubscription: 'Magnitude Test'
         scriptType: 'bash'
@@ -87,7 +92,7 @@ stages:
 
     - task: AzureCLI@2
       displayName: 'Import additional distro images to ACR'
-      condition: eq('${{ parameters.importBaseImages }}', 'true')
+      condition: and(eq('${{ parameters.syncExternalImages }}', 'true'), eq('${{ parameters.importBaseImages }}', 'true'))
       inputs:
         azureSubscription: 'Magnitude Test'
         scriptType: 'bash'
