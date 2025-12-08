@@ -259,13 +259,6 @@ steps:
 - script: |
     BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
-    # Set test arguments
-    TEST_ARGS=""
-    ${{ if eq(parameters.skipPythonIntegrationTests, true) }}:
-      TEST_ARGS="--skip-integration"
-    ${{ else }}:
-      TEST_ARGS=""
-    
     docker run --rm \
       --network testnet \
       -v $PWD:/workspace \
@@ -278,7 +271,7 @@ steps:
       -e TRUST_SERVER_CERTIFICATE="true" \
       -w /workspace \
       $BUILD_IMAGE \
-      /workspace/.pipeline/scripts/containerized-python-test.sh $TEST_ARGS
+      /workspace/.pipeline/scripts/containerized-python-test.sh ${{ if eq(parameters.skipPythonIntegrationTests, true) }}--skip-integration{{ else }}{{ end }}
   displayName: Test Python bindings (mssql-py-core)
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
   env:
