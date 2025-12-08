@@ -594,12 +594,12 @@ impl NetworkTransport {
         // This method is intended to be called from receive_token(). We enforce only one level
         // of recursion by preventing timeout and cancellation on the internal receive_token() call.
         while let Ok(token) = self.receive_token_internal(&dummy_context).await {
-            if let Tokens::Done(done_token) = token {
-                if done_token.status.contains(DoneStatus::ATTN) {
-                    break;
-                }
-                // Discard any other token.
+            if let Tokens::Done(done_token) = token
+                && done_token.status.contains(DoneStatus::ATTN)
+            {
+                break;
             }
+            // Discard any other token.
         }
         Ok(())
     }

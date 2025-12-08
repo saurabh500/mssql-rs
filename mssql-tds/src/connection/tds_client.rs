@@ -828,7 +828,7 @@ SET FMTONLY OFF;"#
             loop_count += 1;
 
             // Warn when approaching iteration limit to help diagnose issues
-            if loop_count % 1000 == 0 {
+            if loop_count.is_multiple_of(1000) {
                 debug!(
                     loop_count,
                     "High iteration count in move_to_column_metadata"

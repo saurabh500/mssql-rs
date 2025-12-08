@@ -162,13 +162,12 @@ pub async fn get_scalar_value(client: &mut TdsClient) -> TdsResult<Option<Column
     let mut result = None;
 
     loop {
-        if let Some(resultset) = client.get_current_resultset() {
-            if let Some(row) = resultset.next_row().await? {
-                if !row.is_empty() {
-                    result = Some(row[0].clone());
-                    break;
-                }
-            }
+        if let Some(resultset) = client.get_current_resultset()
+            && let Some(row) = resultset.next_row().await?
+            && !row.is_empty()
+        {
+            result = Some(row[0].clone());
+            break;
         }
 
         if !client.move_to_next().await? {
