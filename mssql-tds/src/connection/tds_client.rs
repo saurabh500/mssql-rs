@@ -3,10 +3,16 @@
 
 use std::collections::HashMap;
 
+use crate::connection::bulk_copy::{BulkCopyOptions, BulkLoadRow, ResolvedColumnMapping};
+use crate::datatypes::bulk_copy_metadata::BulkCopyColumnMetadata;
 use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqltypes::SqlType;
 use crate::error::Error::UsageError;
-use crate::message::bulk_load::BulkLoadMessage;
+use crate::io::packet_writer::PacketWriter;
+use crate::message::bulk_load::{
+    BulkLoadMessage, StreamingBulkLoadWriter, build_insert_bulk_command,
+};
+use crate::message::messages::PacketType;
 use crate::message::parameters::rpc_parameters::{
     RpcParameter, StatusFlags, build_parameter_list_string,
 };
@@ -360,6 +366,100 @@ SET FMTONLY OFF;"#
         message.serialize(&mut packet_writer).await?;
 
         // STEP 3: Read the final response with row count
+        let rows_affected = self.consume_done_token().await?;
+
+        Ok(rows_affected)
+    }
+
+    /// Executes a bulk load operation using zero-copy streaming.
+    ///
+    /// This method provides superior performance by eliminating per-row Vec allocations.
+    /// Rows are serialized directly to the packet writer via the `BulkLoadRow` trait.
+    ///
+    /// # Performance Benefits
+    ///
+    /// - **Zero allocations per row**: No `dest_buffer.clone()` needed
+    /// - **Direct serialization**: Columns written directly to TDS packet
+    /// - **Column context reuse**: Created once, reused for all rows
+    ///
+    /// # Type Parameters
+    ///
+    /// * `R` - Row type implementing `BulkLoadRow` trait
+    ///
+    /// # Arguments
+    ///
+    /// * `table_name` - Target table name
+    /// * `column_metadata` - Column metadata for destination columns
+    /// * `options` - Bulk copy options
+    /// * `timeout_sec` - Optional timeout in seconds
+    /// * `cancel_handle` - Optional cancellation handle
+    /// * `rows` - Vector of rows to insert
+    /// * `resolved_mappings` - Column mapping information
+    ///
+    /// # Returns
+    ///
+    /// Returns the number of rows actually inserted by SQL Server.
+    #[instrument(skip(self, rows), level = "info")]
+    pub(crate) async fn execute_bulk_load_streaming_zerocopy<R>(
+        &mut self,
+        table_name: String,
+        column_metadata: Vec<BulkCopyColumnMetadata>,
+        options: BulkCopyOptions,
+        timeout_sec: Option<u32>,
+        cancel_handle: Option<&CancelHandle>,
+        rows: Vec<R>,
+        resolved_mappings: &[ResolvedColumnMapping],
+    ) -> TdsResult<u64>
+    where
+        R: BulkLoadRow,
+    {
+        if self.execution_context.has_open_batch() {
+            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
+        }
+
+        // Store timeout and cancel handle for this operation
+        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
+
+        self.transport.reset_reader();
+
+        // STEP 1: Send INSERT BULK command and consume response
+        let insert_bulk_command =
+            build_insert_bulk_command(&table_name, &column_metadata, &options);
+        self.send_batch_and_consume_response(insert_bulk_command, timeout_sec, cancel_handle)
+            .await?;
+
+        // STEP 2: Create streaming writer and begin
+        let default_collation = self.get_collation();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::BulkLoad,
+            self.transport.as_writer(),
+            timeout_sec,
+            cancel_handle,
+        );
+
+        let mut writer = StreamingBulkLoadWriter::new(
+            &mut packet_writer,
+            table_name,
+            column_metadata,
+            options,
+            default_collation,
+        );
+
+        // Begin streaming (write metadata)
+        writer.begin().await?;
+
+        // STEP 3: Stream rows using zero-copy path
+        for row in rows {
+            // Write the row directly using the streaming writer
+            writer.write_row_zerocopy(&row).await?;
+        }
+
+        // STEP 4: End streaming (write DONE token and finalize)
+        let _rows_written = writer.end().await?;
+
+        // STEP 5: Read the final response with row count
         let rows_affected = self.consume_done_token().await?;
 
         Ok(rows_affected)

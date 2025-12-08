@@ -83,6 +83,41 @@ impl TdsValueSerializer {
         }
     }
 
+    /// Serialize a NULL value using the appropriate NULL marker for the type.
+    #[inline(always)]
+    pub async fn serialize_null<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // Check type class and write appropriate NULL marker
+        match ctx.tds_type {
+            // Nullable types (INTN, FLTN, BITN, MONEYN, DATETIMEN, NumericN, Guid, DateN) use length = 0x00
+            0x26 | 0x6D | 0x68 | 0x6E | 0x6F | 0x6C | 0x24 | 0x28 => {
+                writer.write_byte_async(NULL_LENGTH).await?;
+            }
+            _ => {
+                // Other types depend on length classification
+                if ctx.is_plp {
+                    // PLP NULL: 8 bytes of 0xFF
+                    writer.write_u64_async(PLP_NULL).await?;
+                } else if ctx.is_fixed_type() {
+                    // Fixed-length types cannot be NULL - must use nullable variant (INTN, FLTN, etc.)
+                    return Err(Error::UsageError(format!(
+                        "Cannot serialize NULL for fixed-length type 0x{:02X}.",
+                        ctx.tds_type
+                    )));
+                } else {
+                    // Variable-length NULL: 0xFFFF
+                    writer.write_u16_async(VARNULL).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[inline(always)]
     async fn serialize_int<'a, 'b>(
         writer: &'a mut PacketWriter<'b>,

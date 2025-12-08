@@ -53,6 +53,7 @@ use crate::datatypes::column_values::ColumnValues;
 use crate::error::Error;
 use crate::message::bulk_load::BulkLoadMessage;
 use crate::token::tokens::SqlCollation;
+use async_trait::async_trait;
 use std::time::{Duration, Instant};
 use tracing::{debug, trace};
 
@@ -313,7 +314,7 @@ impl ColumnMapping {
 /// This is the result of resolving user-provided column mappings against
 /// the actual destination table metadata.
 #[derive(Debug, Clone)]
-struct ResolvedColumnMapping {
+pub(crate) struct ResolvedColumnMapping {
     /// Source column index (0-based)
     source_index: usize,
     /// Destination column index (0-based)
@@ -1457,6 +1458,281 @@ impl<'a> BulkCopy<'a> {
 
         Ok(())
     }
+
+    /// Writes rows to the server using zero-copy bulk load operations.
+    ///
+    /// This method implements the zero-copy optimization path that eliminates per-row
+    /// Vec allocations by serializing rows directly to the packet writer.
+    ///
+    /// # Performance
+    ///
+    /// This method provides superior performance compared to `write_to_server` by:
+    /// - Eliminating the `dest_buffer.clone()` allocation per row (0 allocations vs 1)
+    /// - Writing columns directly to the TDS packet without intermediate buffering
+    /// - Reusing column contexts across all rows (created once during metadata phase)
+    ///
+    /// # Type Parameters
+    ///
+    /// * `I` - Iterator over rows
+    /// * `R` - Row type implementing `BulkLoadRow` trait
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use mssql_tds::connection::bulk_copy::{BulkLoadRow, BulkRowWriter};
+    ///
+    /// struct User {
+    ///     id: i32,
+    ///     name: String,
+    ///     active: bool,
+    /// }
+    ///
+    /// #[async_trait]
+    /// impl BulkLoadRow for User {
+    ///     async fn write_to_packet(&self, writer: &mut BulkRowWriter<'_>) -> TdsResult<()> {
+    ///         writer.write_int(0, self.id).await?;
+    ///         writer.write_string(1, &self.name).await?;
+    ///         writer.write_bit(2, self.active).await?;
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let users = vec![
+    ///     User { id: 1, name: "Alice".to_string(), active: true },
+    ///     User { id: 2, name: "Bob".to_string(), active: false },
+    /// ];
+    ///
+    /// bulk_copy.write_to_server_zerocopy(users.into_iter()).await?;
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Column mapping fails
+    /// - Type conversion fails
+    /// - SQL Server returns an error (constraints, type mismatches, etc.)
+    /// - Network error occurs
+    /// - Operation is cancelled or times out
+    pub async fn write_to_server_zerocopy<I, R>(&mut self, rows: I) -> TdsResult<BulkCopyResult>
+    where
+        I: IntoIterator<Item = R>,
+        R: BulkLoadRow,
+    {
+        let start_time = Instant::now();
+        let mut total_rows = 0u64;
+
+        // Peek-able iterator for batch boundary detection
+        let mut rows = rows.into_iter().peekable();
+
+        // Ensure destination table exists and retrieve metadata
+        if self.destination_metadata.is_none() {
+            self.retrieve_destination_metadata().await?;
+        }
+
+        let _server_metadata = self
+            .destination_metadata
+            .as_ref()
+            .ok_or_else(|| Error::UsageError("Destination metadata not available".to_string()))?;
+
+        // Validate column mappings
+        if self.column_mappings.is_empty() {
+            return Err(Error::UsageError(
+                "No column mappings configured. Use add_column_mapping().".to_string(),
+            ));
+        }
+
+        // Prepare metadata only if we have rows to process
+        if rows.peek().is_some() {
+            // Retrieve destination metadata
+            let destination_metadata = self.retrieve_destination_metadata().await?;
+
+            // Resolve column mappings (simplified for zerocopy - assume ordinal mappings)
+            let resolved_mappings: Vec<ResolvedColumnMapping> = destination_metadata
+                .iter()
+                .enumerate()
+                .map(|(i, col)| ResolvedColumnMapping {
+                    source_index: i,
+                    destination_index: i,
+                    destination_name: col.name.clone(),
+                    destination_type: col.sql_type,
+                })
+                .collect();
+
+            // Build destination column metadata for the bulk load message
+            let dest_column_metadata: Vec<BulkCopyColumnMetadata> = destination_metadata
+                .iter()
+                .map(|col| col.to_bulk_copy_metadata())
+                .collect();
+
+            // Process rows with zero-copy path
+            self.write_rows_to_server_zerocopy(
+                rows,
+                &resolved_mappings,
+                dest_column_metadata,
+                &mut total_rows,
+                start_time,
+            )
+            .await?;
+        }
+
+        let elapsed = start_time.elapsed();
+        Ok(BulkCopyResult::new(total_rows, elapsed))
+    }
+
+    /// Internal method to write rows to the server using zero-copy path.
+    ///
+    /// This method implements the zero-copy optimization:
+    /// - Rows are serialized directly to packet writer via BulkLoadRow trait
+    /// - No intermediate Vec allocations (0 allocations per row)
+    /// - Column contexts are created once and reused across all rows
+    async fn write_rows_to_server_zerocopy<I, R>(
+        &mut self,
+        mut rows: std::iter::Peekable<I>,
+        resolved_mappings: &[ResolvedColumnMapping],
+        dest_column_metadata: Vec<BulkCopyColumnMetadata>,
+        total_rows: &mut u64,
+        start_time: Instant,
+    ) -> TdsResult<()>
+    where
+        I: Iterator<Item = R>,
+        R: BulkLoadRow,
+    {
+        // Determine batch size (0 means all rows in one batch)
+        let batch_size = if self.options.batch_size == 0 {
+            usize::MAX
+        } else {
+            self.options.batch_size
+        };
+
+        let timeout_sec = if self.options.timeout_sec > 0 {
+            Some(self.options.timeout_sec)
+        } else {
+            None
+        };
+
+        loop {
+            if rows.peek().is_none() {
+                break;
+            }
+
+            // Collect rows for this batch
+            let mut batch_rows = Vec::new();
+            for _ in 0..batch_size {
+                if let Some(row) = rows.next() {
+                    batch_rows.push(row);
+                } else {
+                    break;
+                }
+            }
+
+            if batch_rows.is_empty() {
+                break;
+            }
+
+            // Execute streaming bulk load with zero-copy path
+            let batch_count = self
+                .client
+                .execute_bulk_load_streaming_zerocopy(
+                    self.table_name.clone(),
+                    dest_column_metadata.clone(),
+                    self.options.clone(),
+                    timeout_sec,
+                    None,
+                    batch_rows,
+                    resolved_mappings,
+                )
+                .await?;
+
+            *total_rows += batch_count;
+
+            // Report progress if callback is configured
+            if let Some(ref mut callback) = self.progress_callback {
+                if self.options.notification_interval > 0
+                    && *total_rows % self.options.notification_interval as u64 == 0
+                {
+                    let elapsed = start_time.elapsed();
+                    let rows_per_second = if elapsed.as_secs_f64() > 0.0 {
+                        *total_rows as f64 / elapsed.as_secs_f64()
+                    } else {
+                        0.0
+                    };
+
+                    callback(BulkCopyProgress {
+                        rows_copied: *total_rows,
+                        total_rows: None,
+                        elapsed,
+                        rows_per_second,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Zero-copy bulk copy trait for direct serialization to TDS packets.
+///
+/// This trait enables true zero-copy bulk insert by allowing rows to write
+/// directly to the packet writer without allocating intermediate Vec<ColumnValues>.
+/// This eliminates the per-row allocation overhead present in the `BulkCopyRow` trait.
+///
+/// # Performance Benefits
+///
+/// - **Zero allocations per row** - no Vec allocation needed
+/// - **Direct serialization** - writes straight to TDS packet buffer
+/// - **Lower memory pressure** - no intermediate storage of column values
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use mssql_tds::connection::bulk_copy::{BulkLoadRow, BulkRowWriter};
+/// use mssql_tds::core::TdsResult;
+///
+/// struct Product {
+///     id: i32,
+///     name: String,
+///     price: f64,
+/// }
+///
+/// impl BulkLoadRow for Product {
+///     async fn write_to_packet(&self, writer: &mut BulkRowWriter<'_>) -> TdsResult<()> {
+///         writer.write_int(self.id).await?;
+///         writer.write_string(&self.name).await?;
+///         writer.write_float(self.price).await?;
+///         Ok(())
+///     }
+/// }
+///
+/// // Use it:
+/// let products = vec![Product { id: 1, name: "Widget".to_string(), price: 9.99 }];
+/// let bulk_copy = BulkCopy::new(&mut client, "Products");
+/// bulk_copy.write_to_server_zerocopy(products.into_iter()).await?;
+/// ```
+#[async_trait]
+pub trait BulkLoadRow {
+    /// Write this row's column values directly to the packet writer.
+    ///
+    /// The order of writes must match the order of columns in the destination table.
+    /// Each column value is serialized directly to the TDS packet without intermediate
+    /// allocations.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - Streaming bulk load writer
+    /// * `column_index` - Mutable reference to track current column index
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Network errors occur during transmission
+    /// - Type conversion errors occur
+    /// - Column count doesn't match metadata
+    async fn write_to_packet(
+        &self,
+        writer: &mut crate::message::bulk_load::StreamingBulkLoadWriter<'_>,
+        column_index: &mut usize,
+    ) -> TdsResult<()>;
 }
 
 #[cfg(test)]
