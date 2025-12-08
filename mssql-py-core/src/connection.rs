@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -15,7 +18,7 @@ use mssql_tds::{
 
 /// Python Connection class for Core TDS backend
 #[pyclass]
-pub struct DdbcConnection {
+pub struct PyCoreConnection {
     #[allow(dead_code)] // Used for async operations in cursor execute
     runtime: Runtime,
     tds_client: Option<Arc<Mutex<TdsClient>>>,
@@ -23,7 +26,7 @@ pub struct DdbcConnection {
 }
 
 #[pymethods]
-impl DdbcConnection {
+impl PyCoreConnection {
     #[new]
     fn new(client_context_dict: &Bound<'_, PyDict>) -> PyResult<Self> {
         let runtime = Runtime::new()
@@ -38,7 +41,7 @@ impl DdbcConnection {
             runtime.block_on(async { provider.create_client(client_context, None).await });
 
         match tds_client {
-            Ok(client) => Ok(DdbcConnection {
+            Ok(client) => Ok(PyCoreConnection {
                 runtime,
                 tds_client: Some(Arc::new(Mutex::new(client))),
                 is_closed: false,
@@ -57,13 +60,13 @@ impl DdbcConnection {
         Ok(())
     }
 
-    fn cursor(&self) -> PyResult<crate::cursor::DdbcCursor> {
+    fn cursor(&self) -> PyResult<crate::cursor::PyCoreCursor> {
         if self.is_closed {
             return Err(PyRuntimeError::new_err("Connection is closed"));
         }
 
         if let Some(client) = &self.tds_client {
-            Ok(crate::cursor::DdbcCursor::new(client.clone()))
+            Ok(crate::cursor::PyCoreCursor::new(client.clone()))
         } else {
             Err(PyRuntimeError::new_err("No active connection"))
         }
@@ -100,7 +103,7 @@ impl DdbcConnection {
     }
 }
 
-impl DdbcConnection {
+impl PyCoreConnection {
     /// Convert Python dict (ClientContext fields) to Rust ClientContext
     fn dict_to_client_context(dict: &Bound<'_, PyDict>) -> PyResult<ClientContext> {
         // Extract required fields with defaults

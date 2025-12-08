@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use mssql_tds::connection::tds_client::TdsClient;
 use pyo3::prelude::*;
 use std::sync::Arc;
@@ -5,13 +8,13 @@ use tokio::sync::Mutex;
 
 /// Python Cursor class for Core TDS backend
 #[pyclass]
-pub struct DdbcCursor {
+pub struct PyCoreCursor {
     #[allow(dead_code)] // Will be used for query execution
     tds_client: Arc<Mutex<TdsClient>>,
 }
 
 #[pymethods]
-impl DdbcCursor {
+impl PyCoreCursor {
     fn execute(&mut self, _query: String, _params: Option<Vec<Py<PyAny>>>) -> PyResult<()> {
         // TODO: Implement execute with actual TDS query execution
         Ok(())
@@ -38,12 +41,12 @@ impl DdbcCursor {
     }
 
     fn __repr__(&self) -> String {
-        "DdbcCursor()".to_string()
+        "PyCoreCursor()".to_string()
     }
 }
 
-impl DdbcCursor {
+impl PyCoreCursor {
     pub fn new(tds_client: Arc<Mutex<TdsClient>>) -> Self {
-        DdbcCursor { tds_client }
+        PyCoreCursor { tds_client }
     }
 }

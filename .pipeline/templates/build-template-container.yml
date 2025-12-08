@@ -31,6 +31,11 @@ parameters:
   type: boolean
   default: false
 
+- name: additionalPythonTestArgs
+  displayName: Additional Python Test Arguments
+  type: string
+  default: ''
+
 steps:
 - task: DockerInstaller@0
   inputs:
@@ -250,6 +255,35 @@ steps:
       testResultsFormat: JUnit
       testResultsFiles: $(Build.SourcesDirectory)/mssql-js/junit.xml
       testRunTitle: $(System.PhaseName)-Js
+
+- script: |
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
+    
+    docker run --rm \
+      --network testnet \
+      -v $PWD:/workspace \
+      -v $PWD/ca.crt:/usr/local/share/ca-certificates/mssql-ca.crt:ro \
+      -e SQL_PASSWORD="$(SQL_PASSWORD)" \
+      -e DB_HOST="sql1" \
+      -e DB_USERNAME="sa" \
+      -e SQL_SERVER="sql1" \
+      -e SQL_DATABASE="master" \
+      -e TRUST_SERVER_CERTIFICATE="true" \
+      -w /workspace \
+      $BUILD_IMAGE \
+      /workspace/.pipeline/scripts/containerized-python-test.sh ${{ parameters.additionalPythonTestArgs }}
+  displayName: Test Python bindings (mssql-py-core)
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+
+- task: PublishTestResults@2
+  condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
+  displayName: Publish Python test results
+  inputs:
+    testResultsFormat: JUnit
+    testResultsFiles: $(Build.SourcesDirectory)/mssql-py-core/pytest-results.xml
+    testRunTitle: $(System.PhaseName)-Python
 
 - script: |
     docker stop sqlserver || true

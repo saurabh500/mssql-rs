@@ -11,7 +11,7 @@ parameters:
 - name: importBaseImages
   displayName: 'Import base images from public registries to ACR'
   type: boolean
-  default: true
+  default: false
 
 - name: buildPythonImages
   displayName: 'Build custom Python images with Rust pre-installed'

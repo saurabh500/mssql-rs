@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 use pyo3::prelude::*;
 
 mod connection;
@@ -6,9 +9,9 @@ mod types;
 mod utils;
 
 /// Python module for Core TDS connectivity
-#[pymodule]
-fn mssql_core_tds(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<connection::DdbcConnection>()?;
-    m.add_class::<cursor::DdbcCursor>()?;
+#[pymodule(name = "mssql_py_core")]
+fn mssql_py_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<connection::PyCoreConnection>()?;
+    m.add_class::<cursor::PyCoreCursor>()?;
     Ok(())
 }
