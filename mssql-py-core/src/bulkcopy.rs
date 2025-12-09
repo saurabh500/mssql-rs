@@ -294,7 +294,6 @@ impl BulkLoadRow for PythonRowAdapter {
         column_index: &mut usize,
     ) -> TdsResult<()> {
         // Step 1: Acquire GIL and convert Python values to ColumnValues
-        let start_gil = Instant::now();
         let column_values: Vec<_> = Python::attach(|py| {
             let tuple = self
                 .row

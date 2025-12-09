@@ -10,6 +10,35 @@ use mssql_tds::error::Error;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDate, PyDateTime, PyInt, PyString, PyTime};
 
+/// Convert a Python object to ColumnValues for TDS serialization
+///
+/// This function handles direct conversion from Python types to TDS column values,
+/// supporting the most common SQL Server data types.
+///
+/// # Supported Types
+///
+/// - `None` → `ColumnValues::Null`
+/// - `int` → `ColumnValues::Int` or `ColumnValues::BigInt`
+/// - `float` → `ColumnValues::Float`
+/// - `str` → `ColumnValues::String`
+/// - `bool` → `ColumnValues::Bit`
+/// - `bytes` → `ColumnValues::Binary`
+/// - `datetime.datetime` → `ColumnValues::DateTime2`
+/// - `datetime.date` → `ColumnValues::Date`
+/// - `datetime.time` → `ColumnValues::Time`
+///
+/// # Arguments
+///
+/// * `py_obj` - Python object to convert
+///
+/// # Returns
+///
+/// `TdsResult<ColumnValues>` - The converted column value
+///
+/// # Errors
+///
+/// Returns an error if the Python type is not supported or conversion fails.
+///
 /// Fast-path converter that checks type once and extracts directly
 ///
 /// This avoids the expensive fallback chain of trying bool→i32→i64→str
@@ -20,7 +49,7 @@ use pyo3::types::{PyBool, PyBytes, PyDate, PyDateTime, PyInt, PyString, PyTime};
 ///
 /// Traditional approach: ~2.3µs per value (tries multiple type conversions)
 /// Fast-path approach: ~0.5-1.0µs per value (single type check + direct extract)
-pub fn py_to_column_value_fast(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+pub fn py_to_column_value(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
     // Handle None (NULL) - most common check
     if py_obj.is_none() {
         return Ok(ColumnValues::Null);
@@ -132,51 +161,4 @@ pub fn py_to_column_value_fast(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnVal
         "Unsupported Python type for bulk copy: {}",
         type_name
     )))
-}
-
-/// Convert a Python object to ColumnValues for TDS serialization
-///
-/// This function handles direct conversion from Python types to TDS column values,
-/// supporting the most common SQL Server data types.
-///
-/// # Supported Types
-///
-/// - `None` → `ColumnValues::Null`
-/// - `int` → `ColumnValues::Int` or `ColumnValues::BigInt`
-/// - `float` → `ColumnValues::Float`
-/// - `str` → `ColumnValues::String`
-/// - `bool` → `ColumnValues::Bit`
-/// - `bytes` → `ColumnValues::Binary`
-/// - `datetime.datetime` → `ColumnValues::DateTime2`
-/// - `datetime.date` → `ColumnValues::Date`
-/// - `datetime.time` → `ColumnValues::Time`
-///
-/// # Arguments
-///
-/// * `py_obj` - Python object to convert
-///
-/// # Returns
-///
-/// `TdsResult<ColumnValues>` - The converted column value
-///
-/// # Errors
-///
-/// Returns an error if the Python type is not supported or conversion fails.
-pub fn py_to_column_value(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
-    // Use fast-path implementation
-    py_to_column_value_fast(py_obj)
-}
-
-/// Convert Python object to SQL Server type
-#[allow(dead_code)] // Will be used for parameter binding
-pub fn py_to_sql(_obj: &PyAny) -> PyResult<()> {
-    // TODO: Implement type conversions
-    Ok(())
-}
-
-/// Convert SQL Server type to Python object
-#[allow(dead_code)] // Will be used for result set conversion
-pub fn sql_to_py(py: Python) -> PyResult<Py<PyAny>> {
-    // TODO: Implement type conversions
-    Ok(py.None())
 }
