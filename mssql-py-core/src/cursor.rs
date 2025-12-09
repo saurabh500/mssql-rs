@@ -250,16 +250,21 @@ impl PyCoreCursor {
 
                 // Auto-generate column mappings if needed
                 let mut column_mappings = options.column_mappings;
-                if auto_generate_mappings {
-                    info!("bulkcopy: Retrieving destination metadata for auto-mapping");
-                    let metadata = bulk_copy.retrieve_destination_metadata().await
+                let destination_metadata = if auto_generate_mappings || column_mappings.is_empty() {
+                    info!("bulkcopy: Retrieving destination metadata for auto-mapping or type coercion");
+                    Some(bulk_copy.retrieve_destination_metadata().await
                         .map_err(|e| {
                             error!("bulkcopy: Failed to retrieve destination metadata: {}", e);
                             pyo3::exceptions::PyRuntimeError::new_err(format!(
                                 "Failed to retrieve destination metadata: {}", e
                             ))
-                        })?;
-                    
+                        })?)
+                } else {
+                    None
+                };
+                
+                if auto_generate_mappings {
+                    let metadata = destination_metadata.as_ref().unwrap();
                     info!("bulkcopy: Retrieved {} columns from destination table", metadata.len());
                     
                     // Get the number of columns in the first row
@@ -313,8 +318,17 @@ impl PyCoreCursor {
 
                 // Create iterator of PythonRowAdapter
                 info!("bulkcopy: Creating PythonRowAdapter iterators");
-                let row_adapters: Vec<PythonRowAdapter> =
-                    rows.into_iter().map(PythonRowAdapter::new).collect();
+                let row_adapters: Vec<PythonRowAdapter> = if let Some(metadata) = destination_metadata {
+                    info!("bulkcopy: Creating adapters with metadata for type coercion");
+                    rows.into_iter()
+                        .map(|row| PythonRowAdapter::with_metadata(row, metadata.clone()))
+                        .collect()
+                } else {
+                    info!("bulkcopy: Creating adapters without metadata");
+                    rows.into_iter()
+                        .map(PythonRowAdapter::new)
+                        .collect()
+                };
                 info!("bulkcopy: Created {} row adapters", row_adapters.len());
 
                 // Execute bulk copy with zero-copy streaming

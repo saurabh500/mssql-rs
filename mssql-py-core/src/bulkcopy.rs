@@ -12,11 +12,14 @@ use std::time::{Duration, Instant};
 
 use crate::types::py_to_column_value;
 use async_trait::async_trait;
-use mssql_tds::connection::bulk_copy::BulkLoadRow;
+use mssql_tds::connection::bulk_copy::{BulkLoadRow, DestinationColumnMetadata};
 use mssql_tds::core::TdsResult;
+use mssql_tds::datatypes::bulk_copy_metadata::SqlDbType;
+use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::error::Error;
+use mssql_tds::message::bulk_load::StreamingBulkLoadWriter;
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
+use pyo3::types::{PyString, PyTuple};
 
 /// Adapter that wraps a Python tuple for zero-copy bulk insert.
 ///
@@ -24,9 +27,13 @@ use pyo3::types::PyTuple;
 /// to be serialized directly to TDS packets without allocating intermediate
 /// Vec<ColumnValues>. The GIL is acquired only when reading Python values.
 ///
+/// When destination metadata is provided, the adapter will attempt to perform
+/// type conversions (e.g., string to int) to match the target column types.
 pub struct PythonRowAdapter {
     /// Python tuple containing row data (stored as Py<PyAny> for Send + Sync)
     row: Py<PyAny>,
+    /// Optional destination column metadata for type coercion
+    destination_metadata: Option<Vec<DestinationColumnMetadata>>,
 }
 
 impl PythonRowAdapter {
@@ -40,7 +47,122 @@ impl PythonRowAdapter {
     ///
     /// A new PythonRowAdapter wrapping the tuple.
     pub fn new(row: Py<PyAny>) -> Self {
-        Self { row }
+        Self {
+            row,
+            destination_metadata: None,
+        }
+    }
+
+    /// Create a new Python row adapter with destination metadata for type coercion.
+    ///
+    /// # Arguments
+    ///
+    /// * `row` - Python tuple containing column values
+    /// * `destination_metadata` - Destination column metadata for type conversion
+    ///
+    /// # Returns
+    ///
+    /// A new PythonRowAdapter with type coercion support.
+    pub fn with_metadata(row: Py<PyAny>, destination_metadata: Vec<DestinationColumnMetadata>) -> Self {
+        Self {
+            row,
+            destination_metadata: Some(destination_metadata),
+        }
+    }
+
+    /// Convert a Python value to a ColumnValue, attempting type coercion if metadata is available.
+    fn convert_with_coercion(
+        py_obj: &Bound<'_, PyAny>,
+        target_type: Option<SqlDbType>,
+    ) -> TdsResult<ColumnValues> {
+        // If we have target metadata, check if we need type coercion
+        if let Some(target) = target_type {
+            // Check if the Python value is a string and target is an integer type
+            if py_obj.is_instance_of::<PyString>() {
+                match target {
+                    SqlDbType::Int | SqlDbType::BigInt | SqlDbType::SmallInt | SqlDbType::TinyInt => {
+                        // Try type coercion for string-to-integer conversion
+                        return Self::try_coerce_type(py_obj, target);
+                    }
+                    _ => {
+                        // Fall through to normal conversion
+                    }
+                }
+            }
+        }
+        
+        // Try direct conversion
+        py_to_column_value(py_obj)
+    }
+
+    /// Attempt to coerce a Python value to match the target SQL type.
+    fn try_coerce_type(py_obj: &Bound<'_, PyAny>, target_type: SqlDbType) -> TdsResult<ColumnValues> {
+        match target_type {
+            SqlDbType::Int | SqlDbType::BigInt | SqlDbType::SmallInt | SqlDbType::TinyInt => {
+                // Try to convert string to integer
+                if let Ok(py_str) = py_obj.cast::<PyString>() {
+                    let s = py_str.to_str().map_err(|e| {
+                        Error::UsageError(format!("Failed to extract string: {}", e))
+                    })?;
+                    
+                    // Try parsing as i64 to cover all integer types
+                    let parsed = s.parse::<i64>().map_err(|e| {
+                        Error::UsageError(format!(
+                            "Cannot convert string '{}' to integer: {}",
+                            s, e
+                        ))
+                    })?;
+                    
+                    // Return appropriate integer type based on target
+                    match target_type {
+                        SqlDbType::TinyInt => {
+                            if parsed >= 0 && parsed <= 255 {
+                                Ok(ColumnValues::TinyInt(parsed as u8))
+                            } else {
+                                Err(Error::UsageError(format!(
+                                    "Value {} out of range for TINYINT (0-255)",
+                                    parsed
+                                )))
+                            }
+                        }
+                        SqlDbType::SmallInt => {
+                            if parsed >= i16::MIN as i64 && parsed <= i16::MAX as i64 {
+                                Ok(ColumnValues::SmallInt(parsed as i16))
+                            } else {
+                                Err(Error::UsageError(format!(
+                                    "Value {} out of range for SMALLINT",
+                                    parsed
+                                )))
+                            }
+                        }
+                        SqlDbType::Int => {
+                            if parsed >= i32::MIN as i64 && parsed <= i32::MAX as i64 {
+                                Ok(ColumnValues::Int(parsed as i32))
+                            } else {
+                                Err(Error::UsageError(format!(
+                                    "Value {} out of range for INT",
+                                    parsed
+                                )))
+                            }
+                        }
+                        SqlDbType::BigInt => Ok(ColumnValues::BigInt(parsed)),
+                        _ => unreachable!(),
+                    }
+                } else {
+                    Err(Error::UsageError(format!(
+                        "Cannot coerce type to integer, expected string but got: {:?}",
+                        py_obj.get_type().name()
+                    )))
+                }
+            }
+            _ => {
+                // No coercion available for this type yet
+                Err(Error::UsageError(format!(
+                    "Type coercion not implemented for target type: {:?}",
+                    target_type
+                )))
+            }
+        }
     }
 }
 
@@ -76,7 +198,7 @@ impl BulkLoadRow for PythonRowAdapter {
     /// - Network errors occur during transmission
     async fn write_to_packet(
         &self,
-        writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+        writer: &mut StreamingBulkLoadWriter<'_>,
         column_index: &mut usize,
     ) -> TdsResult<()> {
         // Step 1: Acquire GIL and convert Python values to ColumnValues
@@ -91,9 +213,18 @@ impl BulkLoadRow for PythonRowAdapter {
             // Convert each Python value to ColumnValues
             let mut values = Vec::with_capacity(tuple.len());
             let mut total_extract_time = Duration::ZERO;
-            for item in tuple.iter() {
+            for (i, item) in tuple.iter().enumerate() {
                 let extract_start = Instant::now();
-                let column_value = py_to_column_value(&item)?;
+                
+                // Get target type from metadata if available
+                let target_type = self.destination_metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get(i))
+                    .map(|col| col.sql_type);
+                
+                // Try conversion with type coercion
+                let column_value = Self::convert_with_coercion(&item, target_type)?;
+                
                 total_extract_time += extract_start.elapsed();
                 values.push(column_value);
             }
