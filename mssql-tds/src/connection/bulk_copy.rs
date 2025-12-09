@@ -45,7 +45,7 @@
 //! ```
 
 use crate::connection::metadata_retriever::{
-    DestinationColumnMetadata, MetadataRetriever, SelectTop0Retriever,
+    DestinationColumnMetadata, FmtOnlyMetadataRetriever, MetadataRetriever,
 };
 use crate::connection::tds_client::TdsClient;
 use crate::core::TdsResult;
@@ -307,7 +307,7 @@ impl<'a> BulkCopy<'a> {
             column_mappings: Vec::new(),
             progress_callback: None,
             destination_metadata: None,
-            metadata_retriever: Box::new(SelectTop0Retriever::new()),
+            metadata_retriever: Box::new(FmtOnlyMetadataRetriever::new()),
         }
     }
 

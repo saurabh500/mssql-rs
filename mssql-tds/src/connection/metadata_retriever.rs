@@ -9,7 +9,7 @@
 //!
 //! # Implementations
 //!
-//! - [`SelectTop0Retriever`]: Uses `SET FMTONLY ON` for fast metadata retrieval
+//! - [`FmtOnlyMetadataRetriever`]: Uses `SET FMTONLY ON` for fast metadata retrieval
 //!
 //! # Custom Retrievers
 //!
@@ -18,9 +18,7 @@
 
 use crate::connection::tds_client::TdsClient;
 use crate::core::{CancelHandle, TdsResult};
-use crate::datatypes::bulk_copy_metadata::{
-    BulkCopyColumnMetadata, SqlDbType, TypeLength,
-};
+use crate::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType, TypeLength};
 use crate::datatypes::sqldatatypes::{TdsDataType, TypeInfo, TypeInfoVariant};
 use crate::error::Error;
 use crate::token::tokens::{ColMetadataToken, SqlCollation};
@@ -109,7 +107,7 @@ pub trait MetadataRetriever: Send {
 /// # Example
 ///
 /// ```rust,ignore
-/// let retriever = SelectTop0Retriever::new();
+/// let retriever = FmtOnlyMetadataRetriever::new();
 /// let bulk_copy = BulkCopy::with_retriever(
 ///     &mut client,
 ///     "MyTable",
@@ -117,131 +115,122 @@ pub trait MetadataRetriever: Send {
 /// );
 /// ```
 #[derive(Debug, Default)]
-pub struct SelectTop0Retriever;
+pub struct FmtOnlyMetadataRetriever;
 
-impl SelectTop0Retriever {
-    /// Create a new SELECT TOP 0 metadata retriever.
+impl FmtOnlyMetadataRetriever {
+    /// Create a new FMTONLY metadata retriever.
     pub fn new() -> Self {
         Self
     }
+}
 
-    /// Convert TDS type ID to SqlDbType.
-    ///
-    /// This maps the TDS data type from COLMETADATA token to our SqlDbType enum.
-    fn map_tds_type_to_sql_type(tds_type: TdsDataType, type_info: &TypeInfo) -> TdsResult<SqlDbType> {
-        
-        match tds_type {
-            TdsDataType::Int1 => Ok(SqlDbType::TinyInt),
-            TdsDataType::Int2 => Ok(SqlDbType::SmallInt),
-            TdsDataType::Int4 => Ok(SqlDbType::Int),
-            TdsDataType::Int8 => Ok(SqlDbType::BigInt),
-            TdsDataType::Bit => Ok(SqlDbType::Bit),
-            TdsDataType::Flt4 => Ok(SqlDbType::Real),
-            TdsDataType::Flt8 => Ok(SqlDbType::Float),
-            TdsDataType::Money => Ok(SqlDbType::Money),
-            TdsDataType::Money4 => Ok(SqlDbType::SmallMoney),
-            TdsDataType::DateTime => Ok(SqlDbType::DateTime),
-            TdsDataType::DateTim4 => Ok(SqlDbType::SmallDateTime),
-            TdsDataType::DateN => Ok(SqlDbType::Date),
-            TdsDataType::TimeN => Ok(SqlDbType::Time),
-            TdsDataType::DateTime2N => Ok(SqlDbType::DateTime2),
-            TdsDataType::DateTimeOffsetN => Ok(SqlDbType::DateTimeOffset),
-            TdsDataType::Guid => Ok(SqlDbType::UniqueIdentifier),
-            TdsDataType::BigBinary | TdsDataType::BigVarBinary => Ok(SqlDbType::VarBinary),
-            TdsDataType::Image => Ok(SqlDbType::Image),
-            TdsDataType::BigChar => Ok(SqlDbType::Char),
-            TdsDataType::BigVarChar => Ok(SqlDbType::VarChar),
-            TdsDataType::Text => Ok(SqlDbType::Text),
-            TdsDataType::NChar => Ok(SqlDbType::NChar),
-            TdsDataType::NVarChar => Ok(SqlDbType::NVarChar),
-            TdsDataType::NText => Ok(SqlDbType::NText),
-            TdsDataType::Xml => Ok(SqlDbType::Xml),
-            
-            // Nullable variants - map to underlying type
-            TdsDataType::IntN => {
-                match type_info.length {
-                    1 => Ok(SqlDbType::TinyInt),
-                    2 => Ok(SqlDbType::SmallInt),
-                    4 => Ok(SqlDbType::Int),
-                    8 => Ok(SqlDbType::BigInt),
-                    _ => Err(Error::UsageError(format!(
-                        "Invalid IntN length: {}",
-                        type_info.length
-                    ))),
-                }
-            }
-            TdsDataType::FltN => {
-                match type_info.length {
-                    4 => Ok(SqlDbType::Real),
-                    8 => Ok(SqlDbType::Float),
-                    _ => Err(Error::UsageError(format!(
-                        "Invalid FltN length: {}",
-                        type_info.length
-                    ))),
-                }
-            }
-            TdsDataType::MoneyN => {
-                match type_info.length {
-                    4 => Ok(SqlDbType::SmallMoney),
-                    8 => Ok(SqlDbType::Money),
-                    _ => Err(Error::UsageError(format!(
-                        "Invalid MoneyN length: {}",
-                        type_info.length
-                    ))),
-                }
-            }
-            TdsDataType::DateTimeN => {
-                match type_info.length {
-                    4 => Ok(SqlDbType::SmallDateTime),
-                    8 => Ok(SqlDbType::DateTime),
-                    _ => Err(Error::UsageError(format!(
-                        "Invalid DateTimeN length: {}",
-                        type_info.length
-                    ))),
-                }
-            }
-            TdsDataType::DecimalN => Ok(SqlDbType::Decimal),
-            TdsDataType::NumericN => Ok(SqlDbType::Numeric),
-            
+/// Convert TDS type ID to SqlDbType.
+///
+/// This maps the TDS data type from COLMETADATA token to our SqlDbType enum.
+fn map_tds_type_to_sql_type(tds_type: TdsDataType, type_info: &TypeInfo) -> TdsResult<SqlDbType> {
+    match tds_type {
+        TdsDataType::Int1 => Ok(SqlDbType::TinyInt),
+        TdsDataType::Int2 => Ok(SqlDbType::SmallInt),
+        TdsDataType::Int4 => Ok(SqlDbType::Int),
+        TdsDataType::Int8 => Ok(SqlDbType::BigInt),
+        TdsDataType::Bit => Ok(SqlDbType::Bit),
+        TdsDataType::Flt4 => Ok(SqlDbType::Real),
+        TdsDataType::Flt8 => Ok(SqlDbType::Float),
+        TdsDataType::Money => Ok(SqlDbType::Money),
+        TdsDataType::Money4 => Ok(SqlDbType::SmallMoney),
+        TdsDataType::DateTime => Ok(SqlDbType::DateTime),
+        TdsDataType::DateTim4 => Ok(SqlDbType::SmallDateTime),
+        TdsDataType::DateN => Ok(SqlDbType::Date),
+        TdsDataType::TimeN => Ok(SqlDbType::Time),
+        TdsDataType::DateTime2N => Ok(SqlDbType::DateTime2),
+        TdsDataType::DateTimeOffsetN => Ok(SqlDbType::DateTimeOffset),
+        TdsDataType::Guid => Ok(SqlDbType::UniqueIdentifier),
+        TdsDataType::BigBinary | TdsDataType::BigVarBinary => Ok(SqlDbType::VarBinary),
+        TdsDataType::Image => Ok(SqlDbType::Image),
+        TdsDataType::BigChar => Ok(SqlDbType::Char),
+        TdsDataType::BigVarChar => Ok(SqlDbType::VarChar),
+        TdsDataType::Text => Ok(SqlDbType::Text),
+        TdsDataType::NChar => Ok(SqlDbType::NChar),
+        TdsDataType::NVarChar => Ok(SqlDbType::NVarChar),
+        TdsDataType::NText => Ok(SqlDbType::NText),
+        TdsDataType::Xml => Ok(SqlDbType::Xml),
+
+        // Nullable variants - map to underlying type
+        TdsDataType::IntN => match type_info.length {
+            1 => Ok(SqlDbType::TinyInt),
+            2 => Ok(SqlDbType::SmallInt),
+            4 => Ok(SqlDbType::Int),
+            8 => Ok(SqlDbType::BigInt),
             _ => Err(Error::UsageError(format!(
-                "Unsupported TDS data type: {:?}",
-                tds_type
+                "Invalid IntN length: {}",
+                type_info.length
             ))),
-        }
-    }
+        },
+        TdsDataType::FltN => match type_info.length {
+            4 => Ok(SqlDbType::Real),
+            8 => Ok(SqlDbType::Float),
+            _ => Err(Error::UsageError(format!(
+                "Invalid FltN length: {}",
+                type_info.length
+            ))),
+        },
+        TdsDataType::MoneyN => match type_info.length {
+            4 => Ok(SqlDbType::SmallMoney),
+            8 => Ok(SqlDbType::Money),
+            _ => Err(Error::UsageError(format!(
+                "Invalid MoneyN length: {}",
+                type_info.length
+            ))),
+        },
+        TdsDataType::DateTimeN => match type_info.length {
+            4 => Ok(SqlDbType::SmallDateTime),
+            8 => Ok(SqlDbType::DateTime),
+            _ => Err(Error::UsageError(format!(
+                "Invalid DateTimeN length: {}",
+                type_info.length
+            ))),
+        },
+        TdsDataType::DecimalN => Ok(SqlDbType::Decimal),
+        TdsDataType::NumericN => Ok(SqlDbType::Numeric),
 
-    /// Get max_length from TypeInfo.
-    fn get_max_length(type_info: &TypeInfo) -> i16 {
-        match &type_info.type_info_variant {
-            TypeInfoVariant::FixedLen(_) => type_info.length as i16,
-            TypeInfoVariant::VarLen(_, _) => type_info.length as i16,
-            TypeInfoVariant::VarLenString(_, _, _) => type_info.length as i16,
-            TypeInfoVariant::VarLenScale(_, _) => type_info.length as i16,
-            TypeInfoVariant::VarLenPrecisionScale(_, _, _, _) => type_info.length as i16,
-            TypeInfoVariant::PartialLen(_, _, _, _, _) => -1, // PLP types use -1
-        }
+        _ => Err(Error::UsageError(format!(
+            "Unsupported TDS data type: {:?}",
+            tds_type
+        ))),
     }
+}
 
-    /// Get precision from TypeInfo.
-    fn get_precision(type_info: &TypeInfo) -> u8 {
-        match &type_info.type_info_variant {
-            TypeInfoVariant::VarLenPrecisionScale(_, _, precision, _) => *precision,
-            _ => 0,
-        }
+/// Get max_length from TypeInfo.
+fn get_max_length(type_info: &TypeInfo) -> i16 {
+    match &type_info.type_info_variant {
+        TypeInfoVariant::FixedLen(_) => type_info.length as i16,
+        TypeInfoVariant::VarLen(_, _) => type_info.length as i16,
+        TypeInfoVariant::VarLenString(_, _, _) => type_info.length as i16,
+        TypeInfoVariant::VarLenScale(_, _) => type_info.length as i16,
+        TypeInfoVariant::VarLenPrecisionScale(_, _, _, _) => type_info.length as i16,
+        TypeInfoVariant::PartialLen(_, _, _, _, _) => -1, // PLP types use -1
     }
+}
 
-    /// Get scale from TypeInfo.
-    fn get_scale(type_info: &TypeInfo) -> u8 {
-        match &type_info.type_info_variant {
-            TypeInfoVariant::VarLenScale(_, scale) => *scale,
-            TypeInfoVariant::VarLenPrecisionScale(_, _, _, scale) => *scale,
-            _ => 0,
-        }
+/// Get precision from TypeInfo.
+fn get_precision(type_info: &TypeInfo) -> u8 {
+    match &type_info.type_info_variant {
+        TypeInfoVariant::VarLenPrecisionScale(_, _, precision, _) => *precision,
+        _ => 0,
+    }
+}
+
+/// Get scale from TypeInfo.
+fn get_scale(type_info: &TypeInfo) -> u8 {
+    match &type_info.type_info_variant {
+        TypeInfoVariant::VarLenScale(_, scale) => *scale,
+        TypeInfoVariant::VarLenPrecisionScale(_, _, _, scale) => *scale,
+        _ => 0,
     }
 }
 
 #[async_trait]
-impl MetadataRetriever for SelectTop0Retriever {
+impl MetadataRetriever for FmtOnlyMetadataRetriever {
     async fn retrieve_metadata(
         &mut self,
         client: &mut TdsClient,
@@ -249,17 +238,32 @@ impl MetadataRetriever for SelectTop0Retriever {
         timeout_sec: u32,
     ) -> TdsResult<Vec<DestinationColumnMetadata>> {
         // Fetch metadata using SET FMTONLY ON
-        let col_metadata_token = fetch_table_metadata(client, table_name, Some(timeout_sec), None).await?;
+        let col_metadata_token =
+            fetch_table_metadata(client, table_name, Some(timeout_sec), None).await?;
 
-        // Convert ColMetadataToken to Vec<DestinationColumnMetadata>
+        // Convert using TryFrom trait
+        Vec::<DestinationColumnMetadata>::try_from(col_metadata_token)
+    }
+}
+
+impl TryFrom<ColMetadataToken> for Vec<DestinationColumnMetadata> {
+    type Error = Error;
+
+    fn try_from(col_metadata_token: ColMetadataToken) -> Result<Self, Self::Error> {
+        if col_metadata_token.columns.is_empty() {
+            return Err(Error::UsageError(
+                "Table not found or has no columns".to_string(),
+            ));
+        }
+
         let mut metadata = Vec::with_capacity(col_metadata_token.columns.len());
 
         for (ordinal, col) in col_metadata_token.columns.iter().enumerate() {
             // Map TDS type to SqlDbType
-            let sql_type = Self::map_tds_type_to_sql_type(col.data_type, &col.type_info)?;
+            let sql_type = map_tds_type_to_sql_type(col.data_type, &col.type_info)?;
 
             // Get system_type_id from SqlDbType
-            // Note: This is an approximation - SELECT TOP 0 doesn't give us the exact system_type_id
+            // Note: This is an approximation - FMTONLY doesn't give us the exact system_type_id
             let system_type_id = match sql_type {
                 SqlDbType::TinyInt => 48,
                 SqlDbType::SmallInt => 52,
@@ -288,13 +292,12 @@ impl MetadataRetriever for SelectTop0Retriever {
                 _ => 0, // Unknown
             };
 
-            let max_length = Self::get_max_length(&col.type_info);
-            let precision = Self::get_precision(&col.type_info);
-            let scale = Self::get_scale(&col.type_info);
+            let max_length = get_max_length(&col.type_info);
+            let precision = get_precision(&col.type_info);
+            let scale = get_scale(&col.type_info);
             let is_nullable = col.is_nullable();
 
             // Extract identity and computed flags from TDS COLMETADATA token
-            // These flags are part of the TDS protocol response
             let is_identity = col.is_identity();
             let is_computed = col.is_computed();
 
@@ -314,13 +317,6 @@ impl MetadataRetriever for SelectTop0Retriever {
                 is_computed,
                 collation,
             });
-        }
-
-        if metadata.is_empty() {
-            return Err(Error::UsageError(format!(
-                "Table '{}' not found or has no columns",
-                table_name
-            )));
         }
 
         Ok(metadata)
@@ -504,9 +500,12 @@ SET FMTONLY OFF;"#
     client.execute(query, timeout_sec, cancel_handle).await?;
 
     // Get the metadata from the result and clone it immediately
-    let metadata = client.get_current_metadata().ok_or_else(|| {
-        Error::UsageError(format!("Failed to fetch metadata for table {table_name}"))
-    })?.clone();
+    let metadata = client
+        .get_current_metadata()
+        .ok_or_else(|| {
+            Error::UsageError(format!("Failed to fetch metadata for table {table_name}"))
+        })?
+        .clone();
 
     debug!(
         "Fetched {} columns from table metadata",

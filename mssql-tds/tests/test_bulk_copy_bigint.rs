@@ -163,7 +163,8 @@ mod bulk_copy_bigint_tests {
         // Verify the data was inserted
         client
             .execute(
-                "SELECT id, value1, value2, value3 FROM #BulkCopyTestBigInt ORDER BY id".to_string(),
+                "SELECT id, value1, value2, value3 FROM #BulkCopyTestBigInt ORDER BY id"
+                    .to_string(),
                 None,
                 None,
             )
@@ -609,8 +610,8 @@ mod bulk_copy_bigint_tests {
         let test_data = vec![
             TestBigIntUser {
                 id: 1,
-                value1: i64::MIN,           // -9,223,372,036,854,775,808
-                value2: i64::MAX,           // 9,223,372,036,854,775,807
+                value1: i64::MIN, // -9,223,372,036,854,775,808
+                value2: i64::MAX, // 9,223,372,036,854,775,807
                 value3: 0,
             },
             TestBigIntUser {

@@ -8,7 +8,6 @@ mod bulk_copy_integration_tests {
     use crate::common::{begin_connection, create_context, init_tracing};
     use async_trait::async_trait;
     use mssql_tds::connection::bulk_copy::{BulkCopy, BulkLoadRow};
-    use mssql_tds::connection::metadata_retriever::SelectTop0Retriever;
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
     use mssql_tds::core::TdsResult;
     use mssql_tds::datatypes::bulk_copy_metadata::SqlDbType;
@@ -17,19 +16,6 @@ mod bulk_copy_integration_tests {
     #[ctor::ctor]
     fn init() {
         init_tracing();
-    }
-
-    // Helper function to create BulkCopy with a specific retriever
-    fn create_bulk_copy_with_retriever<'a>(
-        client: &'a mut TdsClient,
-        table_name: &'static str,
-        use_select_top0: bool,
-    ) -> BulkCopy<'a> {
-        if use_select_top0 {
-            BulkCopy::with_retriever(client, table_name, Box::new(SelectTop0Retriever::new()))
-        } else {
-            BulkCopy::new(client, table_name)
-        }
     }
 
     // Define a simple test data structure
@@ -181,26 +167,16 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retrieve_destination_metadata_basic() {
-        test_retrieve_destination_metadata_basic_impl(false).await;
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_retrieve_destination_metadata_basic_with_select_top0() {
-        test_retrieve_destination_metadata_basic_impl(true).await;
-    }
-
-    async fn test_retrieve_destination_metadata_basic_impl(use_select_top0: bool) {
         let context = create_context();
         let mut client = begin_connection(context).await;
 
-        let table_name = if use_select_top0 {
-            "#MetadataTestSelectTop0"
-        } else {
-            "#MetadataTest"
-        };
+        let table_name = "#MetadataTest";
 
         // Drop table if it exists from previous run
-        let drop_sql = format!("IF OBJECT_ID('tempdb..{}') IS NOT NULL DROP TABLE {}", table_name, table_name);
+        let drop_sql = format!(
+            "IF OBJECT_ID('tempdb..{}') IS NOT NULL DROP TABLE {}",
+            table_name, table_name
+        );
         client.execute(drop_sql, None, None).await.ok();
         client.close_query().await.ok();
 
@@ -224,7 +200,7 @@ mod bulk_copy_integration_tests {
         client.close_query().await.expect("Failed to close query");
 
         // Retrieve metadata
-        let mut bulk_copy = create_bulk_copy_with_retriever(&mut client, table_name, use_select_top0);
+        let mut bulk_copy = BulkCopy::new(&mut client, table_name);
         let metadata = bulk_copy
             .retrieve_destination_metadata()
             .await
@@ -263,16 +239,7 @@ mod bulk_copy_integration_tests {
         assert_eq!(metadata[3].precision, 18);
         assert_eq!(metadata[3].scale, 2);
 
-        let retriever_type = if use_select_top0 {
-            "SelectTop0Retriever"
-        } else {
-            "SystemCatalogRetriever"
-        };
-        println!(
-            "Metadata test passed with {}: Retrieved {} columns",
-            retriever_type,
-            metadata.len()
-        );
+        println!("Metadata test passed: Retrieved {} columns", metadata.len());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -349,10 +316,7 @@ mod bulk_copy_integration_tests {
 
         // Verify computed column is marked correctly
         assert_eq!(metadata.len(), 4);
-        assert!(
-            !metadata[0].is_computed,
-            "id column should not be computed"
-        );
+        assert!(!metadata[0].is_computed, "id column should not be computed");
         assert!(
             !metadata[1].is_computed,
             "value1 column should not be computed"
@@ -445,27 +409,27 @@ mod bulk_copy_integration_tests {
         // Verify types and lengths
         use mssql_tds::datatypes::bulk_copy_metadata::SqlDbType;
         assert_eq!(metadata.len(), 6);
-        
+
         // VARCHAR(50)
         assert_eq!(metadata[0].sql_type, SqlDbType::VarChar);
         assert_eq!(metadata[0].max_length, 50);
-        
+
         // NVARCHAR(100) - uses 2 bytes per char
         assert_eq!(metadata[1].sql_type, SqlDbType::NVarChar);
         assert_eq!(metadata[1].max_length, 200);
-        
+
         // CHAR(10)
         assert_eq!(metadata[2].sql_type, SqlDbType::Char);
         assert_eq!(metadata[2].max_length, 10);
-        
+
         // NCHAR(20) - uses 2 bytes per char
         assert_eq!(metadata[3].sql_type, SqlDbType::NChar);
         assert_eq!(metadata[3].max_length, 40);
-        
+
         // VARCHAR(MAX)
         assert_eq!(metadata[4].sql_type, SqlDbType::VarChar);
         assert_eq!(metadata[4].max_length, -1);
-        
+
         // NVARCHAR(MAX)
         assert_eq!(metadata[5].sql_type, SqlDbType::NVarChar);
         assert_eq!(metadata[5].max_length, -1);
@@ -512,7 +476,7 @@ mod bulk_copy_integration_tests {
         // Verify types
         use mssql_tds::datatypes::bulk_copy_metadata::SqlDbType;
         assert_eq!(metadata.len(), 10);
-        
+
         assert_eq!(metadata[0].sql_type, SqlDbType::TinyInt);
         assert_eq!(metadata[1].sql_type, SqlDbType::SmallInt);
         assert_eq!(metadata[2].sql_type, SqlDbType::Int);
@@ -543,10 +507,7 @@ mod bulk_copy_integration_tests {
         let result = bulk_copy.retrieve_destination_metadata().await;
 
         // Should return an error
-        assert!(
-            result.is_err(),
-            "Expected error for non-existent table"
-        );
+        assert!(result.is_err(), "Expected error for non-existent table");
 
         if let Err(e) = result {
             println!("Expected error occurred: {:?}", e);
