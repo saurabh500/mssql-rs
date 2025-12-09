@@ -7,6 +7,9 @@
 //! BulkLoadRow trait, enabling direct serialization to TDS packets without
 //! intermediate allocations.
 
+use std::cell::Cell;
+use std::time::{Duration, Instant};
+
 use crate::types::py_to_column_value;
 use async_trait::async_trait;
 use mssql_tds::connection::bulk_copy::BulkLoadRow;
@@ -21,11 +24,6 @@ use pyo3::types::PyTuple;
 /// to be serialized directly to TDS packets without allocating intermediate
 /// Vec<ColumnValues>. The GIL is acquired only when reading Python values.
 ///
-/// # Performance
-///
-/// - **Zero allocations per row**: No Vec<ColumnValues> created
-/// - **Direct serialization**: Python value → TDS packet bytes
-/// - **Minimal GIL contention**: GIL acquired per column, not per batch
 pub struct PythonRowAdapter {
     /// Python tuple containing row data (stored as Py<PyAny> for Send + Sync)
     row: Py<PyAny>,
@@ -43,24 +41,6 @@ impl PythonRowAdapter {
     /// A new PythonRowAdapter wrapping the tuple.
     pub fn new(row: Py<PyAny>) -> Self {
         Self { row }
-    }
-
-    /// Extract column count from the wrapped tuple.
-    ///
-    /// This acquires the GIL to access the Python object.
-    ///
-    /// # Returns
-    ///
-    /// Number of columns in the tuple, or an error if the object is not a tuple.
-    pub fn column_count(&self) -> TdsResult<usize> {
-        Python::attach(|py| {
-            let tuple = self
-                .row
-                .bind(py)
-                .cast::<PyTuple>()
-                .map_err(|e| Error::UsageError(format!("Expected tuple, got: {}", e)))?;
-            Ok(tuple.len())
-        })
     }
 }
 
@@ -99,12 +79,10 @@ impl BulkLoadRow for PythonRowAdapter {
         writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
         column_index: &mut usize,
     ) -> TdsResult<()> {
-        use std::time::Instant;
         
         // Step 1: Acquire GIL and convert Python values to ColumnValues
         let start_gil = Instant::now();
         let column_values: Vec<_> = Python::attach(|py| {
-            let _start_type_conv = Instant::now();
             let tuple = self
                 .row
                 .bind(py)
@@ -113,7 +91,7 @@ impl BulkLoadRow for PythonRowAdapter {
 
             // Convert each Python value to ColumnValues
             let mut values = Vec::with_capacity(tuple.len());
-            let mut total_extract_time = std::time::Duration::ZERO;
+            let mut total_extract_time = Duration::ZERO;
             for item in tuple.iter() {
                 let extract_start = Instant::now();
                 let column_value = py_to_column_value(&item)?;
@@ -123,9 +101,9 @@ impl BulkLoadRow for PythonRowAdapter {
             
             // Log timing per row (sample every 10000 rows to avoid spam)
             thread_local! {
-                static ROW_COUNT: std::cell::Cell<u64> = std::cell::Cell::new(0);
-                static TOTAL_GIL_TIME: std::cell::Cell<std::time::Duration> = std::cell::Cell::new(std::time::Duration::ZERO);
-                static TOTAL_CONV_TIME: std::cell::Cell<std::time::Duration> = std::cell::Cell::new(std::time::Duration::ZERO);
+                static ROW_COUNT: Cell<u64> = Cell::new(0);
+                static TOTAL_GIL_TIME: Cell<Duration> = Cell::new(Duration::ZERO);
+                static TOTAL_CONV_TIME: Cell<Duration> = Cell::new(Duration::ZERO);
             }
             
             ROW_COUNT.with(|c| {
@@ -156,8 +134,8 @@ impl BulkLoadRow for PythonRowAdapter {
         
         // Sample write timing too
         thread_local! {
-            static WRITE_COUNT: std::cell::Cell<u64> = std::cell::Cell::new(0);
-            static TOTAL_WRITE_TIME: std::cell::Cell<std::time::Duration> = std::cell::Cell::new(std::time::Duration::ZERO);
+            static WRITE_COUNT: Cell<u64> = Cell::new(0);
+            static TOTAL_WRITE_TIME: Cell<Duration> = Cell::new(Duration::ZERO);
         }
         
         WRITE_COUNT.with(|c| {
