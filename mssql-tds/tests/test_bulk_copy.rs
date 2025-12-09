@@ -461,4 +461,124 @@ mod bulk_copy_integration_tests {
 
         assert_eq!(result.rows_affected, 0);
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_null_to_non_nullable_column() {
+        let context = create_context();
+        let mut client = begin_connection(context).await;
+
+        // Create test table where all columns are non-nullable
+        client
+            .execute(
+                "CREATE TABLE #BulkCopyNonNullable (
+                    id INT NOT NULL,
+                    value1 INT NOT NULL,
+                    value2 INT NOT NULL
+                )"
+                .to_string(),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create test table");
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Define structure that can hold nullable values
+        #[derive(Debug, Clone)]
+        struct NullableUser {
+            id: i32,
+            value1: Option<i32>,
+            value2: Option<i32>,
+        }
+
+        #[async_trait]
+        impl BulkLoadRow for NullableUser {
+            async fn write_to_packet(
+                &self,
+                writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+                column_index: &mut usize,
+            ) -> TdsResult<()> {
+                writer
+                    .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                    .await?;
+                *column_index += 1;
+                let value1 = self
+                    .value1
+                    .map(ColumnValues::Int)
+                    .unwrap_or(ColumnValues::Null);
+                writer.write_column_value(*column_index, &value1).await?;
+                *column_index += 1;
+                let value2 = self
+                    .value2
+                    .map(ColumnValues::Int)
+                    .unwrap_or(ColumnValues::Null);
+                writer.write_column_value(*column_index, &value2).await?;
+                *column_index += 1;
+                Ok(())
+            }
+        }
+
+        #[async_trait]
+        impl BulkLoadRow for &NullableUser {
+            async fn write_to_packet(
+                &self,
+                writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+                column_index: &mut usize,
+            ) -> TdsResult<()> {
+                writer
+                    .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                    .await?;
+                *column_index += 1;
+                let value1 = self
+                    .value1
+                    .map(ColumnValues::Int)
+                    .unwrap_or(ColumnValues::Null);
+                writer.write_column_value(*column_index, &value1).await?;
+                *column_index += 1;
+                let value2 = self
+                    .value2
+                    .map(ColumnValues::Int)
+                    .unwrap_or(ColumnValues::Null);
+                writer.write_column_value(*column_index, &value2).await?;
+                *column_index += 1;
+                Ok(())
+            }
+        }
+
+        // Create test data with NULL in non-nullable column
+        let test_data = vec![
+            NullableUser {
+                id: 1,
+                value1: Some(100),
+                value2: Some(200),
+            },
+            NullableUser {
+                id: 2,
+                value1: None, // NULL to non-nullable column - should fail on server
+                value2: Some(201),
+            },
+        ];
+
+        let result = {
+            let mut bulk_copy = BulkCopy::new(&mut client, "#BulkCopyNonNullable");
+            bulk_copy.write_to_server_zerocopy(&test_data).await
+        };
+
+        // Server should reject this with error 515 (cannot insert NULL into non-nullable column)
+        assert!(
+            result.is_err(),
+            "Expected error when inserting NULL into non-nullable column"
+        );
+
+        let error = result.unwrap_err();
+        let error_msg = format!("{:?}", error);
+
+        // Verify it's the expected SQL Server error (error 515)
+        assert!(
+            error_msg.contains("515") || error_msg.contains("NULL") || error_msg.contains("null"),
+            "Expected error about NULL constraint violation, got: {}",
+            error_msg
+        );
+    }
 }
