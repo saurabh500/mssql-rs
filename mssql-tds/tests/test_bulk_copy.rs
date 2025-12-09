@@ -6,10 +6,11 @@ mod common;
 
 mod bulk_copy_integration_tests {
     use crate::common::{begin_connection, create_context, init_tracing};
-    use mssql_tds::connection::bulk_copy::{BulkCopy, BulkCopyRow};
+    use mssql_tds::connection::bulk_copy::{BulkCopy, BulkLoadRow};
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
+    use mssql_tds::core::TdsResult;
     use mssql_tds::datatypes::column_values::ColumnValues;
-    use mssql_tds::datatypes::sql_string::SqlString;
+    use async_trait::async_trait;
 
     #[ctor::ctor]
     fn init() {
@@ -20,19 +21,46 @@ mod bulk_copy_integration_tests {
     #[derive(Debug, Clone)]
     struct TestUser {
         id: i32,
-        name: String,
-        age: i16,
-        active: bool,
+        value1: i32,
+        value2: i32,
+        value3: i32,
     }
 
-    impl BulkCopyRow for TestUser {
-        fn to_column_values(&self) -> Vec<ColumnValues> {
-            vec![
-                ColumnValues::Int(self.id),
-                ColumnValues::String(SqlString::from_utf8_string(self.name.clone())),
-                ColumnValues::SmallInt(self.age),
-                ColumnValues::Bit(self.active),
-            ]
+    #[async_trait]
+    impl BulkLoadRow for TestUser {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            writer.write_column_value(*column_index, &ColumnValues::Int(self.id)).await?;
+            *column_index += 1;
+            writer.write_column_value(*column_index, &ColumnValues::Int(self.value1)).await?;
+            *column_index += 1;
+            writer.write_column_value(*column_index, &ColumnValues::Int(self.value2)).await?;
+            *column_index += 1;
+            writer.write_column_value(*column_index, &ColumnValues::Int(self.value3)).await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for &TestUser {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            writer.write_column_value(*column_index, &ColumnValues::Int(self.id)).await?;
+            *column_index += 1;
+            writer.write_column_value(*column_index, &ColumnValues::Int(self.value1)).await?;
+            *column_index += 1;
+            writer.write_column_value(*column_index, &ColumnValues::Int(self.value2)).await?;
+            *column_index += 1;
+            writer.write_column_value(*column_index, &ColumnValues::Int(self.value3)).await?;
+            *column_index += 1;
+            Ok(())
         }
     }
 
@@ -46,9 +74,9 @@ mod bulk_copy_integration_tests {
             .execute(
                 "CREATE TABLE #BulkCopyTest (
                     id INT NOT NULL,
-                    name NVARCHAR(100) NOT NULL,
-                    age SMALLINT NOT NULL,
-                    active BIT NOT NULL
+                    value1 INT NOT NULL,
+                    value2 INT NOT NULL,
+                    value3 INT NOT NULL
                 )"
                 .to_string(),
                 None,
@@ -64,21 +92,21 @@ mod bulk_copy_integration_tests {
         let test_data = vec![
             TestUser {
                 id: 1,
-                name: "Alice".to_string(),
-                age: 30,
-                active: true,
+                value1: 100,
+                value2: 200,
+                value3: 300,
             },
             TestUser {
                 id: 2,
-                name: "Bob".to_string(),
-                age: 25,
-                active: false,
+                value1: 101,
+                value2: 201,
+                value3: 301,
             },
             TestUser {
                 id: 3,
-                name: "Charlie".to_string(),
-                age: 35,
-                active: true,
+                value1: 102,
+                value2: 202,
+                value3: 302,
             },
         ];
 
@@ -87,7 +115,7 @@ mod bulk_copy_integration_tests {
             let bulk_copy = BulkCopy::new(&mut client, "#BulkCopyTest");
             bulk_copy
                 .batch_size(1000)
-                .write_to_server(test_data.into_iter())
+                .write_to_server_zerocopy(&test_data)
                 .await
                 .expect("Bulk copy failed")
         };
@@ -119,7 +147,7 @@ mod bulk_copy_integration_tests {
         // Verify the data was inserted
         client
             .execute(
-                "SELECT id, name, age, active FROM #BulkCopyTest ORDER BY id".to_string(),
+                "SELECT id, value1, value2, value3 FROM #BulkCopyTest ORDER BY id".to_string(),
                 None,
                 None,
             )
@@ -133,33 +161,21 @@ mod bulk_copy_integration_tests {
                 match row_count {
                     1 => {
                         assert_eq!(row[0], ColumnValues::Int(1));
-                        if let ColumnValues::String(s) = &row[1] {
-                            assert_eq!(s.to_utf8_string(), "Alice");
-                        } else {
-                            panic!("Expected string for name");
-                        }
-                        assert_eq!(row[2], ColumnValues::SmallInt(30));
-                        assert_eq!(row[3], ColumnValues::Bit(true));
+                        assert_eq!(row[1], ColumnValues::Int(100));
+                        assert_eq!(row[2], ColumnValues::Int(200));
+                        assert_eq!(row[3], ColumnValues::Int(300));
                     }
                     2 => {
                         assert_eq!(row[0], ColumnValues::Int(2));
-                        if let ColumnValues::String(s) = &row[1] {
-                            assert_eq!(s.to_utf8_string(), "Bob");
-                        } else {
-                            panic!("Expected string for name");
-                        }
-                        assert_eq!(row[2], ColumnValues::SmallInt(25));
-                        assert_eq!(row[3], ColumnValues::Bit(false));
+                        assert_eq!(row[1], ColumnValues::Int(101));
+                        assert_eq!(row[2], ColumnValues::Int(201));
+                        assert_eq!(row[3], ColumnValues::Int(301));
                     }
                     3 => {
                         assert_eq!(row[0], ColumnValues::Int(3));
-                        if let ColumnValues::String(s) = &row[1] {
-                            assert_eq!(s.to_utf8_string(), "Charlie");
-                        } else {
-                            panic!("Expected string for name");
-                        }
-                        assert_eq!(row[2], ColumnValues::SmallInt(35));
-                        assert_eq!(row[3], ColumnValues::Bit(true));
+                        assert_eq!(row[1], ColumnValues::Int(102));
+                        assert_eq!(row[2], ColumnValues::Int(202));
+                        assert_eq!(row[3], ColumnValues::Int(302));
                     }
                     _ => panic!("Unexpected row"),
                 }
@@ -181,9 +197,9 @@ mod bulk_copy_integration_tests {
             .execute(
                 "CREATE TABLE #BulkCopyLarge (
                     id INT NOT NULL,
-                    name NVARCHAR(100) NOT NULL,
-                    age SMALLINT NOT NULL,
-                    active BIT NOT NULL
+                    value1 INT NOT NULL,
+                    value2 INT NOT NULL,
+                    value3 INT NOT NULL
                 )"
                 .to_string(),
                 None,
@@ -198,9 +214,9 @@ mod bulk_copy_integration_tests {
         let test_data: Vec<TestUser> = (1..=100)
             .map(|i| TestUser {
                 id: i,
-                name: format!("User{i}"),
-                age: (20 + (i % 50)) as i16,
-                active: i % 2 == 0,
+                value1: i * 10,
+                value2: i * 20,
+                value3: i * 30,
             })
             .collect();
 
@@ -208,7 +224,7 @@ mod bulk_copy_integration_tests {
         let result = {
             let mut bulk_copy = BulkCopy::new(&mut client, "#BulkCopyLarge");
             bulk_copy
-                .write_to_server(test_data.into_iter())
+                .write_to_server_zerocopy(&test_data)
                 .await
                 .expect("Bulk copy failed")
         };
@@ -247,8 +263,8 @@ mod bulk_copy_integration_tests {
             .execute(
                 "CREATE TABLE #BulkCopyNulls (
                     id INT NOT NULL,
-                    name NVARCHAR(100) NULL,
-                    age SMALLINT NULL
+                    value1 INT NULL,
+                    value2 INT NULL
                 )"
                 .to_string(),
                 None,
@@ -263,52 +279,83 @@ mod bulk_copy_integration_tests {
         #[derive(Debug, Clone)]
         struct NullableUser {
             id: i32,
-            name: Option<String>,
-            age: Option<i16>,
+            value1: Option<i32>,
+            value2: Option<i32>,
         }
 
-        impl BulkCopyRow for NullableUser {
-            fn to_column_values(&self) -> Vec<ColumnValues> {
-                vec![
-                    ColumnValues::Int(self.id),
-                    self.name
-                        .as_ref()
-                        .map(|s| ColumnValues::String(SqlString::from_utf8_string(s.clone())))
-                        .unwrap_or(ColumnValues::Null),
-                    self.age
-                        .map(ColumnValues::SmallInt)
-                        .unwrap_or(ColumnValues::Null),
-                ]
+        #[async_trait]
+        impl BulkLoadRow for NullableUser {
+            async fn write_to_packet(
+                &self,
+                writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+                column_index: &mut usize,
+            ) -> TdsResult<()> {
+                writer.write_column_value(*column_index, &ColumnValues::Int(self.id)).await?;
+                *column_index += 1;
+                let value1 = self.value1
+                    .map(ColumnValues::Int)
+                    .unwrap_or(ColumnValues::Null);
+                writer.write_column_value(*column_index, &value1).await?;
+                *column_index += 1;
+                let value2 = self.value2
+                    .map(ColumnValues::Int)
+                    .unwrap_or(ColumnValues::Null);
+                writer.write_column_value(*column_index, &value2).await?;
+                *column_index += 1;
+                Ok(())
+            }
+        }
+
+        #[async_trait]
+        impl BulkLoadRow for &NullableUser {
+            async fn write_to_packet(
+                &self,
+                writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+                column_index: &mut usize,
+            ) -> TdsResult<()> {
+                writer.write_column_value(*column_index, &ColumnValues::Int(self.id)).await?;
+                *column_index += 1;
+                let value1 = self.value1
+                    .map(ColumnValues::Int)
+                    .unwrap_or(ColumnValues::Null);
+                writer.write_column_value(*column_index, &value1).await?;
+                *column_index += 1;
+                let value2 = self.value2
+                    .map(ColumnValues::Int)
+                    .unwrap_or(ColumnValues::Null);
+                writer.write_column_value(*column_index, &value2).await?;
+                *column_index += 1;
+                Ok(())
             }
         }
 
         let test_data = vec![
             NullableUser {
                 id: 1,
-                name: Some("Alice".to_string()),
-                age: Some(30),
+                value1: Some(100),
+                value2: Some(200),
             },
             NullableUser {
                 id: 2,
-                name: None,
-                age: Some(25),
+                value1: None,
+                value2: Some(201),
             },
             NullableUser {
                 id: 3,
-                name: Some("Charlie".to_string()),
-                age: None,
+                value1: Some(102),
+                value2: None,
             },
             NullableUser {
                 id: 4,
-                name: None,
-                age: None,
+                value1: None,
+                value2: None,
             },
         ];
 
         let result = {
             let mut bulk_copy = BulkCopy::new(&mut client, "#BulkCopyNulls");
             bulk_copy
-                .write_to_server(test_data.into_iter())
+                .write_to_server_zerocopy(&test_data)
                 .await
                 .expect("Bulk copy failed")
         };
@@ -318,7 +365,7 @@ mod bulk_copy_integration_tests {
         // Verify the data
         client
             .execute(
-                "SELECT id, name, age FROM #BulkCopyNulls ORDER BY id".to_string(),
+                "SELECT id, value1, value2 FROM #BulkCopyNulls ORDER BY id".to_string(),
                 None,
                 None,
             )
@@ -332,17 +379,17 @@ mod bulk_copy_integration_tests {
                 match row_count {
                     1 => {
                         assert_eq!(row[0], ColumnValues::Int(1));
-                        assert!(matches!(row[1], ColumnValues::String(_)));
-                        assert_eq!(row[2], ColumnValues::SmallInt(30));
+                        assert_eq!(row[1], ColumnValues::Int(100));
+                        assert_eq!(row[2], ColumnValues::Int(200));
                     }
                     2 => {
                         assert_eq!(row[0], ColumnValues::Int(2));
                         assert_eq!(row[1], ColumnValues::Null);
-                        assert_eq!(row[2], ColumnValues::SmallInt(25));
+                        assert_eq!(row[2], ColumnValues::Int(201));
                     }
                     3 => {
                         assert_eq!(row[0], ColumnValues::Int(3));
-                        assert!(matches!(row[1], ColumnValues::String(_)));
+                        assert_eq!(row[1], ColumnValues::Int(102));
                         assert_eq!(row[2], ColumnValues::Null);
                     }
                     4 => {
@@ -367,7 +414,7 @@ mod bulk_copy_integration_tests {
             .execute(
                 "CREATE TABLE #BulkCopyEmpty (
                     id INT NOT NULL,
-                    name NVARCHAR(100) NOT NULL
+                    value1 INT NOT NULL
                 )"
                 .to_string(),
                 None,
@@ -383,7 +430,7 @@ mod bulk_copy_integration_tests {
         let result = {
             let mut bulk_copy = BulkCopy::new(&mut client, "#BulkCopyEmpty");
             bulk_copy
-                .write_to_server(test_data.into_iter())
+                .write_to_server_zerocopy(&test_data)
                 .await
                 .expect("Bulk copy should handle empty dataset")
         };

@@ -8,6 +8,7 @@
 //! intermediate allocations.
 
 use std::cell::Cell;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::types::py_to_column_value;
@@ -66,8 +67,8 @@ impl SourcePythonType {
 pub struct PythonRowAdapter {
     /// Python tuple containing row data (stored as Py<PyAny> for Send + Sync)
     row: Py<PyAny>,
-    /// Optional destination column metadata for type coercion
-    destination_metadata: Option<Vec<DestinationColumnMetadata>>,
+    /// Optional destination column metadata for type coercion (wrapped in Arc for efficient sharing across rows)
+    destination_metadata: Option<Arc<Vec<DestinationColumnMetadata>>>,
 }
 
 impl PythonRowAdapter {
@@ -92,12 +93,12 @@ impl PythonRowAdapter {
     /// # Arguments
     ///
     /// * `row` - Python tuple containing column values
-    /// * `destination_metadata` - Destination column metadata for type conversion
+    /// * `destination_metadata` - Destination column metadata for type conversion (wrapped in Arc for efficient sharing)
     ///
     /// # Returns
     ///
     /// A new PythonRowAdapter with type coercion support.
-    pub fn with_metadata(row: Py<PyAny>, destination_metadata: Vec<DestinationColumnMetadata>) -> Self {
+    pub fn with_metadata(row: Py<PyAny>, destination_metadata: Arc<Vec<DestinationColumnMetadata>>) -> Self {
         Self {
             row,
             destination_metadata: Some(destination_metadata),

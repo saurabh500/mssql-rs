@@ -10,7 +10,7 @@ use crate::datatypes::sqltypes::SqlType;
 use crate::error::Error::UsageError;
 use crate::io::packet_writer::PacketWriter;
 use crate::message::bulk_load::{
-    BulkLoadMessage, StreamingBulkLoadWriter, build_insert_bulk_command,
+    StreamingBulkLoadWriter, build_insert_bulk_command,
 };
 use crate::message::messages::PacketType;
 use crate::message::parameters::rpc_parameters::{
@@ -35,7 +35,7 @@ use crate::{
     token::tokens::{ColMetadataToken, CurrentCommand, Tokens},
 };
 use async_trait::async_trait;
-use tracing::{debug, error, info, instrument, trace};
+use tracing::{debug, error, info, instrument};
 
 use crate::{
     core::{CancelHandle, TdsResult},
@@ -217,158 +217,6 @@ impl TdsClient {
             self.execution_context.set_has_open_batch(true);
         }
         Ok(())
-    }
-
-    /// Fetches table metadata from SQL Server by querying the table with TOP 0.
-    ///
-    /// This method queries the destination table to get the exact column metadata
-    /// (including TDS types) that SQL Server expects. This matches the .NET SqlBulkCopy
-    /// behavior which queries the table schema before sending bulk data.
-    ///
-    /// # Arguments
-    ///
-    /// * `table_name` - The fully qualified table name (e.g., "dbo.TableName")
-    /// * `timeout_sec` - Optional timeout in seconds for the query
-    /// * `cancel_handle` - Optional cancellation handle
-    ///
-    /// # Returns
-    ///
-    /// A `ColMetadataToken` containing the column metadata from the server.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The table doesn't exist
-    /// - Network errors occur
-    /// - Timeout occurs
-    /// - Operation is cancelled
-    #[instrument(skip(self), level = "info")]
-    pub(crate) async fn fetch_table_metadata(
-        &mut self,
-        table_name: &str,
-        timeout_sec: Option<u32>,
-        cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<ColMetadataToken> {
-        // Use SET FMTONLY ON to get metadata without query execution overhead.
-        // This matches .NET SqlBulkCopy behavior and is more efficient than SELECT TOP 0.
-        // It also dynamically builds the column list to:
-        // - Support hidden columns in temporal tables
-        // - Exclude SQL Graph columns that cannot be selected
-        let query = format!(
-            r#"DECLARE @Column_Names NVARCHAR(MAX) = NULL;
-IF EXISTS (SELECT TOP 1 * FROM sys.all_columns WHERE [object_id] = OBJECT_ID('sys.all_columns') AND [name] = 'graph_type')
-BEGIN
-    SELECT @Column_Names = COALESCE(@Column_Names + ', ', '') + QUOTENAME([name]) 
-    FROM sys.all_columns 
-    WHERE [object_id] = OBJECT_ID('{table_name}') 
-    AND COALESCE([graph_type], 0) NOT IN (1, 3, 4, 6, 7) 
-    ORDER BY [column_id] ASC;
-END
-ELSE
-BEGIN
-    SELECT @Column_Names = COALESCE(@Column_Names + ', ', '') + QUOTENAME([name]) 
-    FROM sys.all_columns 
-    WHERE [object_id] = OBJECT_ID('{table_name}') 
-    ORDER BY [column_id] ASC;
-END
-
-SELECT @Column_Names = COALESCE(@Column_Names, '*');
-
-SET FMTONLY ON;
-EXEC(N'SELECT ' + @Column_Names + N' FROM {table_name}');
-SET FMTONLY OFF;"#
-        );
-
-        debug!("Fetching table metadata with FMTONLY");
-
-        // Execute the query
-        self.execute(query, timeout_sec, cancel_handle).await?;
-
-        // Get the metadata from the result
-        let metadata = self.current_metadata.clone().ok_or_else(|| {
-            UsageError(format!("Failed to fetch metadata for table {table_name}"))
-        })?;
-
-        debug!(
-            "Fetched {} columns from table metadata",
-            metadata.columns.len()
-        );
-        for (i, col) in metadata.columns.iter().enumerate() {
-            trace!(
-                "Column {}: name='{}', tds_type=0x{:02X}, nullable={}",
-                i,
-                col.column_name,
-                col.data_type as u8,
-                col.is_nullable()
-            );
-        }
-
-        // Close the query to free up the connection
-        self.close_query().await?;
-
-        Ok(metadata)
-    }
-
-    /// Executes a bulk load operation.
-    ///
-    /// This method implements the TDS bulk load protocol following the proper request-response pattern:
-    /// 1. Send INSERT BULK command → Read response (DONE token with cur_cmd=0xFD)
-    /// 2. Send bulk data (COLMETADATA + ROW tokens) → Read response (DONE token with cur_cmd=0xF0)
-    ///
-    /// This two-phase approach matches .NET SqlBulkCopy behavior and eliminates the need for
-    /// special DONE token filtering. Each operation is acknowledged by the server before
-    /// proceeding to the next step.
-    ///
-    /// # Arguments
-    ///
-    /// * `message` - The bulk load message containing table name, metadata, and rows
-    /// * `timeout_sec` - Optional timeout in seconds for the operation
-    /// * `cancel_handle` - Optional cancellation handle
-    ///
-    /// # Returns
-    ///
-    /// The number of rows affected (inserted) as reported by the SQL Server DONE token.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - There's an open batch already executing
-    /// - Network errors occur during transmission
-    /// - SQL Server returns an error (constraints, type mismatches, etc.)
-    /// - Timeout occurs
-    /// - Operation is cancelled
-    #[instrument(skip(self, message), level = "info")]
-    pub(crate) async fn execute_bulk_load(
-        &mut self,
-        message: BulkLoadMessage,
-        timeout_sec: Option<u32>,
-        cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<u64> {
-        if self.execution_context.has_open_batch() {
-            return Err(UsageError(ALREADY_EXECUTING_ERROR.to_string()));
-        }
-
-        // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
-        self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
-
-        self.transport.reset_reader();
-
-        // STEP 1: Send INSERT BULK command and consume response
-        // Uses the standard batch send/consume pattern (reuses send_batch_and_consume_response)
-        let insert_bulk_command = message.build_insert_bulk_command();
-        self.send_batch_and_consume_response(insert_bulk_command, timeout_sec, cancel_handle)
-            .await?;
-
-        // STEP 2: Send the COLMETADATA and row data
-        let mut packet_writer =
-            message.create_packet_writer(self.transport.as_writer(), timeout_sec, cancel_handle);
-        message.serialize(&mut packet_writer).await?;
-
-        // STEP 3: Read the final response with row count
-        let rows_affected = self.consume_done_token().await?;
-
-        Ok(rows_affected)
     }
 
     /// Executes a bulk load operation using zero-copy streaming.

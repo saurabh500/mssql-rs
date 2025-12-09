@@ -321,8 +321,9 @@ impl PyCoreCursor {
                 info!("bulkcopy: Creating PythonRowAdapter iterators");
                 let row_adapters: Vec<PythonRowAdapter> = if let Some(metadata) = destination_metadata {
                     info!("bulkcopy: Creating adapters with metadata for type coercion");
+                    let metadata_arc = Arc::new(metadata);
                     rows.into_iter()
-                        .map(|row| PythonRowAdapter::with_metadata(row, metadata.clone()))
+                        .map(|row| PythonRowAdapter::with_metadata(row, Arc::clone(&metadata_arc)))
                         .collect()
                 } else {
                     info!("bulkcopy: Creating adapters without metadata");
