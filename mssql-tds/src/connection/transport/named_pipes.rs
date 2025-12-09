@@ -6,12 +6,7 @@
 //! This module provides Windows-specific functionality for connecting to SQL Server
 //! via Named Pipes, including retry logic for busy pipe instances.
 
-use crate::connection::client_context::TransportContext;
-use crate::connection::transport::network_transport::{
-    NetworkTransport, PRE_NEGOTIATED_PACKET_SIZE, Stream,
-};
-use crate::connection::transport::ssl_handler::SslHandler;
-use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
+use crate::connection::transport::network_transport::Stream;
 use std::time::Duration;
 use tokio::net::windows::named_pipe::NamedPipeClient;
 use tracing::{debug, info, warn};
@@ -144,40 +139,6 @@ fn wait_for_named_pipe(pipe_path: &str, timeout_ms: u32) -> std::io::Result<()> 
     }
 
     Ok(())
-}
-
-/// Creates a NetworkTransport for Named Pipe connections.
-///
-/// Named Pipes support TLS encryption, and this function sets up the transport
-/// with appropriate SSL handling. Uses the transport context to extract the
-/// server name for TLS certificate validation.
-pub(crate) async fn create_named_pipe_transport(
-    pipe_client: NamedPipeClient,
-    transport_context: &TransportContext,
-    encryption_options: EncryptionOptions,
-    encryption_mode: EncryptionSetting,
-) -> TdsResult<Box<NetworkTransport>> {
-    // Named Pipes support TLS encryption
-    let base_stream: Box<dyn Stream> = Box::new(pipe_client);
-
-    // Extract server name from the transport context
-    // This handles both local (\\.\\...) and remote (\\\\server\\...) pipe paths
-    let server_host_name = transport_context.get_server_name();
-    info!(
-        server_host_name,
-        ?encryption_mode,
-        "Creating named pipe transport"
-    );
-
-    Ok(Box::new(NetworkTransport::new(
-        base_stream,
-        SslHandler {
-            server_host_name,
-            encryption_options,
-        },
-        PRE_NEGOTIATED_PACKET_SIZE,
-        encryption_mode,
-    )))
 }
 
 /// Implementation of Stream trait for NamedPipeClient
