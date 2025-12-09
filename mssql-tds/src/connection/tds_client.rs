@@ -400,6 +400,7 @@ SET FMTONLY OFF;"#
     ///
     /// Returns the number of rows actually inserted by SQL Server.
     #[instrument(skip(self, rows), level = "info")]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn execute_bulk_load_streaming_zerocopy<R>(
         &mut self,
         table_name: String,

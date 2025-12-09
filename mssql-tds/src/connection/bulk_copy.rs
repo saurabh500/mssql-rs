@@ -1646,24 +1646,23 @@ impl<'a> BulkCopy<'a> {
             *total_rows += batch_count;
 
             // Report progress if callback is configured
-            if let Some(ref mut callback) = self.progress_callback {
-                if self.options.notification_interval > 0
-                    && *total_rows % self.options.notification_interval as u64 == 0
-                {
-                    let elapsed = start_time.elapsed();
-                    let rows_per_second = if elapsed.as_secs_f64() > 0.0 {
-                        *total_rows as f64 / elapsed.as_secs_f64()
-                    } else {
-                        0.0
-                    };
+            if let Some(ref mut callback) = self.progress_callback
+                && self.options.notification_interval > 0
+                && (*total_rows).is_multiple_of(self.options.notification_interval as u64)
+            {
+                let elapsed = start_time.elapsed();
+                let rows_per_second = if elapsed.as_secs_f64() > 0.0 {
+                    *total_rows as f64 / elapsed.as_secs_f64()
+                } else {
+                    0.0
+                };
 
-                    callback(BulkCopyProgress {
-                        rows_copied: *total_rows,
-                        total_rows: None,
-                        elapsed,
-                        rows_per_second,
-                    });
-                }
+                callback(BulkCopyProgress {
+                    rows_copied: *total_rows,
+                    total_rows: None,
+                    elapsed,
+                    rows_per_second,
+                });
             }
         }
 

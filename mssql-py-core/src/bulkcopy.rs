@@ -79,7 +79,6 @@ impl BulkLoadRow for PythonRowAdapter {
         writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
         column_index: &mut usize,
     ) -> TdsResult<()> {
-        
         // Step 1: Acquire GIL and convert Python values to ColumnValues
         let start_gil = Instant::now();
         let column_values: Vec<_> = Python::attach(|py| {
@@ -98,26 +97,28 @@ impl BulkLoadRow for PythonRowAdapter {
                 total_extract_time += extract_start.elapsed();
                 values.push(column_value);
             }
-            
+
             // Log timing per row (sample every 10000 rows to avoid spam)
             thread_local! {
-                static ROW_COUNT: Cell<u64> = Cell::new(0);
-                static TOTAL_GIL_TIME: Cell<Duration> = Cell::new(Duration::ZERO);
-                static TOTAL_CONV_TIME: Cell<Duration> = Cell::new(Duration::ZERO);
+                static ROW_COUNT: Cell<u64> = const { Cell::new(0) };
+                static TOTAL_GIL_TIME: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+                static TOTAL_CONV_TIME: Cell<Duration> = const { Cell::new(Duration::ZERO) };
             }
-            
+
             ROW_COUNT.with(|c| {
                 let count = c.get() + 1;
                 c.set(count);
-                
+
                 TOTAL_GIL_TIME.with(|t| t.set(t.get() + start_gil.elapsed()));
                 TOTAL_CONV_TIME.with(|t| t.set(t.get() + total_extract_time));
-                
+
                 if count % 10000 == 0 {
                     let avg_gil = TOTAL_GIL_TIME.with(|t| t.get()) / count as u32;
                     let avg_conv = TOTAL_CONV_TIME.with(|t| t.get()) / count as u32;
-                    eprintln!("[PROFILE] {} rows: avg GIL+conversion={:?}, avg type_conversion={:?}", 
-                             count, avg_gil, avg_conv);
+                    eprintln!(
+                        "[PROFILE] {} rows: avg GIL+conversion={:?}, avg type_conversion={:?}",
+                        count, avg_gil, avg_conv
+                    );
                 }
             });
 
@@ -131,19 +132,19 @@ impl BulkLoadRow for PythonRowAdapter {
             *column_index += 1;
         }
         let write_time = start_write.elapsed();
-        
+
         // Sample write timing too
         thread_local! {
-            static WRITE_COUNT: Cell<u64> = Cell::new(0);
-            static TOTAL_WRITE_TIME: Cell<Duration> = Cell::new(Duration::ZERO);
+            static WRITE_COUNT: Cell<u64> = const { Cell::new(0) };
+            static TOTAL_WRITE_TIME: Cell<Duration> = const { Cell::new(Duration::ZERO) };
         }
-        
+
         WRITE_COUNT.with(|c| {
             let count = c.get() + 1;
             c.set(count);
-            
+
             TOTAL_WRITE_TIME.with(|t| t.set(t.get() + write_time));
-            
+
             if count % 10000 == 0 {
                 let avg_write = TOTAL_WRITE_TIME.with(|t| t.get()) / count as u32;
                 eprintln!("[PROFILE] {} rows: avg TDS_write={:?}", count, avg_write);

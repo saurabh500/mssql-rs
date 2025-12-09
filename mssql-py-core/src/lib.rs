@@ -3,11 +3,11 @@
 
 use pyo3::prelude::*;
 
+mod bulkcopy;
 mod connection;
 mod cursor;
 mod types;
 mod utils;
-mod bulkcopy;
 
 /// Python module for Core TDS connectivity
 #[pymodule(name = "mssql_py_core")]

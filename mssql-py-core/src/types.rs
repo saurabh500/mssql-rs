@@ -1,14 +1,14 @@
 // Type conversion utilities between Python and SQL Server types
 
-use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDateTime, PyDate, PyTime, PyString, PyInt, PyBool};
+use mssql_tds::core::TdsResult;
 use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::datatypes::sql_string::SqlString;
-use mssql_tds::core::TdsResult;
 use mssql_tds::error::Error;
+use pyo3::prelude::*;
+use pyo3::types::{PyBool, PyBytes, PyDate, PyDateTime, PyInt, PyString, PyTime};
 
 /// Fast-path converter that checks type once and extracts directly
-/// 
+///
 /// This avoids the expensive fallback chain of trying bool→i32→i64→str
 /// on every single value. Instead, we check the Python type name once
 /// and use direct extraction.
@@ -25,7 +25,7 @@ pub fn py_to_column_value_fast(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnVal
 
     // Fast path: check instance type directly
     // This is much faster than trying extract::<T>() in sequence
-    
+
     // Check for int (most common in bulk copy)
     if py_obj.is_instance_of::<PyInt>() {
         // Try i32 first (most common range)
@@ -37,37 +37,41 @@ pub fn py_to_column_value_fast(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnVal
             return Ok(ColumnValues::BigInt(val));
         }
     }
-    
+
     // Check for string (second most common)
     if py_obj.is_instance_of::<PyString>() {
         // Direct string extraction - no fallback needed
-        let val = py_obj.extract::<String>()
+        let val = py_obj
+            .extract::<String>()
             .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
         let sql_string = SqlString::from_utf8_string(val);
         return Ok(ColumnValues::String(sql_string));
     }
-    
+
     // Check for bool (must be before int check in fallback, but after PyInt instance check)
     if py_obj.is_instance_of::<PyBool>() {
-        let val = py_obj.extract::<bool>()
+        let val = py_obj
+            .extract::<bool>()
             .map_err(|e| Error::UsageError(format!("Failed to extract bool: {}", e)))?;
         return Ok(ColumnValues::Bit(val));
     }
-    
+
     // Check for float
     if py_obj.is_exact_instance_of::<pyo3::types::PyFloat>() {
-        let val = py_obj.extract::<f64>()
+        let val = py_obj
+            .extract::<f64>()
             .map_err(|e| Error::UsageError(format!("Failed to extract float: {}", e)))?;
         return Ok(ColumnValues::Float(val));
     }
-    
+
     // Check for bytes
     if py_obj.is_instance_of::<PyBytes>() {
-        let bytes = py_obj.extract::<Vec<u8>>()
+        let bytes = py_obj
+            .extract::<Vec<u8>>()
             .map_err(|e| Error::UsageError(format!("Failed to extract bytes: {}", e)))?;
         return Ok(ColumnValues::Bytes(bytes));
     }
-    
+
     // Check for datetime types
     if py_obj.is_instance_of::<PyDateTime>() {
         match py_obj.call_method0("isoformat") {
@@ -78,11 +82,14 @@ pub fn py_to_column_value_fast(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnVal
                 }
             }
             Err(e) => {
-                return Err(Error::UsageError(format!("Failed to convert datetime: {}", e)));
+                return Err(Error::UsageError(format!(
+                    "Failed to convert datetime: {}",
+                    e
+                )));
             }
         }
     }
-    
+
     if py_obj.is_instance_of::<PyDate>() {
         match py_obj.call_method0("isoformat") {
             Ok(result) => {
@@ -96,7 +103,7 @@ pub fn py_to_column_value_fast(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnVal
             }
         }
     }
-    
+
     if py_obj.is_instance_of::<PyTime>() {
         match py_obj.call_method0("isoformat") {
             Ok(result) => {
@@ -112,10 +119,12 @@ pub fn py_to_column_value_fast(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnVal
     }
 
     // Unsupported type
-    let type_name = py_obj.get_type().name()
+    let type_name = py_obj
+        .get_type()
+        .name()
         .map(|n| n.to_string())
         .unwrap_or_else(|_| "<unknown>".to_string());
-    
+
     Err(Error::UsageError(format!(
         "Unsupported Python type for bulk copy: {}",
         type_name
@@ -123,7 +132,7 @@ pub fn py_to_column_value_fast(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnVal
 }
 
 /// Convert a Python object to ColumnValues for TDS serialization
-/// 
+///
 /// This function handles direct conversion from Python types to TDS column values,
 /// supporting the most common SQL Server data types.
 ///

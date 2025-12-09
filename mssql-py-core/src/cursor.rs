@@ -1,15 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use mssql_tds::connection::bulk_copy::{BulkCopy, ColumnMappingSource, ColumnMapping as TdsColumnMapping};
-use mssql_tds::connection::tds_client::TdsClient;
+use mssql_tds::connection::bulk_copy::{
+    BulkCopy, ColumnMapping as TdsColumnMapping, ColumnMappingSource,
+};
+use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
+use mssql_tds::datatypes::column_values::ColumnValues;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyIterator, PyTuple};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tokio::runtime::Handle;
-use tracing::{info, error};
+use tokio::sync::Mutex;
+use tracing::{error, info};
 
 use crate::bulkcopy::PythonRowAdapter;
 
@@ -23,28 +26,127 @@ pub struct PyCoreCursor {
 
 #[pymethods]
 impl PyCoreCursor {
-    fn execute(&mut self, _query: String, _params: Option<Vec<Py<PyAny>>>) -> PyResult<()> {
-        // TODO: Implement execute with actual TDS query execution
+    #[pyo3(signature = (query, params=None))]
+    #[allow(unused_variables)]
+    fn execute(
+        &mut self,
+        py: Python,
+        query: String,
+        params: Option<Vec<Py<PyAny>>>,
+    ) -> PyResult<()> {
+        info!("execute: Executing query: {}", query);
+
+        let tds_client = self.tds_client.clone();
+        let runtime_handle = self.runtime_handle.clone();
+
+        // Execute query asynchronously
+        py.detach(|| {
+            runtime_handle.block_on(async {
+                let mut client = tds_client.lock().await;
+                info!("execute: Locked TDS client, calling execute");
+
+                // Execute with 30 second timeout
+                client.execute(query, Some(30), None).await.map_err(|e| {
+                    error!("execute: Failed to execute query: {}", e);
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "Query execution failed: {}",
+                        e
+                    ))
+                })?;
+
+                info!("execute: Query executed successfully");
+                Ok::<_, PyErr>(())
+            })
+        })?;
+
+        self.has_resultset = true;
         Ok(())
     }
 
-    fn fetchone(&mut self) -> PyResult<Option<Py<PyAny>>> {
-        // TODO: Implement fetchone
-        Ok(None)
+    fn fetchone(&mut self, py: Python) -> PyResult<Option<Py<PyAny>>> {
+        if !self.has_resultset {
+            return Ok(None);
+        }
+
+        info!("fetchone: Fetching one row");
+
+        let tds_client = self.tds_client.clone();
+        let runtime_handle = self.runtime_handle.clone();
+
+        // Fetch one row asynchronously
+        let result = py.detach(|| {
+            runtime_handle.block_on(async {
+                let mut client = tds_client.lock().await;
+                info!("fetchone: Locked TDS client");
+
+                if let Some(resultset) = client.get_current_resultset() {
+                    info!("fetchone: Got resultset, fetching next row");
+                    if let Some(row) = resultset.next_row().await.map_err(|e| {
+                        error!("fetchone: Failed to fetch row: {}", e);
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Failed to fetch row: {}",
+                            e
+                        ))
+                    })? {
+                        info!("fetchone: Got row with {} columns", row.len());
+                        return Ok(Some(row));
+                    }
+                }
+
+                info!("fetchone: No more rows");
+                Ok::<_, PyErr>(None)
+            })
+        })?;
+
+        // Convert row to Python tuple
+        if let Some(row) = result {
+            Python::attach(|py| {
+                let py_list: Vec<Bound<'_, PyAny>> = row
+                    .iter()
+                    .map(|col_val| Self::column_value_to_python(py, col_val))
+                    .collect();
+                let py_tuple = PyTuple::new(py, py_list.iter())?;
+                Ok(Some(py_tuple.into()))
+            })
+        } else {
+            Ok(None)
+        }
     }
 
-    fn fetchall(&mut self) -> PyResult<Vec<Py<PyAny>>> {
-        // TODO: Implement fetchall
-        Ok(vec![])
+    fn fetchall(&mut self, py: Python) -> PyResult<Vec<Py<PyAny>>> {
+        if !self.has_resultset {
+            return Ok(vec![]);
+        }
+
+        info!("fetchall: Fetching all rows");
+
+        let mut results = Vec::new();
+        while let Some(row) = self.fetchone(py)? {
+            results.push(row);
+        }
+
+        info!("fetchall: Fetched {} rows", results.len());
+        Ok(results)
     }
 
-    fn fetchmany(&mut self, _size: Option<usize>) -> PyResult<Vec<Py<PyAny>>> {
-        // TODO: Implement fetchmany
-        Ok(vec![])
+    fn fetchmany(&mut self, py: Python, size: Option<usize>) -> PyResult<Vec<Py<PyAny>>> {
+        let fetch_size = size.unwrap_or(1);
+        let mut results = Vec::new();
+
+        for _ in 0..fetch_size {
+            if let Some(row) = self.fetchone(py)? {
+                results.push(row);
+            } else {
+                break;
+            }
+        }
+
+        Ok(results)
     }
 
     fn close(&mut self) -> PyResult<()> {
-        // Cursor close - no action needed for now
+        // TODO: Might need to drain the results.
+        self.has_resultset = false;
         Ok(())
     }
 
@@ -88,10 +190,13 @@ impl PyCoreCursor {
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Py<PyDict>> {
         info!("bulkcopy: Starting bulkcopy to table: {}", table_name);
-        
+
         // Parse kwargs with defaults
         let options = Self::parse_bulkcopy_kwargs(kwargs)?;
-        info!("bulkcopy: Parsed options - batch_size={}, timeout={:?}", options.batch_size, options.timeout);
+        info!(
+            "bulkcopy: Parsed options - batch_size={}, timeout={:?}",
+            options.batch_size, options.timeout
+        );
 
         // Clone the TdsClient Arc for async execution
         let tds_client = self.tds_client.clone();
@@ -122,7 +227,7 @@ impl PyCoreCursor {
 
                 // Create BulkCopy instance
                 info!("bulkcopy: Creating BulkCopy instance");
-                let mut bulk_copy = BulkCopy::new(&mut *client, table_name)
+                let mut bulk_copy = BulkCopy::new(&mut client, table_name)
                     .batch_size(options.batch_size)
                     .timeout(options.timeout)
                     .check_constraints(options.check_constraints)
@@ -134,21 +239,26 @@ impl PyCoreCursor {
                 info!("bulkcopy: BulkCopy instance created");
 
                 // Add column mappings
-                info!("bulkcopy: Adding {} column mappings", options.column_mappings.len());
+                info!(
+                    "bulkcopy: Adding {} column mappings",
+                    options.column_mappings.len()
+                );
                 for mapping in options.column_mappings {
                     let tds_mapping = match mapping {
-                        ColumnMapping::ByName { source, destination } => {
-                            TdsColumnMapping {
-                                source: ColumnMappingSource::Name(source),
-                                destination,
-                            }
-                        }
-                        ColumnMapping::ByOrdinal { source, destination } => {
-                            TdsColumnMapping {
-                                source: ColumnMappingSource::Ordinal(source),
-                                destination,
-                            }
-                        }
+                        ColumnMapping::ByName {
+                            source,
+                            destination,
+                        } => TdsColumnMapping {
+                            source: ColumnMappingSource::Name(source),
+                            destination,
+                        },
+                        ColumnMapping::ByOrdinal {
+                            source,
+                            destination,
+                        } => TdsColumnMapping {
+                            source: ColumnMappingSource::Ordinal(source),
+                            destination,
+                        },
                     };
                     bulk_copy = bulk_copy.add_column_mapping(tds_mapping);
                 }
@@ -156,10 +266,8 @@ impl PyCoreCursor {
 
                 // Create iterator of PythonRowAdapter
                 info!("bulkcopy: Creating PythonRowAdapter iterators");
-                let row_adapters: Vec<PythonRowAdapter> = rows
-                    .into_iter()
-                    .map(|py_obj| PythonRowAdapter::new(py_obj))
-                    .collect();
+                let row_adapters: Vec<PythonRowAdapter> =
+                    rows.into_iter().map(PythonRowAdapter::new).collect();
                 info!("bulkcopy: Created {} row adapters", row_adapters.len());
 
                 // Execute bulk copy with zero-copy streaming
@@ -169,9 +277,15 @@ impl PyCoreCursor {
                     .await
                     .map_err(|e| {
                         error!("bulkcopy: write_to_server_zerocopy failed: {}", e);
-                        pyo3::exceptions::PyRuntimeError::new_err(format!("Bulk copy failed: {}", e))
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Bulk copy failed: {}",
+                            e
+                        ))
                     })?;
-                info!("bulkcopy: write_to_server_zerocopy completed successfully, rows_affected={}", bulk_result.rows_affected);
+                info!(
+                    "bulkcopy: write_to_server_zerocopy completed successfully, rows_affected={}",
+                    bulk_result.rows_affected
+                );
 
                 Ok::<_, PyErr>(bulk_result)
             })
@@ -180,17 +294,17 @@ impl PyCoreCursor {
         // Convert result to Python dict
         let py_result = PyDict::new(py);
         py_result.set_item("rows_copied", result.rows_affected)?;
-        
+
         // Calculate batch count
         let batch_count = if options.batch_size > 0 {
-            (result.rows_affected + options.batch_size as u64 - 1) / options.batch_size as u64
+            result.rows_affected.div_ceil(options.batch_size as u64)
         } else {
             1
         };
         py_result.set_item("batch_count", batch_count)?;
-        
+
         py_result.set_item("elapsed_time", result.elapsed.as_secs_f64())?;
-        
+
         let rows_per_second = if result.elapsed.as_secs_f64() > 0.0 {
             result.rows_affected as f64 / result.elapsed.as_secs_f64()
         } else {
@@ -200,10 +314,64 @@ impl PyCoreCursor {
 
         Ok(py_result.into())
     }
-
 }
 
 impl PyCoreCursor {
+    /// Convert a TDS ColumnValue to a Python object
+    fn column_value_to_python<'py>(py: Python<'py>, col_val: &ColumnValues) -> Bound<'py, PyAny> {
+        use pyo3::types::{PyBytes, PyString};
+
+        match col_val {
+            ColumnValues::Null => py.None().into_bound(py),
+            ColumnValues::Bit(b) => (*b).into_pyobject(py).unwrap().to_owned().into_any(),
+            ColumnValues::TinyInt(i) => (*i).into_pyobject(py).unwrap().to_owned().into_any(),
+            ColumnValues::SmallInt(i) => (*i).into_pyobject(py).unwrap().to_owned().into_any(),
+            ColumnValues::Int(i) => (*i).into_pyobject(py).unwrap().to_owned().into_any(),
+            ColumnValues::BigInt(i) => (*i).into_pyobject(py).unwrap().to_owned().into_any(),
+            ColumnValues::Float(f) => (*f).into_pyobject(py).unwrap().to_owned().into_any(),
+            ColumnValues::Real(f) => (*f as f64).into_pyobject(py).unwrap().to_owned().into_any(),
+            ColumnValues::String(s) => s
+                .to_utf8_string()
+                .into_pyobject(py)
+                .unwrap()
+                .to_owned()
+                .into_any(),
+            ColumnValues::Uuid(u) => u
+                .to_string()
+                .into_pyobject(py)
+                .unwrap()
+                .to_owned()
+                .into_any(),
+            ColumnValues::Bytes(b) => PyBytes::new(py, b).into_any(),
+            ColumnValues::Numeric(n) | ColumnValues::Decimal(n) => format!("{:?}", n)
+                .into_pyobject(py)
+                .unwrap()
+                .to_owned()
+                .into_any(),
+            ColumnValues::DateTime(dt) => format!("{:?}", dt)
+                .into_pyobject(py)
+                .unwrap()
+                .to_owned()
+                .into_any(),
+            ColumnValues::SmallDateTime(dt) => format!("{:?}", dt)
+                .into_pyobject(py)
+                .unwrap()
+                .to_owned()
+                .into_any(),
+            ColumnValues::Money(m) => format!("{:?}", m)
+                .into_pyobject(py)
+                .unwrap()
+                .to_owned()
+                .into_any(),
+            ColumnValues::SmallMoney(m) => format!("{:?}", m)
+                .into_pyobject(py)
+                .unwrap()
+                .to_owned()
+                .into_any(),
+            _ => PyString::new(py, &format!("{:?}", col_val)).into_any(),
+        }
+    }
+
     /// Parse bulk copy keyword arguments from Python dict
     fn parse_bulkcopy_kwargs(kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<BulkCopyOptions> {
         let mut options = BulkCopyOptions::default();
@@ -253,7 +421,6 @@ impl PyCoreCursor {
         Ok(options)
     }
 
-    
     /// Parse column mappings from Python list of tuples
     fn parse_column_mappings(mappings_obj: &Bound<'_, PyAny>) -> PyResult<Vec<ColumnMapping>> {
         use pyo3::exceptions::PyTypeError;
@@ -270,7 +437,7 @@ impl PyCoreCursor {
         let list_len = mappings_obj.len()?;
         for i in 0..list_len {
             let item = mappings_obj.get_item(i)?;
-            
+
             // Check if it's a tuple
             if !item.is_instance_of::<PyTuple>() {
                 return Err(PyTypeError::new_err("Each mapping must be a tuple"));
@@ -309,7 +476,7 @@ impl PyCoreCursor {
 
         Ok(result)
     }
-    
+
     fn __repr__(&self) -> String {
         "PyCoreCursor()".to_string()
     }
