@@ -9,7 +9,7 @@ import pytest
 def test_connection_real_database(client_context):
     """Test connection to a real database."""
     import mssql_py_core
-    
+
     conn = mssql_py_core.PyCoreConnection(client_context)
     assert conn is not None
     assert conn.is_connected()

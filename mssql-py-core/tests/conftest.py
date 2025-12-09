@@ -14,9 +14,9 @@ def get_db_credentials():
     env_path = Path(__file__).parent.parent.parent / ".env"
     if env_path.exists():
         load_dotenv(env_path)
-    
+
     username = os.environ.get("DB_USERNAME", "sa")
-    
+
     # Try SQL_PASSWORD env var first, then /tmp/password file
     password = os.environ.get("SQL_PASSWORD")
     if not password:
@@ -25,7 +25,7 @@ def get_db_credentials():
                 password = f.read().strip()
         except FileNotFoundError:
             pytest.skip("SQL_PASSWORD not set and /tmp/password not found")
-    
+
     return username, password
 
 
@@ -50,14 +50,14 @@ def get_client_context():
     server = get_server_address()
     database = get_database_name()
     trust_cert = trust_server_certificate()
-    
+
     return {
         "server": server,
         "user_name": username,
         "password": password,
         "database": database,
         "trust_server_certificate": trust_cert,
-        "encryption": "Optional"
+        "encryption": "Optional",
     }
 
 
@@ -71,7 +71,7 @@ def client_context():
 def connection():
     """Pytest fixture that provides a connected PyCoreConnection instance."""
     import mssql_py_core
-    
+
     context = get_client_context()
     conn = mssql_py_core.PyCoreConnection(context)
     yield conn

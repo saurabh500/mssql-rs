@@ -159,7 +159,11 @@ impl PyCoreCursor {
     /// * `kwargs` - Optional keyword arguments for bulk copy options:
     ///   - `batch_size` (int): Number of rows per batch (default: 0)
     ///   - `timeout` (int): Timeout in seconds (default: 30)
-    ///   - `column_mappings` (list): List of (source, dest) tuples for column mapping
+    ///   - `column_mappings` (list): Optional list of (source, dest) tuples for column mapping.
+    ///     Source can be an integer (0-based ordinal) or string (column name).
+    ///     Destination is a string column name.
+    ///     If not provided, automatic ordinal-based mapping is used (0→0, 1→1, etc.).
+    ///     Example: [(0, 'id'), (1, 'name')] or [('src_id', 'dest_id')]
     ///   - `keep_identity` (bool): Preserve source identity values. When not specified, identity values are assigned by the destination.
     ///   - `check_constraints` (bool): Check constraints while data is being inserted. By default, constraints are not checked.
     ///   - `table_lock` (bool): Obtain a bulk update lock for the duration of the bulk copy operation. When not specified, row locks are used.
@@ -211,6 +215,12 @@ impl PyCoreCursor {
         }
         info!("bulkcopy: Collected {} rows", rows.len());
 
+        // Track whether we need to auto-generate mappings
+        let auto_generate_mappings = options.column_mappings.is_empty() && !rows.is_empty();
+        if auto_generate_mappings {
+            info!("bulkcopy: No column mappings provided, will auto-generate after retrieving metadata");
+        }
+
         // Release GIL and execute async bulk copy
         info!("bulkcopy: Releasing GIL and starting async execution");
         let runtime_handle = self.runtime_handle.clone();
@@ -238,12 +248,49 @@ impl PyCoreCursor {
                     .use_internal_transaction(options.use_internal_transaction);
                 info!("bulkcopy: BulkCopy instance created");
 
+                // Auto-generate column mappings if needed
+                let mut column_mappings = options.column_mappings;
+                if auto_generate_mappings {
+                    info!("bulkcopy: Retrieving destination metadata for auto-mapping");
+                    let metadata = bulk_copy.retrieve_destination_metadata().await
+                        .map_err(|e| {
+                            error!("bulkcopy: Failed to retrieve destination metadata: {}", e);
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "Failed to retrieve destination metadata: {}", e
+                            ))
+                        })?;
+                    
+                    info!("bulkcopy: Retrieved {} columns from destination table", metadata.len());
+                    
+                    // Get the number of columns in the first row
+                    let num_columns = Python::attach(|py| {
+                        let first_row = rows[0].bind(py);
+                        if let Ok(tuple) = first_row.cast::<PyTuple>() {
+                            tuple.len()
+                        } else {
+                            0
+                        }
+                    });
+                    
+                    info!("bulkcopy: First row has {} columns", num_columns);
+                    
+                    // Auto-generate ordinal mappings for available columns
+                    let mapping_count = std::cmp::min(num_columns, metadata.len());
+                    for i in 0..mapping_count {
+                        column_mappings.push(ColumnMapping::ByOrdinal {
+                            source: i,
+                            destination: metadata[i].name.clone(),
+                        });
+                    }
+                    info!("bulkcopy: Auto-generated {} column mappings", mapping_count);
+                }
+
                 // Add column mappings
                 info!(
                     "bulkcopy: Adding {} column mappings",
-                    options.column_mappings.len()
+                    column_mappings.len()
                 );
-                for mapping in options.column_mappings {
+                for mapping in column_mappings {
                     let tds_mapping = match mapping {
                         ColumnMapping::ByName {
                             source,
