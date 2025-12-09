@@ -6,12 +6,7 @@
 //! This module provides Windows-specific functionality for connecting to SQL Server
 //! via Named Pipes, including retry logic for busy pipe instances.
 
-use crate::connection::client_context::TransportContext;
-use crate::connection::transport::network_transport::{
-    NetworkTransport, PRE_NEGOTIATED_PACKET_SIZE, Stream,
-};
-use crate::connection::transport::ssl_handler::SslHandler;
-use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
+use crate::connection::transport::network_transport::Stream;
 use std::time::Duration;
 use tokio::net::windows::named_pipe::NamedPipeClient;
 use tracing::{debug, info, warn};
