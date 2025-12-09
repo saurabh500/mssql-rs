@@ -27,22 +27,31 @@ def test_cursor_repr():
     pass
 
 
-@pytest.mark.asyncio
-async def test_cursor_execute():
+@pytest.mark.integration
+def test_cursor_execute(client_context):
     """Test cursor execute method."""
-    # TODO: Implement once connection and execute are functional
-    # cursor = ...
-    # cursor.execute("SELECT 1")
-    # result = cursor.fetchone()
-    # assert result is not None
-    pass
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 AS value")
+    result = cursor.fetchone()
+    assert result is not None
+    assert result[0] == 1
+    conn.close()
 
 
-@pytest.mark.asyncio
-async def test_cursor_fetchall():
+@pytest.mark.integration
+def test_cursor_fetchall(client_context):
     """Test cursor fetchall method."""
-    # TODO: Implement once connection and execute are functional
-    pass
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3")
+    results = cursor.fetchall()
+    assert results is not None
+    assert len(results) == 3
+    assert results[0][0] == 1
+    assert results[1][0] == 2
+    assert results[2][0] == 3
+    conn.close()
 
 
 @pytest.mark.asyncio
@@ -58,21 +67,52 @@ def test_cursor_close():
     pass
 
 
-@pytest.mark.skip(reason="Bulk copy API is stubbed, not yet implemented")
-def test_cursor_bulkcopy():
-    """Test cursor bulkcopy method."""
-    # TODO: Implement once connection is available and bulkcopy is implemented
-    # This test verifies the bulkcopy API signature and basic functionality
-    # 
-    # Expected usage:
-    # conn = mssql_py_core.PyConnection(...)
-    # cursor = conn.cursor()
-    # data = [(1, 'Alice', 30), (2, 'Bob', 25)]
-    # result = cursor.bulkcopy('Users', iter(data), batch_size=1000, timeout=30)
-    # assert result['rows_copied'] == 2
-    # assert result['batch_count'] == 1
-    # assert result['elapsed_time'] > 0
-    pass
+@pytest.mark.integration
+def test_cursor_bulkcopy(client_context):
+    """Test cursor bulkcopy method with two integer columns."""
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+    
+    # Create a test table with two int columns
+    table_name = "BulkCopyTestTable"
+    cursor.execute(f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}")
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, value INT)")
+    
+    # Prepare test data - two columns, both int
+    data = [
+        (1, 100),
+        (2, 200),
+        (3, 300),
+    ]
+    
+    # Execute bulk copy with column mappings
+    result = cursor.bulkcopy(
+        table_name, 
+        iter(data), 
+        kwargs={
+            'batch_size': 1000, 
+            'timeout': 30,
+            'column_mappings': [(0, 'id'), (1, 'value')]  # Map tuple positions to columns
+        }
+    )
+    
+    # Verify results
+    assert result is not None
+    assert result['rows_copied'] == 3
+    assert result['batch_count'] == 1
+    assert 'elapsed_time' in result
+    
+    # Verify data was inserted correctly
+    cursor.execute(f"SELECT id, value FROM {table_name} ORDER BY id")
+    rows = cursor.fetchall()
+    assert len(rows) == 3
+    assert rows[0][0] == 1 and rows[0][1] == 100
+    assert rows[1][0] == 2 and rows[1][1] == 200
+    assert rows[2][0] == 3 and rows[2][1] == 300
+    
+    # Cleanup
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
 
 
 @pytest.mark.skip(reason="Bulk copy API is stubbed, not yet implemented")
