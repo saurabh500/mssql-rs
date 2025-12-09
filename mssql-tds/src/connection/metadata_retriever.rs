@@ -9,20 +9,18 @@
 //!
 //! # Implementations
 //!
-//! - [`SystemCatalogRetriever`]: Queries `sys.columns` and `sys.objects` system views
-//! - [`SelectTop0Retriever`]: Uses `SET FMTONLY ON` for faster metadata retrieval
+//! - [`SelectTop0Retriever`]: Uses `SET FMTONLY ON` for fast metadata retrieval
 //!
 //! # Custom Retrievers
 //!
 //! You can implement the [`MetadataRetriever`] trait to provide custom metadata
 //! retrieval strategies, such as caching or alternative sources.
 
-use crate::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
+use crate::connection::tds_client::TdsClient;
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::bulk_copy_metadata::{
-    BulkCopyColumnMetadata, SqlDbType, SystemTypeId, TypeLength,
+    BulkCopyColumnMetadata, SqlDbType, TypeLength,
 };
-use crate::datatypes::column_values::ColumnValues;
 use crate::datatypes::sqldatatypes::{TdsDataType, TypeInfo, TypeInfoVariant};
 use crate::error::Error;
 use crate::token::tokens::{ColMetadataToken, SqlCollation};
@@ -86,237 +84,18 @@ pub trait MetadataRetriever: Send {
     ) -> TdsResult<Vec<DestinationColumnMetadata>>;
 }
 
-/// Default metadata retriever using SQL Server system catalog views.
-///
-/// This implementation queries `sys.columns` and `sys.objects` to retrieve
-/// table metadata. It handles both regular tables and temporary tables.
-#[derive(Debug, Default)]
-pub struct SystemCatalogRetriever;
-
-impl SystemCatalogRetriever {
-    /// Create a new system catalog retriever.
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Parse table name into schema and table components.
-    pub fn parse_table_name(table_name: &str) -> (String, String) {
-        if let Some(dot_pos) = table_name.rfind('.') {
-            let schema = table_name[..dot_pos].to_string();
-            let table = table_name[dot_pos + 1..].to_string();
-            (schema, table)
-        } else {
-            ("dbo".to_string(), table_name.to_string())
-        }
-    }
-}
-
-#[async_trait]
-impl MetadataRetriever for SystemCatalogRetriever {
-    async fn retrieve_metadata(
-        &mut self,
-        client: &mut TdsClient,
-        table_name: &str,
-        timeout_sec: u32,
-    ) -> TdsResult<Vec<DestinationColumnMetadata>> {
-        // Parse table name to extract schema and table
-        let (schema, table) = Self::parse_table_name(table_name);
-
-        // Query sys.columns for table metadata
-        // Handle temp tables (starting with #) which are in tempdb
-        let query = if table.starts_with('#') {
-            // Temp tables are in tempdb.sys.objects
-            format!(
-                "SELECT \
-                    c.name, \
-                    c.column_id, \
-                    c.system_type_id, \
-                    c.max_length, \
-                    c.precision, \
-                    c.scale, \
-                    c.is_nullable, \
-                    c.is_identity, \
-                    c.is_computed, \
-                    c.collation_name \
-                FROM tempdb.sys.columns c \
-                INNER JOIN tempdb.sys.objects o ON c.object_id = o.object_id \
-                WHERE o.name LIKE '{}%' \
-                ORDER BY c.column_id",
-                table.replace('\'', "''").replace("%", "[%]") // Escape wildcards for LIKE
-            )
-        } else {
-            // Regular tables
-            format!(
-                "SELECT \
-                    c.name, \
-                    c.column_id, \
-                    c.system_type_id, \
-                    c.max_length, \
-                    c.precision, \
-                    c.scale, \
-                    c.is_nullable, \
-                    c.is_identity, \
-                    c.is_computed, \
-                    c.collation_name \
-                FROM sys.columns c \
-                INNER JOIN sys.objects o ON c.object_id = o.object_id \
-                WHERE o.name = '{}' AND SCHEMA_NAME(o.schema_id) = '{}' \
-                ORDER BY c.column_id",
-                table.replace('\'', "''"), // Escape single quotes
-                schema.replace('\'', "''")
-            )
-        };
-
-        // Execute the query
-        client
-            .execute(query, Some(timeout_sec), None)
-            .await?;
-
-        // Read the results
-        let mut metadata = Vec::new();
-
-        if let Some(resultset) = client.get_current_resultset() {
-            while let Some(row) = resultset.next_row().await? {
-                if row.len() < 10 {
-                    return Err(Error::UsageError(
-                        "Unexpected number of columns in metadata query result".to_string(),
-                    ));
-                }
-
-                // Extract column values
-                let name = match &row[0] {
-                    ColumnValues::String(s) => s.to_utf8_string(),
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected string for column name".to_string(),
-                        ));
-                    }
-                };
-
-                let column_id = match &row[1] {
-                    ColumnValues::Int(i) => *i as usize,
-                    _ => return Err(Error::UsageError("Expected int for column_id".to_string())),
-                };
-
-                let system_type_id = match &row[2] {
-                    ColumnValues::TinyInt(t) => *t,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected tinyint for system_type_id".to_string(),
-                        ));
-                    }
-                };
-
-                let max_length = match &row[3] {
-                    ColumnValues::SmallInt(s) => *s,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected smallint for max_length".to_string(),
-                        ));
-                    }
-                };
-
-                let precision = match &row[4] {
-                    ColumnValues::TinyInt(p) => *p,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected tinyint for precision".to_string(),
-                        ));
-                    }
-                };
-
-                let scale = match &row[5] {
-                    ColumnValues::TinyInt(s) => *s,
-                    _ => return Err(Error::UsageError("Expected tinyint for scale".to_string())),
-                };
-
-                let is_nullable = match &row[6] {
-                    ColumnValues::Bit(b) => *b,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected bit for is_nullable".to_string(),
-                        ));
-                    }
-                };
-
-                let is_identity = match &row[7] {
-                    ColumnValues::Bit(b) => *b,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected bit for is_identity".to_string(),
-                        ));
-                    }
-                };
-
-                let is_computed = match &row[8] {
-                    ColumnValues::Bit(b) => *b,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected bit for is_computed".to_string(),
-                        ));
-                    }
-                };
-
-                // collation_name can be NULL for non-string types
-                let _collation_name = match &row[9] {
-                    ColumnValues::String(s) => Some(s.to_utf8_string()),
-                    ColumnValues::Null => None,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected string or NULL for collation_name".to_string(),
-                        ));
-                    }
-                };
-
-                // Map system_type_id to SqlDbType using TryFrom trait with SystemTypeId wrapper
-                let sql_type = SqlDbType::try_from(SystemTypeId(system_type_id))?;
-
-                // TODO: Parse collation_name to create SqlCollation
-                // For now, use None (will be enhanced in future)
-                let collation = None;
-
-                metadata.push(DestinationColumnMetadata {
-                    name,
-                    ordinal: column_id - 1, // SQL Server is 1-based, we use 0-based
-                    system_type_id,
-                    sql_type,
-                    max_length,
-                    precision,
-                    scale,
-                    is_nullable,
-                    is_identity,
-                    is_computed,
-                    collation,
-                });
-            }
-        }
-
-        // Close the query
-        client.close_query().await?;
-
-        if metadata.is_empty() {
-            return Err(Error::UsageError(format!(
-                "Table '{}' not found or has no columns",
-                table_name
-            )));
-        }
-
-        Ok(metadata)
-    }
-}
-
 /// Metadata retriever using SET FMTONLY ON query.
 ///
 /// This implementation retrieves table metadata by executing `SET FMTONLY ON; SELECT * FROM table`
 /// which returns only the COLMETADATA token without any rows. This is faster than
-/// querying sys.columns and provides complete metadata including:
+/// querying system catalog views and provides complete metadata including:
 /// - Column names, types, nullability
 /// - Identity and computed column flags (from TDS COLMETADATA flags)
 /// - Precision, scale, and collation information
 ///
-/// # Advantages over SystemCatalogRetriever
+/// # Advantages
 ///
-/// - Faster: Single round-trip with SET FMTONLY instead of sys.columns query
+/// - Fast: Single round-trip with SET FMTONLY
 /// - Works with any user permissions that allow SELECT on the table
 /// - Handles temporal tables and SQL Graph columns correctly (via dynamic column list)
 ///
@@ -678,12 +457,10 @@ impl DestinationColumnMetadata {
 /// # Implementation Notes
 ///
 /// This function is designed for bulk copy operations where we need table schema
-/// without the overhead of querying sys.columns. It dynamically builds the column
+/// without the overhead of querying system catalog views. It dynamically builds the column
 /// list to:
 /// - Support hidden columns in temporal tables
 /// - Exclude SQL Graph columns that cannot be selected
-///
-/// For full metadata including computed/identity flags, use SystemCatalogRetriever instead.
 #[instrument(skip(client), level = "info")]
 pub(crate) async fn fetch_table_metadata(
     client: &mut TdsClient,

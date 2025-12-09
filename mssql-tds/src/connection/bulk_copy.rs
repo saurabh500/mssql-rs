@@ -1026,23 +1026,6 @@ mod tests {
         assert!(SqlDbType::try_from(SystemTypeId(255)).is_err());
     }
 
-    #[test]
-    fn test_parse_table_name() {
-        use crate::connection::metadata_retriever::SystemCatalogRetriever;
-        
-        // Test with schema.table format
-        let table_with_schema = "myschema.mytable";
-        let (schema, table) = SystemCatalogRetriever::parse_table_name(table_with_schema);
-        assert_eq!(schema, "myschema");
-        assert_eq!(table, "mytable");
-
-        // Test without schema (defaults to dbo)
-        let table_without_schema = "mytable";
-        let (schema2, table2) = SystemCatalogRetriever::parse_table_name(table_without_schema);
-        assert_eq!(schema2, "dbo");
-        assert_eq!(table2, "mytable");
-    }
-
     // Tests for type compatibility checking
     // Note: These test the internal logic without needing a full BulkCopy instance
 
