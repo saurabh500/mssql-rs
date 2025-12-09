@@ -226,3 +226,291 @@ where
         Ok(Tokens::from(metadata))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::common::test_utils::MockReader;
+    use super::*;
+    use crate::datatypes::sqldatatypes::TdsDataType;
+    use byteorder::{ByteOrder, LittleEndian};
+
+    /// Helper to build column metadata bytes
+    fn build_colmetadata_bytes(col_count: u16, columns: Vec<ColumnData>) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Write column count
+        let mut buf = [0u8; 2];
+        LittleEndian::write_u16(&mut buf, col_count);
+        data.extend_from_slice(&buf);
+
+        // Write each column
+        for col in columns {
+            // UserType (4 bytes)
+            let mut buf = [0u8; 4];
+            LittleEndian::write_u32(&mut buf, col.user_type);
+            data.extend_from_slice(&buf);
+
+            // Flags (2 bytes)
+            let mut buf = [0u8; 2];
+            LittleEndian::write_u16(&mut buf, col.flags);
+            data.extend_from_slice(&buf);
+
+            // DataType (1 byte)
+            data.push(col.data_type_byte);
+
+            // TypeInfo (varies by type)
+            data.extend_from_slice(&col.type_info_bytes);
+
+            // Column name (B_VARCHAR with 1-byte length)
+            let name_bytes = MockReader::encode_utf16(&col.name);
+            data.push((name_bytes.len() / 2) as u8); // Length in characters
+            data.extend_from_slice(&name_bytes);
+        }
+
+        data
+    }
+
+    #[derive(Clone)]
+    struct ColumnData {
+        user_type: u32,
+        flags: u16,
+        data_type_byte: u8,
+        type_info_bytes: Vec<u8>,
+        name: String,
+    }
+
+    #[tokio::test]
+    async fn test_parse_no_metadata() {
+        // 0xFFFF indicates no metadata
+        let data = vec![0xFF, 0xFF];
+        let mut reader = MockReader::new(data);
+        let parser = ColMetadataTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::ColMetadata(token) => {
+                assert_eq!(token.column_count, 0);
+                assert_eq!(token.columns.len(), 0);
+            }
+            _ => panic!("Expected ColMetadata token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_single_int_column() {
+        let columns = vec![ColumnData {
+            user_type: 0,
+            flags: 0x00, // Not nullable
+            data_type_byte: TdsDataType::Int4 as u8,
+            type_info_bytes: vec![], // INT has no type info
+            name: "id".to_string(),
+        }];
+
+        let data = build_colmetadata_bytes(1, columns);
+        let mut reader = MockReader::new(data);
+        let parser = ColMetadataTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::ColMetadata(token) => {
+                assert_eq!(token.column_count, 1);
+                assert_eq!(token.columns.len(), 1);
+                assert_eq!(token.columns[0].user_type, 0);
+                assert_eq!(token.columns[0].flags, 0x00);
+                assert_eq!(token.columns[0].data_type, TdsDataType::Int4);
+                assert_eq!(token.columns[0].column_name, "id");
+            }
+            _ => panic!("Expected ColMetadata token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_nullable_column() {
+        let columns = vec![ColumnData {
+            user_type: 0,
+            flags: 0x01, // Nullable
+            data_type_byte: TdsDataType::IntN as u8,
+            type_info_bytes: vec![0x04], // IntN type info: length byte
+            name: "age".to_string(),
+        }];
+
+        let data = build_colmetadata_bytes(1, columns);
+        let mut reader = MockReader::new(data);
+        let parser = ColMetadataTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::ColMetadata(token) => {
+                assert_eq!(token.columns.len(), 1);
+                assert_eq!(token.columns[0].flags, 0x01);
+                assert_eq!(token.columns[0].data_type, TdsDataType::IntN);
+                assert!(token.columns[0].is_nullable());
+            }
+            _ => panic!("Expected ColMetadata token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_multiple_columns() {
+        let columns = vec![
+            ColumnData {
+                user_type: 0,
+                flags: 0x00,
+                data_type_byte: TdsDataType::Int4 as u8,
+                type_info_bytes: vec![],
+                name: "id".to_string(),
+            },
+            ColumnData {
+                user_type: 0,
+                flags: 0x01,
+                data_type_byte: TdsDataType::IntN as u8,
+                type_info_bytes: vec![0x04],
+                name: "age".to_string(),
+            },
+            ColumnData {
+                user_type: 0,
+                flags: 0x01,
+                data_type_byte: TdsDataType::BigVarChar as u8,
+                type_info_bytes: {
+                    let mut bytes = vec![
+                        0x32, 0x00, // MaxLength: 50
+                    ];
+                    // Collation (5 bytes): LCID + flags
+                    bytes.extend_from_slice(&[0x09, 0x04, 0xD0, 0x00, 0x34]);
+                    bytes
+                },
+                name: "name".to_string(),
+            },
+        ];
+
+        let data = build_colmetadata_bytes(3, columns.clone());
+        let mut reader = MockReader::new(data);
+        let parser = ColMetadataTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::ColMetadata(token) => {
+                assert_eq!(token.column_count, 3);
+                assert_eq!(token.columns.len(), 3);
+
+                // Check first column
+                assert_eq!(token.columns[0].column_name, "id");
+                assert_eq!(token.columns[0].data_type, TdsDataType::Int4);
+
+                // Check second column
+                assert_eq!(token.columns[1].column_name, "age");
+                assert_eq!(token.columns[1].data_type, TdsDataType::IntN);
+
+                // Check third column
+                assert_eq!(token.columns[2].column_name, "name");
+                assert_eq!(token.columns[2].data_type, TdsDataType::BigVarChar);
+            }
+            _ => panic!("Expected ColMetadata token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_bigint_column() {
+        let columns = vec![ColumnData {
+            user_type: 0,
+            flags: 0x00,
+            data_type_byte: TdsDataType::Int8 as u8,
+            type_info_bytes: vec![],
+            name: "bigid".to_string(),
+        }];
+
+        let data = build_colmetadata_bytes(1, columns);
+        let mut reader = MockReader::new(data);
+        let parser = ColMetadataTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::ColMetadata(token) => {
+                assert_eq!(token.columns.len(), 1);
+                assert_eq!(token.columns[0].data_type, TdsDataType::Int8);
+            }
+            _ => panic!("Expected ColMetadata token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_identity_column() {
+        let columns = vec![ColumnData {
+            user_type: 0,
+            flags: 0x10, // Identity flag (per ColumnMetadata::is_identity implementation)
+            data_type_byte: TdsDataType::Int4 as u8,
+            type_info_bytes: vec![],
+            name: "id".to_string(),
+        }];
+
+        let data = build_colmetadata_bytes(1, columns);
+        let mut reader = MockReader::new(data);
+        let parser = ColMetadataTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await.unwrap();
+
+        match result {
+            Tokens::ColMetadata(token) => {
+                assert_eq!(token.columns.len(), 1);
+                assert_eq!(token.columns[0].flags, 0x10);
+                assert!(token.columns[0].is_identity());
+            }
+            _ => panic!("Expected ColMetadata token"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_invalid_data_type() {
+        let mut data = vec![0x01, 0x00]; // col_count = 1
+        data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // user_type
+        data.extend_from_slice(&[0x00, 0x00]); // flags
+        data.push(0xFF); // Invalid data type byte
+
+        let mut reader = MockReader::new(data);
+        let parser = ColMetadataTokenParser::default();
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_column_encryption_not_supported() {
+        let parser = ColMetadataTokenParser::new(true); // Enable encryption support
+        let data = vec![0x01, 0x00]; // col_count = 1
+        let mut reader = MockReader::new(data);
+        let context = ParserContext::default();
+
+        let result = parser.parse(&mut reader, &context).await;
+        assert!(result.is_err());
+
+        if let Err(crate::error::Error::UnimplementedFeature { feature, .. }) = result {
+            assert_eq!(feature, "Column Encryption");
+        } else {
+            panic!("Expected UnimplementedFeature error");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_constructor_methods() {
+        let parser = ColMetadataTokenParser::new(false);
+        assert!(!parser.is_column_encryption_supported());
+
+        let parser = ColMetadataTokenParser::new(true);
+        assert!(parser.is_column_encryption_supported());
+
+        let parser = ColMetadataTokenParser::default();
+        assert!(!parser.is_column_encryption_supported());
+    }
+}
