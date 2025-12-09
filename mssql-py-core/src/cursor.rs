@@ -263,11 +263,11 @@ impl PyCoreCursor {
                 } else {
                     None
                 };
-                
+
                 if auto_generate_mappings {
                     let metadata = destination_metadata.as_ref().unwrap();
                     info!("bulkcopy: Retrieved {} columns from destination table", metadata.len());
-                    
+
                     // Get the number of columns in the first row
                     let num_columns = Python::attach(|py| {
                         let first_row = rows[0].bind(py);
@@ -277,9 +277,9 @@ impl PyCoreCursor {
                             0
                         }
                     });
-                    
+
                     info!("bulkcopy: First row has {} columns", num_columns);
-                    
+
                     // Auto-generate ordinal mappings for available columns
                     let mapping_count = std::cmp::min(num_columns, metadata.len());
                     for (i, col_meta) in metadata.iter().enumerate().take(mapping_count) {

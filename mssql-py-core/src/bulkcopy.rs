@@ -98,7 +98,10 @@ impl PythonRowAdapter {
     /// # Returns
     ///
     /// A new PythonRowAdapter with type coercion support.
-    pub fn with_metadata(row: Py<PyAny>, destination_metadata: Arc<Vec<DestinationColumnMetadata>>) -> Self {
+    pub fn with_metadata(
+        row: Py<PyAny>,
+        destination_metadata: Arc<Vec<DestinationColumnMetadata>>,
+    ) -> Self {
         Self {
             row,
             destination_metadata: Some(destination_metadata),
@@ -201,20 +204,17 @@ impl PythonRowAdapter {
         py_obj: &Bound<'_, PyAny>,
         target_type: SqlDbType,
     ) -> TdsResult<ColumnValues> {
-        let py_str = py_obj.cast::<PyString>().map_err(|e| {
-            Error::UsageError(format!("Failed to cast to string: {}", e))
-        })?;
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
 
-        let s = py_str.to_str().map_err(|e| {
-            Error::UsageError(format!("Failed to extract string: {}", e))
-        })?;
+        let s = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
 
         // Parse as i64 to cover all integer types
         let parsed = s.parse::<i64>().map_err(|e| {
-            Error::UsageError(format!(
-                "Cannot convert string '{}' to integer: {}",
-                s, e
-            ))
+            Error::UsageError(format!("Cannot convert string '{}' to integer: {}", s, e))
         })?;
 
         // Convert to appropriate TDS integer type with range validation
@@ -308,15 +308,16 @@ impl BulkLoadRow for PythonRowAdapter {
             let mut total_extract_time = Duration::ZERO;
             for (i, item) in tuple.iter().enumerate() {
                 let extract_start = Instant::now();
-                
+
                 // Get target metadata if available
-                let target_metadata = self.destination_metadata
+                let target_metadata = self
+                    .destination_metadata
                     .as_ref()
                     .and_then(|meta| meta.get(i));
-                
+
                 // Try conversion with type coercion and null validation
                 let column_value = Self::convert_with_coercion(&item, target_metadata)?;
-                
+
                 total_extract_time += extract_start.elapsed();
                 values.push(column_value);
             }

@@ -6,11 +6,11 @@ mod common;
 
 mod bulk_copy_integration_tests {
     use crate::common::{begin_connection, create_context, init_tracing};
+    use async_trait::async_trait;
     use mssql_tds::connection::bulk_copy::{BulkCopy, BulkLoadRow};
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::core::TdsResult;
     use mssql_tds::datatypes::column_values::ColumnValues;
-    use async_trait::async_trait;
 
     #[ctor::ctor]
     fn init() {
@@ -33,13 +33,21 @@ mod bulk_copy_integration_tests {
             writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
             column_index: &mut usize,
         ) -> TdsResult<()> {
-            writer.write_column_value(*column_index, &ColumnValues::Int(self.id)).await?;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
             *column_index += 1;
-            writer.write_column_value(*column_index, &ColumnValues::Int(self.value1)).await?;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value1))
+                .await?;
             *column_index += 1;
-            writer.write_column_value(*column_index, &ColumnValues::Int(self.value2)).await?;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value2))
+                .await?;
             *column_index += 1;
-            writer.write_column_value(*column_index, &ColumnValues::Int(self.value3)).await?;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value3))
+                .await?;
             *column_index += 1;
             Ok(())
         }
@@ -52,13 +60,21 @@ mod bulk_copy_integration_tests {
             writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
             column_index: &mut usize,
         ) -> TdsResult<()> {
-            writer.write_column_value(*column_index, &ColumnValues::Int(self.id)).await?;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
             *column_index += 1;
-            writer.write_column_value(*column_index, &ColumnValues::Int(self.value1)).await?;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value1))
+                .await?;
             *column_index += 1;
-            writer.write_column_value(*column_index, &ColumnValues::Int(self.value2)).await?;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value2))
+                .await?;
             *column_index += 1;
-            writer.write_column_value(*column_index, &ColumnValues::Int(self.value3)).await?;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value3))
+                .await?;
             *column_index += 1;
             Ok(())
         }

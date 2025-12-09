@@ -1195,7 +1195,8 @@ impl<'a> BulkCopy<'a> {
         if self.column_mappings.is_empty() {
             let destination_metadata = self.retrieve_destination_metadata().await?;
             for (i, col) in destination_metadata.iter().enumerate() {
-                self.column_mappings.push(ColumnMapping::by_ordinal(i, col.name.clone()));
+                self.column_mappings
+                    .push(ColumnMapping::by_ordinal(i, col.name.clone()));
             }
         }
 

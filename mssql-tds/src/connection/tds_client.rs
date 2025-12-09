@@ -9,9 +9,7 @@ use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqltypes::SqlType;
 use crate::error::Error::UsageError;
 use crate::io::packet_writer::PacketWriter;
-use crate::message::bulk_load::{
-    StreamingBulkLoadWriter, build_insert_bulk_command,
-};
+use crate::message::bulk_load::{StreamingBulkLoadWriter, build_insert_bulk_command};
 use crate::message::messages::PacketType;
 use crate::message::parameters::rpc_parameters::{
     RpcParameter, StatusFlags, build_parameter_list_string,

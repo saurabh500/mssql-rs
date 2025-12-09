@@ -3,8 +3,8 @@
 
 // Utility functions for the PyO3 bindings
 
-use pyo3::prelude::*;
 use mssql_tds::error::Error as TdsError;
+use pyo3::prelude::*;
 
 /// Convert error types from mssql-tds to Python exceptions
 /// This will be used when implementing actual Core TDS connection logic
@@ -23,6 +23,6 @@ pub fn convert_tds_error(error: TdsError) -> PyErr {
             // - Out of range values
             pyo3::exceptions::PyValueError::new_err(msg)
         }
-        _ => pyo3::exceptions::PyRuntimeError::new_err(error.to_string())
+        _ => pyo3::exceptions::PyRuntimeError::new_err(error.to_string()),
     }
 }
