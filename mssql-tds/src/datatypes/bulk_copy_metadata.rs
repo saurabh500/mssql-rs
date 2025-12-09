@@ -8,7 +8,7 @@
 //! implementation's metadata handling.
 
 use crate::token::tokens::SqlCollation;
-use tracing::{trace, warn};
+use tracing::warn;
 
 /// Newtype wrapper for SQL Server's system_type_id values.
 ///
