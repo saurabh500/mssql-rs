@@ -119,23 +119,24 @@ def test_cursor_bulkcopy(client_context):
 def test_cursor_bulkcopy_auto_mapping(client_context):
     """Test cursor bulkcopy with automatic column mapping.
 
-    Tests bulkcopy when no mappings are specified.
+    Tests bulkcopy when no mappings are specified, including NULL value handling.
     """
     conn = mssql_py_core.PyCoreConnection(client_context)
     cursor = conn.cursor()
 
-    # Create a test table with two int columns
+    # Create a test table with two nullable int columns
     table_name = "BulkCopyAutoMapTable"
     cursor.execute(
         f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
     )
     cursor.execute(f"CREATE TABLE {table_name} (id INT, value INT)")
 
-    # Prepare test data - two columns, both int
+    # Prepare test data - two columns, both int, with NULL values
     data = [
         (1, 100),
-        (2, 200),
-        (3, 300),
+        (2, None),  # NULL value in second column
+        (None, 300),  # NULL value in first column
+        (4, 400),
     ]
 
     # Execute bulk copy WITHOUT column mappings - should auto-generate
@@ -145,17 +146,18 @@ def test_cursor_bulkcopy_auto_mapping(client_context):
 
     # Verify results
     assert result is not None
-    assert result["rows_copied"] == 3
+    assert result["rows_copied"] == 4
     assert result["batch_count"] == 1
     assert "elapsed_time" in result
 
-    # Verify data was inserted correctly
-    cursor.execute(f"SELECT id, value FROM {table_name} ORDER BY id")
+    # Verify data was inserted correctly, including NULL values
+    cursor.execute(f"SELECT id, value FROM {table_name} ORDER BY COALESCE(id, 999)")
     rows = cursor.fetchall()
-    assert len(rows) == 3
+    assert len(rows) == 4
     assert rows[0][0] == 1 and rows[0][1] == 100
-    assert rows[1][0] == 2 and rows[1][1] == 200
-    assert rows[2][0] == 3 and rows[2][1] == 300
+    assert rows[1][0] == 2 and rows[1][1] is None  # Verify NULL in value column
+    assert rows[2][0] == 4 and rows[2][1] == 400
+    assert rows[3][0] is None and rows[3][1] == 300  # Verify NULL in id column
 
     # Cleanup
     cursor.execute(f"DROP TABLE {table_name}")
@@ -207,6 +209,51 @@ def test_cursor_bulkcopy_string_to_int_conversion(client_context):
 
     # Cleanup
     cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_null_to_non_nullable_column(client_context):
+    """Test cursor bulkcopy with null value for non-nullable int column.
+
+    Tests that the client-side metadata validation catches attempts to insert
+    null into a non-nullable column and raises an appropriate conversion error.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    # Create a temp table with a single non-nullable int column
+    table_name = "#BulkCopyNonNullableTable"
+    cursor.execute(f"CREATE TABLE {table_name} (id INT NOT NULL)")
+
+    # Prepare test data with a null value
+    data = [
+        (1,),
+        (None,),  # This should trigger a conversion error
+        (3,),
+    ]
+
+    # Execute bulk copy and expect an error about conversion not being possible
+    error_raised = False
+    error_message = ""
+    try:
+        result = cursor.bulkcopy(
+            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        )
+        # If we get here, no error was raised
+        print(f"No error raised. Result: {result}")
+    except Exception as e:
+        error_raised = True
+        error_message = str(e).lower()
+
+    # Verify that an error was raised with appropriate message
+    assert error_raised, "Expected an exception to be raised for null value in non-nullable column"
+    assert "conversion" in error_message or "null" in error_message, \
+        f"Expected conversion error, got: {error_message}"
+    assert "non-nullable" in error_message, \
+        f"Expected 'non-nullable' in error message, got: {error_message}"
+
+    # Close connection - temp table will be automatically dropped
     conn.close()
 
 

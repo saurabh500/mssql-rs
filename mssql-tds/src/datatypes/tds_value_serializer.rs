@@ -75,6 +75,7 @@ impl TdsValueSerializer {
         'b: 'a,
     {
         match value {
+            ColumnValues::Null => Self::serialize_null(writer, ctx).await,
             ColumnValues::Int(v) => Self::serialize_int(writer, *v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),

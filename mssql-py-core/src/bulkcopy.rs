@@ -73,16 +73,30 @@ impl PythonRowAdapter {
     /// Convert a Python value to a ColumnValue, attempting type coercion if metadata is available.
     fn convert_with_coercion(
         py_obj: &Bound<'_, PyAny>,
-        target_type: Option<SqlDbType>,
+        target_metadata: Option<&DestinationColumnMetadata>,
     ) -> TdsResult<ColumnValues> {
+        // First check if value is None and validate against nullable constraint
+        if py_obj.is_none() {
+            if let Some(meta) = target_metadata {
+                if !meta.is_nullable {
+                    return Err(Error::UsageError(format!(
+                        "Cannot insert NULL value into non-nullable column '{}'. Conversion not possible for NULL to non-nullable column",
+                        meta.name
+                    )));
+                }
+            }
+            // If nullable or no metadata, return NULL
+            return Ok(ColumnValues::Null);
+        }
+        
         // If we have target metadata, check if we need type coercion
-        if let Some(target) = target_type {
+        if let Some(meta) = target_metadata {
             // Check if the Python value is a string and target is an integer type
             if py_obj.is_instance_of::<PyString>() {
-                match target {
+                match meta.sql_type {
                     SqlDbType::Int | SqlDbType::BigInt | SqlDbType::SmallInt | SqlDbType::TinyInt => {
                         // Try type coercion for string-to-integer conversion
-                        return Self::try_coerce_type(py_obj, target);
+                        return Self::try_coerce_type(py_obj, meta.sql_type);
                     }
                     _ => {
                         // Fall through to normal conversion
@@ -216,14 +230,13 @@ impl BulkLoadRow for PythonRowAdapter {
             for (i, item) in tuple.iter().enumerate() {
                 let extract_start = Instant::now();
                 
-                // Get target type from metadata if available
-                let target_type = self.destination_metadata
+                // Get target metadata if available
+                let target_metadata = self.destination_metadata
                     .as_ref()
-                    .and_then(|meta| meta.get(i))
-                    .map(|col| col.sql_type);
+                    .and_then(|meta| meta.get(i));
                 
-                // Try conversion with type coercion
-                let column_value = Self::convert_with_coercion(&item, target_type)?;
+                // Try conversion with type coercion and null validation
+                let column_value = Self::convert_with_coercion(&item, target_metadata)?;
                 
                 total_extract_time += extract_start.elapsed();
                 values.push(column_value);
