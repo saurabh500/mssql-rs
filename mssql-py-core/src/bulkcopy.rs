@@ -219,7 +219,7 @@ impl PythonRowAdapter {
         // Convert to appropriate TDS integer type with range validation
         match target_type {
             SqlDbType::TinyInt => {
-                if parsed >= 0 && parsed <= 255 {
+                if (0..=255).contains(&parsed) {
                     Ok(ColumnValues::TinyInt(parsed as u8))
                 } else {
                     Err(Error::UsageError(format!(
