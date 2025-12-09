@@ -188,10 +188,10 @@ impl PythonRowAdapter {
 
             // Int → Integer types: Validate range for target type
             // This ensures Python integers that exceed the target type's range are rejected
-            // instead of being silently converted to BigInt
+            // instead of being silently converted to a different integer type
             (
                 SourcePythonType::Int,
-                SqlDbType::Int | SqlDbType::SmallInt | SqlDbType::TinyInt,
+                SqlDbType::Int | SqlDbType::BigInt | SqlDbType::SmallInt | SqlDbType::TinyInt,
             ) => {
                 let result = Self::coerce_python_int_to_integer(py_obj, target_meta.sql_type)?;
                 Ok(Some(result))
@@ -271,18 +271,29 @@ impl PythonRowAdapter {
     /// Coerce a Python integer to a SQL Server integer type with range validation.
     ///
     /// Extracts the Python int and validates it fits within the target integer type's range.
-    /// This prevents Python integers that exceed i32::MAX from being silently converted to
-    /// BigInt when the target column is INT, SMALLINT, or TINYINT.
+    /// This prevents Python integers that exceed the target type's range from being silently
+    /// converted to a different SQL integer type.
+    ///
+    /// For BIGINT targets, this function will attempt to extract the value as i64. If the Python
+    /// integer is too large to fit in i64 (exceeds i64::MAX or i64::MIN), PyO3's extract will
+    /// fail with an OverflowError, which we catch and convert to a meaningful error message.
     fn coerce_python_int_to_integer(
         py_obj: &Bound<'_, PyAny>,
         target_type: SqlDbType,
     ) -> TdsResult<ColumnValues> {
         // Extract as i64 to cover all integer types
+        // For Python integers larger than i64::MAX, this will raise OverflowError
         let value = py_obj.extract::<i64>().map_err(|e| {
-            Error::UsageError(format!(
-                "Cannot extract Python integer as i64: {}. Value may be too large for SQL integer types.",
-                e
-            ))
+            // Check if it's an overflow error (Python int too large for i64)
+            if e.to_string().contains("OverflowError") || e.to_string().contains("overflow") {
+                Error::UsageError(format!(
+                    "Python integer out of range for BIGINT column (valid range: {} to {})",
+                    i64::MIN,
+                    i64::MAX
+                ))
+            } else {
+                Error::UsageError(format!("Cannot extract Python integer as i64: {}", e))
+            }
         })?;
 
         // Convert to appropriate TDS integer type with range validation
@@ -320,6 +331,10 @@ impl PythonRowAdapter {
                         i32::MAX
                     )))
                 }
+            }
+            SqlDbType::BigInt => {
+                // Value already validated to fit in i64 by extract() above
+                Ok(ColumnValues::BigInt(value))
             }
             _ => unreachable!("coerce_python_int_to_integer called with non-integer target type"),
         }
