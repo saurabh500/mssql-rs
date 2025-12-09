@@ -44,119 +44,15 @@
 //! println!("Inserted {} rows", result.rows_affected);
 //! ```
 
-use crate::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
-use crate::core::TdsResult;
-use crate::datatypes::bulk_copy_metadata::{
-    BulkCopyColumnMetadata, SqlDbType, SystemTypeId, TypeLength,
+use crate::connection::metadata_retriever::{
+    DestinationColumnMetadata, MetadataRetriever, SelectTop0Retriever,
 };
-use crate::datatypes::column_values::ColumnValues;
+use crate::connection::tds_client::TdsClient;
+use crate::core::TdsResult;
+use crate::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType};
 use crate::error::Error;
-use crate::token::tokens::SqlCollation;
 use async_trait::async_trait;
 use std::time::{Duration, Instant};
-
-/// Metadata about a destination table column.
-///
-/// This is retrieved from SQL Server's system tables and used for
-/// automatic column mapping and type validation.
-#[derive(Debug, Clone)]
-pub struct DestinationColumnMetadata {
-    /// Column name
-    pub name: String,
-
-    /// Column ordinal (0-based position in table)
-    pub ordinal: usize,
-
-    /// SQL Server type ID (from sys.columns.system_type_id)
-    pub system_type_id: u8,
-
-    /// SqlDbType mapped from system_type_id
-    pub sql_type: SqlDbType,
-
-    /// Maximum length in bytes (-1 for MAX types)
-    pub max_length: i16,
-
-    /// Precision (for numeric/decimal types)
-    pub precision: u8,
-
-    /// Scale (for numeric/decimal types)
-    pub scale: u8,
-
-    /// Whether the column allows NULL values
-    pub is_nullable: bool,
-
-    /// Whether the column is an identity column
-    pub is_identity: bool,
-
-    /// Whether the column is computed
-    pub is_computed: bool,
-
-    /// Collation (for string types)
-    pub collation: Option<SqlCollation>,
-}
-
-impl DestinationColumnMetadata {
-    /// Convert destination metadata to BulkCopyColumnMetadata for protocol serialization.
-    pub fn to_bulk_copy_metadata(&self) -> BulkCopyColumnMetadata {
-        // Use fixed-length types for non-nullable columns, nullable types for nullable columns
-        let tds_type = if self.is_nullable {
-            self.sql_type.to_tds_type()
-        } else {
-            self.sql_type.to_tds_type_fixed()
-        };
-
-        let type_length = match self.sql_type {
-            SqlDbType::BigInt
-            | SqlDbType::Int
-            | SqlDbType::SmallInt
-            | SqlDbType::TinyInt
-            | SqlDbType::Bit
-            | SqlDbType::Real
-            | SqlDbType::Float
-            | SqlDbType::Date
-            | SqlDbType::SmallDateTime
-            | SqlDbType::Money
-            | SqlDbType::SmallMoney => TypeLength::Fixed(self.max_length as i32),
-            SqlDbType::VarChar | SqlDbType::NVarChar | SqlDbType::VarBinary => {
-                if self.max_length == -1 {
-                    TypeLength::Plp
-                } else {
-                    TypeLength::Variable(self.max_length as i32)
-                }
-            }
-            SqlDbType::Char | SqlDbType::NChar | SqlDbType::Binary => {
-                TypeLength::Fixed(self.max_length as i32)
-            }
-            SqlDbType::Text
-            | SqlDbType::NText
-            | SqlDbType::Image
-            | SqlDbType::Xml
-            | SqlDbType::Json => TypeLength::Plp,
-            _ => TypeLength::Variable(self.max_length as i32),
-        };
-
-        let mut metadata = BulkCopyColumnMetadata::new(&self.name, self.sql_type, tds_type)
-            .with_length(self.max_length as i32, type_length)
-            .with_nullable(self.is_nullable);
-
-        if matches!(self.sql_type, SqlDbType::Decimal | SqlDbType::Numeric) {
-            metadata = metadata.with_precision_scale(self.precision, self.scale);
-        }
-
-        if let Some(collation) = self.collation {
-            metadata = metadata.with_collation(collation);
-        }
-
-        if self.is_identity {
-            metadata = metadata.with_identity(true);
-        }
-
-        // Note: Computed columns are typically skipped in bulk copy operations
-        // The metadata doesn't need to track this flag for serialization
-
-        metadata
-    }
-}
 
 /// Options for configuring bulk copy operations.
 ///
@@ -385,6 +281,9 @@ pub struct BulkCopy<'a> {
 
     /// Cached destination table metadata (retrieved from sys.columns)
     destination_metadata: Option<Vec<DestinationColumnMetadata>>,
+
+    /// Metadata retriever strategy
+    metadata_retriever: Box<dyn MetadataRetriever + 'a>,
 }
 
 impl<'a> BulkCopy<'a> {
@@ -408,6 +307,41 @@ impl<'a> BulkCopy<'a> {
             column_mappings: Vec::new(),
             progress_callback: None,
             destination_metadata: None,
+            metadata_retriever: Box::new(SelectTop0Retriever::new()),
+        }
+    }
+
+    /// Create a new `BulkCopy` instance with a custom metadata retriever.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - A mutable reference to the TDS client connection
+    /// * `table_name` - Name of the destination table (can include schema: "dbo.Users")
+    /// * `retriever` - Custom metadata retriever implementation
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let custom_retriever = CachedMetadataRetriever::new();
+    /// let mut bulk_copy = BulkCopy::with_retriever(
+    ///     &mut client,
+    ///     "MyTable",
+    ///     Box::new(custom_retriever)
+    /// );
+    /// ```
+    pub fn with_retriever(
+        client: &'a mut TdsClient,
+        table_name: impl Into<String>,
+        retriever: Box<dyn MetadataRetriever + 'a>,
+    ) -> Self {
+        Self {
+            client,
+            table_name: table_name.into(),
+            options: BulkCopyOptions::default(),
+            column_mappings: Vec::new(),
+            progress_callback: None,
+            destination_metadata: None,
+            metadata_retriever: retriever,
         }
     }
 
@@ -625,7 +559,7 @@ impl<'a> BulkCopy<'a> {
 
     /// Retrieve destination table metadata from SQL Server.
     ///
-    /// This queries the sys.columns catalog view to get column information
+    /// This uses the configured metadata retriever strategy to get column information
     /// for the destination table. The metadata is cached for subsequent operations.
     ///
     /// # Returns
@@ -636,7 +570,7 @@ impl<'a> BulkCopy<'a> {
     ///
     /// Returns an error if:
     /// - Table does not exist
-    /// - No permission to access sys.columns
+    /// - No permission to access metadata
     /// - Network errors during query execution
     ///
     /// # Example
@@ -655,209 +589,16 @@ impl<'a> BulkCopy<'a> {
             return Ok(metadata.clone());
         }
 
-        // Parse table name to extract schema and table
-        let (schema, table) = self.parse_table_name();
-
-        // Query sys.columns for table metadata
-        // Handle temp tables (starting with #) which are in tempdb
-        let query = if table.starts_with('#') {
-            // Temp tables are in tempdb.sys.objects
-            format!(
-                "SELECT \
-                    c.name, \
-                    c.column_id, \
-                    c.system_type_id, \
-                    c.max_length, \
-                    c.precision, \
-                    c.scale, \
-                    c.is_nullable, \
-                    c.is_identity, \
-                    c.is_computed, \
-                    c.collation_name \
-                FROM tempdb.sys.columns c \
-                INNER JOIN tempdb.sys.objects o ON c.object_id = o.object_id \
-                WHERE o.name LIKE '{}%' \
-                ORDER BY c.column_id",
-                table.replace('\'', "''").replace("%", "[%]") // Escape wildcards for LIKE
-            )
-        } else {
-            // Regular tables
-            format!(
-                "SELECT \
-                    c.name, \
-                    c.column_id, \
-                    c.system_type_id, \
-                    c.max_length, \
-                    c.precision, \
-                    c.scale, \
-                    c.is_nullable, \
-                    c.is_identity, \
-                    c.is_computed, \
-                    c.collation_name \
-                FROM sys.columns c \
-                INNER JOIN sys.objects o ON c.object_id = o.object_id \
-                WHERE o.name = '{}' AND SCHEMA_NAME(o.schema_id) = '{}' \
-                ORDER BY c.column_id",
-                table.replace('\'', "''"), // Escape single quotes
-                schema.replace('\'', "''")
-            )
-        };
-
-        // Execute the query
-        self.client
-            .execute(query, Some(self.options.timeout_sec), None)
+        // Use the metadata retriever strategy
+        let metadata = self
+            .metadata_retriever
+            .retrieve_metadata(self.client, &self.table_name, self.options.timeout_sec)
             .await?;
-
-        // Read the results
-        let mut metadata = Vec::new();
-
-        if let Some(resultset) = self.client.get_current_resultset() {
-            while let Some(row) = resultset.next_row().await? {
-                if row.len() < 10 {
-                    return Err(Error::UsageError(
-                        "Unexpected number of columns in metadata query result".to_string(),
-                    ));
-                }
-
-                // Extract column values
-                let name = match &row[0] {
-                    ColumnValues::String(s) => s.to_utf8_string(),
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected string for column name".to_string(),
-                        ));
-                    }
-                };
-
-                let column_id = match &row[1] {
-                    ColumnValues::Int(i) => *i as usize,
-                    _ => return Err(Error::UsageError("Expected int for column_id".to_string())),
-                };
-
-                let system_type_id = match &row[2] {
-                    ColumnValues::TinyInt(t) => *t,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected tinyint for system_type_id".to_string(),
-                        ));
-                    }
-                };
-
-                let max_length = match &row[3] {
-                    ColumnValues::SmallInt(s) => *s,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected smallint for max_length".to_string(),
-                        ));
-                    }
-                };
-
-                let precision = match &row[4] {
-                    ColumnValues::TinyInt(p) => *p,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected tinyint for precision".to_string(),
-                        ));
-                    }
-                };
-
-                let scale = match &row[5] {
-                    ColumnValues::TinyInt(s) => *s,
-                    _ => return Err(Error::UsageError("Expected tinyint for scale".to_string())),
-                };
-
-                let is_nullable = match &row[6] {
-                    ColumnValues::Bit(b) => *b,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected bit for is_nullable".to_string(),
-                        ));
-                    }
-                };
-
-                let is_identity = match &row[7] {
-                    ColumnValues::Bit(b) => *b,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected bit for is_identity".to_string(),
-                        ));
-                    }
-                };
-
-                let is_computed = match &row[8] {
-                    ColumnValues::Bit(b) => *b,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected bit for is_computed".to_string(),
-                        ));
-                    }
-                };
-
-                // collation_name can be NULL for non-string types
-                let _collation_name = match &row[9] {
-                    ColumnValues::String(s) => Some(s.to_utf8_string()),
-                    ColumnValues::Null => None,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected string or NULL for collation_name".to_string(),
-                        ));
-                    }
-                };
-
-                // Map system_type_id to SqlDbType using TryFrom trait with SystemTypeId wrapper
-                let sql_type = SqlDbType::try_from(SystemTypeId(system_type_id))?;
-
-                // TODO: Parse collation_name to create SqlCollation
-                // For now, use None (will be enhanced in future)
-                let collation = None;
-
-                metadata.push(DestinationColumnMetadata {
-                    name,
-                    ordinal: column_id - 1, // SQL Server is 1-based, we use 0-based
-                    system_type_id,
-                    sql_type,
-                    max_length,
-                    precision,
-                    scale,
-                    is_nullable,
-                    is_identity,
-                    is_computed,
-                    collation,
-                });
-            }
-        }
-
-        // Close the query
-        self.client.close_query().await?;
-
-        if metadata.is_empty() {
-            return Err(Error::UsageError(format!(
-                "Table '{}' not found or has no columns",
-                self.table_name
-            )));
-        }
 
         // Cache the metadata
         self.destination_metadata = Some(metadata.clone());
 
         Ok(metadata)
-    }
-
-    /// Parse table name into schema and table components.
-    ///
-    /// Handles formats:
-    /// - "Users" → ("dbo", "Users")
-    /// - "dbo.Users" → ("dbo", "Users")
-    /// - "schema.table" → ("schema", "table")
-    fn parse_table_name(&self) -> (String, String) {
-        if let Some(dot_pos) = self.table_name.rfind('.') {
-            let schema = self.table_name[..dot_pos].to_string();
-            let table = self.table_name[dot_pos + 1..].to_string();
-            (schema, table)
-        } else {
-            // Default to dbo schema
-            ("dbo".to_string(), self.table_name.clone())
-        }
     }
 
     /// Writes rows to the server using zero-copy bulk load operations.
@@ -1139,6 +880,8 @@ pub trait BulkLoadRow {
 
 #[cfg(test)]
 mod tests {
+    use crate::datatypes::bulk_copy_metadata::SystemTypeId;
+
     use super::*;
 
     #[test]
@@ -1285,31 +1028,17 @@ mod tests {
 
     #[test]
     fn test_parse_table_name() {
-        // Mock a TdsClient (we just need the table_name field for this test)
-        // Note: In real code, we'd use a proper test fixture or mock
-        // For now, we'll test the logic directly through the parsing behavior
-
+        use crate::connection::metadata_retriever::SystemCatalogRetriever;
+        
         // Test with schema.table format
         let table_with_schema = "myschema.mytable";
-        let (schema, table) = if let Some(dot_pos) = table_with_schema.rfind('.') {
-            let s = table_with_schema[..dot_pos].to_string();
-            let t = table_with_schema[dot_pos + 1..].to_string();
-            (s, t)
-        } else {
-            ("dbo".to_string(), table_with_schema.to_string())
-        };
+        let (schema, table) = SystemCatalogRetriever::parse_table_name(table_with_schema);
         assert_eq!(schema, "myschema");
         assert_eq!(table, "mytable");
 
         // Test without schema (defaults to dbo)
         let table_without_schema = "mytable";
-        let (schema2, table2) = if let Some(dot_pos) = table_without_schema.rfind('.') {
-            let s = table_without_schema[..dot_pos].to_string();
-            let t = table_without_schema[dot_pos + 1..].to_string();
-            (s, t)
-        } else {
-            ("dbo".to_string(), table_without_schema.to_string())
-        };
+        let (schema2, table2) = SystemCatalogRetriever::parse_table_name(table_without_schema);
         assert_eq!(schema2, "dbo");
         assert_eq!(table2, "mytable");
     }

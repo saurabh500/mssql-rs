@@ -100,6 +100,10 @@ impl TdsClient {
         &self.execution_context
     }
 
+    pub(crate) fn get_current_metadata(&self) -> Option<&ColMetadataToken> {
+        self.current_metadata.as_ref()
+    }
+
     /// Updates the remaining timeout by subtracting the elapsed time.
     fn update_remaining_timeout(&mut self, start: Instant) {
         self.remaining_request_timeout = self.remaining_request_timeout.map(|t| {
