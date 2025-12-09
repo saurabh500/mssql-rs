@@ -189,10 +189,7 @@ impl PythonRowAdapter {
             // Int → Integer types: Validate range for target type
             // This ensures Python integers that exceed the target type's range are rejected
             // instead of being silently converted to BigInt
-            (
-                SourcePythonType::Int,
-                SqlDbType::Int | SqlDbType::SmallInt | SqlDbType::TinyInt,
-            ) => {
+            (SourcePythonType::Int, SqlDbType::Int | SqlDbType::SmallInt | SqlDbType::TinyInt) => {
                 let result = Self::coerce_python_int_to_integer(py_obj, target_meta.sql_type)?;
                 Ok(Some(result))
             }
