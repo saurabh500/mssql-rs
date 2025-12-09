@@ -21,6 +21,40 @@ use mssql_tds::message::bulk_load::StreamingBulkLoadWriter;
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
 
+/// Represents the source Python type for conversion mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourcePythonType {
+    None,
+    String,
+    Int,
+    Float,
+    Bytes,
+    Bool,
+    Other,
+}
+
+impl SourcePythonType {
+    /// Detect the Python type from a PyAny object (fast type checking).
+    #[inline]
+    fn detect(py_obj: &Bound<'_, PyAny>) -> Self {
+        if py_obj.is_none() {
+            SourcePythonType::None
+        } else if py_obj.is_instance_of::<PyString>() {
+            SourcePythonType::String
+        } else if py_obj.is_instance_of::<pyo3::types::PyInt>() {
+            SourcePythonType::Int
+        } else if py_obj.is_instance_of::<pyo3::types::PyFloat>() {
+            SourcePythonType::Float
+        } else if py_obj.is_instance_of::<pyo3::types::PyBytes>() {
+            SourcePythonType::Bytes
+        } else if py_obj.is_instance_of::<pyo3::types::PyBool>() {
+            SourcePythonType::Bool
+        } else {
+            SourcePythonType::Other
+        }
+    }
+}
+
 /// Adapter that wraps a Python tuple for zero-copy bulk insert.
 ///
 /// This struct implements the `BulkLoadRow` trait, allowing Python tuples
@@ -70,112 +104,156 @@ impl PythonRowAdapter {
         }
     }
 
-    /// Convert a Python value to a ColumnValue, attempting type coercion if metadata is available.
+    /// Convert a Python value to a ColumnValue with type coercion based on target SQL type.
+    ///
+    /// This function implements a source-to-target type mapping strategy:
+    /// 1. Detect the source Python type (fast type check)
+    /// 2. Validate NULL handling against target column nullability
+    /// 3. Check if coercion is needed based on (source_type, target_sql_type) pair
+    /// 4. Apply appropriate conversion or fall back to default conversion
+    ///
+    /// # Type Coercion Matrix (extensible)
+    ///
+    /// | Source Python Type | Target SQL Type(s)              | Coercion Strategy           |
+    /// |--------------------|----------------------------------|------------------------------|
+    /// | None               | Any non-nullable                | Error: NULL constraint       |
+    /// | None               | Any nullable                    | ColumnValues::Null           |
+    /// | String             | INT/BIGINT/SMALLINT/TINYINT     | Parse string → integer       |
+    /// | String             | (future: DECIMAL/NUMERIC)       | Parse string → decimal       |
+    /// | String             | (future: DATETIME/DATE)         | Parse string → datetime      |
+    /// | (default)          | Any                             | py_to_column_value()         |
     fn convert_with_coercion(
         py_obj: &Bound<'_, PyAny>,
         target_metadata: Option<&DestinationColumnMetadata>,
     ) -> TdsResult<ColumnValues> {
-        // First check if value is None and validate against nullable constraint
-        if py_obj.is_none() {
-            if let Some(meta) = target_metadata {
-                if !meta.is_nullable {
-                    return Err(Error::UsageError(format!(
-                        "Cannot insert NULL value into non-nullable column '{}'. Conversion not possible for NULL to non-nullable column",
-                        meta.name
-                    )));
-                }
-            }
-            // If nullable or no metadata, return NULL
-            return Ok(ColumnValues::Null);
+        // Step 1: Fast source type detection
+        let source_type = SourcePythonType::detect(py_obj);
+
+        // Step 2: Handle NULL values with validation
+        if source_type == SourcePythonType::None {
+            return Self::handle_null_value(target_metadata);
         }
-        
-        // If we have target metadata, check if we need type coercion
+
+        // Step 3: Check if we need type coercion based on source → target mapping
         if let Some(meta) = target_metadata {
-            // Check if the Python value is a string and target is an integer type
-            if py_obj.is_instance_of::<PyString>() {
-                match meta.sql_type {
-                    SqlDbType::Int | SqlDbType::BigInt | SqlDbType::SmallInt | SqlDbType::TinyInt => {
-                        // Try type coercion for string-to-integer conversion
-                        return Self::try_coerce_type(py_obj, meta.sql_type);
-                    }
-                    _ => {
-                        // Fall through to normal conversion
-                    }
-                }
+            if let Some(coerced_value) = Self::try_type_coercion(py_obj, source_type, meta)? {
+                return Ok(coerced_value);
             }
         }
-        
-        // Try direct conversion
+
+        // Step 4: Fall back to default Python → TDS conversion
         py_to_column_value(py_obj)
     }
 
-    /// Attempt to coerce a Python value to match the target SQL type.
-    fn try_coerce_type(py_obj: &Bound<'_, PyAny>, target_type: SqlDbType) -> TdsResult<ColumnValues> {
+    /// Handle NULL value insertion with nullability validation.
+    #[inline]
+    fn handle_null_value(
+        target_metadata: Option<&DestinationColumnMetadata>,
+    ) -> TdsResult<ColumnValues> {
+        if let Some(meta) = target_metadata {
+            if !meta.is_nullable {
+                return Err(Error::UsageError(format!(
+                    "Cannot insert NULL value into non-nullable column '{}'. Conversion not possible for NULL to non-nullable column",
+                    meta.name
+                )));
+            }
+        }
+        Ok(ColumnValues::Null)
+    }
+
+    /// Try type coercion based on source Python type and target SQL type.
+    ///
+    /// Returns Some(ColumnValues) if coercion was applied, None if no coercion needed.
+    ///
+    /// This method encapsulates the type coercion mapping logic, making it easy to add
+    /// new conversions by pattern matching on (source_type, target_sql_type) pairs.
+    fn try_type_coercion(
+        py_obj: &Bound<'_, PyAny>,
+        source_type: SourcePythonType,
+        target_meta: &DestinationColumnMetadata,
+    ) -> TdsResult<Option<ColumnValues>> {
+        // Type coercion dispatch based on (source → target) mapping
+        match (source_type, target_meta.sql_type) {
+            // String → Integer types: Parse string as integer
+            (
+                SourcePythonType::String,
+                SqlDbType::Int | SqlDbType::BigInt | SqlDbType::SmallInt | SqlDbType::TinyInt,
+            ) => {
+                let result = Self::coerce_string_to_integer(py_obj, target_meta.sql_type)?;
+                Ok(Some(result))
+            }
+
+            // TODO: Add more coercion mappings as needed:
+            // (SourcePythonType::String, SqlDbType::Decimal | SqlDbType::Numeric) => {...}
+            // (SourcePythonType::String, SqlDbType::DateTime | SqlDbType::Date) => {...}
+            // (SourcePythonType::Int, SqlDbType::Bit) => {...}
+
+            // No coercion needed - use default conversion
+            _ => Ok(None),
+        }
+    }
+
+    /// Coerce a Python string to a SQL Server integer type.
+    ///
+    /// Parses the string as i64 and validates it fits within the target integer type's range.
+    fn coerce_string_to_integer(
+        py_obj: &Bound<'_, PyAny>,
+        target_type: SqlDbType,
+    ) -> TdsResult<ColumnValues> {
+        let py_str = py_obj.cast::<PyString>().map_err(|e| {
+            Error::UsageError(format!("Failed to cast to string: {}", e))
+        })?;
+
+        let s = py_str.to_str().map_err(|e| {
+            Error::UsageError(format!("Failed to extract string: {}", e))
+        })?;
+
+        // Parse as i64 to cover all integer types
+        let parsed = s.parse::<i64>().map_err(|e| {
+            Error::UsageError(format!(
+                "Cannot convert string '{}' to integer: {}",
+                s, e
+            ))
+        })?;
+
+        // Convert to appropriate TDS integer type with range validation
         match target_type {
-            SqlDbType::Int | SqlDbType::BigInt | SqlDbType::SmallInt | SqlDbType::TinyInt => {
-                // Try to convert string to integer
-                if let Ok(py_str) = py_obj.cast::<PyString>() {
-                    let s = py_str.to_str().map_err(|e| {
-                        Error::UsageError(format!("Failed to extract string: {}", e))
-                    })?;
-                    
-                    // Try parsing as i64 to cover all integer types
-                    let parsed = s.parse::<i64>().map_err(|e| {
-                        Error::UsageError(format!(
-                            "Cannot convert string '{}' to integer: {}",
-                            s, e
-                        ))
-                    })?;
-                    
-                    // Return appropriate integer type based on target
-                    match target_type {
-                        SqlDbType::TinyInt => {
-                            if parsed >= 0 && parsed <= 255 {
-                                Ok(ColumnValues::TinyInt(parsed as u8))
-                            } else {
-                                Err(Error::UsageError(format!(
-                                    "Value {} out of range for TINYINT (0-255)",
-                                    parsed
-                                )))
-                            }
-                        }
-                        SqlDbType::SmallInt => {
-                            if parsed >= i16::MIN as i64 && parsed <= i16::MAX as i64 {
-                                Ok(ColumnValues::SmallInt(parsed as i16))
-                            } else {
-                                Err(Error::UsageError(format!(
-                                    "Value {} out of range for SMALLINT",
-                                    parsed
-                                )))
-                            }
-                        }
-                        SqlDbType::Int => {
-                            if parsed >= i32::MIN as i64 && parsed <= i32::MAX as i64 {
-                                Ok(ColumnValues::Int(parsed as i32))
-                            } else {
-                                Err(Error::UsageError(format!(
-                                    "Value {} out of range for INT",
-                                    parsed
-                                )))
-                            }
-                        }
-                        SqlDbType::BigInt => Ok(ColumnValues::BigInt(parsed)),
-                        _ => unreachable!(),
-                    }
+            SqlDbType::TinyInt => {
+                if parsed >= 0 && parsed <= 255 {
+                    Ok(ColumnValues::TinyInt(parsed as u8))
                 } else {
                     Err(Error::UsageError(format!(
-                        "Cannot coerce type to integer, expected string but got: {:?}",
-                        py_obj.get_type().name()
+                        "Value {} out of range for TINYINT (0-255)",
+                        parsed
                     )))
                 }
             }
-            _ => {
-                // No coercion available for this type yet
-                Err(Error::UsageError(format!(
-                    "Type coercion not implemented for target type: {:?}",
-                    target_type
-                )))
+            SqlDbType::SmallInt => {
+                if parsed >= i16::MIN as i64 && parsed <= i16::MAX as i64 {
+                    Ok(ColumnValues::SmallInt(parsed as i16))
+                } else {
+                    Err(Error::UsageError(format!(
+                        "Value {} out of range for SMALLINT ({} to {})",
+                        parsed,
+                        i16::MIN,
+                        i16::MAX
+                    )))
+                }
             }
+            SqlDbType::Int => {
+                if parsed >= i32::MIN as i64 && parsed <= i32::MAX as i64 {
+                    Ok(ColumnValues::Int(parsed as i32))
+                } else {
+                    Err(Error::UsageError(format!(
+                        "Value {} out of range for INT ({} to {})",
+                        parsed,
+                        i32::MIN,
+                        i32::MAX
+                    )))
+                }
+            }
+            SqlDbType::BigInt => Ok(ColumnValues::BigInt(parsed)),
+            _ => unreachable!("coerce_string_to_integer called with non-integer target type"),
         }
     }
 }

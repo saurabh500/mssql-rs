@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 
 use crate::bulkcopy::PythonRowAdapter;
+use crate::utils::convert_tds_error;
 
 /// Python Cursor class for Core TDS backend
 #[pyclass]
@@ -338,10 +339,7 @@ impl PyCoreCursor {
                     .await
                     .map_err(|e| {
                         error!("bulkcopy: write_to_server_zerocopy failed: {}", e);
-                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "Bulk copy failed: {}",
-                            e
-                        ))
+                        convert_tds_error(e)
                     })?;
                 info!(
                     "bulkcopy: write_to_server_zerocopy completed successfully, rows_affected={}",

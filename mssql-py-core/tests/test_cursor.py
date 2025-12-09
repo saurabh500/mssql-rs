@@ -233,7 +233,7 @@ def test_cursor_bulkcopy_null_to_non_nullable_column(client_context):
         (3,),
     ]
 
-    # Execute bulk copy and expect an error about conversion not being possible
+    # Execute bulk copy and expect a ValueError
     error_raised = False
     error_message = ""
     try:
@@ -242,16 +242,64 @@ def test_cursor_bulkcopy_null_to_non_nullable_column(client_context):
         )
         # If we get here, no error was raised
         print(f"No error raised. Result: {result}")
-    except Exception as e:
+    except ValueError as e:
         error_raised = True
         error_message = str(e).lower()
+        print(f"Expected ValueError caught: {e}")
 
     # Verify that an error was raised with appropriate message
-    assert error_raised, "Expected an exception to be raised for null value in non-nullable column"
+    assert error_raised, "Expected a ValueError to be raised for null value in non-nullable column"
     assert "conversion" in error_message or "null" in error_message, \
         f"Expected conversion error, got: {error_message}"
     assert "non-nullable" in error_message, \
         f"Expected 'non-nullable' in error message, got: {error_message}"
+
+    # Close connection - temp table will be automatically dropped
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_invalid_string_to_int_conversion(client_context):
+    """Test cursor bulkcopy with invalid string that cannot be converted to int.
+
+    Tests that client-side type coercion properly validates string-to-int conversion
+    and fails with an appropriate error when the string is not a valid integer.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    # Create a temp table with int columns
+    table_name = "#BulkCopyInvalidStringTable"
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, value INT)")
+
+    # Prepare test data with invalid string that cannot be parsed as integer
+    data = [
+        ("1", "100"),
+        ("not_a_number", "200"),  # This should trigger a conversion error
+        ("3", "300"),
+    ]
+
+    # Execute bulk copy and expect a client-side ValueError
+    error_raised = False
+    error_message = ""
+    try:
+        result = cursor.bulkcopy(
+            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        )
+        # If we get here, no error was raised
+        print(f"No error raised. Result: {result}")
+    except ValueError as e:
+        error_raised = True
+        error_message = str(e).lower()
+        print(f"Client-side ValueError caught: {e}")
+
+    # Verify that an error was raised with appropriate message about conversion failure
+    assert error_raised, "Expected a ValueError to be raised for invalid string-to-int conversion"
+    assert "cannot convert" in error_message or "conversion" in error_message, \
+        f"Expected conversion error message, got: {error_message}"
+    # Verify that the original parse error message is preserved
+    assert "invalid digit" in error_message or "not_a_number" in error_message, \
+        f"Expected original parse error details to be preserved, got: {error_message}"
 
     # Close connection - temp table will be automatically dropped
     conn.close()
