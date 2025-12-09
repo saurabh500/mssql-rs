@@ -3,6 +3,7 @@
 
 use pyo3::prelude::*;
 
+mod bulkcopy;
 mod connection;
 mod cursor;
 mod types;

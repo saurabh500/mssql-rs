@@ -66,7 +66,9 @@ impl PyCoreConnection {
         }
 
         if let Some(client) = &self.tds_client {
-            Ok(crate::cursor::PyCoreCursor::new(client.clone()))
+            // Pass runtime handle to cursor so it can use the same runtime
+            let handle = self.runtime.handle().clone();
+            Ok(crate::cursor::PyCoreCursor::new(client.clone(), handle))
         } else {
             Err(PyRuntimeError::new_err("No active connection"))
         }

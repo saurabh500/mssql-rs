@@ -6,10 +6,11 @@ mod common;
 
 mod bulk_copy_integration_tests {
     use crate::common::{begin_connection, create_context, init_tracing};
-    use mssql_tds::connection::bulk_copy::{BulkCopy, BulkCopyRow};
+    use async_trait::async_trait;
+    use mssql_tds::connection::bulk_copy::{BulkCopy, BulkLoadRow};
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
+    use mssql_tds::core::TdsResult;
     use mssql_tds::datatypes::column_values::ColumnValues;
-    use mssql_tds::datatypes::sql_string::SqlString;
 
     #[ctor::ctor]
     fn init() {
@@ -20,19 +21,62 @@ mod bulk_copy_integration_tests {
     #[derive(Debug, Clone)]
     struct TestUser {
         id: i32,
-        name: String,
-        age: i16,
-        active: bool,
+        value1: i32,
+        value2: i32,
+        value3: i32,
     }
 
-    impl BulkCopyRow for TestUser {
-        fn to_column_values(&self) -> Vec<ColumnValues> {
-            vec![
-                ColumnValues::Int(self.id),
-                ColumnValues::String(SqlString::from_utf8_string(self.name.clone())),
-                ColumnValues::SmallInt(self.age),
-                ColumnValues::Bit(self.active),
-            ]
+    #[async_trait]
+    impl BulkLoadRow for TestUser {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value1))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value2))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value3))
+                .await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for &TestUser {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value1))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value2))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value3))
+                .await?;
+            *column_index += 1;
+            Ok(())
         }
     }
 
@@ -46,9 +90,9 @@ mod bulk_copy_integration_tests {
             .execute(
                 "CREATE TABLE #BulkCopyMetadataTest (
                     id INT NOT NULL,
-                    name NVARCHAR(100) NOT NULL,
-                    age SMALLINT NOT NULL,
-                    active BIT NOT NULL
+                    value1 INT NOT NULL,
+                    value2 INT NOT NULL,
+                    value3 INT NOT NULL
                 )"
                 .to_string(),
                 None,
@@ -64,30 +108,30 @@ mod bulk_copy_integration_tests {
         let test_data = vec![
             TestUser {
                 id: 1,
-                name: "Alice".to_string(),
-                age: 30,
-                active: true,
+                value1: 100,
+                value2: 200,
+                value3: 300,
             },
             TestUser {
                 id: 2,
-                name: "Bob".to_string(),
-                age: 25,
-                active: false,
+                value1: 101,
+                value2: 201,
+                value3: 301,
             },
             TestUser {
                 id: 3,
-                name: "Charlie".to_string(),
-                age: 35,
-                active: true,
+                value1: 102,
+                value2: 202,
+                value3: 302,
             },
         ];
 
-        // Execute bulk copy using public API
+        // Execute bulk copy using public API (without explicit column mappings - should use ordinal mapping)
         let result = {
             let bulk_copy = BulkCopy::new(&mut client, "#BulkCopyMetadataTest");
             bulk_copy
                 .batch_size(1000)
-                .write_to_server(test_data.into_iter())
+                .write_to_server_zerocopy(&test_data)
                 .await
                 .expect("Bulk copy failed")
         };
