@@ -186,6 +186,14 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
+            // Int → Integer types: Validate range for target type
+            // This ensures Python integers that exceed the target type's range are rejected
+            // instead of being silently converted to BigInt
+            (SourcePythonType::Int, SqlDbType::Int | SqlDbType::SmallInt | SqlDbType::TinyInt) => {
+                let result = Self::coerce_python_int_to_integer(py_obj, target_meta.sql_type)?;
+                Ok(Some(result))
+            }
+
             // TODO: Add more coercion mappings as needed:
             // (SourcePythonType::String, SqlDbType::Decimal | SqlDbType::Numeric) => {...}
             // (SourcePythonType::String, SqlDbType::DateTime | SqlDbType::Date) => {...}
@@ -254,6 +262,63 @@ impl PythonRowAdapter {
             }
             SqlDbType::BigInt => Ok(ColumnValues::BigInt(parsed)),
             _ => unreachable!("coerce_string_to_integer called with non-integer target type"),
+        }
+    }
+
+    /// Coerce a Python integer to a SQL Server integer type with range validation.
+    ///
+    /// Extracts the Python int and validates it fits within the target integer type's range.
+    /// This prevents Python integers that exceed i32::MAX from being silently converted to
+    /// BigInt when the target column is INT, SMALLINT, or TINYINT.
+    fn coerce_python_int_to_integer(
+        py_obj: &Bound<'_, PyAny>,
+        target_type: SqlDbType,
+    ) -> TdsResult<ColumnValues> {
+        // Extract as i64 to cover all integer types
+        let value = py_obj.extract::<i64>().map_err(|e| {
+            Error::UsageError(format!(
+                "Cannot extract Python integer as i64: {}. Value may be too large for SQL integer types.",
+                e
+            ))
+        })?;
+
+        // Convert to appropriate TDS integer type with range validation
+        match target_type {
+            SqlDbType::TinyInt => {
+                if (0..=255).contains(&value) {
+                    Ok(ColumnValues::TinyInt(value as u8))
+                } else {
+                    Err(Error::UsageError(format!(
+                        "Python integer {} out of range for TINYINT column (valid range: 0-255)",
+                        value
+                    )))
+                }
+            }
+            SqlDbType::SmallInt => {
+                if value >= i16::MIN as i64 && value <= i16::MAX as i64 {
+                    Ok(ColumnValues::SmallInt(value as i16))
+                } else {
+                    Err(Error::UsageError(format!(
+                        "Python integer {} out of range for SMALLINT column (valid range: {} to {})",
+                        value,
+                        i16::MIN,
+                        i16::MAX
+                    )))
+                }
+            }
+            SqlDbType::Int => {
+                if value >= i32::MIN as i64 && value <= i32::MAX as i64 {
+                    Ok(ColumnValues::Int(value as i32))
+                } else {
+                    Err(Error::UsageError(format!(
+                        "Python integer {} out of range for INT column (valid range: {} to {})",
+                        value,
+                        i32::MIN,
+                        i32::MAX
+                    )))
+                }
+            }
+            _ => unreachable!("coerce_python_int_to_integer called with non-integer target type"),
         }
     }
 }
