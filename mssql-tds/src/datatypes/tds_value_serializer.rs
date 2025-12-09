@@ -77,6 +77,7 @@ impl TdsValueSerializer {
         match value {
             ColumnValues::Null => Self::serialize_null(writer, ctx).await,
             ColumnValues::Int(v) => Self::serialize_int(writer, *v, ctx).await,
+            ColumnValues::BigInt(v) => Self::serialize_bigint(writer, *v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -149,6 +150,42 @@ impl TdsValueSerializer {
                 }
                 true => {
                     writer.write_i32_unchecked(value);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_bigint<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: i64,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // Phase 1 Optimization: Batch writes for fixed types
+        if !ctx.is_fixed_type() {
+            // Nullable BIGINT (INTN with length 8): length byte + value (9 bytes total)
+            match writer.has_space(9) {
+                false => {
+                    writer.write_byte_async(8).await?; // Length for INTN (8 bytes)
+                    writer.write_i64_async(value).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(8); // Length for INTN (8 bytes)
+                    writer.write_i64_unchecked(value);
+                }
+            }
+        } else {
+            // Fixed type (INT8, 0x7F) - just write value (8 bytes)
+            match writer.has_space(8) {
+                false => {
+                    writer.write_i64_async(value).await?;
+                }
+                true => {
+                    writer.write_i64_unchecked(value);
                 }
             }
         }
