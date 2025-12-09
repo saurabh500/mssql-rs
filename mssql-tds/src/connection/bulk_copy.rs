@@ -44,9 +44,7 @@
 //! println!("Inserted {} rows", result.rows_affected);
 //! ```
 
-use crate::connection::metadata_retriever::{
-    DestinationColumnMetadata, FmtOnlyMetadataRetriever, MetadataRetriever,
-};
+use crate::connection::metadata_retriever::{FmtOnlyMetadataRetriever, MetadataRetriever};
 use crate::connection::tds_client::TdsClient;
 use crate::core::TdsResult;
 use crate::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType};
@@ -279,8 +277,8 @@ pub struct BulkCopy<'a> {
     /// Progress callback
     progress_callback: Option<Box<dyn FnMut(BulkCopyProgress) + Send + 'a>>,
 
-    /// Cached destination table metadata (retrieved from sys.columns)
-    destination_metadata: Option<Vec<DestinationColumnMetadata>>,
+    /// Cached destination table metadata (retrieved from server)
+    destination_metadata: Option<Vec<BulkCopyColumnMetadata>>,
 
     /// Metadata retriever strategy
     metadata_retriever: Box<dyn MetadataRetriever + 'a>,
@@ -564,7 +562,7 @@ impl<'a> BulkCopy<'a> {
     ///
     /// # Returns
     ///
-    /// A vector of `DestinationColumnMetadata` containing column information
+    /// A vector of `BulkCopyColumnMetadata` containing column information
     ///
     /// # Errors
     ///
@@ -578,12 +576,12 @@ impl<'a> BulkCopy<'a> {
     /// ```rust,ignore
     /// let metadata = bulk_copy.retrieve_destination_metadata().await?;
     /// for col in &metadata {
-    ///     println!("Column: {}, Type: {:?}", col.name, col.sql_type);
+    ///     println!("Column: {}, Type: {:?}", col.column_name, col.sql_type);
     /// }
     /// ```
     pub async fn retrieve_destination_metadata(
         &mut self,
-    ) -> TdsResult<Vec<DestinationColumnMetadata>> {
+    ) -> TdsResult<Vec<BulkCopyColumnMetadata>> {
         // Check if we already have cached metadata
         if let Some(ref metadata) = self.destination_metadata {
             return Ok(metadata.clone());
@@ -681,7 +679,7 @@ impl<'a> BulkCopy<'a> {
             let destination_metadata = self.retrieve_destination_metadata().await?;
             for (i, col) in destination_metadata.iter().enumerate() {
                 self.column_mappings
-                    .push(ColumnMapping::by_ordinal(i, col.name.clone()));
+                    .push(ColumnMapping::by_ordinal(i, col.column_name.clone()));
             }
         }
 
@@ -697,16 +695,13 @@ impl<'a> BulkCopy<'a> {
                 .map(|(i, col)| ResolvedColumnMapping {
                     source_index: i,
                     destination_index: i,
-                    destination_name: col.name.clone(),
+                    destination_name: col.column_name.clone(),
                     destination_type: col.sql_type,
                 })
                 .collect();
 
-            // Build destination column metadata for the bulk load message
-            let dest_column_metadata: Vec<BulkCopyColumnMetadata> = destination_metadata
-                .iter()
-                .map(|col| col.to_bulk_copy_metadata())
-                .collect();
+            // Destination metadata is already BulkCopyColumnMetadata - use directly
+            let dest_column_metadata = destination_metadata.clone();
 
             // Process rows with zero-copy path
             self.write_rows_to_server_zerocopy(
@@ -972,22 +967,13 @@ mod tests {
     }
 
     #[test]
-    fn test_destination_metadata_to_bulk_copy_metadata() {
-        let dest_meta = DestinationColumnMetadata {
-            name: "TestColumn".to_string(),
-            ordinal: 0,
-            system_type_id: 56, // Int
-            sql_type: SqlDbType::Int,
-            max_length: 4,
-            precision: 0,
-            scale: 0,
-            is_nullable: true,
-            is_identity: false,
-            is_computed: false,
-            collation: None,
-        };
+    fn test_bulk_copy_metadata_creation() {
+        use crate::datatypes::bulk_copy_metadata::TypeLength;
 
-        let bulk_meta = dest_meta.to_bulk_copy_metadata();
+        let bulk_meta = BulkCopyColumnMetadata::new("TestColumn", SqlDbType::Int, 0x26)
+            .with_length(4, TypeLength::Fixed(4))
+            .with_nullable(true);
+
         assert_eq!(bulk_meta.column_name, "TestColumn");
         assert_eq!(bulk_meta.sql_type, SqlDbType::Int);
         assert_eq!(bulk_meta.tds_type, 0x26); // TDS type for IntN (nullable int)

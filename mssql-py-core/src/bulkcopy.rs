@@ -12,9 +12,9 @@ use std::time::{Duration, Instant};
 
 use crate::types::py_to_column_value;
 use async_trait::async_trait;
-use mssql_tds::connection::bulk_copy::{BulkLoadRow, DestinationColumnMetadata};
+use mssql_tds::connection::bulk_copy::BulkLoadRow;
 use mssql_tds::core::TdsResult;
-use mssql_tds::datatypes::bulk_copy_metadata::SqlDbType;
+use mssql_tds::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType};
 use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::error::Error;
 use mssql_tds::message::bulk_load::StreamingBulkLoadWriter;
@@ -67,7 +67,7 @@ pub struct PythonRowAdapter {
     /// Python tuple containing row data (stored as Py<PyAny> for Send + Sync)
     row: Py<PyAny>,
     /// Optional destination column metadata for type coercion (wrapped in Arc for efficient sharing across rows)
-    destination_metadata: Option<Arc<Vec<DestinationColumnMetadata>>>,
+    destination_metadata: Option<Arc<Vec<BulkCopyColumnMetadata>>>,
 }
 
 impl PythonRowAdapter {
@@ -99,7 +99,7 @@ impl PythonRowAdapter {
     /// A new PythonRowAdapter with type coercion support.
     pub fn with_metadata(
         row: Py<PyAny>,
-        destination_metadata: Arc<Vec<DestinationColumnMetadata>>,
+        destination_metadata: Arc<Vec<BulkCopyColumnMetadata>>,
     ) -> Self {
         Self {
             row,
@@ -127,7 +127,7 @@ impl PythonRowAdapter {
     /// | (default)          | Any                             | py_to_column_value()         |
     fn convert_with_coercion(
         py_obj: &Bound<'_, PyAny>,
-        target_metadata: Option<&DestinationColumnMetadata>,
+        target_metadata: Option<&BulkCopyColumnMetadata>,
     ) -> TdsResult<ColumnValues> {
         // Step 1: Fast source type detection
         let source_type = SourcePythonType::detect(py_obj);
@@ -151,13 +151,13 @@ impl PythonRowAdapter {
     /// Handle NULL value insertion with nullability validation.
     #[inline]
     fn handle_null_value(
-        target_metadata: Option<&DestinationColumnMetadata>,
+        target_metadata: Option<&BulkCopyColumnMetadata>,
     ) -> TdsResult<ColumnValues> {
         if let Some(meta) = target_metadata {
             if !meta.is_nullable {
                 return Err(Error::UsageError(format!(
                     "Cannot insert NULL value into non-nullable column '{}'. Conversion not possible for NULL to non-nullable column",
-                    meta.name
+                    meta.column_name
                 )));
             }
         }
@@ -173,7 +173,7 @@ impl PythonRowAdapter {
     fn try_type_coercion(
         py_obj: &Bound<'_, PyAny>,
         source_type: SourcePythonType,
-        target_meta: &DestinationColumnMetadata,
+        target_meta: &BulkCopyColumnMetadata,
     ) -> TdsResult<Option<ColumnValues>> {
         // Type coercion dispatch based on (source → target) mapping
         match (source_type, target_meta.sql_type) {

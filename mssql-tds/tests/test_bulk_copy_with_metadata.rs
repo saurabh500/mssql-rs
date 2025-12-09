@@ -8,7 +8,7 @@ mod bulk_copy_integration_tests {
     use crate::common::{begin_connection, create_context, init_tracing};
     use async_trait::async_trait;
     use mssql_tds::connection::bulk_copy::{BulkCopy, BulkLoadRow};
-    use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
+    use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::core::TdsResult;
     use mssql_tds::datatypes::bulk_copy_metadata::SqlDbType;
     use mssql_tds::datatypes::column_values::ColumnValues;
@@ -210,16 +210,11 @@ mod bulk_copy_integration_tests {
         assert_eq!(metadata.len(), 5, "Expected 5 columns");
 
         // Verify column names and ordinals
-        assert_eq!(metadata[0].name, "id");
-        assert_eq!(metadata[0].ordinal, 0);
-        assert_eq!(metadata[1].name, "name");
-        assert_eq!(metadata[1].ordinal, 1);
-        assert_eq!(metadata[2].name, "age");
-        assert_eq!(metadata[2].ordinal, 2);
-        assert_eq!(metadata[3].name, "salary");
-        assert_eq!(metadata[3].ordinal, 3);
-        assert_eq!(metadata[4].name, "active");
-        assert_eq!(metadata[4].ordinal, 4);
+        assert_eq!(metadata[0].column_name, "id");
+        assert_eq!(metadata[1].column_name, "name");
+        assert_eq!(metadata[2].column_name, "age");
+        assert_eq!(metadata[3].column_name, "salary");
+        assert_eq!(metadata[4].column_name, "active");
 
         // Verify nullable flags
         assert!(!metadata[0].is_nullable, "id should not be nullable");
@@ -314,21 +309,14 @@ mod bulk_copy_integration_tests {
             .await
             .expect("Failed to retrieve metadata");
 
-        // Verify computed column is marked correctly
+        // Verify columns are retrieved (computed columns may be included in metadata)
+        // Note: BulkCopyColumnMetadata doesn't track is_computed flag as computed columns
+        // are typically skipped during bulk copy operations
         assert_eq!(metadata.len(), 4);
-        assert!(!metadata[0].is_computed, "id column should not be computed");
-        assert!(
-            !metadata[1].is_computed,
-            "value1 column should not be computed"
-        );
-        assert!(
-            !metadata[2].is_computed,
-            "value2 column should not be computed"
-        );
-        assert!(
-            metadata[3].is_computed,
-            "total column should be marked as computed"
-        );
+        assert_eq!(metadata[0].column_name, "id");
+        assert_eq!(metadata[1].column_name, "value1");
+        assert_eq!(metadata[2].column_name, "value2");
+        assert_eq!(metadata[3].column_name, "total");
 
         println!("Computed column metadata test passed");
     }
@@ -368,8 +356,8 @@ mod bulk_copy_integration_tests {
 
         // Both should return the same metadata
         assert_eq!(metadata1.len(), metadata2.len());
-        assert_eq!(metadata1[0].name, metadata2[0].name);
-        assert_eq!(metadata1[1].name, metadata2[1].name);
+        assert_eq!(metadata1[0].column_name, metadata2[0].column_name);
+        assert_eq!(metadata1[1].column_name, metadata2[1].column_name);
 
         println!("Metadata caching test passed");
     }
@@ -412,27 +400,27 @@ mod bulk_copy_integration_tests {
 
         // VARCHAR(50)
         assert_eq!(metadata[0].sql_type, SqlDbType::VarChar);
-        assert_eq!(metadata[0].max_length, 50);
+        assert_eq!(metadata[0].length, 50);
 
         // NVARCHAR(100) - uses 2 bytes per char
         assert_eq!(metadata[1].sql_type, SqlDbType::NVarChar);
-        assert_eq!(metadata[1].max_length, 200);
+        assert_eq!(metadata[1].length, 200);
 
         // CHAR(10)
         assert_eq!(metadata[2].sql_type, SqlDbType::Char);
-        assert_eq!(metadata[2].max_length, 10);
+        assert_eq!(metadata[2].length, 10);
 
         // NCHAR(20) - uses 2 bytes per char
         assert_eq!(metadata[3].sql_type, SqlDbType::NChar);
-        assert_eq!(metadata[3].max_length, 40);
+        assert_eq!(metadata[3].length, 40);
 
         // VARCHAR(MAX)
         assert_eq!(metadata[4].sql_type, SqlDbType::VarChar);
-        assert_eq!(metadata[4].max_length, -1);
+        assert_eq!(metadata[4].length, -1);
 
         // NVARCHAR(MAX)
         assert_eq!(metadata[5].sql_type, SqlDbType::NVarChar);
-        assert_eq!(metadata[5].max_length, -1);
+        assert_eq!(metadata[5].length, -1);
 
         println!("String types metadata test passed");
     }
