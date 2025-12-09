@@ -305,6 +305,66 @@ def test_cursor_bulkcopy_invalid_string_to_int_conversion(client_context):
     conn.close()
 
 
+@pytest.mark.integration
+def test_cursor_bulkcopy_integer_overflow_to_int_column(client_context):
+    """Test cursor bulkcopy with Python integer larger than INT max to INT column.
+
+    When a Python number exceeds i32::MAX (2,147,483,647), it should be rejected
+    during type coercion when the target column is INT type.
+    
+    Expected behavior:
+    - Python int <= i32::MAX converts to ColumnValues::Int successfully
+    - Python int > i32::MAX triggers range validation error during coercion
+    - Error raised: "Python integer ... out of range for INT column"
+    
+    This ensures we catch overflow errors early during type conversion rather than
+    allowing silent conversion to BigInt which would fail later or lose data.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    # Create a temp table with INT column (max value: 2,147,483,647)
+    table_name = "#BulkCopyIntOverflowTable"
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, value INT)")
+
+    # Prepare test data with Python integer larger than i32::MAX
+    # Python integers are arbitrary precision, but SQL INT is limited:
+    # - i32::MIN = -2,147,483,648
+    # - i32::MAX = 2,147,483,647
+    data = [
+        (1, 100),
+        (2, 2147483648),  # i32::MAX + 1 = 2,147,483,648, exceeds INT range
+        (3, 300),
+    ]
+
+    # Execute bulk copy and expect range validation error
+    error_raised = False
+    error_message = ""
+    try:
+        result = cursor.bulkcopy(
+            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        )
+        # If we get here, no error was raised (unexpected)
+        print(f"No error raised. Result: {result}")
+    except (ValueError, RuntimeError) as e:
+        error_raised = True
+        error_message = str(e).lower()
+        print(f"Expected error caught: {e}")
+
+    # Verify that an error was raised about integer overflow
+    assert error_raised, "Expected an error for Python integer exceeding INT column range"
+    assert "out of range" in error_message, \
+        f"Expected 'out of range' error, got: {error_message}"
+    assert "int" in error_message, \
+        f"Expected INT column type in error, got: {error_message}"
+    # The error message should mention the actual value that overflowed
+    assert "2147483648" in error_message, \
+        f"Expected overflow value in error message, got: {error_message}"
+
+    # Close connection - temp table will be automatically dropped
+    conn.close()
+
+
 @pytest.mark.skip(reason="Bulk copy API is stubbed, not yet implemented")
 def test_cursor_bulkcopy_with_options():
     """Test cursor bulkcopy with various options."""
