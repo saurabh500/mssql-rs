@@ -17,6 +17,9 @@ use tracing::event;
 /// Optimized batch write operations with manual overflow control.
 /// Use this for performance-critical code paths where you can batch multiple writes.
 pub(crate) trait TdsPacketWriterUnchecked {
+    /// Writes an i16 without checking overflow (caller must ensure space)
+    fn write_i16_unchecked(&mut self, value: i16);
+
     /// Writes a byte without checking overflow (caller must ensure space)
     fn write_byte_unchecked(&mut self, value: u8);
 
@@ -491,6 +494,11 @@ impl TdsPacketWriterUnchecked for PacketWriter<'_> {
     fn write_u16_unchecked(&mut self, value: u16) {
         let _ =
             WriteBytesExt::write_u16::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+    }
+
+    fn write_i16_unchecked(&mut self, value: i16) {
+        let _ =
+            WriteBytesExt::write_i16::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
     }
 
     fn write_i64_unchecked(&mut self, value: i64) {
