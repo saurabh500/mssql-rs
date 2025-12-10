@@ -8,7 +8,7 @@
 //! implementation's metadata handling.
 
 use crate::token::tokens::SqlCollation;
-use tracing::{trace, warn};
+use tracing::warn;
 
 /// Newtype wrapper for SQL Server's system_type_id values.
 ///
@@ -83,7 +83,6 @@ pub enum SqlDbType {
     Variant,
     Udt,
 
-    // SQL Server 2019+ types
     Json,
 
     // SQL Server 2025+ types (future)
@@ -725,11 +724,8 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
                 (*len as i32, TypeLength::Variable(*len as i32), 0, 0)
             }
             TypeInfoVariant::VarLenString(_len, max_len, _collation) => {
-                trace!(
-                    "VarLenString - max_len={}, col_name={}",
-                    max_len, col.column_name
-                );
-                if *max_len == 0xFFFF {
+                // Check for MAX types: 0xFFFF (65535) indicates unlimited size
+                if *max_len == 65535 {
                     (-1, TypeLength::Plp, 0, 0)
                 } else {
                     // Use max_len for both length and type_length (column definition size)
@@ -754,8 +750,10 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
                 _chunk_size,
                 _plp_null,
             ) => {
-                // PLP types
-                if unknown_len.is_none() {
+                // PLP types (BLOB/CLOB types)
+                // For MAX types (VARCHAR(MAX), NVARCHAR(MAX), VARBINARY(MAX), etc.),
+                // SQL Server sends 0xFFFF (65535) which should be treated as -1 (unlimited)
+                if unknown_len.is_none() || *unknown_len == Some(65535) {
                     (-1, TypeLength::Plp, 0, 0)
                 } else {
                     (unknown_len.unwrap() as i32, TypeLength::Plp, 0, 0)

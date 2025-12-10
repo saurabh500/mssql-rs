@@ -285,7 +285,7 @@ impl PyCoreCursor {
                     for (i, col_meta) in metadata.iter().enumerate().take(mapping_count) {
                         column_mappings.push(ColumnMapping::ByOrdinal {
                             source: i,
-                            destination: col_meta.name.clone(),
+                            destination: col_meta.column_name.clone(),
                         });
                     }
                     info!("bulkcopy: Auto-generated {} column mappings", mapping_count);
