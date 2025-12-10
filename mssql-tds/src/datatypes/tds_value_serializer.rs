@@ -44,10 +44,13 @@ pub struct TdsTypeContext {
 }
 
 impl TdsTypeContext {
-    /// Check if this is a fixed-length type (no length prefix needed).
+    /// Check if this is a fixed-length type (no length prefix needed in ROW data).
     pub fn is_fixed_type(&self) -> bool {
-        // Fixed types: INT1-INT8, BIT, FLT4, FLT8, DATETIME, MONEY, etc.
-        matches!(self.tds_type, 0x30..=0x3F | 0x7F)
+        matches!(
+            self.tds_type,
+            // Fixed types: INT1-INT8, BIT, FLT4, FLT8, DATETIME, MONEY, etc.
+            0x30..=0x3F | 0x7F
+        )
     }
 }
 
@@ -76,6 +79,9 @@ impl TdsValueSerializer {
     {
         match value {
             ColumnValues::Null => Self::serialize_null(writer, ctx).await,
+            ColumnValues::Bit(v) => Self::serialize_bit(writer, *v, ctx).await,
+            ColumnValues::TinyInt(v) => Self::serialize_tinyint(writer, *v, ctx).await,
+            ColumnValues::SmallInt(v) => Self::serialize_smallint(writer, *v, ctx).await,
             ColumnValues::Int(v) => Self::serialize_int(writer, *v, ctx).await,
             ColumnValues::BigInt(v) => Self::serialize_bigint(writer, *v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
@@ -100,6 +106,12 @@ impl TdsValueSerializer {
             0x26 | 0x6D | 0x68 | 0x6E | 0x6F | 0x6C | 0x24 | 0x28 => {
                 writer.write_byte_async(NULL_LENGTH).await?;
             }
+            // Fixed BIT type (0x32) cannot be NULL - must use BitN (0x68) for nullable
+            0x32 => {
+                return Err(Error::UsageError(
+                    "Cannot serialize NULL for fixed BIT type 0x32. Use BitN (0x68) for nullable BIT columns.".to_string()
+                ));
+            }
             _ => {
                 // Other types depend on length classification
                 if ctx.is_plp {
@@ -114,6 +126,115 @@ impl TdsValueSerializer {
                 } else {
                     // Variable-length NULL: 0xFFFF
                     writer.write_u16_async(VARNULL).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_bit<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: bool,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        let byte_value = if value { 1u8 } else { 0u8 };
+
+        if !ctx.is_fixed_type() {
+            // Nullable BIT (BITN with length 1): length byte + value (2 bytes total)
+            match writer.has_space(2) {
+                false => {
+                    writer.write_byte_async(1).await?; // Length for BITN (1 byte)
+                    writer.write_byte_async(byte_value).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(1); // Length for BITN (1 byte)
+                    writer.write_byte_unchecked(byte_value);
+                }
+            }
+        } else {
+            // Fixed type (BIT, 0x32) - just write value (1 byte)
+            match writer.has_space(1) {
+                false => {
+                    writer.write_byte_async(byte_value).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(byte_value);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_tinyint<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: u8,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // Phase 1 Optimization: Batch writes for fixed types
+        if !ctx.is_fixed_type() {
+            // Nullable TINYINT (INTN with length 1): length byte + value (2 bytes total)
+            match writer.has_space(2) {
+                false => {
+                    writer.write_byte_async(1).await?; // Length for INTN (1 byte)
+                    writer.write_byte_async(value).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(1); // Length for INTN (1 byte)
+                    writer.write_byte_unchecked(value);
+                }
+            }
+        } else {
+            // Fixed type (INT1, 0x30) - just write value (1 byte)
+            match writer.has_space(1) {
+                false => {
+                    writer.write_byte_async(value).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(value);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_smallint<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: i16,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // Phase 1 Optimization: Batch writes for fixed types
+        if !ctx.is_fixed_type() {
+            // Nullable SMALLINT (INTN with length 2): length byte + value (3 bytes total)
+            match writer.has_space(3) {
+                false => {
+                    writer.write_byte_async(2).await?; // Length for INTN (2 bytes)
+                    writer.write_i16_async(value).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(2); // Length for INTN (2 bytes)
+                    writer.write_i16_unchecked(value);
+                }
+            }
+        } else {
+            // Fixed type (INT2, 0x34) - just write value (2 bytes)
+            match writer.has_space(2) {
+                false => {
+                    writer.write_i16_async(value).await?;
+                }
+                true => {
+                    writer.write_i16_unchecked(value);
                 }
             }
         }

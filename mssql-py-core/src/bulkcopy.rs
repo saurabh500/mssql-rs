@@ -71,22 +71,6 @@ pub struct PythonRowAdapter {
 }
 
 impl PythonRowAdapter {
-    /// Create a new Python row adapter from a tuple.
-    ///
-    /// # Arguments
-    ///
-    /// * `row` - Python tuple containing column values
-    ///
-    /// # Returns
-    ///
-    /// A new PythonRowAdapter wrapping the tuple.
-    pub fn new(row: Py<PyAny>) -> Self {
-        Self {
-            row,
-            destination_metadata: None,
-        }
-    }
-
     /// Create a new Python row adapter with destination metadata for type coercion.
     ///
     /// # Arguments
@@ -197,10 +181,42 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
+            // Int → Bit: Convert Python integer to boolean
+            // 0 = false, non-zero = true (matches SQL Server's implicit conversion)
+            (SourcePythonType::Int, SqlDbType::Bit) => {
+                let value = py_obj.extract::<i64>().map_err(|e| {
+                    Error::UsageError(format!("Cannot extract Python integer: {}", e))
+                })?;
+                Ok(Some(ColumnValues::Bit(value != 0)))
+            }
+
+            // String → Bit: Parse string as boolean
+            // Accepts: "0"/"1", "true"/"false", "True"/"False", "TRUE"/"FALSE"
+            (SourcePythonType::String, SqlDbType::Bit) => {
+                let py_str = py_obj
+                    .cast::<PyString>()
+                    .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
+
+                let s = py_str
+                    .to_str()
+                    .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+                let bit_value = match s.to_lowercase().as_str() {
+                    "0" | "false" => false,
+                    "1" | "true" => true,
+                    _ => {
+                        return Err(Error::UsageError(format!(
+                            "Cannot convert string '{}' to BIT. Valid values: '0', '1', 'true', 'false'",
+                            s
+                        )))
+                    }
+                };
+                Ok(Some(ColumnValues::Bit(bit_value)))
+            }
+
             // TODO: Add more coercion mappings as needed:
             // (SourcePythonType::String, SqlDbType::Decimal | SqlDbType::Numeric) => {...}
             // (SourcePythonType::String, SqlDbType::DateTime | SqlDbType::Date) => {...}
-            // (SourcePythonType::Int, SqlDbType::Bit) => {...}
 
             // No coercion needed - use default conversion
             _ => Ok(None),

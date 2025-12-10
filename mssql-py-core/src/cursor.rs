@@ -251,22 +251,27 @@ impl PyCoreCursor {
 
                 // Auto-generate column mappings if needed
                 let mut column_mappings = options.column_mappings;
-                let destination_metadata = if auto_generate_mappings || column_mappings.is_empty() {
-                    info!("bulkcopy: Retrieving destination metadata for auto-mapping or type coercion");
-                    Some(bulk_copy.retrieve_destination_metadata().await
-                        .map_err(|e| {
-                            error!("bulkcopy: Failed to retrieve destination metadata: {}", e);
-                            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                "Failed to retrieve destination metadata: {}", e
-                            ))
-                        })?)
-                } else {
-                    None
-                };
+
+                // Always retrieve destination metadata for type coercion
+                // This is needed even when explicit mappings are provided, because we need
+                // to know the target column types for proper value conversion
+                info!("bulkcopy: Retrieving destination metadata for type coercion");
+                let destination_metadata = bulk_copy
+                    .retrieve_destination_metadata()
+                    .await
+                    .map_err(|e| {
+                        error!("bulkcopy: Failed to retrieve destination metadata: {}", e);
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Failed to retrieve destination metadata: {}",
+                            e
+                        ))
+                    })?;
 
                 if auto_generate_mappings {
-                    let metadata = destination_metadata.as_ref().unwrap();
-                    info!("bulkcopy: Retrieved {} columns from destination table", metadata.len());
+                    info!(
+                        "bulkcopy: Retrieved {} columns from destination table",
+                        destination_metadata.len()
+                    );
 
                     // Get the number of columns in the first row
                     let num_columns = Python::attach(|py| {
@@ -281,8 +286,9 @@ impl PyCoreCursor {
                     info!("bulkcopy: First row has {} columns", num_columns);
 
                     // Auto-generate ordinal mappings for available columns
-                    let mapping_count = std::cmp::min(num_columns, metadata.len());
-                    for (i, col_meta) in metadata.iter().enumerate().take(mapping_count) {
+                    let mapping_count = std::cmp::min(num_columns, destination_metadata.len());
+                    for (i, col_meta) in destination_metadata.iter().enumerate().take(mapping_count)
+                    {
                         column_mappings.push(ColumnMapping::ByOrdinal {
                             source: i,
                             destination: col_meta.column_name.clone(),
@@ -292,10 +298,7 @@ impl PyCoreCursor {
                 }
 
                 // Add column mappings
-                info!(
-                    "bulkcopy: Adding {} column mappings",
-                    column_mappings.len()
-                );
+                info!("bulkcopy: Adding {} column mappings", column_mappings.len());
                 for mapping in column_mappings {
                     let tds_mapping = match mapping {
                         ColumnMapping::ByName {
@@ -317,20 +320,15 @@ impl PyCoreCursor {
                 }
                 info!("bulkcopy: Column mappings added");
 
-                // Create iterator of PythonRowAdapter
-                info!("bulkcopy: Creating PythonRowAdapter iterators");
-                let row_adapters: Vec<PythonRowAdapter> = if let Some(metadata) = destination_metadata {
-                    info!("bulkcopy: Creating adapters with metadata for type coercion");
-                    let metadata_arc = Arc::new(metadata);
-                    rows.into_iter()
-                        .map(|row| PythonRowAdapter::with_metadata(row, Arc::clone(&metadata_arc)))
-                        .collect()
-                } else {
-                    info!("bulkcopy: Creating adapters without metadata");
-                    rows.into_iter()
-                        .map(PythonRowAdapter::new)
-                        .collect()
-                };
+                // Create iterator of PythonRowAdapter with metadata for type coercion
+                info!(
+                    "bulkcopy: Creating PythonRowAdapter iterators with metadata for type coercion"
+                );
+                let metadata_arc = Arc::new(destination_metadata);
+                let row_adapters: Vec<PythonRowAdapter> = rows
+                    .into_iter()
+                    .map(|row| PythonRowAdapter::with_metadata(row, Arc::clone(&metadata_arc)))
+                    .collect();
                 info!("bulkcopy: Created {} row adapters", row_adapters.len());
 
                 // Execute bulk copy with zero-copy streaming
