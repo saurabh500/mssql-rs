@@ -16,7 +16,6 @@ import pytest
 import mssql_py_core
 
 
-@pytest.mark.skip(reason="ADO #40933: Bulk copy does not support column count mismatch scenarios")
 @pytest.mark.integration
 def test_bulkcopy_more_columns_than_table(client_context):
     """Test bulk copy where source has more columns than the target table.
@@ -28,9 +27,9 @@ def test_bulkcopy_more_columns_than_table(client_context):
     cursor = conn.cursor()
 
     # Create a test table with 3 INT columns
-    table_name = "BulkCopyMoreColumnsTest"
+    table_name = "#BulkCopyMoreColumnsTest"
     cursor.execute(
-        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+        f"IF OBJECT_ID('tempdb..{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
     )
     cursor.execute(
         f"CREATE TABLE {table_name} (id INT PRIMARY KEY, value1 INT, value2 INT)"
@@ -81,7 +80,6 @@ def test_bulkcopy_more_columns_than_table(client_context):
     conn.close()
 
 
-@pytest.mark.skip(reason="ADO #40933: Bulk copy does not support column count mismatch scenarios")
 @pytest.mark.integration
 def test_bulkcopy_fewer_columns_than_table(client_context):
     """Test bulk copy where source has fewer columns than the target table.
@@ -93,9 +91,9 @@ def test_bulkcopy_fewer_columns_than_table(client_context):
     cursor = conn.cursor()
 
     # Create a test table with 3 INT columns (value2 is nullable)
-    table_name = "BulkCopyFewerColumnsTest"
+    table_name = "#BulkCopyFewerColumnsTest"
     cursor.execute(
-        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+        f"IF OBJECT_ID('tempdb..{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
     )
     cursor.execute(
         f"CREATE TABLE {table_name} (id INT PRIMARY KEY, value1 INT, value2 INT NULL)"
@@ -145,21 +143,20 @@ def test_bulkcopy_fewer_columns_than_table(client_context):
     conn.close()
 
 
-@pytest.mark.skip(reason="ADO #40933: Bulk copy does not support column count mismatch scenarios")
 @pytest.mark.integration
 def test_bulkcopy_auto_mapping_with_extra_columns(client_context):
     """Test bulk copy with auto-mapping when source has more columns than table.
     
     Without explicit column_mappings, auto-mapping should use the first N columns
-    where N is the number of columns in the target table.
+    where N is the number of columns in the target table. Extra source columns are ignored.
     """
     conn = mssql_py_core.PyCoreConnection(client_context)
     cursor = conn.cursor()
 
     # Create a test table with 3 INT columns
-    table_name = "BulkCopyAutoMapExtraTest"
+    table_name = "#BulkCopyAutoMapExtraTest"
     cursor.execute(
-        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+        f"IF OBJECT_ID('tempdb..{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
     )
     cursor.execute(
         f"CREATE TABLE {table_name} (id INT, value1 INT, value2 INT)"
@@ -202,7 +199,62 @@ def test_bulkcopy_auto_mapping_with_extra_columns(client_context):
     conn.close()
 
 
-@pytest.mark.skip(reason="ADO #40933: Bulk copy does not support column count mismatch scenarios")
+@pytest.mark.integration
+def test_bulkcopy_auto_mapping_fewer_columns(client_context):
+    """Test bulk copy with auto-mapping when source has fewer columns than table.
+    
+    Without explicit column_mappings, auto-mapping should use only the available source columns.
+    Unmapped destination columns should receive NULL (if nullable) or DEFAULT values.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    # Create a test table with 3 INT columns (last column nullable)
+    table_name = "#BulkCopyAutoFewerTest"
+    cursor.execute(
+        f"IF OBJECT_ID('tempdb..{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+    )
+    cursor.execute(
+        f"CREATE TABLE {table_name} (id INT, value1 INT, value2 INT NULL)"
+    )
+
+    # Source data has only 2 columns, table has 3
+    # Auto-mapping should map first 2 source columns to first 2 table columns
+    data = [
+        (1, 100),
+        (2, 200),
+        (3, 300),
+    ]
+
+    # Execute bulk copy WITHOUT explicit column mappings
+    # Auto-mapping should map first 2 columns, leaving value2 as NULL
+    result = cursor.bulkcopy(
+        table_name,
+        iter(data),
+        kwargs={
+            "batch_size": 1000,
+            "timeout": 30,
+        },
+    )
+
+    # Verify results
+    assert result is not None
+    assert result["rows_copied"] == 3, "Expected 3 rows to be copied"
+
+    # Verify data was inserted correctly (first 2 columns only, value2 NULL)
+    cursor.execute(f"SELECT id, value1, value2 FROM {table_name} ORDER BY id")
+    rows = cursor.fetchall()
+
+    assert len(rows) == 3, "Expected 3 rows in table"
+    assert rows[0] == (1, 100, None), "value2 should be NULL"
+    assert rows[1] == (2, 200, None), "value2 should be NULL"
+    assert rows[2] == (3, 300, None), "value2 should be NULL"
+
+    # Cleanup
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
+
+
 @pytest.mark.integration
 def test_bulkcopy_partial_column_mapping(client_context):
     """Test bulk copy with partial column mapping.
@@ -214,9 +266,9 @@ def test_bulkcopy_partial_column_mapping(client_context):
     cursor = conn.cursor()
 
     # Create a test table with 3 INT columns
-    table_name = "BulkCopyPartialMapTest"
+    table_name = "#BulkCopyPartialMapTest"
     cursor.execute(
-        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+        f"IF OBJECT_ID('tempdb..{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
     )
     cursor.execute(
         f"CREATE TABLE {table_name} (id INT PRIMARY KEY, value1 INT NULL, value2 INT)"
@@ -262,7 +314,6 @@ def test_bulkcopy_partial_column_mapping(client_context):
     conn.close()
 
 
-@pytest.mark.skip(reason="ADO #40933: Bulk copy does not support column count mismatch scenarios")
 @pytest.mark.integration
 def test_bulkcopy_with_default_values(client_context):
     """Test bulk copy with fewer columns when table has default values.
@@ -273,9 +324,9 @@ def test_bulkcopy_with_default_values(client_context):
     cursor = conn.cursor()
 
     # Create a table with default values (using INT types only)
-    table_name = "BulkCopyDefaultsTest"
+    table_name = "#BulkCopyDefaultsTest"
     cursor.execute(
-        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+        f"IF OBJECT_ID('tempdb..{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
     )
     cursor.execute(
         f"""CREATE TABLE {table_name} (
@@ -329,7 +380,6 @@ def test_bulkcopy_with_default_values(client_context):
     conn.close()
 
 
-@pytest.mark.skip(reason="ADO #40933: Bulk copy does not support column count mismatch scenarios")
 @pytest.mark.integration
 def test_bulkcopy_empty_source(client_context):
     """Test bulk copy with empty source data.
@@ -340,9 +390,9 @@ def test_bulkcopy_empty_source(client_context):
     cursor = conn.cursor()
 
     # Create a test table with INT columns
-    table_name = "BulkCopyEmptyTest"
+    table_name = "#BulkCopyEmptyTest"
     cursor.execute(
-        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+        f"IF OBJECT_ID('tempdb..{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
     )
     cursor.execute(
         f"CREATE TABLE {table_name} (id INT PRIMARY KEY, value1 INT, value2 INT)"
@@ -367,7 +417,9 @@ def test_bulkcopy_empty_source(client_context):
 
     # Verify no rows were inserted
     cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-    count = cursor.fetchone()[0]
+    row = cursor.fetchone()
+    count = row[0]
+    cursor.fetchall()  # Consume any remaining results
     assert count == 0, "Expected no rows in table"
 
     # Cleanup
@@ -375,7 +427,6 @@ def test_bulkcopy_empty_source(client_context):
     conn.close()
 
 
-@pytest.mark.skip(reason="ADO #40933: Bulk copy does not support column count mismatch scenarios")
 @pytest.mark.integration
 def test_bulkcopy_column_order_mismatch(client_context):
     """Test bulk copy where source column order differs from table column order.
@@ -386,9 +437,9 @@ def test_bulkcopy_column_order_mismatch(client_context):
     cursor = conn.cursor()
 
     # Create a test table with columns in order: id, value1, value2
-    table_name = "BulkCopyOrderTest"
+    table_name = "#BulkCopyOrderTest"
     cursor.execute(
-        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+        f"IF OBJECT_ID('tempdb..{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
     )
     cursor.execute(
         f"CREATE TABLE {table_name} (id INT PRIMARY KEY, value1 INT, value2 INT)"
@@ -428,6 +479,127 @@ def test_bulkcopy_column_order_mismatch(client_context):
     assert rows[0] == (1, 100, 30)
     assert rows[1] == (2, 200, 25)
     assert rows[2] == (3, 300, 35)
+
+    # Cleanup
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
+
+
+@pytest.mark.integration
+def test_bulkcopy_duplicate_source_column_mapping(client_context):
+    """Test bulk copy where one source column is mapped to multiple target columns.
+    
+    The same source value should be duplicated across all mapped target columns.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    # Create a test table with 3 INT columns
+    table_name = "#BulkCopyDuplicateMappingTest"
+    cursor.execute(
+        f"IF OBJECT_ID('tempdb..{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+    )
+    cursor.execute(
+        f"CREATE TABLE {table_name} (col1 INT, col2 INT, col3 INT)"
+    )
+
+    # Source data has only 1 column
+    data = [
+        (100,),
+        (200,),
+        (300,),
+        (400,),
+    ]
+
+    # Map the single source column to all three target columns
+    result = cursor.bulkcopy(
+        table_name,
+        iter(data),
+        kwargs={
+            "batch_size": 1000,
+            "timeout": 30,
+            "column_mappings": [
+                (0, "col1"),  # Source column 0 -> table column 'col1'
+                (0, "col2"),  # Source column 0 -> table column 'col2'
+                (0, "col3"),  # Source column 0 -> table column 'col3'
+            ],
+        },
+    )
+
+    # Verify results
+    assert result is not None
+    assert result["rows_copied"] == 4, "Expected 4 rows to be copied"
+    assert result["batch_count"] >= 1
+
+    # Verify data was duplicated across all three columns
+    cursor.execute(f"SELECT col1, col2, col3 FROM {table_name} ORDER BY col1")
+    rows = cursor.fetchall()
+
+    assert len(rows) == 4, "Expected 4 rows in table"
+    assert rows[0] == (100, 100, 100), "All columns should have value 100"
+    assert rows[1] == (200, 200, 200), "All columns should have value 200"
+    assert rows[2] == (300, 300, 300), "All columns should have value 300"
+    assert rows[3] == (400, 400, 400), "All columns should have value 400"
+
+    # Cleanup
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
+
+
+@pytest.mark.integration
+def test_bulkcopy_single_column_to_middle_target(client_context):
+    """Test bulk copy where one source column is mapped to middle target column only.
+    
+    Only the mapped target column should have values, others should be NULL.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    # Create a test table with 3 nullable INT columns
+    table_name = "#BulkCopySingleMiddleColumnTest"
+    cursor.execute(
+        f"IF OBJECT_ID('tempdb..{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+    )
+    cursor.execute(
+        f"CREATE TABLE {table_name} (col1 INT NULL, col2 INT NULL, col3 INT NULL)"
+    )
+
+    # Source data has only 1 column
+    data = [
+        (100,),
+        (200,),
+        (300,),
+        (400,),
+    ]
+
+    # Map the single source column only to col2 (middle column)
+    result = cursor.bulkcopy(
+        table_name,
+        iter(data),
+        kwargs={
+            "batch_size": 1000,
+            "timeout": 30,
+            "column_mappings": [
+                (0, "col2"),  # Source column 0 -> table column 'col2' only
+                # col1 and col3 are not mapped, should be NULL
+            ],
+        },
+    )
+
+    # Verify results
+    assert result is not None
+    assert result["rows_copied"] == 4, "Expected 4 rows to be copied"
+    assert result["batch_count"] >= 1
+
+    # Verify only col2 has values, col1 and col3 are NULL
+    cursor.execute(f"SELECT col1, col2, col3 FROM {table_name} ORDER BY col2")
+    rows = cursor.fetchall()
+
+    assert len(rows) == 4, "Expected 4 rows in table"
+    assert rows[0] == (None, 100, None), "Only col2 should have value 100"
+    assert rows[1] == (None, 200, None), "Only col2 should have value 200"
+    assert rows[2] == (None, 300, None), "Only col2 should have value 300"
+    assert rows[3] == (None, 400, None), "Only col2 should have value 400"
 
     # Cleanup
     cursor.execute(f"DROP TABLE {table_name}")
