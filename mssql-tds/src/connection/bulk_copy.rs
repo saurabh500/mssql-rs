@@ -772,6 +772,7 @@ impl<'a> BulkCopy<'a> {
             };
 
             let mapping_count = std::cmp::min(source_column_count, destination_metadata.len());
+            self.column_mappings.reserve(mapping_count);
             for (i, col) in destination_metadata.iter().enumerate().take(mapping_count) {
                 self.column_mappings
                     .push(ColumnMapping::by_ordinal(i, col.column_name.clone()));

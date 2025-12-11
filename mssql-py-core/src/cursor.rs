@@ -287,6 +287,7 @@ impl PyCoreCursor {
 
                     // Auto-generate ordinal mappings for available columns
                     let mapping_count = std::cmp::min(num_columns, destination_metadata.len());
+                    column_mappings.reserve(mapping_count);
                     for (i, col_meta) in destination_metadata.iter().enumerate().take(mapping_count)
                     {
                         column_mappings.push(ColumnMapping::ByOrdinal {
