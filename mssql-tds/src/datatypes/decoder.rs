@@ -941,6 +941,12 @@ pub struct DecimalParts {
     pub int_parts: Vec<i32>,
 }
 
+impl fmt::Display for DecimalParts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_decimal_string())
+    }
+}
+
 impl DecimalParts {
     /// Create a DecimalParts from a decimal string representation.
     ///
@@ -965,7 +971,7 @@ impl DecimalParts {
             )));
         }
 
-        let integer_part = parts.get(0).unwrap_or(&"0");
+        let integer_part = parts.first().unwrap_or(&"0");
         let fractional_part = parts.get(1).unwrap_or(&"");
 
         // Check scale
@@ -1046,7 +1052,7 @@ impl DecimalParts {
 
     /// Convert DecimalParts to a string representation suitable for Python Decimal.
     /// Returns a string like "123.45", "-0.01", etc.
-    pub fn to_string(&self) -> String {
+    fn to_decimal_string(&self) -> String {
         // Convert int_parts to u128
         let u128_value = self
             .int_parts
