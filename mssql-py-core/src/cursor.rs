@@ -287,6 +287,7 @@ impl PyCoreCursor {
 
                     // Auto-generate ordinal mappings for available columns
                     let mapping_count = std::cmp::min(num_columns, destination_metadata.len());
+                    column_mappings.reserve(mapping_count);
                     for (i, col_meta) in destination_metadata.iter().enumerate().take(mapping_count)
                     {
                         column_mappings.push(ColumnMapping::ByOrdinal {
@@ -320,14 +321,33 @@ impl PyCoreCursor {
                 }
                 info!("bulkcopy: Column mappings added");
 
-                // Create iterator of PythonRowAdapter with metadata for type coercion
+                // Get resolved column mappings for the row adapter
+                info!("bulkcopy: Resolving column mappings");
+                let resolved_mappings = bulk_copy.get_resolved_mappings().await.map_err(|e| {
+                    error!("bulkcopy: Failed to resolve column mappings: {}", e);
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "Failed to resolve column mappings: {}",
+                        e
+                    ))
+                })?;
                 info!(
-                    "bulkcopy: Creating PythonRowAdapter iterators with metadata for type coercion"
+                    "bulkcopy: Resolved {} column mappings",
+                    resolved_mappings.len()
                 );
+                let resolved_mappings_arc = Arc::new(resolved_mappings);
+
+                // Create iterator of PythonRowAdapter with metadata and mappings for type coercion
+                info!("bulkcopy: Creating PythonRowAdapter iterators with metadata and mappings");
                 let metadata_arc = Arc::new(destination_metadata);
                 let row_adapters: Vec<PythonRowAdapter> = rows
                     .into_iter()
-                    .map(|row| PythonRowAdapter::with_metadata(row, Arc::clone(&metadata_arc)))
+                    .map(|row| {
+                        PythonRowAdapter::with_metadata(
+                            row,
+                            Arc::clone(&metadata_arc),
+                            Some(Arc::clone(&resolved_mappings_arc)),
+                        )
+                    })
                     .collect();
                 info!("bulkcopy: Created {} row adapters", row_adapters.len());
 

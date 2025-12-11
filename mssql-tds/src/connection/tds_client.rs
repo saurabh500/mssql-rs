@@ -274,13 +274,28 @@ impl TdsClient {
 
         self.transport.reset_reader();
 
-        // STEP 1: Send INSERT BULK command and consume response
+        // STEP 1: Filter column metadata to only include mapped columns
+        // If we have column mappings, only include the destination columns that are mapped.
+        // This allows SQL Server to handle NULL/defaults for unmapped columns.
+        let mapped_column_metadata = if resolved_mappings.is_empty() {
+            // No mappings specified - use all columns (ordinal mapping)
+            column_metadata.clone()
+        } else {
+            // Filter to only mapped destination columns, preserving their order
+            resolved_mappings
+                .iter()
+                .map(|mapping| column_metadata[mapping.destination_index].clone())
+                .collect()
+        };
+
+        // STEP 2: Send INSERT BULK command and consume response
+        // Use the filtered metadata so the command only references mapped columns
         let insert_bulk_command =
-            build_insert_bulk_command(&table_name, &column_metadata, &options);
+            build_insert_bulk_command(&table_name, &mapped_column_metadata, &options);
         self.send_batch_and_consume_response(insert_bulk_command, timeout_sec, cancel_handle)
             .await?;
 
-        // STEP 2: Create streaming writer and begin
+        // STEP 3: Create streaming writer and begin
         let default_collation = self.get_collation();
 
         let mut packet_writer = PacketWriter::new(
@@ -293,7 +308,7 @@ impl TdsClient {
         let mut writer = StreamingBulkLoadWriter::new(
             &mut packet_writer,
             table_name,
-            column_metadata,
+            mapped_column_metadata,
             options,
             default_collation,
         );

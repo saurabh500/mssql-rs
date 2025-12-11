@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use crate::types::py_to_column_value;
 use async_trait::async_trait;
-use mssql_tds::connection::bulk_copy::BulkLoadRow;
+use mssql_tds::connection::bulk_copy::{BulkLoadRow, ResolvedColumnMapping};
 use mssql_tds::core::TdsResult;
 use mssql_tds::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType};
 use mssql_tds::datatypes::column_values::ColumnValues;
@@ -68,6 +68,8 @@ pub struct PythonRowAdapter {
     row: Py<PyAny>,
     /// Optional destination column metadata for type coercion (wrapped in Arc for efficient sharing across rows)
     destination_metadata: Option<Arc<Vec<BulkCopyColumnMetadata>>>,
+    /// Optional resolved column mappings for reordering columns (wrapped in Arc for efficient sharing across rows)
+    resolved_mappings: Option<Arc<Vec<ResolvedColumnMapping>>>,
 }
 
 impl PythonRowAdapter {
@@ -77,6 +79,7 @@ impl PythonRowAdapter {
     ///
     /// * `row` - Python tuple containing column values
     /// * `destination_metadata` - Destination column metadata for type conversion (wrapped in Arc for efficient sharing)
+    /// * `resolved_mappings` - Optional resolved column mappings for reordering (wrapped in Arc for efficient sharing)
     ///
     /// # Returns
     ///
@@ -84,10 +87,12 @@ impl PythonRowAdapter {
     pub fn with_metadata(
         row: Py<PyAny>,
         destination_metadata: Arc<Vec<BulkCopyColumnMetadata>>,
+        resolved_mappings: Option<Arc<Vec<ResolvedColumnMapping>>>,
     ) -> Self {
         Self {
             row,
             destination_metadata: Some(destination_metadata),
+            resolved_mappings,
         }
     }
 
@@ -400,26 +405,62 @@ impl BulkLoadRow for PythonRowAdapter {
                 .cast::<PyTuple>()
                 .map_err(|e| Error::UsageError(format!("Expected tuple, got: {}", e)))?;
 
-            // Convert each Python value to ColumnValues
-            let mut values = Vec::with_capacity(tuple.len());
-            let mut total_extract_time = Duration::ZERO;
-            for (i, item) in tuple.iter().enumerate() {
-                let extract_start = Instant::now();
+            // If we have resolved mappings, use them to determine column order and indices
+            if let Some(mappings) = &self.resolved_mappings {
+                // Use mappings to read columns in the correct order
+                let mut values = Vec::with_capacity(mappings.len());
+                let mut total_extract_time = Duration::ZERO;
 
-                // Get target metadata if available
-                let target_metadata = self
-                    .destination_metadata
-                    .as_ref()
-                    .and_then(|meta| meta.get(i));
+                for mapping in mappings.iter() {
+                    let extract_start = Instant::now();
 
-                // Try conversion with type coercion and null validation
-                let column_value = Self::convert_with_coercion(&item, target_metadata)?;
+                    // Read from source column index specified in the mapping
+                    let item = tuple.get_item(mapping.source_index).map_err(|e| {
+                        Error::UsageError(format!(
+                            "Source column index {} out of bounds (tuple has {} columns): {}",
+                            mapping.source_index,
+                            tuple.len(),
+                            e
+                        ))
+                    })?;
 
-                total_extract_time += extract_start.elapsed();
-                values.push(column_value);
+                    // Get target metadata from destination_metadata using destination_index
+                    let target_metadata = self
+                        .destination_metadata
+                        .as_ref()
+                        .and_then(|meta| meta.get(mapping.destination_index));
+
+                    // Try conversion with type coercion and null validation
+                    let column_value = Self::convert_with_coercion(&item, target_metadata)?;
+
+                    total_extract_time += extract_start.elapsed();
+                    values.push(column_value);
+                }
+
+                Ok::<Vec<_>, Error>(values)
+            } else {
+                // No mappings - use sequential reading (original behavior)
+                let mut values = Vec::with_capacity(tuple.len());
+                let mut total_extract_time = Duration::ZERO;
+
+                for (i, item) in tuple.iter().enumerate() {
+                    let extract_start = Instant::now();
+
+                    // Get target metadata if available
+                    let target_metadata = self
+                        .destination_metadata
+                        .as_ref()
+                        .and_then(|meta| meta.get(i));
+
+                    // Try conversion with type coercion and null validation
+                    let column_value = Self::convert_with_coercion(&item, target_metadata)?;
+
+                    total_extract_time += extract_start.elapsed();
+                    values.push(column_value);
+                }
+
+                Ok::<Vec<_>, Error>(values)
             }
-
-            Ok::<Vec<_>, Error>(values)
         })?;
 
         // Step 2: GIL is now released, write values to packet asynchronously

@@ -163,15 +163,15 @@ impl ColumnMapping {
 /// This is the result of resolving user-provided column mappings against
 /// the actual destination table metadata.
 #[derive(Debug, Clone)]
-pub(crate) struct ResolvedColumnMapping {
+pub struct ResolvedColumnMapping {
     /// Source column index (0-based)
-    source_index: usize,
+    pub source_index: usize,
     /// Destination column index (0-based)
-    destination_index: usize,
+    pub destination_index: usize,
     /// Destination column name
-    destination_name: String,
+    pub destination_name: String,
     /// Expected destination type
-    destination_type: SqlDbType,
+    pub destination_type: SqlDbType,
 }
 
 /// Progress information for bulk copy operations.
@@ -528,6 +528,87 @@ impl<'a> BulkCopy<'a> {
         self
     }
 
+    /// Resolve user-provided column mappings against destination metadata.
+    ///
+    /// This method converts ColumnMapping (which can specify source by name or ordinal)
+    /// into ResolvedColumnMapping (which uses ordinals for both source and destination).
+    ///
+    /// # Arguments
+    ///
+    /// * `destination_metadata` - Metadata for the destination table columns
+    ///
+    /// # Returns
+    ///
+    /// A vector of resolved mappings, sorted by destination column index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a destination column name is not found in the metadata.
+    fn resolve_column_mappings(
+        &self,
+        destination_metadata: &[BulkCopyColumnMetadata],
+    ) -> TdsResult<Vec<ResolvedColumnMapping>> {
+        let mut resolved = Vec::with_capacity(self.column_mappings.len());
+
+        for mapping in &self.column_mappings {
+            // Get source index (for ordinal-based mappings, use the ordinal directly)
+            let source_index = match &mapping.source {
+                ColumnMappingSource::Ordinal(idx) => *idx,
+                ColumnMappingSource::Name(_) => {
+                    // For name-based source mappings, we can't resolve without source metadata
+                    // This is typically used with DataReader sources, not iterator-based sources
+                    return Err(Error::UsageError(
+                        "Source column name mappings are not supported with iterator-based bulk copy".to_string()
+                    ));
+                }
+            };
+
+            // Find destination column index by name
+            let dest_column = destination_metadata
+                .iter()
+                .enumerate()
+                .find(|(_, col)| col.column_name == mapping.destination)
+                .ok_or_else(|| {
+                    Error::UsageError(format!(
+                        "Destination column '{}' not found in table",
+                        mapping.destination
+                    ))
+                })?;
+
+            resolved.push(ResolvedColumnMapping {
+                source_index,
+                destination_index: dest_column.0,
+                destination_name: dest_column.1.column_name.clone(),
+                destination_type: dest_column.1.sql_type,
+            });
+        }
+
+        // Sort by destination index to ensure we write columns in the correct order
+        resolved.sort_by_key(|m| m.destination_index);
+
+        Ok(resolved)
+    }
+
+    /// Get resolved column mappings for the current configuration.
+    ///
+    /// This method retrieves destination metadata (if not already cached) and
+    /// resolves the column mappings, returning them for use by the row adapter.
+    ///
+    /// # Returns
+    ///
+    /// A vector of resolved column mappings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if metadata retrieval or mapping resolution fails.
+    pub async fn get_resolved_mappings(&mut self) -> TdsResult<Vec<ResolvedColumnMapping>> {
+        // Ensure we have destination metadata
+        let destination_metadata = self.retrieve_destination_metadata().await?;
+
+        // Resolve the mappings
+        self.resolve_column_mappings(&destination_metadata)
+    }
+
     /// Set a progress callback to receive notifications during the operation.
     ///
     /// The callback is invoked every `notification_interval` rows (if set).
@@ -674,10 +755,25 @@ impl<'a> BulkCopy<'a> {
             .as_ref()
             .ok_or_else(|| Error::UsageError("Destination metadata not available".to_string()))?;
 
-        // If no column mappings are configured, use ordinal-to-ordinal mapping
+        // If no column mappings are configured, peek at first row to determine source column count
+        // and create ordinal mappings for min(source_columns, destination_columns)
         if self.column_mappings.is_empty() {
             let destination_metadata = self.retrieve_destination_metadata().await?;
-            for (i, col) in destination_metadata.iter().enumerate() {
+
+            // Peek at first row to determine source column count
+            let source_column_count = if let Some(_first_row) = rows.peek() {
+                // For BulkLoadRow trait, we can't easily determine column count without consuming
+                // So we'll map all destination columns and let the row writer handle it
+                // This is a limitation of the current design - the Python layer handles this better
+                destination_metadata.len()
+            } else {
+                // No rows, doesn't matter
+                0
+            };
+
+            let mapping_count = std::cmp::min(source_column_count, destination_metadata.len());
+            self.column_mappings.reserve(mapping_count);
+            for (i, col) in destination_metadata.iter().enumerate().take(mapping_count) {
                 self.column_mappings
                     .push(ColumnMapping::by_ordinal(i, col.column_name.clone()));
             }
@@ -688,17 +784,8 @@ impl<'a> BulkCopy<'a> {
             // Retrieve destination metadata
             let destination_metadata = self.retrieve_destination_metadata().await?;
 
-            // Resolve column mappings (simplified for zerocopy - assume ordinal mappings)
-            let resolved_mappings: Vec<ResolvedColumnMapping> = destination_metadata
-                .iter()
-                .enumerate()
-                .map(|(i, col)| ResolvedColumnMapping {
-                    source_index: i,
-                    destination_index: i,
-                    destination_name: col.column_name.clone(),
-                    destination_type: col.sql_type,
-                })
-                .collect();
+            // Resolve column mappings using user-provided mappings
+            let resolved_mappings = self.resolve_column_mappings(&destination_metadata)?;
 
             // Destination metadata is already BulkCopyColumnMetadata - use directly
             let dest_column_metadata = destination_metadata.clone();
