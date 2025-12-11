@@ -942,6 +942,144 @@ pub struct DecimalParts {
 }
 
 impl DecimalParts {
+    /// Create a DecimalParts from a decimal string representation.
+    ///
+    /// # Arguments
+    /// * `s` - String like "123.45", "-0.01", "99999999.99"
+    /// * `precision` - Total number of digits
+    /// * `scale` - Number of digits after decimal point
+    ///
+    /// # Returns
+    /// DecimalParts or Error if parsing fails or precision/scale validation fails
+    pub fn from_string(s: &str, precision: u8, scale: u8) -> TdsResult<Self> {
+        let s = s.trim();
+        let is_positive = !s.starts_with('-');
+        let s = s.trim_start_matches('-').trim_start_matches('+');
+
+        // Split on decimal point
+        let parts: Vec<&str> = s.split('.').collect();
+        if parts.len() > 2 {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Invalid decimal string: {}",
+                s
+            )));
+        }
+
+        let integer_part = parts.get(0).unwrap_or(&"0");
+        let fractional_part = parts.get(1).unwrap_or(&"");
+
+        // Check scale
+        if fractional_part.len() > scale as usize {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Decimal scale {} exceeds target scale {}",
+                fractional_part.len(),
+                scale
+            )));
+        }
+
+        // Construct the full number string without decimal point, padded to scale
+        let mut full_num = integer_part.to_string();
+        full_num.push_str(fractional_part);
+        // Pad with zeros if needed to match scale
+        full_num.push_str(&"0".repeat(scale as usize - fractional_part.len()));
+
+        // Check precision
+        if full_num.len() > precision as usize {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Decimal precision {} exceeds target precision {}",
+                full_num.len(),
+                precision
+            )));
+        }
+
+        // Parse as u128
+        let value = full_num.parse::<u128>().map_err(|e| {
+            crate::error::Error::ProtocolError(format!("Failed to parse decimal '{}': {}", s, e))
+        })?;
+
+        // Convert to int_parts (array of i32)
+        let mut int_parts = Vec::new();
+        let mut remaining = value;
+        while remaining > 0 || int_parts.is_empty() {
+            int_parts.push((remaining & 0xFFFFFFFF) as i32);
+            remaining >>= 32;
+        }
+
+        Ok(DecimalParts {
+            is_positive,
+            scale,
+            precision,
+            int_parts,
+        })
+    }
+
+    /// Create a DecimalParts from an i64 value.
+    pub fn from_i64(value: i64, precision: u8, scale: u8) -> TdsResult<Self> {
+        let is_positive = value >= 0;
+        let abs_value = value.unsigned_abs();
+
+        // Scale the value by multiplying by 10^scale
+        let scaled_value = abs_value as u128 * 10u128.pow(scale as u32);
+
+        // Convert to int_parts
+        let mut int_parts = Vec::new();
+        let mut remaining = scaled_value;
+        while remaining > 0 || int_parts.is_empty() {
+            int_parts.push((remaining & 0xFFFFFFFF) as i32);
+            remaining >>= 32;
+        }
+
+        Ok(DecimalParts {
+            is_positive,
+            scale,
+            precision,
+            int_parts,
+        })
+    }
+
+    /// Create a DecimalParts from an f64 value.
+    pub fn from_f64(value: f64, precision: u8, scale: u8) -> TdsResult<Self> {
+        // Convert f64 to string with appropriate precision
+        let s = format!("{:.prec$}", value, prec = scale as usize);
+        Self::from_string(&s, precision, scale)
+    }
+
+    /// Convert DecimalParts to a string representation suitable for Python Decimal.
+    /// Returns a string like "123.45", "-0.01", etc.
+    pub fn to_string(&self) -> String {
+        // Convert int_parts to u128
+        let u128_value = self
+            .int_parts
+            .iter()
+            .rev()
+            .enumerate()
+            .fold(0u128, |acc, (i, &part)| {
+                (acc << (i * 32)) + (part as u32 as u128)
+            });
+
+        let value_str = u128_value.to_string();
+
+        // Insert decimal point at the correct position
+        let result = if self.scale == 0 {
+            value_str
+        } else {
+            let scale_pos = self.scale as usize;
+            if value_str.len() <= scale_pos {
+                // Need to pad with leading zeros
+                format!("0.{}{}", "0".repeat(scale_pos - value_str.len()), value_str)
+            } else {
+                let split_pos = value_str.len() - scale_pos;
+                format!("{}.{}", &value_str[..split_pos], &value_str[split_pos..])
+            }
+        };
+
+        if self.is_positive {
+            result
+        } else {
+            format!("-{}", result)
+        }
+    }
+
     fn to_f64(&self) -> f64 {
         let u128_value = self
             .int_parts

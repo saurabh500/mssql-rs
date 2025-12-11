@@ -84,6 +84,9 @@ impl TdsValueSerializer {
             ColumnValues::SmallInt(v) => Self::serialize_smallint(writer, *v, ctx).await,
             ColumnValues::Int(v) => Self::serialize_int(writer, *v, ctx).await,
             ColumnValues::BigInt(v) => Self::serialize_bigint(writer, *v, ctx).await,
+            ColumnValues::Decimal(v) | ColumnValues::Numeric(v) => {
+                Self::serialize_decimal(writer, v, ctx).await
+            }
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -102,8 +105,8 @@ impl TdsValueSerializer {
     {
         // Check type class and write appropriate NULL marker
         match ctx.tds_type {
-            // Nullable types (INTN, FLTN, BITN, MONEYN, DATETIMEN, NumericN, Guid, DateN) use length = 0x00
-            0x26 | 0x6D | 0x68 | 0x6E | 0x6F | 0x6C | 0x24 | 0x28 => {
+            // Nullable types (INTN, FLTN, BITN, MONEYN, DATETIMEN, DecimalN, NumericN, Guid, DateN) use length = 0x00
+            0x26 | 0x6D | 0x68 | 0x6E | 0x6F | 0x6A | 0x6C | 0x24 | 0x28 => {
                 writer.write_byte_async(NULL_LENGTH).await?;
             }
             // Fixed BIT type (0x32) cannot be NULL - must use BitN (0x68) for nullable
@@ -310,6 +313,63 @@ impl TdsValueSerializer {
                 }
             }
         }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_decimal<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &crate::datatypes::decoder::DecimalParts,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // Decimal/Numeric format in TDS:
+        // - Length byte (number of bytes in the value, excluding the length byte)
+        // - Sign byte (0 = negative, 1 = positive)
+        // - Little-endian bytes representing the value
+        //
+        // Length is determined by precision (from metadata):
+        // Precision 1-9:   5 bytes (1 sign + 4 value bytes)
+        // Precision 10-19: 9 bytes (1 sign + 8 value bytes)
+        // Precision 20-28: 13 bytes (1 sign + 12 value bytes)
+        // Precision 29-38: 17 bytes (1 sign + 16 value bytes)
+
+        let precision = ctx.precision.unwrap_or(38);
+
+        // Determine required byte length based on precision
+        let value_bytes = match precision {
+            1..=9 => 4,
+            10..=19 => 8,
+            20..=28 => 12,
+            29..=38 => 16,
+            _ => {
+                return Err(Error::ProtocolError(format!(
+                    "Invalid precision {} for DECIMAL/NUMERIC type",
+                    precision
+                )));
+            }
+        };
+
+        let total_length = 1 + value_bytes; // sign byte + value bytes
+
+        // Write length byte
+        writer.write_byte_async(total_length as u8).await?;
+
+        // Write sign byte
+        writer
+            .write_byte_async(if value.is_positive { 1 } else { 0 })
+            .await?;
+
+        // Write value bytes in little-endian order
+        // Pad with zeros if value has fewer chunks than needed
+        let chunks_needed = value_bytes / 4;
+        for i in 0..chunks_needed {
+            let chunk = value.int_parts.get(i).copied().unwrap_or(0);
+            writer.write_i32_async(chunk).await?;
+        }
+
         Ok(())
     }
 }

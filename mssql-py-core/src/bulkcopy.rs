@@ -16,6 +16,7 @@ use mssql_tds::connection::bulk_copy::{BulkLoadRow, ResolvedColumnMapping};
 use mssql_tds::core::TdsResult;
 use mssql_tds::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType};
 use mssql_tds::datatypes::column_values::ColumnValues;
+use mssql_tds::datatypes::decoder::DecimalParts;
 use mssql_tds::error::Error;
 use mssql_tds::message::bulk_load::StreamingBulkLoadWriter;
 use pyo3::prelude::*;
@@ -30,6 +31,7 @@ enum SourcePythonType {
     Float,
     Bytes,
     Bool,
+    Decimal,
     Other,
 }
 
@@ -50,6 +52,17 @@ impl SourcePythonType {
         } else if py_obj.is_instance_of::<pyo3::types::PyBool>() {
             SourcePythonType::Bool
         } else {
+            // Check for decimal.Decimal
+            let py = py_obj.py();
+            if let Ok(decimal_module) = pyo3::types::PyModule::import(py, "decimal") {
+                if let Ok(decimal_class) = decimal_module.getattr("Decimal") {
+                    if let Ok(is_instance) = py_obj.is_instance(&decimal_class) {
+                        if is_instance {
+                            return SourcePythonType::Decimal;
+                        }
+                    }
+                }
+            }
             SourcePythonType::Other
         }
     }
@@ -219,9 +232,29 @@ impl PythonRowAdapter {
                 Ok(Some(ColumnValues::Bit(bit_value)))
             }
 
-            // TODO: Add more coercion mappings as needed:
-            // (SourcePythonType::String, SqlDbType::Decimal | SqlDbType::Numeric) => {...}
-            // (SourcePythonType::String, SqlDbType::DateTime | SqlDbType::Date) => {...}
+            // String → Decimal/Numeric: Parse string as decimal
+            (SourcePythonType::String, SqlDbType::Decimal | SqlDbType::Numeric) => {
+                let result = Self::coerce_string_to_decimal(py_obj, target_meta)?;
+                Ok(Some(result))
+            }
+
+            // Int → Decimal/Numeric: Convert integer to decimal
+            (SourcePythonType::Int, SqlDbType::Decimal | SqlDbType::Numeric) => {
+                let result = Self::coerce_int_to_decimal(py_obj, target_meta)?;
+                Ok(Some(result))
+            }
+
+            // Float → Decimal/Numeric: Convert float to decimal
+            (SourcePythonType::Float, SqlDbType::Decimal | SqlDbType::Numeric) => {
+                let result = Self::coerce_float_to_decimal(py_obj, target_meta)?;
+                Ok(Some(result))
+            }
+
+            // Decimal → Decimal/Numeric: Validate precision/scale
+            (SourcePythonType::Decimal, SqlDbType::Decimal | SqlDbType::Numeric) => {
+                let result = Self::coerce_decimal_to_decimal(py_obj, target_meta)?;
+                Ok(Some(result))
+            }
 
             // No coercion needed - use default conversion
             _ => Ok(None),
@@ -359,6 +392,88 @@ impl PythonRowAdapter {
             }
             _ => unreachable!("coerce_python_int_to_integer called with non-integer target type"),
         }
+    }
+
+    /// Coerce a Python string to a SQL Server DECIMAL/NUMERIC type.
+    fn coerce_string_to_decimal(
+        py_obj: &Bound<'_, PyAny>,
+        target_meta: &BulkCopyColumnMetadata,
+    ) -> TdsResult<ColumnValues> {
+        let s = py_obj
+            .extract::<String>()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+        let decimal_parts =
+            DecimalParts::from_string(&s, target_meta.precision, target_meta.scale)?;
+
+        if target_meta.sql_type == SqlDbType::Numeric {
+            Ok(ColumnValues::Numeric(decimal_parts))
+        } else {
+            Ok(ColumnValues::Decimal(decimal_parts))
+        }
+    }
+
+    /// Coerce a Python integer to a SQL Server DECIMAL/NUMERIC type.
+    fn coerce_int_to_decimal(
+        py_obj: &Bound<'_, PyAny>,
+        target_meta: &BulkCopyColumnMetadata,
+    ) -> TdsResult<ColumnValues> {
+        let value = py_obj
+            .extract::<i64>()
+            .map_err(|e| Error::UsageError(format!("Failed to extract integer: {}", e)))?;
+
+        let decimal_parts =
+            DecimalParts::from_i64(value, target_meta.precision, target_meta.scale)?;
+
+        if target_meta.sql_type == SqlDbType::Numeric {
+            Ok(ColumnValues::Numeric(decimal_parts))
+        } else {
+            Ok(ColumnValues::Decimal(decimal_parts))
+        }
+    }
+
+    /// Coerce a Python float to a SQL Server DECIMAL/NUMERIC type.
+    fn coerce_float_to_decimal(
+        py_obj: &Bound<'_, PyAny>,
+        target_meta: &BulkCopyColumnMetadata,
+    ) -> TdsResult<ColumnValues> {
+        let value = py_obj
+            .extract::<f64>()
+            .map_err(|e| Error::UsageError(format!("Failed to extract float: {}", e)))?;
+
+        let decimal_parts =
+            DecimalParts::from_f64(value, target_meta.precision, target_meta.scale)?;
+
+        if target_meta.sql_type == SqlDbType::Numeric {
+            Ok(ColumnValues::Numeric(decimal_parts))
+        } else {
+            Ok(ColumnValues::Decimal(decimal_parts))
+        }
+    }
+
+    /// Coerce a Python Decimal to a SQL Server DECIMAL/NUMERIC type.
+    /// Validates that the Python Decimal's precision and scale match the target.
+    fn coerce_decimal_to_decimal(
+        py_obj: &Bound<'_, PyAny>,
+        target_meta: &BulkCopyColumnMetadata,
+    ) -> TdsResult<ColumnValues> {
+        // Extract Decimal as string
+        if let Ok(decimal_str) = py_obj.call_method0("__str__") {
+            if let Ok(s) = decimal_str.extract::<String>() {
+                let decimal_parts =
+                    DecimalParts::from_string(&s, target_meta.precision, target_meta.scale)?;
+
+                if target_meta.sql_type == SqlDbType::Numeric {
+                    return Ok(ColumnValues::Numeric(decimal_parts));
+                } else {
+                    return Ok(ColumnValues::Decimal(decimal_parts));
+                }
+            }
+        }
+
+        Err(Error::UsageError(
+            "Failed to extract Decimal value as string".to_string(),
+        ))
     }
 }
 

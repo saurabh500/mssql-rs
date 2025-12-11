@@ -397,7 +397,7 @@ impl PyCoreCursor {
 impl PyCoreCursor {
     /// Convert a TDS ColumnValue to a Python object
     fn column_value_to_python<'py>(py: Python<'py>, col_val: &ColumnValues) -> Bound<'py, PyAny> {
-        use pyo3::types::{PyBytes, PyString};
+        use pyo3::types::{PyBytes, PyModule, PyString};
 
         match col_val {
             ColumnValues::Null => py.None().into_bound(py),
@@ -421,11 +421,19 @@ impl PyCoreCursor {
                 .to_owned()
                 .into_any(),
             ColumnValues::Bytes(b) => PyBytes::new(py, b).into_any(),
-            ColumnValues::Numeric(n) | ColumnValues::Decimal(n) => format!("{:?}", n)
-                .into_pyobject(py)
-                .unwrap()
-                .to_owned()
-                .into_any(),
+            ColumnValues::Numeric(n) | ColumnValues::Decimal(n) => {
+                // Convert DecimalParts to Python Decimal object
+                let decimal_str = n.to_string();
+                if let Ok(decimal_module) = PyModule::import(py, "decimal") {
+                    if let Ok(decimal_class) = decimal_module.getattr("Decimal") {
+                        if let Ok(decimal_obj) = decimal_class.call1((decimal_str.as_str(),)) {
+                            return decimal_obj.into_any();
+                        }
+                    }
+                }
+                // Fallback to string if Decimal conversion fails
+                decimal_str.into_pyobject(py).unwrap().to_owned().into_any()
+            }
             ColumnValues::DateTime(dt) => format!("{:?}", dt)
                 .into_pyobject(py)
                 .unwrap()
