@@ -5,10 +5,11 @@
 
 use mssql_tds::core::TdsResult;
 use mssql_tds::datatypes::column_values::ColumnValues;
+use mssql_tds::datatypes::decoder::DecimalParts;
 use mssql_tds::datatypes::sql_string::SqlString;
 use mssql_tds::error::Error;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyDate, PyDateTime, PyInt, PyString, PyTime};
+use pyo3::types::{PyBool, PyBytes, PyDate, PyDateTime, PyInt, PyModule, PyString, PyTime};
 
 /// Convert a Python object to ColumnValues for TDS serialization
 ///
@@ -146,6 +147,39 @@ pub fn py_to_column_value(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> 
             }
             Err(e) => {
                 return Err(Error::UsageError(format!("Failed to convert time: {}", e)));
+            }
+        }
+    }
+
+    // Check for decimal.Decimal type
+    // We need to check if the object is an instance of decimal.Decimal
+    let py = py_obj.py();
+    if let Ok(decimal_module) = PyModule::import(py, "decimal") {
+        if let Ok(decimal_class) = decimal_module.getattr("Decimal") {
+            if let Ok(is_instance) = py_obj.is_instance(&decimal_class) {
+                if is_instance {
+                    // Extract Decimal as string and parse it
+                    if let Ok(decimal_str) = py_obj.call_method0("__str__") {
+                        if let Ok(s) = decimal_str.extract::<String>() {
+                            // Use a reasonable precision and scale for default conversion
+                            // This will be validated/adjusted during bulk copy if metadata is available
+                            match DecimalParts::from_string(&s, 38, 10) {
+                                Ok(decimal_parts) => {
+                                    return Ok(ColumnValues::Decimal(decimal_parts))
+                                }
+                                Err(e) => {
+                                    return Err(Error::UsageError(format!(
+                                        "Failed to convert Python Decimal '{}': {}",
+                                        s, e
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                    return Err(Error::UsageError(
+                        "Failed to extract Decimal value as string".to_string(),
+                    ));
+                }
             }
         }
     }

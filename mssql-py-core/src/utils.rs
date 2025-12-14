@@ -23,6 +23,13 @@ pub fn convert_tds_error(error: TdsError) -> PyErr {
             // - Out of range values
             pyo3::exceptions::PyValueError::new_err(msg)
         }
+        TdsError::TypeConversionError(msg) => {
+            // Type conversion errors (e.g., decimal parsing, type mismatches)
+            pyo3::exceptions::PyValueError::new_err(msg)
+        }
+        TdsError::ProtocolError(msg) => {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Protocol Error: {}", msg))
+        }
         _ => pyo3::exceptions::PyRuntimeError::new_err(error.to_string()),
     }
 }

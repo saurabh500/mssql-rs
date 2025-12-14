@@ -941,15 +941,183 @@ pub struct DecimalParts {
     pub int_parts: Vec<i32>,
 }
 
+impl fmt::Display for DecimalParts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_decimal_string())
+    }
+}
+
 impl DecimalParts {
+    /// Create a DecimalParts from a decimal string representation.
+    ///
+    /// # Arguments
+    /// * `s` - String like "123.45", "-0.01", "99999999.99"
+    /// * `precision` - Total number of digits
+    /// * `scale` - Number of digits after decimal point
+    ///
+    /// # Returns
+    /// DecimalParts or Error if parsing fails or precision/scale validation fails
+    pub fn from_string(s: &str, precision: u8, scale: u8) -> TdsResult<Self> {
+        let s = s.trim();
+        let is_positive = !s.starts_with('-');
+        let s = s.trim_start_matches('-').trim_start_matches('+');
+
+        // Split on decimal point
+        let parts: Vec<&str> = s.split('.').collect();
+        if parts.len() > 2 {
+            return Err(crate::error::Error::TypeConversionError(format!(
+                "Invalid decimal string: {}",
+                s
+            )));
+        }
+
+        let integer_part = parts.first().unwrap_or(&"0");
+        let fractional_part = parts.get(1).unwrap_or(&"");
+
+        // Validate that integer and fractional parts contain only digits
+        if !integer_part.chars().all(|c| c.is_ascii_digit()) {
+            return Err(crate::error::Error::TypeConversionError(format!(
+                "Failed to parse decimal '{}': invalid digit found in string",
+                s
+            )));
+        }
+        if !fractional_part.is_empty() && !fractional_part.chars().all(|c| c.is_ascii_digit()) {
+            return Err(crate::error::Error::TypeConversionError(format!(
+                "Failed to parse decimal '{}': invalid digit found in string",
+                s
+            )));
+        }
+
+        // Check scale
+        if fractional_part.len() > scale as usize {
+            return Err(crate::error::Error::TypeConversionError(format!(
+                "Decimal scale {} exceeds target scale {}",
+                fractional_part.len(),
+                scale
+            )));
+        }
+
+        // Trim leading zeros from integer part for precision check
+        let integer_part_trimmed = integer_part.trim_start_matches('0');
+        let integer_part_trimmed = if integer_part_trimmed.is_empty() {
+            "0"
+        } else {
+            integer_part_trimmed
+        };
+
+        // Check precision: count actual significant digits (integer part + fractional part)
+        let actual_precision = integer_part_trimmed.len() + fractional_part.len();
+        if actual_precision > precision as usize {
+            return Err(crate::error::Error::TypeConversionError(format!(
+                "Decimal precision {} exceeds target precision {}",
+                actual_precision, precision
+            )));
+        }
+
+        // Construct the full number string without decimal point, padded to scale
+        let mut full_num = integer_part.to_string();
+        full_num.push_str(fractional_part);
+        // Pad with zeros if needed to match scale
+        full_num.push_str(&"0".repeat(scale as usize - fractional_part.len()));
+
+        // Parse as u128
+        let value = full_num.parse::<u128>().map_err(|e| {
+            crate::error::Error::TypeConversionError(format!(
+                "Failed to parse decimal '{}': {}",
+                s, e
+            ))
+        })?;
+
+        // Convert to int_parts (array of i32)
+        let mut int_parts = Vec::new();
+        let mut remaining = value;
+        while remaining > 0 || int_parts.is_empty() {
+            int_parts.push((remaining & 0xFFFFFFFF) as i32);
+            remaining >>= 32;
+        }
+
+        Ok(DecimalParts {
+            is_positive,
+            scale,
+            precision,
+            int_parts,
+        })
+    }
+
+    /// Create a DecimalParts from an i64 value.
+    pub fn from_i64(value: i64, precision: u8, scale: u8) -> TdsResult<Self> {
+        let is_positive = value >= 0;
+        let abs_value = value.unsigned_abs();
+
+        // Scale the value by multiplying by 10^scale
+        let scaled_value = abs_value as u128 * 10u128.pow(scale as u32);
+
+        // Convert to int_parts
+        let mut int_parts = Vec::new();
+        let mut remaining = scaled_value;
+        while remaining > 0 || int_parts.is_empty() {
+            int_parts.push((remaining & 0xFFFFFFFF) as i32);
+            remaining >>= 32;
+        }
+
+        Ok(DecimalParts {
+            is_positive,
+            scale,
+            precision,
+            int_parts,
+        })
+    }
+
+    /// Create a DecimalParts from an f64 value.
+    pub fn from_f64(value: f64, precision: u8, scale: u8) -> TdsResult<Self> {
+        // Convert f64 to string with appropriate precision
+        let s = format!("{:.prec$}", value, prec = scale as usize);
+        Self::from_string(&s, precision, scale)
+    }
+
+    /// Convert DecimalParts to a string representation suitable for Python Decimal.
+    /// Returns a string like "123.45", "-0.01", etc.
+    fn to_decimal_string(&self) -> String {
+        // Convert int_parts to u128
+        // int_parts[0] is the least significant, int_parts[n-1] is most significant
+        let u128_value = self
+            .int_parts
+            .iter()
+            .enumerate()
+            .fold(0u128, |acc, (i, &part)| {
+                acc + ((part as u32 as u128) << (i * 32))
+            });
+
+        let value_str = u128_value.to_string();
+
+        // Insert decimal point at the correct position
+        let result = if self.scale == 0 {
+            value_str
+        } else {
+            let scale_pos = self.scale as usize;
+            if value_str.len() <= scale_pos {
+                // Need to pad with leading zeros
+                format!("0.{}{}", "0".repeat(scale_pos - value_str.len()), value_str)
+            } else {
+                let split_pos = value_str.len() - scale_pos;
+                format!("{}.{}", &value_str[..split_pos], &value_str[split_pos..])
+            }
+        };
+
+        if self.is_positive {
+            result
+        } else {
+            format!("-{}", result)
+        }
+    }
+
     fn to_f64(&self) -> f64 {
         let u128_value = self
             .int_parts
             .iter()
-            .rev()
             .enumerate()
             .fold(0u128, |acc, (i, &part)| {
-                (acc << (i * 32)) + (part as u32 as u128)
+                acc + ((part as u32 as u128) << (i * 32))
             });
 
         let mut d_ret: f64 = u128_value as f64;
@@ -1665,5 +1833,226 @@ mod test {
         let debug_str = format!("{parts:?}");
         assert!(debug_str.contains("0"));
         assert!(debug_str.contains("F64 value: 0"));
+    }
+
+    // Tests for DecimalParts::from_string
+    #[test]
+    fn test_from_string_positive_decimal() {
+        let result = DecimalParts::from_string("123.45", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert!(parts.is_positive);
+        assert_eq!(parts.scale, 2);
+        assert_eq!(parts.precision, 10);
+        assert_eq!(parts.to_decimal_string(), "123.45");
+    }
+
+    #[test]
+    fn test_from_string_negative_decimal() {
+        let result = DecimalParts::from_string("-123.45", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert!(!parts.is_positive);
+        assert_eq!(parts.scale, 2);
+        assert_eq!(parts.precision, 10);
+        assert_eq!(parts.to_decimal_string(), "-123.45");
+    }
+
+    #[test]
+    fn test_from_string_integer_no_decimal_point() {
+        let result = DecimalParts::from_string("12345", 10, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert!(parts.is_positive);
+        assert_eq!(parts.scale, 0);
+        assert_eq!(parts.to_decimal_string(), "12345");
+    }
+
+    #[test]
+    fn test_from_string_with_leading_zeros() {
+        let result = DecimalParts::from_string("00123.45", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "123.45");
+    }
+
+    #[test]
+    fn test_from_string_small_fractional_value() {
+        let result = DecimalParts::from_string("0.01", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "0.01");
+    }
+
+    #[test]
+    fn test_from_string_zero() {
+        let result = DecimalParts::from_string("0", 10, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "0");
+    }
+
+    #[test]
+    fn test_from_string_zero_with_scale() {
+        let result = DecimalParts::from_string("0.00", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "0.00");
+    }
+
+    #[test]
+    fn test_from_string_fractional_padding() {
+        // "1.5" with scale 3 should be treated as "1.500"
+        let result = DecimalParts::from_string("1.5", 10, 3);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "1.500");
+    }
+
+    #[test]
+    fn test_from_string_max_precision_38_digits() {
+        let value = "12345678901234567890123456789012345678";
+        let result = DecimalParts::from_string(value, 38, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), value);
+    }
+
+    #[test]
+    fn test_from_string_high_scale() {
+        let result = DecimalParts::from_string("123.456789", 10, 6);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "123.456789");
+    }
+
+    #[test]
+    fn test_from_string_leading_zeros_precision_check() {
+        // "00001.00" should have precision of 3 (1 significant digit + 2 scale)
+        let result = DecimalParts::from_string("00001.00", 5, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "1.00");
+    }
+
+    #[test]
+    fn test_from_string_with_positive_sign() {
+        let result = DecimalParts::from_string("+123.45", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert!(parts.is_positive);
+        assert_eq!(parts.to_decimal_string(), "123.45");
+    }
+
+    // Error cases
+    #[test]
+    fn test_from_string_invalid_characters() {
+        let result = DecimalParts::from_string("not_a_number", 10, 2);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("invalid digit"));
+    }
+
+    #[test]
+    fn test_from_string_multiple_decimal_points() {
+        let result = DecimalParts::from_string("123.45.67", 10, 2);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("Invalid decimal string"));
+    }
+
+    #[test]
+    fn test_from_string_scale_exceeded() {
+        // Trying to parse "123.456" with scale 2 should fail
+        let result = DecimalParts::from_string("123.456", 10, 2);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("scale") && error_msg.contains("exceeds"));
+    }
+
+    #[test]
+    fn test_from_string_precision_exceeded() {
+        // "12345" has 5 significant digits, should fail with precision 4
+        let result = DecimalParts::from_string("12345", 4, 0);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("precision") && error_msg.contains("exceeds"));
+    }
+
+    #[test]
+    fn test_from_string_precision_exceeded_with_decimal() {
+        // "123.45" has 5 significant digits total, should fail with precision 4
+        let result = DecimalParts::from_string("123.45", 4, 2);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("precision") && error_msg.contains("exceeds"));
+    }
+
+    #[test]
+    fn test_from_string_invalid_digit_in_integer_part() {
+        let result = DecimalParts::from_string("12a34", 10, 0);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("invalid digit"));
+    }
+
+    #[test]
+    fn test_from_string_invalid_digit_in_fractional_part() {
+        let result = DecimalParts::from_string("123.4x5", 10, 2);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("invalid digit"));
+    }
+
+    #[test]
+    fn test_from_string_leading_zeros_not_counted_in_precision() {
+        // "0000123" should be treated as precision 3, not 7
+        let result = DecimalParts::from_string("0000123", 3, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "123");
+    }
+
+    #[test]
+    fn test_from_string_whitespace_trimmed() {
+        let result = DecimalParts::from_string("  123.45  ", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "123.45");
+    }
+
+    #[test]
+    fn test_from_string_negative_zero() {
+        let result = DecimalParts::from_string("-0", 10, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert!(!parts.is_positive);
+        assert_eq!(parts.to_decimal_string(), "-0");
+    }
+
+    #[test]
+    fn test_from_string_only_zeros_with_decimal() {
+        let result = DecimalParts::from_string("0.0", 10, 1);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "0.0");
+    }
+
+    #[test]
+    fn test_from_string_exact_precision_match() {
+        // Test when actual precision exactly matches target precision
+        let result = DecimalParts::from_string("12345", 5, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "12345");
+    }
+
+    #[test]
+    fn test_from_string_exact_scale_match() {
+        // Test when fractional digits exactly match scale
+        let result = DecimalParts::from_string("123.45", 5, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "123.45");
     }
 }

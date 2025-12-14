@@ -353,22 +353,23 @@ impl SqlType {
             Some(v) => {
                 packet_writer.write_byte_async(v.precision).await?;
                 packet_writer.write_byte_async(v.scale).await?;
-                // Send the actual data size.
+
+                // For TDS 7.0 and above, there are always 17 bytes of data
+                // This matches .NET SqlClient behavior
                 packet_writer.write_byte_async(DECIMAL_FIXED_SIZE).await?;
+
                 if v.is_positive {
                     packet_writer.write_byte_async(0x01).await?;
                 } else {
                     packet_writer.write_byte_async(0x00).await?;
                 }
 
-                // Write up to 3 int_parts, pad with zeros if fewer, ignore extras.
-                // Always write 4 i32 values.
-                for i in 0..3 {
+                // Always write 4 i32 values (16 bytes) regardless of precision
+                // Pad with zeros if fewer int_parts are needed
+                for i in 0..4 {
                     let part = v.int_parts.get(i).copied().unwrap_or(0);
                     packet_writer.write_i32_async(part).await?;
                 }
-                // The fourth part is always 0.
-                packet_writer.write_i32_async(0).await?;
             }
             None => {
                 packet_writer.write_byte_async(1).await?;
@@ -2090,17 +2091,17 @@ mod decimalparts_tests {
         let payload = mock_reader_writer.get_written_data();
         let mut test_cursor = Cursor::new(payload);
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
-        assert_eq!(test_cursor.get_u8(), TdsDataType::NumericN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), TdsDataType::NumericN as u8); // Validate tds type
         assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // type length data
-        assert_eq!(test_cursor.get_u8(), precision); // type length data
-        assert_eq!(test_cursor.get_u8(), scale); // type length data
-        assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // size of the data
+        assert_eq!(test_cursor.get_u8(), precision); // precision
+        assert_eq!(test_cursor.get_u8(), scale); // scale
+        assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // size of the data (always 17 for TDS 7.0+)
         assert_eq!(test_cursor.get_u8(), 0x01); // Positive value
         let mut parts: Vec<i32> = Vec::new();
         for _ in 0..3 {
             parts.push(test_cursor.get_i32_le());
         }
-        assert_eq!(int_parts.clone(), parts); // size for Some Data
+        assert_eq!(int_parts.clone(), parts); // verify written data
     }
 
     #[tokio::test]
@@ -2140,17 +2141,17 @@ mod decimalparts_tests {
         let payload = mock_reader_writer.get_written_data();
         let mut test_cursor = Cursor::new(payload);
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
-        assert_eq!(test_cursor.get_u8(), TdsDataType::NumericN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), TdsDataType::NumericN as u8); // Validate tds type
         assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // type length data
-        assert_eq!(test_cursor.get_u8(), precision); // type length data
-        assert_eq!(test_cursor.get_u8(), scale); // type length data
-        assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // size of the data
+        assert_eq!(test_cursor.get_u8(), precision); // precision
+        assert_eq!(test_cursor.get_u8(), scale); // scale
+        assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // size of the data (always 17 for TDS 7.0+)
         assert_eq!(test_cursor.get_u8(), 0x00); // Negative value
         let mut parts: Vec<i32> = Vec::new();
         for _ in 0..3 {
             parts.push(test_cursor.get_i32_le());
         }
-        assert_eq!(int_parts.clone(), parts); // size for Some Data
+        assert_eq!(int_parts.clone(), parts); // verify written data
     }
 
     #[tokio::test]
