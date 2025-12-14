@@ -53,6 +53,9 @@ pub enum Error {
 
     #[error("Unimplemented Feature: {feature} - {context}")]
     UnimplementedFeature { feature: String, context: String },
+
+    #[error("Type Conversion Error: {0}")]
+    TypeConversionError(String),
 }
 
 #[cfg(test)]
@@ -180,6 +183,15 @@ mod tests {
         let err_str = error.to_string();
         assert!(err_str.contains("Always Encrypted"));
         assert!(err_str.contains("Column encryption not supported"));
+    }
+
+    #[test]
+    fn test_type_conversion_error() {
+        let error = Error::TypeConversionError("Cannot convert VARCHAR to INT".to_string());
+        assert_eq!(
+            error.to_string(),
+            "Type Conversion Error: Cannot convert VARCHAR to INT"
+        );
     }
 
     #[test]

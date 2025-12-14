@@ -965,7 +965,7 @@ impl DecimalParts {
         // Split on decimal point
         let parts: Vec<&str> = s.split('.').collect();
         if parts.len() > 2 {
-            return Err(crate::error::Error::ProtocolError(format!(
+            return Err(crate::error::Error::TypeConversionError(format!(
                 "Invalid decimal string: {}",
                 s
             )));
@@ -976,13 +976,13 @@ impl DecimalParts {
 
         // Validate that integer and fractional parts contain only digits
         if !integer_part.chars().all(|c| c.is_ascii_digit()) {
-            return Err(crate::error::Error::ProtocolError(format!(
+            return Err(crate::error::Error::TypeConversionError(format!(
                 "Failed to parse decimal '{}': invalid digit found in string",
                 s
             )));
         }
         if !fractional_part.is_empty() && !fractional_part.chars().all(|c| c.is_ascii_digit()) {
-            return Err(crate::error::Error::ProtocolError(format!(
+            return Err(crate::error::Error::TypeConversionError(format!(
                 "Failed to parse decimal '{}': invalid digit found in string",
                 s
             )));
@@ -990,7 +990,7 @@ impl DecimalParts {
 
         // Check scale
         if fractional_part.len() > scale as usize {
-            return Err(crate::error::Error::ProtocolError(format!(
+            return Err(crate::error::Error::TypeConversionError(format!(
                 "Decimal scale {} exceeds target scale {}",
                 fractional_part.len(),
                 scale
@@ -1008,7 +1008,7 @@ impl DecimalParts {
         // Check precision: count actual significant digits (integer part + fractional part)
         let actual_precision = integer_part_trimmed.len() + fractional_part.len();
         if actual_precision > precision as usize {
-            return Err(crate::error::Error::ProtocolError(format!(
+            return Err(crate::error::Error::TypeConversionError(format!(
                 "Decimal precision {} exceeds target precision {}",
                 actual_precision, precision
             )));
@@ -1022,7 +1022,10 @@ impl DecimalParts {
 
         // Parse as u128
         let value = full_num.parse::<u128>().map_err(|e| {
-            crate::error::Error::ProtocolError(format!("Failed to parse decimal '{}': {}", s, e))
+            crate::error::Error::TypeConversionError(format!(
+                "Failed to parse decimal '{}': {}",
+                s, e
+            ))
         })?;
 
         // Convert to int_parts (array of i32)
