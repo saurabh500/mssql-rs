@@ -409,19 +409,22 @@ impl PythonRowAdapter {
             "DECIMAL"
         };
 
-        let decimal_parts =
-            DecimalParts::from_string(&s, target_meta.precision, target_meta.scale)
-                .map_err(|e| {
-                    // Re-wrap error with type-specific message
-                    let msg = e.to_string().to_lowercase();
-                    if msg.contains("decimal precision") {
-                        Error::ProtocolError(msg.replace("decimal precision", &format!("{} precision", type_name)))
-                    } else if msg.contains("decimal scale") {
-                        Error::ProtocolError(msg.replace("decimal scale", &format!("{} scale", type_name)))
-                    } else {
-                        e
-                    }
-                })?;
+        let decimal_parts = DecimalParts::from_string(&s, target_meta.precision, target_meta.scale)
+            .map_err(|e| {
+                // Re-wrap error with type-specific message
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("decimal precision") {
+                    Error::ProtocolError(
+                        msg.replace("decimal precision", &format!("{} precision", type_name)),
+                    )
+                } else if msg.contains("decimal scale") {
+                    Error::ProtocolError(
+                        msg.replace("decimal scale", &format!("{} scale", type_name)),
+                    )
+                } else {
+                    e
+                }
+            })?;
 
         if target_meta.sql_type == SqlDbType::Numeric {
             Ok(ColumnValues::Numeric(decimal_parts))
@@ -445,19 +448,22 @@ impl PythonRowAdapter {
             "DECIMAL"
         };
 
-        let decimal_parts =
-            DecimalParts::from_i64(value, target_meta.precision, target_meta.scale)
-                .map_err(|e| {
-                    // Re-wrap error with type-specific message
-                    let msg = e.to_string().to_lowercase();
-                    if msg.contains("decimal precision") {
-                        Error::ProtocolError(msg.replace("decimal precision", &format!("{} precision", type_name)))
-                    } else if msg.contains("decimal scale") {
-                        Error::ProtocolError(msg.replace("decimal scale", &format!("{} scale", type_name)))
-                    } else {
-                        e
-                    }
-                })?;
+        let decimal_parts = DecimalParts::from_i64(value, target_meta.precision, target_meta.scale)
+            .map_err(|e| {
+                // Re-wrap error with type-specific message
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("decimal precision") {
+                    Error::ProtocolError(
+                        msg.replace("decimal precision", &format!("{} precision", type_name)),
+                    )
+                } else if msg.contains("decimal scale") {
+                    Error::ProtocolError(
+                        msg.replace("decimal scale", &format!("{} scale", type_name)),
+                    )
+                } else {
+                    e
+                }
+            })?;
 
         if target_meta.sql_type == SqlDbType::Numeric {
             Ok(ColumnValues::Numeric(decimal_parts))
@@ -481,19 +487,22 @@ impl PythonRowAdapter {
             "DECIMAL"
         };
 
-        let decimal_parts =
-            DecimalParts::from_f64(value, target_meta.precision, target_meta.scale)
-                .map_err(|e| {
-                    // Re-wrap error with type-specific message
-                    let msg = e.to_string().to_lowercase();
-                    if msg.contains("decimal precision") {
-                        Error::ProtocolError(msg.replace("decimal precision", &format!("{} precision", type_name)))
-                    } else if msg.contains("decimal scale") {
-                        Error::ProtocolError(msg.replace("decimal scale", &format!("{} scale", type_name)))
-                    } else {
-                        e
-                    }
-                })?;
+        let decimal_parts = DecimalParts::from_f64(value, target_meta.precision, target_meta.scale)
+            .map_err(|e| {
+                // Re-wrap error with type-specific message
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("decimal precision") {
+                    Error::ProtocolError(
+                        msg.replace("decimal precision", &format!("{} precision", type_name)),
+                    )
+                } else if msg.contains("decimal scale") {
+                    Error::ProtocolError(
+                        msg.replace("decimal scale", &format!("{} scale", type_name)),
+                    )
+                } else {
+                    e
+                }
+            })?;
 
         if target_meta.sql_type == SqlDbType::Numeric {
             Ok(ColumnValues::Numeric(decimal_parts))
@@ -523,9 +532,14 @@ impl PythonRowAdapter {
                             // Re-wrap error with type-specific message
                             let msg = e.to_string().to_lowercase();
                             if msg.contains("decimal precision") {
-                                Error::ProtocolError(msg.replace("decimal precision", &format!("{} precision", type_name)))
+                                Error::ProtocolError(msg.replace(
+                                    "decimal precision",
+                                    &format!("{} precision", type_name),
+                                ))
                             } else if msg.contains("decimal scale") {
-                                Error::ProtocolError(msg.replace("decimal scale", &format!("{} scale", type_name)))
+                                Error::ProtocolError(
+                                    msg.replace("decimal scale", &format!("{} scale", type_name)),
+                                )
                             } else {
                                 e
                             }
