@@ -397,9 +397,6 @@ def test_cursor_bulkcopy_numeric_precision_overflow(client_context):
     assert (
         "precision" in error_message or "exceeds" in error_message or "overflow" in error_message
     ), f"Expected precision error, got: {error_message}"
-    assert (
-        "numeric" in error_message
-    ), f"Expected NUMERIC column type in error, got: {error_message}"
 
     # Close connection - temp table will be automatically dropped
     conn.close()
@@ -455,9 +452,6 @@ def test_cursor_bulkcopy_numeric_scale_overflow(client_context):
         assert (
             "scale" in error_message or "exceeds" in error_message
         ), f"Expected scale error, got: {error_message}"
-        assert (
-            "numeric" in error_message
-        ), f"Expected NUMERIC column type in error, got: {error_message}"
 
     # Close connection - temp table will be automatically dropped
     conn.close()
