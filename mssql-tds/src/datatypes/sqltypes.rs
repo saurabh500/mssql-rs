@@ -353,11 +353,11 @@ impl SqlType {
             Some(v) => {
                 packet_writer.write_byte_async(v.precision).await?;
                 packet_writer.write_byte_async(v.scale).await?;
-                
+
                 // For TDS 7.0 and above, there are always 17 bytes of data
                 // This matches .NET SqlClient behavior
                 packet_writer.write_byte_async(DECIMAL_FIXED_SIZE).await?;
-                
+
                 if v.is_positive {
                     packet_writer.write_byte_async(0x01).await?;
                 } else {

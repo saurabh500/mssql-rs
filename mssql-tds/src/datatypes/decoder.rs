@@ -999,15 +999,18 @@ impl DecimalParts {
 
         // Trim leading zeros from integer part for precision check
         let integer_part_trimmed = integer_part.trim_start_matches('0');
-        let integer_part_trimmed = if integer_part_trimmed.is_empty() { "0" } else { integer_part_trimmed };
-        
+        let integer_part_trimmed = if integer_part_trimmed.is_empty() {
+            "0"
+        } else {
+            integer_part_trimmed
+        };
+
         // Check precision: count actual significant digits (integer part + fractional part)
         let actual_precision = integer_part_trimmed.len() + fractional_part.len();
         if actual_precision > precision as usize {
             return Err(crate::error::Error::ProtocolError(format!(
                 "Decimal precision {} exceeds target precision {}",
-                actual_precision,
-                precision
+                actual_precision, precision
             )));
         }
 
