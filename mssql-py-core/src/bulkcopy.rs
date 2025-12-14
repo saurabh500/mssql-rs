@@ -403,8 +403,25 @@ impl PythonRowAdapter {
             .extract::<String>()
             .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
 
+        let type_name = if target_meta.sql_type == SqlDbType::Numeric {
+            "NUMERIC"
+        } else {
+            "DECIMAL"
+        };
+
         let decimal_parts =
-            DecimalParts::from_string(&s, target_meta.precision, target_meta.scale)?;
+            DecimalParts::from_string(&s, target_meta.precision, target_meta.scale)
+                .map_err(|e| {
+                    // Re-wrap error with type-specific message
+                    let msg = e.to_string().to_lowercase();
+                    if msg.contains("decimal precision") {
+                        Error::ProtocolError(msg.replace("decimal precision", &format!("{} precision", type_name)))
+                    } else if msg.contains("decimal scale") {
+                        Error::ProtocolError(msg.replace("decimal scale", &format!("{} scale", type_name)))
+                    } else {
+                        e
+                    }
+                })?;
 
         if target_meta.sql_type == SqlDbType::Numeric {
             Ok(ColumnValues::Numeric(decimal_parts))
@@ -422,8 +439,25 @@ impl PythonRowAdapter {
             .extract::<i64>()
             .map_err(|e| Error::UsageError(format!("Failed to extract integer: {}", e)))?;
 
+        let type_name = if target_meta.sql_type == SqlDbType::Numeric {
+            "NUMERIC"
+        } else {
+            "DECIMAL"
+        };
+
         let decimal_parts =
-            DecimalParts::from_i64(value, target_meta.precision, target_meta.scale)?;
+            DecimalParts::from_i64(value, target_meta.precision, target_meta.scale)
+                .map_err(|e| {
+                    // Re-wrap error with type-specific message
+                    let msg = e.to_string().to_lowercase();
+                    if msg.contains("decimal precision") {
+                        Error::ProtocolError(msg.replace("decimal precision", &format!("{} precision", type_name)))
+                    } else if msg.contains("decimal scale") {
+                        Error::ProtocolError(msg.replace("decimal scale", &format!("{} scale", type_name)))
+                    } else {
+                        e
+                    }
+                })?;
 
         if target_meta.sql_type == SqlDbType::Numeric {
             Ok(ColumnValues::Numeric(decimal_parts))
@@ -441,8 +475,25 @@ impl PythonRowAdapter {
             .extract::<f64>()
             .map_err(|e| Error::UsageError(format!("Failed to extract float: {}", e)))?;
 
+        let type_name = if target_meta.sql_type == SqlDbType::Numeric {
+            "NUMERIC"
+        } else {
+            "DECIMAL"
+        };
+
         let decimal_parts =
-            DecimalParts::from_f64(value, target_meta.precision, target_meta.scale)?;
+            DecimalParts::from_f64(value, target_meta.precision, target_meta.scale)
+                .map_err(|e| {
+                    // Re-wrap error with type-specific message
+                    let msg = e.to_string().to_lowercase();
+                    if msg.contains("decimal precision") {
+                        Error::ProtocolError(msg.replace("decimal precision", &format!("{} precision", type_name)))
+                    } else if msg.contains("decimal scale") {
+                        Error::ProtocolError(msg.replace("decimal scale", &format!("{} scale", type_name)))
+                    } else {
+                        e
+                    }
+                })?;
 
         if target_meta.sql_type == SqlDbType::Numeric {
             Ok(ColumnValues::Numeric(decimal_parts))
@@ -457,11 +508,28 @@ impl PythonRowAdapter {
         py_obj: &Bound<'_, PyAny>,
         target_meta: &BulkCopyColumnMetadata,
     ) -> TdsResult<ColumnValues> {
+        let type_name = if target_meta.sql_type == SqlDbType::Numeric {
+            "NUMERIC"
+        } else {
+            "DECIMAL"
+        };
+
         // Extract Decimal as string
         if let Ok(decimal_str) = py_obj.call_method0("__str__") {
             if let Ok(s) = decimal_str.extract::<String>() {
                 let decimal_parts =
-                    DecimalParts::from_string(&s, target_meta.precision, target_meta.scale)?;
+                    DecimalParts::from_string(&s, target_meta.precision, target_meta.scale)
+                        .map_err(|e| {
+                            // Re-wrap error with type-specific message
+                            let msg = e.to_string().to_lowercase();
+                            if msg.contains("decimal precision") {
+                                Error::ProtocolError(msg.replace("decimal precision", &format!("{} precision", type_name)))
+                            } else if msg.contains("decimal scale") {
+                                Error::ProtocolError(msg.replace("decimal scale", &format!("{} scale", type_name)))
+                            } else {
+                                e
+                            }
+                        })?;
 
                 if target_meta.sql_type == SqlDbType::Numeric {
                     return Ok(ColumnValues::Numeric(decimal_parts));

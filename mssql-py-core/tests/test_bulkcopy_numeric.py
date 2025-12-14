@@ -338,11 +338,11 @@ def test_cursor_bulkcopy_numeric_invalid_string_to_numeric_conversion(client_con
         error_raised
     ), "Expected a ValueError to be raised for invalid string-to-numeric conversion"
     assert (
-        "cannot convert" in error_message or "conversion" in error_message
-    ), f"Expected conversion error message, got: {error_message}"
+        "failed to parse decimal" in error_message
+    ), f"Expected 'failed to parse decimal' message, got: {error_message}"
     # Verify that the original parse error message is preserved
     assert (
-        "invalid" in error_message or "not_a_number" in error_message
+        "invalid" in error_message and "not_a_number" in error_message
     ), f"Expected original parse error details to be preserved, got: {error_message}"
 
     # Close connection - temp table will be automatically dropped
