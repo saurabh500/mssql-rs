@@ -1838,7 +1838,7 @@ mod test {
         let result = DecimalParts::from_string("123.45", 10, 2);
         assert!(result.is_ok());
         let parts = result.unwrap();
-        assert_eq!(parts.is_positive, true);
+        assert!(parts.is_positive);
         assert_eq!(parts.scale, 2);
         assert_eq!(parts.precision, 10);
         assert_eq!(parts.to_decimal_string(), "123.45");
@@ -1849,7 +1849,7 @@ mod test {
         let result = DecimalParts::from_string("-123.45", 10, 2);
         assert!(result.is_ok());
         let parts = result.unwrap();
-        assert_eq!(parts.is_positive, false);
+        assert!(!parts.is_positive);
         assert_eq!(parts.scale, 2);
         assert_eq!(parts.precision, 10);
         assert_eq!(parts.to_decimal_string(), "-123.45");
@@ -1860,7 +1860,7 @@ mod test {
         let result = DecimalParts::from_string("12345", 10, 0);
         assert!(result.is_ok());
         let parts = result.unwrap();
-        assert_eq!(parts.is_positive, true);
+        assert!(parts.is_positive);
         assert_eq!(parts.scale, 0);
         assert_eq!(parts.to_decimal_string(), "12345");
     }
@@ -1937,7 +1937,7 @@ mod test {
         let result = DecimalParts::from_string("+123.45", 10, 2);
         assert!(result.is_ok());
         let parts = result.unwrap();
-        assert_eq!(parts.is_positive, true);
+        assert!(parts.is_positive);
         assert_eq!(parts.to_decimal_string(), "123.45");
     }
 
@@ -2023,7 +2023,7 @@ mod test {
         let result = DecimalParts::from_string("-0", 10, 0);
         assert!(result.is_ok());
         let parts = result.unwrap();
-        assert_eq!(parts.is_positive, false);
+        assert!(!parts.is_positive);
         assert_eq!(parts.to_decimal_string(), "-0");
     }
 
