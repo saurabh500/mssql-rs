@@ -584,17 +584,17 @@ impl PythonRowAdapter {
         const MONEY_SCALE: f64 = 10000.0;
 
         // MONEY range: -922,337,203,685,477.5808 to 922,337,203,685,477.5807
-        const MONEY_MIN: f64 = -922_337_203_685_477.5808;
-        const MONEY_MAX: f64 = 922_337_203_685_477.5807;
+        const MONEY_MIN: f64 = -922_337_203_685_477.6;
+        const MONEY_MAX: f64 = 922_337_203_685_477.6;
 
         // SMALLMONEY range: -214,748.3648 to 214,748.3647
-        const SMALLMONEY_MIN: f64 = -214_748.3648;
-        const SMALLMONEY_MAX: f64 = 214_748.3647;
+        const SMALLMONEY_MIN: f64 = -214_748.364_8;
+        const SMALLMONEY_MAX: f64 = 214_748.364_7;
 
         match target_type {
             SqlDbType::SmallMoney => {
                 // Validate range for SMALLMONEY
-                if value < SMALLMONEY_MIN || value > SMALLMONEY_MAX {
+                if !(SMALLMONEY_MIN..=SMALLMONEY_MAX).contains(&value) {
                     return Err(Error::UsageError(format!(
                         "Value {} exceeds SMALLMONEY range ({} to {})",
                         value, SMALLMONEY_MIN, SMALLMONEY_MAX
@@ -610,7 +610,7 @@ impl PythonRowAdapter {
             }
             SqlDbType::Money => {
                 // Validate range for MONEY
-                if value < MONEY_MIN || value > MONEY_MAX {
+                if !(MONEY_MIN..=MONEY_MAX).contains(&value) {
                     return Err(Error::UsageError(format!(
                         "Value {} exceeds MONEY range ({} to {})",
                         value, MONEY_MIN, MONEY_MAX
