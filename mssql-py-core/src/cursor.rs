@@ -444,16 +444,47 @@ impl PyCoreCursor {
                 .unwrap()
                 .to_owned()
                 .into_any(),
-            ColumnValues::Money(m) => format!("{:?}", m)
-                .into_pyobject(py)
-                .unwrap()
-                .to_owned()
-                .into_any(),
-            ColumnValues::SmallMoney(m) => format!("{:?}", m)
-                .into_pyobject(py)
-                .unwrap()
-                .to_owned()
-                .into_any(),
+            ColumnValues::Money(m) => {
+                // Convert SqlMoney to Python Decimal object
+                // Money values are stored as 8-byte integers representing units of 1/10000
+                let lsb_in_i64 = (m.lsb_part as i64) & 0x00000000FFFFFFFF;
+                let money_val = lsb_in_i64 | ((m.msb_part as i64) << 32);
+
+                // Format as decimal string with 4 decimal places
+                let integer_part = money_val / 10000;
+                let fractional_part = (money_val % 10000).abs();
+                let decimal_str = format!("{}.{:04}", integer_part, fractional_part);
+
+                if let Ok(decimal_module) = PyModule::import(py, "decimal") {
+                    if let Ok(decimal_class) = decimal_module.getattr("Decimal") {
+                        if let Ok(decimal_obj) = decimal_class.call1((decimal_str.as_str(),)) {
+                            return decimal_obj.into_any();
+                        }
+                    }
+                }
+                // Fallback to string if Decimal conversion fails
+                decimal_str.into_pyobject(py).unwrap().to_owned().into_any()
+            }
+            ColumnValues::SmallMoney(m) => {
+                // Convert SqlSmallMoney to Python Decimal object
+                // SmallMoney values are stored as 4-byte integers representing units of 1/10000
+                let money_val = m.int_val as i64;
+
+                // Format as decimal string with 4 decimal places
+                let integer_part = money_val / 10000;
+                let fractional_part = (money_val % 10000).abs();
+                let decimal_str = format!("{}.{:04}", integer_part, fractional_part);
+
+                if let Ok(decimal_module) = PyModule::import(py, "decimal") {
+                    if let Ok(decimal_class) = decimal_module.getattr("Decimal") {
+                        if let Ok(decimal_obj) = decimal_class.call1((decimal_str.as_str(),)) {
+                            return decimal_obj.into_any();
+                        }
+                    }
+                }
+                // Fallback to string if Decimal conversion fails
+                decimal_str.into_pyobject(py).unwrap().to_owned().into_any()
+            }
             _ => PyString::new(py, &format!("{:?}", col_val)).into_any(),
         }
     }
