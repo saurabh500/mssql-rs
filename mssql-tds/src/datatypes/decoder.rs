@@ -479,6 +479,111 @@ impl GenericDecoder {
         }
     }
 
+    async fn decode_vector<T>(
+        &self,
+        reader: &mut T,
+        metadata: &ColumnMetadata,
+    ) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
+        use crate::datatypes::sql_vector::SqlVector;
+        use crate::datatypes::sqldatatypes::{
+            VECTOR_HEADER_SIZE, VECTOR_MAX_SIZE, VectorBaseType, VectorLayoutFormat,
+            VectorLayoutVersion,
+        };
+
+        // Read length prefix (USHORTLEN format)
+        let length_prefix_value = reader.read_uint16().await? as usize;
+
+        // Handle NULL (length = 0xFFFF)
+        if length_prefix_value == 0xFFFF {
+            return Ok(ColumnValues::Null);
+        }
+
+        // Validate length
+        if length_prefix_value > VECTOR_MAX_SIZE {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Vector length {} exceeds maximum of {} bytes",
+                length_prefix_value, VECTOR_MAX_SIZE
+            )));
+        }
+
+        // Must have at least header
+        if length_prefix_value < VECTOR_HEADER_SIZE {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Vector length {} is less than minimum header size of {} bytes",
+                length_prefix_value, VECTOR_HEADER_SIZE
+            )));
+        }
+
+        // Read 8-byte header
+        let layout_format_byte = reader.read_byte().await?;
+        let layout_version_byte = reader.read_byte().await?;
+        let dimension_count = reader.read_uint16().await?;
+        let base_type_byte = reader.read_byte().await?;
+        let _reserved1 = reader.read_byte().await?; // Reserved
+        let _reserved2 = reader.read_byte().await?; // Reserved
+        let _reserved3 = reader.read_byte().await?; // Reserved
+
+        // Validate header using enum conversions
+        let _layout_format = VectorLayoutFormat::try_from(layout_format_byte)?;
+        let _layout_version = VectorLayoutVersion::try_from(layout_version_byte)?;
+
+        // Get base type from metadata's TypeInfoVariant scale field
+        let base_type_in_metadata = match &metadata.type_info.type_info_variant {
+            TypeInfoVariant::VarLenScale(_, scale) => *scale,
+            _ => {
+                return Err(crate::error::Error::ProtocolError(
+                    "Vector metadata missing scale (base type)".to_string(),
+                ));
+            }
+        };
+
+        if base_type_byte != base_type_in_metadata {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Vector base type mismatch: metadata has 0x{:02X}, vector header has 0x{:02X}",
+                base_type_in_metadata, base_type_byte
+            )));
+        }
+
+        // Validate base type using enum conversion
+        let base_type = VectorBaseType::try_from(base_type_byte)?;
+
+        let length_in_metadata = metadata.type_info.length;
+        // Calculate data length based on vector header info
+        let element_size = base_type.element_size_bytes();
+        let length_from_vector_header =
+            VECTOR_HEADER_SIZE + (dimension_count as usize * element_size);
+        if length_prefix_value != length_from_vector_header
+            || length_prefix_value != length_in_metadata
+        {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Vector length mismatch: length in prefix {} bytes, length from vector header {} bytes, length in metadata {} bytes, for {} dimensions (element size: {} bytes)",
+                length_prefix_value,
+                length_from_vector_header,
+                length_in_metadata,
+                dimension_count,
+                element_size
+            )));
+        }
+
+        // Read raw element bytes (let SqlVector parse based on base_type)
+        let element_bytes = length_prefix_value - VECTOR_HEADER_SIZE;
+        let mut raw_bytes = vec![0u8; element_bytes];
+        reader.read_bytes(&mut raw_bytes).await?;
+
+        // Create SqlVector - from_raw validates header, parses bytes by type, and validates dimensions
+        let vector = SqlVector::from_raw(
+            layout_format_byte,
+            layout_version_byte,
+            base_type_byte,
+            raw_bytes,
+        )?;
+
+        Ok(ColumnValues::Vector(vector))
+    }
+
     async fn read_plp_bytes<T>(reader: &mut T) -> TdsResult<Option<Vec<u8>>>
     where
         T: TdsPacketReader + Send + Sync,
@@ -709,6 +814,7 @@ impl SqlTypeDecode for GenericDecoder {
                     None => ColumnValues::Null,
                 }
             }
+            TdsDataType::Vector => self.decode_vector(reader, metadata).await?,
             TdsDataType::BitN => {
                 let byte_len = reader.read_byte().await?;
                 if byte_len > 0 {
@@ -2054,5 +2160,160 @@ mod test {
         assert!(result.is_ok());
         let parts = result.unwrap();
         assert_eq!(parts.to_decimal_string(), "123.45");
+    }
+
+    // Vector deserialization tests
+    mod vector_tests {
+        use super::*;
+        use crate::datatypes::{
+            sql_vector::SqlVector,
+            sqldatatypes::{
+                VECTOR_MAX_DIMENSIONS, VectorBaseType, VectorLayoutFormat, VectorLayoutVersion,
+            },
+        };
+
+        #[test]
+        fn test_vector_creation_and_validation() {
+            // Test that SqlVector::from_f32 creates valid vectors
+            let dimensions = vec![1.0, 2.0, 3.0];
+            let vector = SqlVector::from_f32(dimensions.clone()).unwrap();
+
+            // Only check semantic data - TDS header fields are not stored
+            assert_eq!(vector.as_f32(), Some(dimensions.as_slice()));
+            assert_eq!(vector.dimension_count(), 3);
+        }
+
+        #[test]
+        fn test_vector_single_dimension() {
+            let vector = SqlVector::from_f32(vec![42.5]).unwrap();
+            assert_eq!(vector.as_f32(), Some(&[42.5][..]));
+            assert_eq!(vector.dimension_count(), 1);
+        }
+
+        #[test]
+        fn test_vector_max_dimensions() {
+            let dimensions: Vec<f32> = (0..VECTOR_MAX_DIMENSIONS).map(|i| i as f32).collect();
+            let vector = SqlVector::from_f32(dimensions).unwrap();
+            assert_eq!(vector.dimension_count(), VECTOR_MAX_DIMENSIONS);
+        }
+
+        #[test]
+        fn test_vector_from_raw_valid() {
+            let values = vec![1.0_f32, 2.0, 3.0];
+            // Convert f32 values to raw bytes
+            let mut raw_bytes = Vec::new();
+            for val in &values {
+                raw_bytes.extend_from_slice(&val.to_le_bytes());
+            }
+
+            let vector = SqlVector::from_raw(
+                VectorLayoutFormat::V1 as u8,
+                VectorLayoutVersion::V1 as u8,
+                VectorBaseType::Float32 as u8,
+                raw_bytes,
+            );
+
+            // from_raw validates during construction
+            assert!(vector.is_ok());
+            let vector = vector.unwrap();
+            assert_eq!(vector.as_f32(), Some(values.as_slice()));
+        }
+
+        #[test]
+        fn test_vector_from_raw_invalid_layout_format() {
+            let values = vec![1.0_f32, 2.0];
+            let mut raw_bytes = Vec::new();
+            for val in &values {
+                raw_bytes.extend_from_slice(&val.to_le_bytes());
+            }
+
+            let result = SqlVector::from_raw(
+                0x00, // Invalid format
+                VectorLayoutVersion::V1 as u8,
+                VectorBaseType::Float32 as u8,
+                raw_bytes,
+            );
+
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("layout format"));
+        }
+
+        #[test]
+        fn test_vector_from_raw_invalid_layout_version() {
+            let values = vec![1.0_f32, 2.0];
+            let mut raw_bytes = Vec::new();
+            for val in &values {
+                raw_bytes.extend_from_slice(&val.to_le_bytes());
+            }
+
+            let result = SqlVector::from_raw(
+                VectorLayoutFormat::V1 as u8,
+                0x99, // Invalid version
+                VectorBaseType::Float32 as u8,
+                raw_bytes,
+            );
+
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("layout version"));
+        }
+
+        #[test]
+        fn test_vector_from_raw_invalid_base_type() {
+            let values = vec![1.0_f32, 2.0];
+            let mut raw_bytes = Vec::new();
+            for val in &values {
+                raw_bytes.extend_from_slice(&val.to_le_bytes());
+            }
+
+            let result = SqlVector::from_raw(
+                VectorLayoutFormat::V1 as u8,
+                VectorLayoutVersion::V1 as u8,
+                0x99, // Invalid base type
+                raw_bytes,
+            );
+
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("base type"));
+        }
+
+        #[test]
+        fn test_vector_empty_dimensions() {
+            let result = SqlVector::from_f32(vec![]);
+            assert!(result.is_err());
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("at least one dimension")
+            );
+        }
+
+        #[test]
+        fn test_vector_too_many_dimensions() {
+            let dimensions: Vec<f32> = (0..(VECTOR_MAX_DIMENSIONS + 1)).map(|i| i as f32).collect();
+            let result = SqlVector::from_f32(dimensions);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
+        }
+
+        #[test]
+        fn test_vector_total_size() {
+            let vector = SqlVector::from_f32(vec![1.0, 2.0, 3.0]).unwrap();
+            assert_eq!(vector.total_size(), 8 + 3 * 4); // 8 byte header + 3 floats * 4 bytes
+        }
+
+        #[test]
+        fn test_column_values_vector_variant() {
+            let vector = SqlVector::from_f32(vec![1.0, 2.0, 3.0]).unwrap();
+            let col_val = ColumnValues::Vector(vector);
+
+            match col_val {
+                ColumnValues::Vector(v) => {
+                    assert_eq!(v.dimension_count(), 3);
+                    assert_eq!(v.as_f32(), Some(&[1.0, 2.0, 3.0][..]));
+                }
+                _ => panic!("Expected Vector variant"),
+            }
+        }
     }
 }

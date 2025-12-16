@@ -139,6 +139,8 @@ impl TryFrom<TdsDataType> for SqlDataTypes {
             TdsDataType::NumericN => Err(()),
             TdsDataType::MoneyN => Err(()),
             TdsDataType::None => Err(()),
+            // TODO(Phase 3): Add Vector to SqlDataTypes enum and implement proper conversion
+            TdsDataType::Vector => Err(()),
         }
     }
 
@@ -658,5 +660,10 @@ pub fn transform_col(col: ColumnValues) -> RowDataType {
         ColumnValues::Xml(sql_xml) => RowDataType::E(Buffer::from(sql_xml.bytes)),
         ColumnValues::Null => RowDataType::F(Null),
         ColumnValues::Json(sql_json) => RowDataType::E(Buffer::from(sql_json.bytes)),
+        // TODO(Phase 3): Implement Vector to JavaScript conversion
+        ColumnValues::Vector(_) => {
+            // Temporary placeholder - return null for now
+            RowDataType::F(Null)
+        }
     }
 }

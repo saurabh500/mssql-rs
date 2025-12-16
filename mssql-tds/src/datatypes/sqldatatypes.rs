@@ -56,6 +56,7 @@ pub enum TdsDataType {
     Udt = 0xF0,
     Xml = 0xF1,
     Json = 0xF4,
+    Vector = 0xF5,
 
     #[default]
     None = 0x00,
@@ -92,6 +93,7 @@ impl TdsDataType {
             TdsDataType::SsVariant => "sql_variant",
             TdsDataType::Udt => "udt",
             TdsDataType::Json => "json",
+            TdsDataType::Vector => "vector",
             TdsDataType::DateN => "date",
             TdsDataType::TimeN => "time",
             TdsDataType::DateTime2N => "datetime2",
@@ -162,6 +164,7 @@ impl TryFrom<u8> for TdsDataType {
             0xF0 => Ok(TdsDataType::Udt),
             0xF1 => Ok(TdsDataType::Xml),
             0xF4 => Ok(TdsDataType::Json),
+            0xF5 => Ok(TdsDataType::Vector),
             _ => Err(Error::ProtocolError(format(format_args!(
                 "Invalid TDS Type {value:?}"
             )))),
@@ -197,6 +200,89 @@ macro_rules! impl_try_from_tdstypes {
         }
     };
 }
+
+// Vector data type binary format definitions
+// These types define the structure of the Vector type as specified in TDS protocol
+
+/// Vector layout format identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum VectorLayoutFormat {
+    /// Version 1 layout format (0xA9)
+    V1 = 0xA9,
+}
+
+impl TryFrom<u8> for VectorLayoutFormat {
+    type Error = Error;
+
+    fn try_from(value: u8) -> TdsResult<Self> {
+        match value {
+            0xA9 => Ok(VectorLayoutFormat::V1),
+            _ => Err(Error::ProtocolError(format!(
+                "Invalid Vector layout format: 0x{:02X}",
+                value
+            ))),
+        }
+    }
+}
+
+/// Vector layout version
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum VectorLayoutVersion {
+    /// Version 1 (0x01)
+    V1 = 0x01,
+}
+
+impl TryFrom<u8> for VectorLayoutVersion {
+    type Error = Error;
+
+    fn try_from(value: u8) -> TdsResult<Self> {
+        match value {
+            0x01 => Ok(VectorLayoutVersion::V1),
+            _ => Err(Error::ProtocolError(format!(
+                "Unsupported Vector layout version: 0x{:02X}",
+                value
+            ))),
+        }
+    }
+}
+
+/// Vector base type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum VectorBaseType {
+    /// 32-bit floating point (0x00)
+    Float32 = 0x00,
+}
+
+impl VectorBaseType {
+    /// Returns the size in bytes of each element for this base type.
+    pub const fn element_size_bytes(self) -> usize {
+        match self {
+            VectorBaseType::Float32 => 4,
+        }
+    }
+}
+
+impl TryFrom<u8> for VectorBaseType {
+    type Error = Error;
+
+    fn try_from(value: u8) -> TdsResult<Self> {
+        match value {
+            0x00 => Ok(VectorBaseType::Float32),
+            _ => Err(Error::ProtocolError(format!(
+                "Unsupported Vector base type: 0x{:02X}",
+                value
+            ))),
+        }
+    }
+}
+
+// Vector size constants
+pub const VECTOR_MAX_DIMENSIONS: u16 = 1998;
+pub const VECTOR_HEADER_SIZE: usize = 8;
+pub const VECTOR_MAX_SIZE: usize = 8000;
 
 impl_try_from_tdstypes!(
     /// The subset of TdsDataTypes which are categorized as Fixed Length Types.
@@ -269,6 +355,7 @@ impl_try_from_tdstypes!(
         Image = TdsDataType::Image as u8,
         NText = TdsDataType::NText as u8,
         SsVariant = TdsDataType::SsVariant as u8,
+        Vector = TdsDataType::Vector as u8,
     }
 );
 
@@ -283,7 +370,8 @@ impl VariableLengthTypes {
             | VariableLengthTypes::BigBinary
             | VariableLengthTypes::BigChar
             | VariableLengthTypes::NVarChar
-            | VariableLengthTypes::NChar => size_of::<u16>(),
+            | VariableLengthTypes::NChar
+            | VariableLengthTypes::Vector => size_of::<u16>(),
 
             VariableLengthTypes::Guid
             | VariableLengthTypes::IntN
@@ -465,6 +553,20 @@ where
                     tds_type: data_type,
                     length,
                     type_info_variant: TypeInfoVariant::VarLenScale(vdt, scale),
+                }
+            }
+            VariableLengthTypes::Vector => {
+                // Vector uses USHORTLEN (u16) for max length and SCALE byte for base type
+                let length = reader.read_uint16().await? as usize;
+                let base_type_byte = reader.read_byte().await?;
+
+                // Validate base type
+                let _base_type = VectorBaseType::try_from(base_type_byte)?;
+
+                TypeInfo {
+                    tds_type: data_type,
+                    length,
+                    type_info_variant: TypeInfoVariant::VarLenScale(vdt, base_type_byte),
                 }
             }
             VariableLengthTypes::MoneyN
@@ -985,5 +1087,32 @@ mod tests {
     fn test_variable_length_types_equality() {
         assert_eq!(VariableLengthTypes::NVarChar, VariableLengthTypes::NVarChar);
         assert_ne!(VariableLengthTypes::NVarChar, VariableLengthTypes::Text);
+    }
+
+    // Vector-specific tests
+    #[test]
+    fn test_vector_type_meta_name() {
+        assert_eq!(TdsDataType::Vector.get_meta_type_name(), "vector");
+    }
+
+    #[test]
+    fn test_vector_try_from_u8() {
+        assert_eq!(TdsDataType::try_from(0xF5).unwrap(), TdsDataType::Vector);
+    }
+
+    #[test]
+    fn test_vector_in_variable_length_types() {
+        assert_eq!(
+            VariableLengthTypes::try_from(TdsDataType::Vector).unwrap(),
+            VariableLengthTypes::Vector
+        );
+    }
+
+    #[test]
+    fn test_vector_len_byte_count() {
+        assert_eq!(
+            VariableLengthTypes::Vector.get_len_byte_count(),
+            size_of::<u16>()
+        );
     }
 }

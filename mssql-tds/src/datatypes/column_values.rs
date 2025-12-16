@@ -5,6 +5,7 @@ use crate::core::TdsResult;
 use crate::datatypes::decoder::DecimalParts;
 use crate::datatypes::sql_json::SqlJson;
 use crate::datatypes::sql_string::SqlString;
+use crate::datatypes::sql_vector::SqlVector;
 use crate::error::Error;
 use core::fmt;
 use std::fmt::Debug;
@@ -66,6 +67,7 @@ pub enum ColumnValues {
     Null,
     Uuid(Uuid),
     Json(SqlJson),
+    Vector(SqlVector),
 }
 
 pub const DEFAULT_VARTIME_SCALE: u8 = 7;
