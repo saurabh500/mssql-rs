@@ -573,8 +573,8 @@ impl GenericDecoder {
         let mut raw_bytes = vec![0u8; element_bytes];
         reader.read_bytes(&mut raw_bytes).await?;
 
-        // Create SqlVector - from_raw validates header, parses bytes by type, and validates dimensions
-        let vector = SqlVector::from_raw(
+        // Create SqlVector - try_from_raw validates header, parses bytes by type, and validates dimensions
+        let vector = SqlVector::try_from_raw(
             layout_format_byte,
             layout_version_byte,
             base_type_byte,
@@ -2174,9 +2174,9 @@ mod test {
 
         #[test]
         fn test_vector_creation_and_validation() {
-            // Test that SqlVector::from_f32 creates valid vectors
+            // Test that SqlVector::try_from_f32 creates valid vectors
             let dimensions = vec![1.0, 2.0, 3.0];
-            let vector = SqlVector::from_f32(dimensions.clone()).unwrap();
+            let vector = SqlVector::try_from_f32(dimensions.clone()).unwrap();
 
             // Only check semantic data - TDS header fields are not stored
             assert_eq!(vector.as_f32(), Some(dimensions.as_slice()));
@@ -2185,7 +2185,7 @@ mod test {
 
         #[test]
         fn test_vector_single_dimension() {
-            let vector = SqlVector::from_f32(vec![42.5]).unwrap();
+            let vector = SqlVector::try_from_f32(vec![42.5]).unwrap();
             assert_eq!(vector.as_f32(), Some(&[42.5][..]));
             assert_eq!(vector.dimension_count(), 1);
         }
@@ -2193,7 +2193,7 @@ mod test {
         #[test]
         fn test_vector_max_dimensions() {
             let dimensions: Vec<f32> = (0..VECTOR_MAX_DIMENSIONS).map(|i| i as f32).collect();
-            let vector = SqlVector::from_f32(dimensions).unwrap();
+            let vector = SqlVector::try_from_f32(dimensions).unwrap();
             assert_eq!(vector.dimension_count(), VECTOR_MAX_DIMENSIONS);
         }
 
@@ -2206,14 +2206,14 @@ mod test {
                 raw_bytes.extend_from_slice(&val.to_le_bytes());
             }
 
-            let vector = SqlVector::from_raw(
+            let vector = SqlVector::try_from_raw(
                 VectorLayoutFormat::V1 as u8,
                 VectorLayoutVersion::V1 as u8,
                 VectorBaseType::Float32 as u8,
                 raw_bytes,
             );
 
-            // from_raw validates during construction
+            // try_from_raw validates during construction
             assert!(vector.is_ok());
             let vector = vector.unwrap();
             assert_eq!(vector.as_f32(), Some(values.as_slice()));
@@ -2227,7 +2227,7 @@ mod test {
                 raw_bytes.extend_from_slice(&val.to_le_bytes());
             }
 
-            let result = SqlVector::from_raw(
+            let result = SqlVector::try_from_raw(
                 0x00, // Invalid format
                 VectorLayoutVersion::V1 as u8,
                 VectorBaseType::Float32 as u8,
@@ -2246,7 +2246,7 @@ mod test {
                 raw_bytes.extend_from_slice(&val.to_le_bytes());
             }
 
-            let result = SqlVector::from_raw(
+            let result = SqlVector::try_from_raw(
                 VectorLayoutFormat::V1 as u8,
                 0x99, // Invalid version
                 VectorBaseType::Float32 as u8,
@@ -2265,7 +2265,7 @@ mod test {
                 raw_bytes.extend_from_slice(&val.to_le_bytes());
             }
 
-            let result = SqlVector::from_raw(
+            let result = SqlVector::try_from_raw(
                 VectorLayoutFormat::V1 as u8,
                 VectorLayoutVersion::V1 as u8,
                 0x99, // Invalid base type
@@ -2278,7 +2278,7 @@ mod test {
 
         #[test]
         fn test_vector_empty_dimensions() {
-            let result = SqlVector::from_f32(vec![]);
+            let result = SqlVector::try_from_f32(vec![]);
             assert!(result.is_err());
             assert!(
                 result
@@ -2291,20 +2291,20 @@ mod test {
         #[test]
         fn test_vector_too_many_dimensions() {
             let dimensions: Vec<f32> = (0..(VECTOR_MAX_DIMENSIONS + 1)).map(|i| i as f32).collect();
-            let result = SqlVector::from_f32(dimensions);
+            let result = SqlVector::try_from_f32(dimensions);
             assert!(result.is_err());
             assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
         }
 
         #[test]
         fn test_vector_total_size() {
-            let vector = SqlVector::from_f32(vec![1.0, 2.0, 3.0]).unwrap();
+            let vector = SqlVector::try_from_f32(vec![1.0, 2.0, 3.0]).unwrap();
             assert_eq!(vector.total_size(), 8 + 3 * 4); // 8 byte header + 3 floats * 4 bytes
         }
 
         #[test]
         fn test_column_values_vector_variant() {
-            let vector = SqlVector::from_f32(vec![1.0, 2.0, 3.0]).unwrap();
+            let vector = SqlVector::try_from_f32(vec![1.0, 2.0, 3.0]).unwrap();
             let col_val = ColumnValues::Vector(vector);
 
             match col_val {

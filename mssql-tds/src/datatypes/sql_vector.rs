@@ -36,7 +36,7 @@ impl SqlVector {
     /// # Returns
     /// * `Ok(SqlVector)` if valid
     /// * `Err` if validation fails (too many dimensions, exceeds size limit)
-    pub fn from_f32(values: Vec<f32>) -> TdsResult<Self> {
+    pub fn try_from_f32(values: Vec<f32>) -> TdsResult<Self> {
         let vector = Self {
             base_type: VectorBaseType::Float32,
             data: VectorData::Float32(values),
@@ -47,7 +47,7 @@ impl SqlVector {
 
     /// Creates a SqlVector from raw header fields and raw bytes (used during deserialization).
     /// Validates the TDS header fields then parses and stores the typed data.
-    pub(crate) fn from_raw(
+    pub(crate) fn try_from_raw(
         layout_format: u8,
         layout_version: u8,
         base_type: u8,
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn test_from_f32_valid() {
         let values = vec![1.0, 2.0, 3.0];
-        let vector = SqlVector::from_f32(values);
+        let vector = SqlVector::try_from_f32(values);
         assert!(vector.is_ok());
         let vector = vector.unwrap();
         assert_eq!(vector.as_f32(), Some(&[1.0, 2.0, 3.0][..]));
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn test_validate_too_many_dimensions() {
         let values = vec![0.0f32; (VECTOR_MAX_DIMENSIONS + 1) as usize];
-        let result = SqlVector::from_f32(values);
+        let result = SqlVector::try_from_f32(values);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
     }
@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn test_validate_unsupported_format() {
         let raw_bytes = 1.0_f32.to_le_bytes().to_vec();
-        let result = SqlVector::from_raw(
+        let result = SqlVector::try_from_raw(
             0x00,
             VectorLayoutVersion::V1 as u8,
             VectorBaseType::Float32 as u8,
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn test_validate_unsupported_version() {
         let raw_bytes = 1.0_f32.to_le_bytes().to_vec();
-        let result = SqlVector::from_raw(
+        let result = SqlVector::try_from_raw(
             VectorLayoutFormat::V1 as u8,
             0x02,
             VectorBaseType::Float32 as u8,
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_validate_unsupported_base_type() {
         let raw_bytes = 1.0_f32.to_le_bytes().to_vec();
-        let result = SqlVector::from_raw(
+        let result = SqlVector::try_from_raw(
             VectorLayoutFormat::V1 as u8,
             VectorLayoutVersion::V1 as u8,
             0xFF,
@@ -213,14 +213,14 @@ mod tests {
     #[test]
     fn test_total_size() {
         let values = vec![1.0, 2.0, 3.0];
-        let vector = SqlVector::from_f32(values).unwrap();
+        let vector = SqlVector::try_from_f32(values).unwrap();
         assert_eq!(vector.total_size(), VECTOR_HEADER_SIZE + 3 * 4); // 8 + 12 = 20
     }
 
     #[test]
     fn test_base_type() {
         let values = vec![1.0, 2.0, 3.0];
-        let vector = SqlVector::from_f32(values).unwrap();
+        let vector = SqlVector::try_from_f32(values).unwrap();
         assert_eq!(vector.base_type(), VectorBaseType::Float32);
     }
 }
