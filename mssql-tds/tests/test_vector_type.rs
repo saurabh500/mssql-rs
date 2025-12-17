@@ -2,18 +2,7 @@
 // Licensed under the MIT License.
 
 //! Integration tests for SQL Server Vector data type deserialization.
-//!
 //! These tests require SQL Server 2025 or later with Vector support enabled.
-//!
-//! ## Running the Tests
-//!
-//! ```bash
-//! # Run all vector integration tests
-//! cargo test --test test_vector_type
-//!
-//! # Run a specific test
-//! cargo test --test test_vector_type test_vector_basic_deserialization
-//! ```
 //!
 //! Note: These tests will fail if connecting to a SQL Server version that doesn't support
 //! the Vector data type (prior to SQL Server 2025). In the future, these tests should be

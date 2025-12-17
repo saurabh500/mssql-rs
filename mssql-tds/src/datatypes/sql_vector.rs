@@ -8,11 +8,11 @@ use crate::datatypes::sqldatatypes::{
 };
 use crate::error::Error;
 
-/// Internal enum representing the typed data stored in a SqlVector.
+/// Enum representing the typed data stored in a SqlVector.
 /// In future, this enum will be extended to support additional base types
 /// such as Float16, Int32, etc.
 #[derive(Debug, PartialEq, Clone)]
-enum VectorData {
+pub enum VectorData {
     Float32(Vec<f32>),
 }
 
@@ -21,18 +21,10 @@ enum VectorData {
 /// The Vector type stores an ordered sequence of elements.
 /// Version 1 supports single-precision float (float32) with a maximum of 1998 dimensions
 /// and a total size limit of 8000 bytes.
-///
-/// ## ABI Stability
-///
-/// The `data` field is boxed inside SqlVector to maintain ABI stability.
-/// When new vector base types (Float16, Int32, Int8) are added, the enum size
-/// may change, but the Box pointer size in SqlVector remains constant, preventing
-/// memory corruption in existing compiled binaries that load newer library versions.
-///
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlVector {
-    base_type: VectorBaseType, // Preserves original type from SQL Server
-    data: Box<VectorData>,     // Boxed for ABI stability
+    pub base_type: VectorBaseType, // Preserves original type from SQL Server
+    pub data: VectorData,
 }
 
 impl SqlVector {
@@ -47,7 +39,7 @@ impl SqlVector {
     pub fn from_f32(values: Vec<f32>) -> TdsResult<Self> {
         let vector = Self {
             base_type: VectorBaseType::Float32,
-            data: Box::new(VectorData::Float32(values)),
+            data: VectorData::Float32(values),
         };
         vector.validate_dimensions()?;
         Ok(vector)
@@ -73,7 +65,7 @@ impl SqlVector {
                     .chunks_exact(4)
                     .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                     .collect();
-                Box::new(VectorData::Float32(f32_values))
+                VectorData::Float32(f32_values)
             }
         };
 
@@ -88,14 +80,14 @@ impl SqlVector {
     /// Returns a reference to the dimension values as a float slice.
     /// Returns None if the vector is not Float32 type.
     pub fn as_f32(&self) -> Option<&[f32]> {
-        match self.data.as_ref() {
+        match &self.data {
             VectorData::Float32(v) => Some(v),
         }
     }
 
     /// Returns the number of dimensions in this vector.
     pub fn dimension_count(&self) -> u16 {
-        match self.data.as_ref() {
+        match &self.data {
             VectorData::Float32(v) => v.len() as u16,
         }
     }
@@ -110,7 +102,7 @@ impl SqlVector {
     /// Returns the total size in bytes (header + dimension values).
     /// Used during serialization (Phase 3).
     pub(crate) fn total_size(&self) -> usize {
-        let element_bytes = match self.data.as_ref() {
+        let element_bytes = match &self.data {
             VectorData::Float32(v) => v.len() * size_of::<f32>(),
         };
         VECTOR_HEADER_SIZE + element_bytes
@@ -118,7 +110,7 @@ impl SqlVector {
 
     /// Validates the vector dimensions (count and total size).
     fn validate_dimensions(&self) -> TdsResult<()> {
-        let dimension_count = match self.data.as_ref() {
+        let dimension_count = match &self.data {
             VectorData::Float32(v) => v.len(),
         };
 
