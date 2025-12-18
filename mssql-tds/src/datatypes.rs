@@ -7,6 +7,7 @@ pub mod decoder;
 pub(crate) mod encoder;
 pub mod sql_json;
 pub mod sql_string;
+pub mod sql_vector;
 pub mod sqldatatypes;
 pub mod sqltypes;
 pub mod tds_value_serializer;
