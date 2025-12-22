@@ -87,6 +87,8 @@ impl TdsValueSerializer {
             ColumnValues::Decimal(v) | ColumnValues::Numeric(v) => {
                 Self::serialize_decimal(writer, v, ctx).await
             }
+            ColumnValues::SmallMoney(v) => Self::serialize_smallmoney(writer, v, ctx).await,
+            ColumnValues::Money(v) => Self::serialize_money(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -370,6 +372,94 @@ impl TdsValueSerializer {
             writer.write_i32_async(chunk).await?;
         }
 
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_smallmoney<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &crate::datatypes::column_values::SqlSmallMoney,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // SMALLMONEY format in TDS:
+        // - For MoneyN (nullable, 0x6E): length byte (4) + 4-byte integer
+        // - For Money4 (fixed, 0x7A): 4-byte integer only
+        // The value is stored as a 4-byte signed integer scaled by 10,000
+        // (e.g., $123.4567 is stored as 1234567)
+
+        if !ctx.is_fixed_type() {
+            // MoneyN with length 4: length byte + value (5 bytes total)
+            match writer.has_space(5) {
+                false => {
+                    writer.write_byte_async(4).await?; // Length for MoneyN (4 bytes)
+                    writer.write_i32_async(value.int_val).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(4); // Length for MoneyN (4 bytes)
+                    writer.write_i32_unchecked(value.int_val);
+                }
+            }
+        } else {
+            // Fixed type (Money4, 0x7A) - just write value (4 bytes)
+            match writer.has_space(4) {
+                false => {
+                    writer.write_i32_async(value.int_val).await?;
+                }
+                true => {
+                    writer.write_i32_unchecked(value.int_val);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_money<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &crate::datatypes::column_values::SqlMoney,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // MONEY format in TDS:
+        // - For MoneyN (nullable, 0x6E): length byte (8) + 8 bytes (two 4-byte integers)
+        // - For Money (fixed, 0x3C): 8 bytes (two 4-byte integers) only
+        // The value is stored as two 4-byte signed integers in mixed endian format:
+        //   - First 4 bytes: MSB (most significant 4 bytes)
+        //   - Second 4 bytes: LSB (least significant 4 bytes)
+        // The combined value is scaled by 10,000 (e.g., $123.4567 is stored as 1234567)
+
+        if !ctx.is_fixed_type() {
+            // MoneyN with length 8: length byte + value (9 bytes total)
+            match writer.has_space(9) {
+                false => {
+                    writer.write_byte_async(8).await?; // Length for MoneyN (8 bytes)
+                    writer.write_i32_async(value.msb_part).await?; // MSB first
+                    writer.write_i32_async(value.lsb_part).await?; // LSB second
+                }
+                true => {
+                    writer.write_byte_unchecked(8); // Length for MoneyN (8 bytes)
+                    writer.write_i32_unchecked(value.msb_part); // MSB first
+                    writer.write_i32_unchecked(value.lsb_part); // LSB second
+                }
+            }
+        } else {
+            // Fixed type (Money, 0x3C) - just write value (8 bytes)
+            match writer.has_space(8) {
+                false => {
+                    writer.write_i32_async(value.msb_part).await?; // MSB first
+                    writer.write_i32_async(value.lsb_part).await?; // LSB second
+                }
+                true => {
+                    writer.write_i32_unchecked(value.msb_part); // MSB first
+                    writer.write_i32_unchecked(value.lsb_part); // LSB second
+                }
+            }
+        }
         Ok(())
     }
 }

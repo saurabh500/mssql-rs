@@ -21,6 +21,8 @@ use mssql_tds::error::Error;
 use mssql_tds::message::bulk_load::StreamingBulkLoadWriter;
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
+use rust_decimal::prelude::*;
+use rust_decimal::Decimal;
 
 /// Represents the source Python type for conversion mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,6 +258,30 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
+            // String → Money/SmallMoney: Parse string as money
+            (SourcePythonType::String, SqlDbType::Money | SqlDbType::SmallMoney) => {
+                let result = Self::coerce_string_to_money(py_obj, target_meta.sql_type)?;
+                Ok(Some(result))
+            }
+
+            // Int → Money/SmallMoney: Convert integer to money
+            (SourcePythonType::Int, SqlDbType::Money | SqlDbType::SmallMoney) => {
+                let result = Self::coerce_int_to_money(py_obj, target_meta.sql_type)?;
+                Ok(Some(result))
+            }
+
+            // Float → Money/SmallMoney: Convert float to money
+            (SourcePythonType::Float, SqlDbType::Money | SqlDbType::SmallMoney) => {
+                let result = Self::coerce_float_to_money(py_obj, target_meta.sql_type)?;
+                Ok(Some(result))
+            }
+
+            // Decimal → Money/SmallMoney: Convert decimal to money
+            (SourcePythonType::Decimal, SqlDbType::Money | SqlDbType::SmallMoney) => {
+                let result = Self::coerce_decimal_to_money(py_obj, target_meta.sql_type)?;
+                Ok(Some(result))
+            }
+
             // No coercion needed - use default conversion
             _ => Ok(None),
         }
@@ -474,6 +500,198 @@ impl PythonRowAdapter {
         Err(Error::UsageError(
             "Failed to extract Decimal value as string".to_string(),
         ))
+    }
+
+    /// Coerce a Python string to a SQL Server MONEY/SMALLMONEY type.
+    fn coerce_string_to_money(
+        py_obj: &Bound<'_, PyAny>,
+        target_type: SqlDbType,
+    ) -> TdsResult<ColumnValues> {
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
+
+        let s = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+        // Parse the string as f64, then convert to money
+        let value = s.parse::<f64>().map_err(|e| {
+            Error::UsageError(format!(
+                "Failed to parse string '{}' as money value: {}",
+                s, e
+            ))
+        })?;
+
+        Self::float_to_money(value, target_type)
+    }
+
+    /// Coerce a Python integer to a SQL Server MONEY/SMALLMONEY type.
+    fn coerce_int_to_money(
+        py_obj: &Bound<'_, PyAny>,
+        target_type: SqlDbType,
+    ) -> TdsResult<ColumnValues> {
+        let value = py_obj
+            .extract::<i64>()
+            .map_err(|e| Error::UsageError(format!("Failed to extract integer: {}", e)))?;
+
+        // Convert to f64, then to money (money values are scaled by 10,000)
+        let money_value = value as f64;
+        Self::float_to_money(money_value, target_type)
+    }
+
+    /// Coerce a Python float to a SQL Server MONEY/SMALLMONEY type.
+    fn coerce_float_to_money(
+        py_obj: &Bound<'_, PyAny>,
+        target_type: SqlDbType,
+    ) -> TdsResult<ColumnValues> {
+        let value = py_obj
+            .extract::<f64>()
+            .map_err(|e| Error::UsageError(format!("Failed to extract float: {}", e)))?;
+
+        Self::float_to_money(value, target_type)
+    }
+
+    /// Coerce a Python Decimal to a SQL Server MONEY/SMALLMONEY type.
+    /// Uses rust_decimal for precision-preserving conversion without f64 loss.
+    fn coerce_decimal_to_money(
+        py_obj: &Bound<'_, PyAny>,
+        target_type: SqlDbType,
+    ) -> TdsResult<ColumnValues> {
+        // Extract Decimal as string
+        if let Ok(decimal_str) = py_obj.call_method0("__str__") {
+            if let Ok(s) = decimal_str.extract::<String>() {
+                // Parse using rust_decimal - handles precision perfectly
+                let decimal = Decimal::from_str(&s).map_err(|e| {
+                    Error::UsageError(format!("Failed to parse Decimal '{}': {}", s, e))
+                })?;
+
+                return Self::decimal_to_money(decimal, target_type);
+            }
+        }
+
+        Err(Error::UsageError(
+            "Failed to extract Decimal value for money conversion".to_string(),
+        ))
+    }
+
+    /// Convert rust_decimal::Decimal to MONEY/SMALLMONEY
+    /// Money values are scaled by 10,000 and stored as integers.
+    /// This approach avoids f64 precision loss for large or high-precision values.
+    fn decimal_to_money(decimal: Decimal, target_type: SqlDbType) -> TdsResult<ColumnValues> {
+        // Money types have exactly 4 decimal places
+        const MONEY_SCALE: u32 = 4;
+
+        // Scale to 4 decimal places (banker's rounding is default in rust_decimal)
+        let scaled_decimal = decimal.round_dp(MONEY_SCALE);
+
+        // Multiply by 10,000 to get the integer representation
+        let money_decimal = scaled_decimal * Decimal::from(10000);
+
+        // Convert to i64 (this will return None if out of range)
+        let scaled_value = money_decimal.to_i64().ok_or_else(|| {
+            Error::UsageError(format!(
+                "Decimal value {} out of range for money conversion",
+                decimal
+            ))
+        })?;
+
+        match target_type {
+            SqlDbType::SmallMoney => {
+                // SMALLMONEY range: -214,748.3648 to 214,748.3647
+                // Stored as i32, so range is -2,147,483,648 to 2,147,483,647 (scaled by 10000)
+                const SMALLMONEY_MIN: i64 = -2_147_483_648;
+                const SMALLMONEY_MAX: i64 = 2_147_483_647;
+
+                if !(SMALLMONEY_MIN..=SMALLMONEY_MAX).contains(&scaled_value) {
+                    return Err(Error::UsageError(format!(
+                        "Value {} exceeds SMALLMONEY range (-214748.3648 to 214748.3647)",
+                        decimal
+                    )));
+                }
+
+                Ok(ColumnValues::SmallMoney(
+                    mssql_tds::datatypes::column_values::SqlSmallMoney {
+                        int_val: scaled_value as i32,
+                    },
+                ))
+            }
+            SqlDbType::Money => {
+                // MONEY range: -922,337,203,685,477.5808 to 922,337,203,685,477.5807
+                // Fits in i64 when scaled by 10000
+                let lsb_part = (scaled_value & 0xFFFFFFFF) as i32;
+                let msb_part = (scaled_value >> 32) as i32;
+
+                Ok(ColumnValues::Money(
+                    mssql_tds::datatypes::column_values::SqlMoney { lsb_part, msb_part },
+                ))
+            }
+            _ => Err(Error::UsageError(format!(
+                "Invalid target type {:?} for money conversion",
+                target_type
+            ))),
+        }
+    }
+
+    /// Helper: Convert f64 to MONEY or SMALLMONEY with range validation.
+    ///
+    /// Money values are stored as scaled integers (scaled by 10,000):
+    /// - MONEY: 8-byte integer (two 4-byte parts: MSB, LSB)
+    /// - SMALLMONEY: 4-byte integer
+    fn float_to_money(value: f64, target_type: SqlDbType) -> TdsResult<ColumnValues> {
+        // Money types have 4 decimal places and are stored as integers scaled by 10,000
+        const MONEY_SCALE: f64 = 10000.0;
+
+        // MONEY range: -922,337,203,685,477.5808 to 922,337,203,685,477.5807
+        const MONEY_MIN: f64 = -922_337_203_685_477.6;
+        const MONEY_MAX: f64 = 922_337_203_685_477.6;
+
+        // SMALLMONEY range: -214,748.3648 to 214,748.3647
+        const SMALLMONEY_MIN: f64 = -214_748.364_8;
+        const SMALLMONEY_MAX: f64 = 214_748.364_7;
+
+        match target_type {
+            SqlDbType::SmallMoney => {
+                // Validate range for SMALLMONEY
+                if !(SMALLMONEY_MIN..=SMALLMONEY_MAX).contains(&value) {
+                    return Err(Error::UsageError(format!(
+                        "Value {} exceeds SMALLMONEY range ({} to {})",
+                        value, SMALLMONEY_MIN, SMALLMONEY_MAX
+                    )));
+                }
+
+                // Scale by 10,000 and convert to i32
+                let scaled = (value * MONEY_SCALE).round() as i32;
+
+                Ok(ColumnValues::SmallMoney(
+                    mssql_tds::datatypes::column_values::SqlSmallMoney { int_val: scaled },
+                ))
+            }
+            SqlDbType::Money => {
+                // Validate range for MONEY
+                if !(MONEY_MIN..=MONEY_MAX).contains(&value) {
+                    return Err(Error::UsageError(format!(
+                        "Value {} exceeds MONEY range ({} to {})",
+                        value, MONEY_MIN, MONEY_MAX
+                    )));
+                }
+
+                // Scale by 10,000 and convert to i64
+                let scaled = (value * MONEY_SCALE).round() as i64;
+
+                // Split into MSB (high 32 bits) and LSB (low 32 bits)
+                let lsb_part = (scaled & 0xFFFFFFFF) as i32;
+                let msb_part = (scaled >> 32) as i32;
+
+                Ok(ColumnValues::Money(
+                    mssql_tds::datatypes::column_values::SqlMoney { lsb_part, msb_part },
+                ))
+            }
+            _ => Err(Error::UsageError(format!(
+                "Invalid target type {:?} for money conversion",
+                target_type
+            ))),
+        }
     }
 }
 
