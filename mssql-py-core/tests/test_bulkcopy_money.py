@@ -636,10 +636,14 @@ def test_cursor_bulkcopy_money_precision_handling(client_context):
     cursor.execute(f"SELECT id, value FROM {table_name} ORDER BY id")
     rows = cursor.fetchall()
     assert len(rows) == 3
-    # SQL Server uses banker's rounding for MONEY types
-    assert rows[0][0] == Decimal("1000.1235")  # Rounded from 1000.12345
+    # SQL Server uses banker's rounding for MONEY types (round half to even)
+    # 1000.12345 -> 1000.1234 (5th digit is 5, 4th digit is 4 (even), round down)
+    assert rows[0][0] == Decimal("1000.1234")  # Rounded from 1000.12345
+    # 100.56789 -> 100.5679 (9th digit > 5, round up)
     assert rows[0][1] == Decimal("100.5679")   # Rounded from 100.56789
+    # 2000.999999 -> 2001.0000 (rounds up)
     assert rows[1][0] == Decimal("2001.0000")  # Rounded from 2000.999999
+    # 200.111111 -> 200.1111 (truncates/rounds down)
     assert rows[1][1] == Decimal("200.1111")   # Rounded from 200.111111
 
     # Cleanup
