@@ -648,6 +648,70 @@ def test_cursor_bulkcopy_money_precision_handling(client_context):
 
 
 @pytest.mark.integration
+def test_cursor_bulkcopy_money_high_scale_precision(client_context):
+    """Test cursor bulkcopy with MONEY values having scale > 5.
+
+    MONEY and SMALLMONEY types have fixed 4 decimal places. This test verifies
+    behavior when input values have more than 5 decimal places (scale > 5).
+    We want to observe how the Rust code handles this precision conversion.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    # Create a test table with MONEY and SMALLMONEY columns
+    table_name = "BulkCopyMoneyHighScaleTable"
+    cursor.execute(
+        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+    )
+    cursor.execute(f"CREATE TABLE {table_name} (id MONEY, value SMALLMONEY)")
+
+    # Prepare test data with scale > 5 (more than 5 decimal places)
+    data = [
+        (Decimal("1000.123456"), Decimal("100.567890")),  # 6 decimal places
+        (Decimal("2000.1234567"), Decimal("200.9876543")),  # 7 decimal places
+        (Decimal("3000.12345678"), Decimal("300.987654321")),  # 8+ decimal places
+        (Decimal("4000.999999999"), Decimal("400.1111111")),  # 9+ decimal places
+    ]
+
+    # Execute bulk copy to see what happens in Rust code
+    result = cursor.bulkcopy(
+        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+    )
+
+    # Verify results
+    assert result is not None
+    assert result["rows_copied"] == 4
+    assert result["batch_count"] == 1
+    assert "elapsed_time" in result
+
+    # Verify data was inserted - should be rounded to 4 decimal places
+    cursor.execute(f"SELECT id, value FROM {table_name} ORDER BY id")
+    rows = cursor.fetchall()
+    assert len(rows) == 4
+    
+    # Print actual values to observe Rust behavior
+    print(f"Row 1: id={rows[0][0]}, value={rows[0][1]}")
+    print(f"Row 2: id={rows[1][0]}, value={rows[1][1]}")
+    print(f"Row 3: id={rows[2][0]}, value={rows[2][1]}")
+    print(f"Row 4: id={rows[3][0]}, value={rows[3][1]}")
+    
+    # Verify that rounding occurred (SQL Server uses banker's rounding)
+    # These assertions verify the expected rounding behavior
+    assert rows[0][0] == Decimal("1000.1235")  # 1000.123456 -> 1000.1235
+    assert rows[0][1] == Decimal("100.5679")   # 100.567890 -> 100.5679
+    assert rows[1][0] == Decimal("2000.1235")  # 2000.1234567 -> 2000.1235
+    assert rows[1][1] == Decimal("200.9877")   # 200.9876543 -> 200.9877
+    assert rows[2][0] == Decimal("3000.1235")  # 3000.12345678 -> 3000.1235
+    assert rows[2][1] == Decimal("300.9877")   # 300.987654321 -> 300.9877
+    assert rows[3][0] == Decimal("4001.0000")  # 4000.999999999 -> 4001.0000
+    assert rows[3][1] == Decimal("400.1111")   # 400.1111111 -> 400.1111
+
+    # Cleanup
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
+
+
+@pytest.mark.integration
 def test_cursor_bulkcopy_money_large_values(client_context):
     """Test cursor bulkcopy with large MONEY values within valid range.
 
