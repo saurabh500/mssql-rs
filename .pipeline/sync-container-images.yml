@@ -28,7 +28,6 @@ schedules:
   displayName: Weekly Python image build (Monday 3 AM UTC)
   branches:
     include:
-    - main
     - development
   always: true
 
