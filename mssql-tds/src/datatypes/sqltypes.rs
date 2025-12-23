@@ -504,8 +504,11 @@ impl SqlType {
                 }
             }
             None => {
-                // Write the NULL length.
-                packet_writer.write_u64_async(PLP_NULL).await?;
+                match param_len {
+                    // For max length, we send a PLP NULL, for all other values, we send a NULL length which is u16::MAX.
+                    u16::MAX => packet_writer.write_u64_async(PLP_NULL).await?,
+                    _ => packet_writer.write_u16_async(u16::MAX).await?,
+                };
             }
         }
         Ok(())
@@ -1819,6 +1822,40 @@ mod nvarchar_tests {
         let _ignore_collation_info = test_cursor.get_u32();
         let _ignore_collation_sortid = test_cursor.get_u8();
         assert_eq!(test_cursor.get_u64_le(), PLP_NULL);
+    }
+
+    #[tokio::test]
+    async fn test_write_null_nvarchar_non_plp_via_serialize_nvarchar() {
+        // Use a non-MAX declared length to trigger non-PLP NULL path
+        let declared_len_chars: u16 = 100; // characters
+        let bit = SqlType::NVarchar(None, declared_len_chars);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+        let collation = SqlCollation::default();
+
+        // Call serialize_nvarchar directly to exercise the NVARCHAR-specific path
+        bit.serialize_nvarchar(&mut packet_writer, &collation, &None, declared_len_chars)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::NVarChar as u8); // TDS type
+        // NVARCHAR metadata length is bytes, so chars*2
+        assert_eq!(test_cursor.get_u16_le(), declared_len_chars * 2);
+        let _ignore_collation_info = test_cursor.get_u32();
+        let _ignore_collation_sortid = test_cursor.get_u8();
+        // Non-PLP NULL must write u16::MAX as the data length
+        assert_eq!(test_cursor.get_u16_le(), u16::MAX);
     }
 }
 
