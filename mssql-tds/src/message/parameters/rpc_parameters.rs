@@ -124,6 +124,7 @@ impl RpcParameter {
                     None => "18, 10".to_string(), // Default precision and scale
                 }
             }
+            SqlType::Vector(_, dims, _) => dims.to_string(),
             _ => "".to_string(),
         };
 
@@ -219,7 +220,13 @@ fn build_parameter_list_string_impl(named_params: &Vec<RpcParameter>, params_lis
             } else {
                 params_list.push_str(", ");
             }
-            params_list.push_str(&format!("{param_name} {param_type_name} "));
+            // Include OUTPUT for parameters marked as BY_REF_VALUE
+            let output_suffix = if param.options.contains(StatusFlags::BY_REF_VALUE) {
+                " OUTPUT"
+            } else {
+                ""
+            };
+            params_list.push_str(&format!("{param_name} {param_type_name}{output_suffix} "));
         }
     }
 }
@@ -258,6 +265,7 @@ impl From<&SqlType> for TdsDataType {
             SqlType::Uuid(_) => TdsDataType::Guid,
             SqlType::DateTime(_) => TdsDataType::DateTime,
             SqlType::Date(_) => TdsDataType::DateN,
+            SqlType::Vector(_, _, _) => TdsDataType::Vector,
         }
     }
 }
@@ -312,5 +320,13 @@ mod tests {
         let sql_type = SqlType::VarBinaryMax(None);
         let rpc_param = RpcParameter::get_sql_name(&sql_type);
         assert_eq!(rpc_param, "varbinary(MAX)".to_string());
+
+        let sql_type = SqlType::Vector(
+            None,
+            3,
+            crate::datatypes::sqldatatypes::VectorBaseType::Float32,
+        );
+        let rpc_param = RpcParameter::get_sql_name(&sql_type);
+        assert_eq!(rpc_param, "vector(3)".to_string());
     }
 }

@@ -142,7 +142,7 @@ impl SqlDbType {
             SqlDbType::Json => 0xF4,             // TdsDataType::Json
             SqlDbType::Variant => 0x62,          // TdsDataType::SsVariant
             SqlDbType::Udt => 0xF0,              // TdsDataType::Udt
-            SqlDbType::Vector => 0x00,           // Future type, placeholder
+            SqlDbType::Vector => 0xF5,           // TdsDataType::Vector
         }
     }
 
