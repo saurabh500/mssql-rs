@@ -67,6 +67,51 @@ mod vector_integration_tests {
         }
     }
 
+    /// Test vector column metadata via get_metadata(): type, length, scale, flags
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_vector_metadata_fields() {
+        use mssql_tds::datatypes::sqldatatypes::{TdsDataType, VECTOR_HEADER_SIZE, VectorBaseType};
+
+        let context = create_context();
+        let mut client = begin_connection(context).await;
+
+        let query = "SELECT
+            CAST('[1.0, 2.0, 3.0]' AS VECTOR(3)) AS NonNullVec,
+            CAST(NULL AS VECTOR(3)) AS NullVec";
+
+        client.execute(query.to_string(), None, None).await.unwrap();
+
+        let resultset = client
+            .get_current_resultset()
+            .expect("Expected a result set");
+
+        let metadata = resultset.get_metadata();
+        assert_eq!(metadata.len(), 2);
+
+        // Expected metadata values for VECTOR(3), Float32 base type
+        let expected_length = VECTOR_HEADER_SIZE + 3 * VectorBaseType::Float32.element_size_bytes();
+        let expected_scale = VectorBaseType::Float32 as u8; // SCALE carries base type byte
+
+        // Column 0: NonNullVec
+        let col0 = &metadata[0];
+        assert_eq!(col0.column_name, "NonNullVec");
+        assert_eq!(col0.data_type, TdsDataType::Vector);
+        assert_eq!(col0.type_info.length, expected_length);
+        assert_eq!(col0.get_scale(), expected_scale);
+        assert!(!col0.is_plp());
+        // Expression columns are generally nullable in SQL Server metadata
+        assert!(col0.is_nullable());
+
+        // Column 1: NullVec
+        let col1 = &metadata[1];
+        assert_eq!(col1.column_name, "NullVec");
+        assert_eq!(col1.data_type, TdsDataType::Vector);
+        assert_eq!(col1.type_info.length, expected_length);
+        assert_eq!(col1.get_scale(), expected_scale);
+        assert!(!col1.is_plp());
+        assert!(col1.is_nullable());
+    }
+
     /// Test vector with single dimension
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vector_single_dimension() {
