@@ -39,7 +39,7 @@ parameters:
 steps:
 - task: DockerInstaller@0
   inputs:
-    dockerVersion: '27.0.3-1'
+    dockerVersion: '29.0.0'
   displayName: Install Docker
 
 
