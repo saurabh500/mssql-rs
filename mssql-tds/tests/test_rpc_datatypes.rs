@@ -211,6 +211,7 @@ mod rpc_datatypes {
     async fn test_sp_execute_null_for_data_types() {
         let columns = vec![
             ("nvarchar", SqlType::NVarchar(None, 100)),
+            ("nvarcharmax", SqlType::NVarcharMax(None)),
             ("varbinary", SqlType::VarBinary(None, 100)),
             ("varbinarymax", SqlType::VarBinaryMax(None)),
             ("int", SqlType::Int(None)),
@@ -220,7 +221,8 @@ mod rpc_datatypes {
             ("float", SqlType::Float(None)),
             ("real", SqlType::Real(None)),
             ("xml", SqlType::Xml(None)),
-            ("varchar", SqlType::VarcharMax(None)),
+            ("varchar", SqlType::Varchar(None, 100)),
+            ("varcharmax", SqlType::VarcharMax(None)),
             ("date", SqlType::Date(None)),
             ("datetime", SqlType::DateTime(None)),
             ("datetime2", SqlType::DateTime2(None)),
