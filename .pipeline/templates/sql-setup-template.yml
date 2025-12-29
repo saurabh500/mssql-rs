@@ -174,7 +174,7 @@ steps:
 - ${{ if eq(parameters.buildTarget, 'Linux') }}:
   - task: DockerInstaller@0
     inputs:
-      dockerVersion: '17.09.0-ce'
+      dockerVersion: '29.0.0'
 
   - script: |
       set -euo pipefail

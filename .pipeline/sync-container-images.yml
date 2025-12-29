@@ -206,7 +206,7 @@ stages:
     - task: DockerInstaller@0
       displayName: 'Install Docker'
       inputs:
-        dockerVersion: '17.09.0-ce'
+        dockerVersion: '29.0.0'
 
     - template: templates/install-ubuntu-dependency.yaml
       parameters:
