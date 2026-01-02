@@ -31,95 +31,6 @@ const PLP_NULL: u64 = 0xFFFFFFFFFFFFFFFF;
 const PLP_UNKNOWN: u64 = 0xFFFFFFFFFFFFFFFE;
 const PLP_TERMINATOR: u32 = 0x00000000;
 
-/// Bulk load message for transmitting bulk copy data.
-///
-/// This message encapsulates column metadata and row data for the TDS bulk load protocol.
-pub(crate) struct BulkLoadMessage {
-    /// Destination table name
-    pub table_name: String,
-
-    /// Column metadata
-    pub column_metadata: Vec<BulkCopyColumnMetadata>,
-
-    /// Row data (batch)
-    pub rows: Vec<Vec<ColumnValues>>,
-
-    /// Bulk copy options
-    pub options: BulkCopyOptions,
-}
-
-impl BulkLoadMessage {
-    /// Create a new bulk load message.
-    pub fn new(
-        table_name: String,
-        column_metadata: Vec<BulkCopyColumnMetadata>,
-        rows: Vec<Vec<ColumnValues>>,
-        options: BulkCopyOptions,
-    ) -> Self {
-        Self {
-            table_name,
-            column_metadata,
-            rows,
-            options,
-        }
-    }
-
-    /// Build the "INSERT BULK" SQL command that must be sent before the bulk data.
-    ///
-    /// This matches .NET's SqlBulkCopy.AnalyzeTargetAndCreateUpdateBulkCommand() behavior.
-    /// Format: INSERT BULK table_name (col1 type1, col2 type2, ...) [WITH (options)]
-    pub fn build_insert_bulk_command(&self) -> String {
-        let mut command = format!("INSERT BULK {} (", self.table_name);
-
-        for (i, col_meta) in self.column_metadata.iter().enumerate() {
-            if i > 0 {
-                command.push_str(", ");
-            }
-
-            // Column name
-            command.push_str(&format!("[{}] ", col_meta.column_name));
-
-            // Type definition
-            let type_def = self.get_sql_type_definition(col_meta);
-            command.push_str(&type_def);
-        }
-
-        command.push(')');
-
-        // Add WITH clause for options
-        let mut options = Vec::new();
-        if self.options.keep_nulls {
-            options.push("KEEP_NULLS");
-        }
-        if self.options.table_lock {
-            options.push("TABLOCK");
-        }
-        if self.options.check_constraints {
-            options.push("CHECK_CONSTRAINTS");
-        }
-        if self.options.fire_triggers {
-            options.push("FIRE_TRIGGERS");
-        }
-        if self.options.keep_identity {
-            options.push("KEEP_IDENTITY");
-        }
-
-        if !options.is_empty() {
-            command.push_str(" WITH (");
-            command.push_str(&options.join(", "));
-            command.push(')');
-        }
-
-        command
-    }
-
-    /// Get SQL type definition string for a column.
-    fn get_sql_type_definition(&self, col_meta: &BulkCopyColumnMetadata) -> String {
-        // Reuse the implementation from BulkCopyColumnMetadata
-        col_meta.get_sql_type_definition()
-    }
-}
-
 /// Streaming bulk load writer for transmitting bulk copy data row-by-row.
 ///
 /// This writer enables streaming bulk copy without accumulating rows in memory.
@@ -757,40 +668,6 @@ pub(crate) fn build_insert_bulk_command(
     }
 
     command
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::datatypes::bulk_copy_metadata::{SqlDbType, TypeLength};
-
-    #[test]
-    fn test_bulk_load_message_creation() {
-        let metadata = vec![
-            BulkCopyColumnMetadata::new("id", SqlDbType::Int, 0x38)
-                .with_length(4, TypeLength::Fixed(4)),
-            BulkCopyColumnMetadata::new("name", SqlDbType::NVarChar, 0xE7)
-                .with_length(100, TypeLength::Variable(100)),
-        ];
-
-        use crate::datatypes::sql_string::SqlString;
-
-        let rows = vec![vec![
-            ColumnValues::Int(1),
-            ColumnValues::String(SqlString::from_utf8_string("test".to_string())),
-        ]];
-
-        let msg = BulkLoadMessage::new(
-            "TestTable".to_string(),
-            metadata,
-            rows,
-            BulkCopyOptions::default(),
-        );
-
-        assert_eq!(msg.table_name, "TestTable");
-        assert_eq!(msg.column_metadata.len(), 2);
-        assert_eq!(msg.rows.len(), 1);
-    }
 }
 
 // Include additional unit tests from separate test file
