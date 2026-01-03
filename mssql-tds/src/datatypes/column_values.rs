@@ -213,15 +213,24 @@ pub struct SqlDate {
 }
 
 impl SqlDate {
+    // SQL Server DATE range: 0001-01-01 to 9999-12-31
+    // 0001-01-01 has ordinal 1
+    // 9999-12-31 has ordinal 3652059
+    const MIN_DAYS: u32 = 1; // 0001-01-01
+    const MAX_DAYS: u32 = 3_652_059; // 9999-12-31
+
     pub fn create(days: u32) -> TdsResult<SqlDate> {
-        if days <= 0xFFFFFF {
+        if days >= Self::MIN_DAYS && days <= Self::MAX_DAYS {
             Ok(SqlDate {
                 days_since_01_01_0001: days,
             })
         } else {
-            Err(Error::UsageError(
-                "Value out of range for SqlDate (must be <= 0xFFFFFF)".to_string(),
-            ))
+            Err(Error::UsageError(format!(
+                "Date value {} is out of range for DATE column. Valid range: {} to {}",
+                days,
+                Self::MIN_DAYS,
+                Self::MAX_DAYS
+            )))
         }
     }
 
@@ -374,14 +383,20 @@ mod tests {
 
     #[test]
     fn test_sql_date_create_max_valid() {
-        let result = SqlDate::create(0xFFFFFF);
+        // The SQL Server DATE type max is 9999-12-31 = ordinal 3,652,059
+        let result = SqlDate::create(3_652_059);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_sql_date_create_invalid() {
-        let result = SqlDate::create(0x1000000);
+        // Any value above 3,652,059 should fail
+        let result = SqlDate::create(3_652_060);
         assert!(result.is_err());
+
+        // 0xFFFFFF is far beyond the valid range
+        let result_hex = SqlDate::create(0x1000000);
+        assert!(result_hex.is_err());
     }
 
     #[test]
@@ -465,5 +480,53 @@ mod tests {
         };
         let cloned = xml.clone();
         assert_eq!(xml, cloned);
+    }
+
+    #[test]
+    fn test_sql_date_min_boundary() {
+        // 0001-01-01 = ordinal 1 (minimum valid date)
+        let result = SqlDate::create(1);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().get_days(), 1);
+    }
+
+    #[test]
+    fn test_sql_date_max_boundary() {
+        // 9999-12-31 = ordinal 3,652,059 (maximum valid date)
+        let result = SqlDate::create(3_652_059);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().get_days(), 3_652_059);
+    }
+
+    #[test]
+    fn test_sql_date_below_min() {
+        // Day 0 is below minimum valid date (0001-01-01)
+        let result = SqlDate::create(0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn test_sql_date_above_max() {
+        // Day 3,652,060 is above maximum valid date (9999-12-31)
+        let result = SqlDate::create(3_652_060);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn test_sql_date_far_future() {
+        // Day 16,777,215 (0xFFFFFF) is far beyond SQL Server DATE range
+        let result = SqlDate::create(16_777_215);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn test_sql_date_mid_range() {
+        // 2000-01-01 = ordinal 730,485 (a typical date)
+        let result = SqlDate::create(730_485);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().get_days(), 730_485);
     }
 }

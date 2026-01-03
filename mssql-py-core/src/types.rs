@@ -4,6 +4,7 @@
 // Type conversion utilities between Python and SQL Server types
 
 use mssql_tds::core::TdsResult;
+use mssql_tds::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType};
 use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::datatypes::decoder::DecimalParts;
 use mssql_tds::datatypes::sql_string::SqlString;
@@ -31,6 +32,7 @@ use pyo3::types::{PyBool, PyBytes, PyDate, PyDateTime, PyInt, PyModule, PyString
 /// # Arguments
 ///
 /// * `py_obj` - Python object to convert
+/// * `target_metadata` - Optional target column metadata for type validation
 ///
 /// # Returns
 ///
@@ -38,7 +40,9 @@ use pyo3::types::{PyBool, PyBytes, PyDate, PyDateTime, PyInt, PyModule, PyString
 ///
 /// # Errors
 ///
-/// Returns an error if the Python type is not supported or conversion fails.
+/// Returns an error if:
+/// - The Python type is not supported or conversion fails
+/// - When target_metadata is provided, if the converted type doesn't match the target SQL type
 ///
 /// Fast-path converter that checks type once and extracts directly
 ///
@@ -46,11 +50,31 @@ use pyo3::types::{PyBool, PyBytes, PyDate, PyDateTime, PyInt, PyModule, PyString
 /// on every single value. Instead, we check the Python type name once
 /// and use direct extraction.
 ///
-/// # Performance
+/// # Type Validation
 ///
-/// Traditional approach: ~2.3µs per value (tries multiple type conversions)
-/// Fast-path approach: ~0.5-1.0µs per value (single type check + direct extract)
-pub fn py_to_column_value(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+/// When `target_metadata` is provided, this function validates that the converted
+/// ColumnValues type is compatible with the target SQL type. This prevents silent
+/// type mismatches that could occur when try_type_coercion() returns None but
+/// the type mapping isn't properly maintained.
+pub fn py_to_column_value(
+    py_obj: &Bound<'_, PyAny>,
+    target_metadata: Option<&BulkCopyColumnMetadata>,
+) -> TdsResult<ColumnValues> {
+    let result = py_to_column_value_internal(py_obj)?;
+
+    // Validate type compatibility if metadata provided
+    if let Some(meta) = target_metadata {
+        validate_type_compatibility(&result, meta)?;
+    }
+
+    Ok(result)
+}
+
+/// Internal conversion function without validation.
+///
+/// This is the core type conversion logic extracted to a separate function
+/// to keep the validation step clean and maintainable.
+fn py_to_column_value_internal(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
     // Handle None (NULL) - most common check
     if py_obj.is_none() {
         return Ok(ColumnValues::Null);
@@ -105,7 +129,7 @@ pub fn py_to_column_value(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> 
         return Ok(ColumnValues::Bytes(bytes));
     }
 
-    // Check for datetime types
+    // Check for datetime types (must check PyDateTime before PyDate since datetime is a subclass of date)
     if py_obj.is_instance_of::<PyDateTime>() {
         match py_obj.call_method0("isoformat") {
             Ok(result) => {
@@ -124,15 +148,22 @@ pub fn py_to_column_value(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> 
     }
 
     if py_obj.is_instance_of::<PyDate>() {
-        match py_obj.call_method0("isoformat") {
-            Ok(result) => {
-                if let Ok(iso_str) = result.extract::<String>() {
-                    let sql_string = SqlString::from_utf8_string(iso_str);
-                    return Ok(ColumnValues::String(sql_string));
+        // Convert Python date object to SqlDate
+        // Use Python's built-in toordinal() method which correctly calculates
+        // the number of days since year 1, January 1
+        match py_obj.call_method0("toordinal") {
+            Ok(ordinal_obj) => {
+                if let Ok(days) = ordinal_obj.extract::<u32>() {
+                    return Ok(ColumnValues::Date(
+                        mssql_tds::datatypes::column_values::SqlDate::create(days)?,
+                    ));
                 }
             }
             Err(e) => {
-                return Err(Error::UsageError(format!("Failed to convert date: {}", e)));
+                return Err(Error::UsageError(format!(
+                    "Failed to get ordinal from date object: {}",
+                    e
+                )));
             }
         }
     }
@@ -195,4 +226,75 @@ pub fn py_to_column_value(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> 
         "Unsupported Python type for bulk copy: {}",
         type_name
     )))
+}
+
+/// Validate that the converted ColumnValues type matches the target SQL type.
+///
+/// This function ensures type safety by verifying that the result of py_to_column_value()
+/// is compatible with the target column metadata provided. This prevents silent type
+/// mismatches that could occur if try_type_coercion() incorrectly returns None.
+///
+/// # Arguments
+///
+/// * `result` - The ColumnValues produced by conversion
+/// * `target_metadata` - The target column metadata to validate against
+///
+/// # Returns
+///
+/// `TdsResult<()>` - Ok if types are compatible, Err with descriptive message otherwise
+fn validate_type_compatibility(
+    result: &ColumnValues,
+    target_metadata: &BulkCopyColumnMetadata,
+) -> TdsResult<()> {
+    // Check if result type matches target type
+    let result_matches_target = match (&result, target_metadata.sql_type) {
+        // Integer types
+        (ColumnValues::TinyInt(_), SqlDbType::TinyInt) => true,
+        (ColumnValues::SmallInt(_), SqlDbType::SmallInt) => true,
+        (ColumnValues::Int(_), SqlDbType::Int) => true,
+        (ColumnValues::BigInt(_), SqlDbType::BigInt) => true,
+
+        // Float/Decimal
+        (ColumnValues::Float(_), SqlDbType::Float) => true,
+        (ColumnValues::Real(_), SqlDbType::Real) => true,
+        (ColumnValues::Numeric(_), SqlDbType::Numeric | SqlDbType::Decimal) => true,
+
+        // String
+        (
+            ColumnValues::String(_),
+            SqlDbType::VarChar | SqlDbType::NVarChar | SqlDbType::Char | SqlDbType::NChar,
+        ) => true,
+
+        // Binary
+        (ColumnValues::Bytes(_), SqlDbType::VarBinary | SqlDbType::Binary) => true,
+
+        // Boolean
+        (ColumnValues::Bit(_), SqlDbType::Bit) => true,
+
+        // Date/Time
+        (ColumnValues::Date(_), SqlDbType::Date) => true,
+        (ColumnValues::DateTime2(_), SqlDbType::DateTime2) => true,
+        (ColumnValues::DateTime(_), SqlDbType::DateTime | SqlDbType::SmallDateTime) => true,
+        (ColumnValues::Time(_), SqlDbType::Time) => true,
+
+        // Money
+        (ColumnValues::Money(_), SqlDbType::Money) => true,
+        (ColumnValues::SmallMoney(_), SqlDbType::SmallMoney) => true,
+
+        // NULL is always compatible
+        (ColumnValues::Null, _) => true,
+
+        // No match - type mismatch
+        _ => false,
+    };
+
+    if !result_matches_target {
+        return Err(Error::UsageError(format!(
+            "Type mismatch for column '{}': converted to {:?} but target SQL type is {:?}. \
+             This indicates try_type_coercion() returned None for an incompatible type pair.",
+            target_metadata.column_name, result, target_metadata.sql_type
+        )));
+    }
+
+    Ok(())
 }
