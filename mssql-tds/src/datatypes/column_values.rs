@@ -220,7 +220,7 @@ impl SqlDate {
     const MAX_DAYS: u32 = 3_652_059; // 9999-12-31
 
     pub fn create(days: u32) -> TdsResult<SqlDate> {
-        if days >= Self::MIN_DAYS && days <= Self::MAX_DAYS {
+        if (Self::MIN_DAYS..=Self::MAX_DAYS).contains(&days) {
             Ok(SqlDate {
                 days_since_01_01_0001: days,
             })
