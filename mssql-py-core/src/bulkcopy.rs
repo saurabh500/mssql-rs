@@ -20,6 +20,7 @@ use mssql_tds::datatypes::decoder::DecimalParts;
 use mssql_tds::error::Error;
 use mssql_tds::message::bulk_load::StreamingBulkLoadWriter;
 use pyo3::prelude::*;
+use pyo3::types::{PyDate, PyDateTime};
 use pyo3::types::{PyString, PyTuple};
 use rust_decimal::prelude::*;
 use rust_decimal::Decimal;
@@ -34,6 +35,8 @@ enum SourcePythonType {
     Bytes,
     Bool,
     Decimal,
+    Date,
+    DateTime,
     Other,
 }
 
@@ -53,6 +56,11 @@ impl SourcePythonType {
             SourcePythonType::Bytes
         } else if py_obj.is_instance_of::<pyo3::types::PyBool>() {
             SourcePythonType::Bool
+        } else if py_obj.is_instance_of::<PyDateTime>() {
+            // Check for datetime before date, since datetime is a subclass of date
+            SourcePythonType::DateTime
+        } else if py_obj.is_instance_of::<PyDate>() {
+            SourcePythonType::Date
         } else {
             // Check for decimal.Decimal
             let py = py_obj.py();
@@ -149,7 +157,21 @@ impl PythonRowAdapter {
         }
 
         // Step 4: Fall back to default Python → TDS conversion
-        py_to_column_value(py_obj)
+        // ESSENTIAL: This line handles all native type conversions!
+        // When try_type_coercion returns None (no special transformation needed),
+        // we fall back to py_to_column_value to handle the conversion.
+        //
+        // Passes target_metadata for type validation.
+        // This ensures that if try_type_coercion incorrectly returns None,
+        // the type mismatch will be caught and reported explicitly rather
+        // than silently producing wrong data.
+        //
+        // This handles:
+        // - Python datetime.date → SQL DATE conversion
+        // - Native type conversions (float→float, bytes→bytes, etc.)
+        // - Bulk copy without explicit column metadata
+        //
+        py_to_column_value(py_obj, target_metadata)
     }
 
     /// Handle NULL value insertion with nullability validation.
@@ -279,6 +301,23 @@ impl PythonRowAdapter {
             // Decimal → Money/SmallMoney: Convert decimal to money
             (SourcePythonType::Decimal, SqlDbType::Money | SqlDbType::SmallMoney) => {
                 let result = Self::coerce_decimal_to_money(py_obj, target_meta.sql_type)?;
+                Ok(Some(result))
+            }
+
+            // Date → Date: Direct conversion (no coercion needed, handled in default path)
+            (SourcePythonType::Date, SqlDbType::Date) => {
+                Ok(None) // Will use default conversion in py_to_column_value
+            }
+
+            // DateTime → Date: Extract date part
+            (SourcePythonType::DateTime, SqlDbType::Date) => {
+                let result = Self::coerce_datetime_to_date(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // String → Date: Parse ISO format date string (YYYY-MM-DD)
+            (SourcePythonType::String, SqlDbType::Date) => {
+                let result = Self::coerce_string_to_date(py_obj)?;
                 Ok(Some(result))
             }
 
@@ -692,6 +731,87 @@ impl PythonRowAdapter {
                 target_type
             ))),
         }
+    }
+
+    /// Coerce a Python string to SQL Server DATE type.
+    ///
+    /// Parses ISO format date strings (YYYY-MM-DD) into SqlDate values.
+    fn coerce_string_to_date(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
+
+        let s = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+        // Use Python's datetime.date.fromisoformat() to parse ISO date string
+        // This handles all ISO format variations and date validation automatically
+        let py = py_obj.py();
+        let datetime_module = py
+            .import("datetime")
+            .map_err(|e| Error::UsageError(format!("Failed to import datetime module: {}", e)))?;
+
+        let date_class = datetime_module
+            .getattr("date")
+            .map_err(|e| Error::UsageError(format!("Failed to get date class: {}", e)))?;
+
+        let parsed_date = date_class
+            .call_method1("fromisoformat", (s,))
+            .map_err(|e| {
+                Error::UsageError(format!(
+                    "Invalid ISO date format '{}'. Expected YYYY-MM-DD: {}",
+                    s, e
+                ))
+            })?;
+
+        // Use Python's toordinal() to get ordinal (1-based: date(1,1,1) = 1)
+        // SQL Server DATE needs 0-based days since 0001-01-01, so subtract 1
+        let days_py = parsed_date
+            .call_method0("toordinal")
+            .map_err(|e| Error::UsageError(format!("Failed to get ordinal from date: {}", e)))?;
+
+        let ordinal = days_py
+            .extract::<u32>()
+            .map_err(|e| Error::UsageError(format!("Failed to convert ordinal to u32: {}", e)))?;
+
+        // Convert from 1-based ordinal to 0-based days since 0001-01-01
+        let days = ordinal
+            .checked_sub(1)
+            .ok_or_else(|| Error::UsageError("Date ordinal is 0, expected >= 1".to_string()))?;
+
+        Ok(ColumnValues::Date(
+            mssql_tds::datatypes::column_values::SqlDate::create(days)?,
+        ))
+    }
+
+    /// Coerce a Python datetime to SQL Server DATE type (extract date part).
+    ///
+    /// Extracts the date part from a datetime object, discarding the time component.
+    fn coerce_datetime_to_date(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        // Convert datetime to date by calling .date() method
+        let date_obj = py_obj.call_method0("date").map_err(|e| {
+            Error::UsageError(format!("Failed to extract date from datetime: {}", e))
+        })?;
+
+        // Use Python's toordinal() to get ordinal (1-based: date(1,1,1) = 1)
+        // SQL Server DATE needs 0-based days since 0001-01-01, so subtract 1
+        let days_py = date_obj
+            .call_method0("toordinal")
+            .map_err(|e| Error::UsageError(format!("Failed to get ordinal from date: {}", e)))?;
+
+        let ordinal = days_py
+            .extract::<u32>()
+            .map_err(|e| Error::UsageError(format!("Failed to convert ordinal to u32: {}", e)))?;
+
+        // Convert from 1-based ordinal to 0-based days since 0001-01-01
+        let days = ordinal
+            .checked_sub(1)
+            .ok_or_else(|| Error::UsageError("Date ordinal is 0, expected >= 1".to_string()))?;
+
+        Ok(ColumnValues::Date(
+            mssql_tds::datatypes::column_values::SqlDate::create(days)?,
+        ))
     }
 }
 

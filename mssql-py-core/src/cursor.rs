@@ -485,6 +485,27 @@ impl PyCoreCursor {
                 // Fallback to string if Decimal conversion fails
                 decimal_str.into_pyobject(py).unwrap().to_owned().into_any()
             }
+            ColumnValues::Date(sql_date) => {
+                // Convert SqlDate to Python datetime.date object
+                // SqlDate stores 0-based days since 0001-01-01 (date(1,1,1) = day 0)
+                // Python's fromordinal() expects 1-based ordinals (date(1,1,1) = ordinal 1)
+                // So we need to add 1 to convert back
+                if let Ok(datetime_module) = PyModule::import(py, "datetime") {
+                    if let Ok(date_class) = datetime_module.getattr("date") {
+                        // Add 1 to convert from 0-based days to 1-based ordinal
+                        let ordinal = sql_date.get_days() + 1;
+                        if let Ok(date_obj) = date_class.call_method1("fromordinal", (ordinal,)) {
+                            return date_obj.into_any();
+                        }
+                    }
+                }
+                // Fallback to string if date conversion fails
+                format!("{:?}", col_val)
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
+                    .into_any()
+            }
             _ => PyString::new(py, &format!("{:?}", col_val)).into_any(),
         }
     }

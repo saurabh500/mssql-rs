@@ -89,6 +89,7 @@ impl TdsValueSerializer {
             }
             ColumnValues::SmallMoney(v) => Self::serialize_smallmoney(writer, v, ctx).await,
             ColumnValues::Money(v) => Self::serialize_money(writer, v, ctx).await,
+            ColumnValues::Date(v) => Self::serialize_date(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -457,6 +458,62 @@ impl TdsValueSerializer {
                 true => {
                     writer.write_i32_unchecked(value.msb_part); // MSB first
                     writer.write_i32_unchecked(value.lsb_part); // LSB second
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_date<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &crate::datatypes::column_values::SqlDate,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // DATE format in TDS:
+        // - For DateN (nullable, 0x28): length byte (3) + 3-byte unsigned integer
+        // - For Date (fixed, 0x2A): 3-byte unsigned integer only
+        // The value is stored as a 3-byte unsigned integer representing days since 0001-01-01
+        // Valid range: 1 (0001-01-01) to 3,652,059 (9999-12-31)
+        // The 3-byte unsigned integer can hold values up to 0xFFFFFF (16,777,215),
+        // but SQL Server DATE type has a more restricted range.
+
+        if !ctx.is_fixed_type() {
+            // DateN with length 3: length byte + value (4 bytes total)
+            let days = value.get_days();
+            match writer.has_space(4) {
+                false => {
+                    writer.write_byte_async(3).await?; // Length for DateN (3 bytes)
+                    // Write 3 bytes in little-endian format (u32 as 3 bytes)
+                    writer.write_byte_async((days & 0xFF) as u8).await?;
+                    writer.write_byte_async(((days >> 8) & 0xFF) as u8).await?;
+                    writer.write_byte_async(((days >> 16) & 0xFF) as u8).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(3); // Length for DateN (3 bytes)
+                    // Write 3 bytes in little-endian format (u32 as 3 bytes)
+                    writer.write_byte_unchecked((days & 0xFF) as u8);
+                    writer.write_byte_unchecked(((days >> 8) & 0xFF) as u8);
+                    writer.write_byte_unchecked(((days >> 16) & 0xFF) as u8);
+                }
+            }
+        } else {
+            // Fixed type (Date, 0x2A) - just write value (3 bytes)
+            let days = value.get_days();
+
+            match writer.has_space(3) {
+                false => {
+                    writer.write_byte_async((days & 0xFF) as u8).await?;
+                    writer.write_byte_async(((days >> 8) & 0xFF) as u8).await?;
+                    writer.write_byte_async(((days >> 16) & 0xFF) as u8).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked((days & 0xFF) as u8);
+                    writer.write_byte_unchecked(((days >> 8) & 0xFF) as u8);
+                    writer.write_byte_unchecked(((days >> 16) & 0xFF) as u8);
                 }
             }
         }
