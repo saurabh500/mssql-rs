@@ -765,15 +765,20 @@ impl PythonRowAdapter {
                 ))
             })?;
 
-        // Use Python's toordinal() to get days since 0001-01-01
-        // This is much simpler than manual calendar arithmetic and handles all edge cases
+        // Use Python's toordinal() to get ordinal (1-based: date(1,1,1) = 1)
+        // SQL Server DATE needs 0-based days since 0001-01-01, so subtract 1
         let days_py = parsed_date
             .call_method0("toordinal")
             .map_err(|e| Error::UsageError(format!("Failed to get ordinal from date: {}", e)))?;
 
-        let days = days_py
+        let ordinal = days_py
             .extract::<u32>()
             .map_err(|e| Error::UsageError(format!("Failed to convert ordinal to u32: {}", e)))?;
+
+        // Convert from 1-based ordinal to 0-based days since 0001-01-01
+        let days = ordinal
+            .checked_sub(1)
+            .ok_or_else(|| Error::UsageError("Date ordinal is 0, expected >= 1".to_string()))?;
 
         Ok(ColumnValues::Date(
             mssql_tds::datatypes::column_values::SqlDate::create(days)?,
@@ -789,14 +794,20 @@ impl PythonRowAdapter {
             Error::UsageError(format!("Failed to extract date from datetime: {}", e))
         })?;
 
-        // Use Python's toordinal() to get days since 0001-01-01
+        // Use Python's toordinal() to get ordinal (1-based: date(1,1,1) = 1)
+        // SQL Server DATE needs 0-based days since 0001-01-01, so subtract 1
         let days_py = date_obj
             .call_method0("toordinal")
             .map_err(|e| Error::UsageError(format!("Failed to get ordinal from date: {}", e)))?;
 
-        let days = days_py
+        let ordinal = days_py
             .extract::<u32>()
             .map_err(|e| Error::UsageError(format!("Failed to convert ordinal to u32: {}", e)))?;
+
+        // Convert from 1-based ordinal to 0-based days since 0001-01-01
+        let days = ordinal
+            .checked_sub(1)
+            .ok_or_else(|| Error::UsageError("Date ordinal is 0, expected >= 1".to_string()))?;
 
         Ok(ColumnValues::Date(
             mssql_tds::datatypes::column_values::SqlDate::create(days)?,

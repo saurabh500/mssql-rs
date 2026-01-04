@@ -291,6 +291,18 @@ def test_cursor_bulkcopy_date_boundary_values(client_context):
     cursor.fetchall()  # Consume remaining result sets before next execute
     assert count == 4
 
+    # Verify the actual date values match what was sent
+    cursor.execute(f"SELECT id, event_date FROM {table_name} ORDER BY id")
+    rows = cursor.fetchall()
+    cursor.fetchall()  # Consume remaining result sets
+    
+    # Check each row's date value
+    assert len(rows) == 4
+    for i, (expected_id, expected_date) in enumerate(data):
+        actual_id, actual_date = rows[i]
+        assert actual_id == expected_id, f"Row {i}: ID mismatch - expected {expected_id}, got {actual_id}"
+        assert actual_date == expected_date, f"Row {i}: Date mismatch - expected {expected_date}, got {actual_date}"
+
     # Close connection - temp table will be automatically dropped
     conn.close()
 
@@ -334,4 +346,62 @@ def test_cursor_bulkcopy_date_invalid_boundary_out_of_range(client_context):
     assert result["rows_copied"] == 2
 
     # Close connection - temp table will be automatically dropped
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_date_max_boundary_9999_12_31(client_context):
+    """Test bulk copy with the maximum valid DATE value: 9999-12-31.
+    
+    This test verifies the fix for the toordinal() off-by-one bug.
+    Python's toordinal() returns 1-based values (date(1,1,1) = 1), but
+    SQL Server DATE type needs 0-based days since 0001-01-01.
+    
+    Before the fix:
+    - date(9999, 12, 31).toordinal() = 3,652,059 (sent directly)
+    - SQL Server rejected this as out of range (error 7339)
+    
+    After the fix:
+    - date(9999, 12, 31).toordinal() - 1 = 3,652,058 (correct value)
+    - SQL Server accepts this as valid 9999-12-31
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    # Create a test table
+    table_name = "BulkCopyTestMaxDate"
+    cursor.execute(
+        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+    )
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, test_date DATE)")
+
+    # Test boundary dates
+    data = [
+        (1, datetime.date(1, 1, 1)),        # Minimum date (day 0)
+        (2, datetime.date(2024, 1, 1)),     # Regular date
+        (3, datetime.date(9999, 12, 30)),   # One day before max
+        (4, datetime.date(9999, 12, 31)),   # Maximum date - critical test!
+    ]
+
+    # Execute bulk copy
+    result = cursor.bulkcopy(
+        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+    )
+
+    # Verify bulk copy succeeded
+    assert result is not None
+    assert result["rows_copied"] == 4
+
+    # Verify the dates were inserted correctly
+    cursor.execute(f"SELECT id, test_date FROM {table_name} ORDER BY id")
+    rows = cursor.fetchall()
+    
+    assert len(rows) == 4
+    assert rows[0][1] == datetime.date(1, 1, 1)
+    assert rows[1][1] == datetime.date(2024, 1, 1)
+    assert rows[2][1] == datetime.date(9999, 12, 30)
+    assert rows[3][1] == datetime.date(9999, 12, 31), "9999-12-31 should be inserted correctly!"
+
+    # Cleanup
+    cursor.execute(f"DROP TABLE {table_name}")
     conn.close()

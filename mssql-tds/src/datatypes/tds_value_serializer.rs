@@ -483,11 +483,11 @@ impl TdsValueSerializer {
 
         if !ctx.is_fixed_type() {
             // DateN with length 3: length byte + value (4 bytes total)
+            let days = value.get_days();
             match writer.has_space(4) {
                 false => {
                     writer.write_byte_async(3).await?; // Length for DateN (3 bytes)
                     // Write 3 bytes in little-endian format (u32 as 3 bytes)
-                    let days = value.get_days();
                     writer.write_byte_async((days & 0xFF) as u8).await?;
                     writer.write_byte_async(((days >> 8) & 0xFF) as u8).await?;
                     writer.write_byte_async(((days >> 16) & 0xFF) as u8).await?;
@@ -495,7 +495,6 @@ impl TdsValueSerializer {
                 true => {
                     writer.write_byte_unchecked(3); // Length for DateN (3 bytes)
                     // Write 3 bytes in little-endian format (u32 as 3 bytes)
-                    let days = value.get_days();
                     writer.write_byte_unchecked((days & 0xFF) as u8);
                     writer.write_byte_unchecked(((days >> 8) & 0xFF) as u8);
                     writer.write_byte_unchecked(((days >> 16) & 0xFF) as u8);
@@ -503,15 +502,15 @@ impl TdsValueSerializer {
             }
         } else {
             // Fixed type (Date, 0x2A) - just write value (3 bytes)
+            let days = value.get_days();
+
             match writer.has_space(3) {
                 false => {
-                    let days = value.get_days();
                     writer.write_byte_async((days & 0xFF) as u8).await?;
                     writer.write_byte_async(((days >> 8) & 0xFF) as u8).await?;
                     writer.write_byte_async(((days >> 16) & 0xFF) as u8).await?;
                 }
                 true => {
-                    let days = value.get_days();
                     writer.write_byte_unchecked((days & 0xFF) as u8);
                     writer.write_byte_unchecked(((days >> 8) & 0xFF) as u8);
                     writer.write_byte_unchecked(((days >> 16) & 0xFF) as u8);

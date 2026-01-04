@@ -149,11 +149,15 @@ fn py_to_column_value_internal(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnVal
 
     if py_obj.is_instance_of::<PyDate>() {
         // Convert Python date object to SqlDate
-        // Use Python's built-in toordinal() method which correctly calculates
-        // the number of days since year 1, January 1
+        // Python's toordinal() is 1-based (date(1,1,1).toordinal() == 1)
+        // SQL Server DATE needs 0-based days since 0001-01-01, so subtract 1
         match py_obj.call_method0("toordinal") {
             Ok(ordinal_obj) => {
-                if let Ok(days) = ordinal_obj.extract::<u32>() {
+                if let Ok(ordinal) = ordinal_obj.extract::<u32>() {
+                    // Convert from 1-based ordinal to 0-based days
+                    let days = ordinal.checked_sub(1).ok_or_else(|| {
+                        Error::UsageError("Date ordinal is 0, expected >= 1".to_string())
+                    })?;
                     return Ok(ColumnValues::Date(
                         mssql_tds::datatypes::column_values::SqlDate::create(days)?,
                     ));

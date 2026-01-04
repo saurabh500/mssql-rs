@@ -214,13 +214,12 @@ pub struct SqlDate {
 
 impl SqlDate {
     // SQL Server DATE range: 0001-01-01 to 9999-12-31
-    // 0001-01-01 has ordinal 1
-    // 9999-12-31 has ordinal 3652059
-    const MIN_DAYS: u32 = 1; // 0001-01-01
-    const MAX_DAYS: u32 = 3_652_059; // 9999-12-31
+    // Days are counted from 0 (0001-01-01 = day 0, 0001-01-02 = day 1, etc.)
+    const MIN_DAYS: u32 = 0; // 0001-01-01
+    const MAX_DAYS: u32 = 3_652_058; // 9999-12-31
 
     pub fn create(days: u32) -> TdsResult<SqlDate> {
-        if (Self::MIN_DAYS..=Self::MAX_DAYS).contains(&days) {
+        if days <= Self::MAX_DAYS {
             Ok(SqlDate {
                 days_since_01_01_0001: days,
             })
@@ -383,15 +382,15 @@ mod tests {
 
     #[test]
     fn test_sql_date_create_max_valid() {
-        // The SQL Server DATE type max is 9999-12-31 = ordinal 3,652,059
-        let result = SqlDate::create(3_652_059);
+        // The SQL Server DATE type max is 9999-12-31 = 3,652,058 days since 0001-01-01
+        let result = SqlDate::create(3_652_058);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_sql_date_create_invalid() {
-        // Any value above 3,652,059 should fail
-        let result = SqlDate::create(3_652_060);
+        // Any value above 3,652,058 should fail
+        let result = SqlDate::create(3_652_059);
         assert!(result.is_err());
 
         // 0xFFFFFF is far beyond the valid range
@@ -484,32 +483,26 @@ mod tests {
 
     #[test]
     fn test_sql_date_min_boundary() {
-        // 0001-01-01 = ordinal 1 (minimum valid date)
-        let result = SqlDate::create(1);
+        // 0001-01-01 = day 0 (minimum valid date)
+        let result = SqlDate::create(0);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().get_days(), 1);
+        assert_eq!(result.unwrap().get_days(), 0);
     }
 
     #[test]
     fn test_sql_date_max_boundary() {
-        // 9999-12-31 = ordinal 3,652,059 (maximum valid date)
-        let result = SqlDate::create(3_652_059);
+        // 9999-12-31 = 3,652,058 days since 0001-01-01 (maximum valid date)
+        // but SQL Server DATE uses 0-based counting, so the correct value is 3,652,058
+        let result = SqlDate::create(3_652_058);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().get_days(), 3_652_059);
-    }
-
-    #[test]
-    fn test_sql_date_below_min() {
-        // Day 0 is below minimum valid date (0001-01-01)
-        let result = SqlDate::create(0);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("out of range"));
+        assert_eq!(result.unwrap().get_days(), 3_652_058);
     }
 
     #[test]
     fn test_sql_date_above_max() {
-        // Day 3,652,060 is above maximum valid date (9999-12-31)
-        let result = SqlDate::create(3_652_060);
+        // Day 3,652,059 is above maximum valid date (9999-12-31)
+        // The correct maximum is 3,652,058
+        let result = SqlDate::create(3_652_059);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("out of range"));
     }
