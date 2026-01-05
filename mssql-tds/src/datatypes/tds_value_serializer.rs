@@ -92,6 +92,7 @@ impl TdsValueSerializer {
             ColumnValues::Date(v) => Self::serialize_date(writer, v, ctx).await,
             ColumnValues::Time(v) => Self::serialize_time(writer, v, ctx).await,
             ColumnValues::DateTime(v) => Self::serialize_datetime(writer, v, ctx).await,
+            ColumnValues::DateTime2(v) => Self::serialize_datetime2(writer, v, ctx).await,
             ColumnValues::SmallDateTime(v) => Self::serialize_smalldatetime(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
@@ -718,6 +719,122 @@ impl TdsValueSerializer {
                 true => {
                     writer.write_u16_unchecked(value.days);
                     writer.write_u16_unchecked(value.time);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_datetime2<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &crate::datatypes::column_values::SqlDateTime2,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // DATETIME2 format in TDS:
+        // - For DateTime2N (nullable, 0x2A): length byte + time_nanoseconds + 3-byte days
+        // - Time portion: 3, 4, or 5 bytes (same encoding as TIME type)
+        // - Date portion: 3 bytes (unsigned, days since 0001-01-01)
+        // Total length depends on scale:
+        //   - Scale 0-2: 6 bytes (3 for time + 3 for date)
+        //   - Scale 3-4: 7 bytes (4 for time + 3 for date)
+        //   - Scale 5-7: 8 bytes (5 for time + 3 for date)
+
+        // Determine the time length based on scale
+        let time_length = match value.time.scale {
+            0..=2 => 3u8,
+            3 | 4 => 4u8,
+            5..=7 => 5u8,
+            _ => {
+                return Err(Error::UsageError(format!(
+                    "Invalid scale for DateTime2 type: {}. Valid range: 0-7",
+                    value.time.scale
+                )));
+            }
+        };
+
+        let date_length = 3u8;
+        let total_value_length = time_length + date_length;
+
+        // Scale the time value based on the scale (same logic as serialize_time)
+        let time_value = match value.time.scale {
+            0 => value.time.time_nanoseconds / 10_000_000, // Seconds
+            1 => value.time.time_nanoseconds / 1_000_000,  // Tenths
+            2 => value.time.time_nanoseconds / 100_000,    // Hundredths
+            3 => value.time.time_nanoseconds / 10_000,     // Milliseconds
+            4 => value.time.time_nanoseconds / 1_000,      // Ten-thousandths
+            5 => value.time.time_nanoseconds / 100,        // Hundred-thousandths
+            6 => value.time.time_nanoseconds / 10,         // Microseconds
+            7 => value.time.time_nanoseconds,              // 100-nanoseconds (no scaling)
+            _ => value.time.time_nanoseconds,
+        };
+
+        if !ctx.is_fixed_type() {
+            // DateTime2N with length prefix
+            let total_size = (1 + total_value_length) as usize;
+            match writer.has_space(total_size) {
+                false => {
+                    writer.write_byte_async(total_value_length).await?; // Length byte
+
+                    // Write time_value in little-endian format (variable bytes)
+                    for i in 0..time_length {
+                        let byte_val = ((time_value >> (i * 8)) & 0xFF) as u8;
+                        writer.write_byte_async(byte_val).await?;
+                    }
+
+                    // Write date as 3-byte little-endian unsigned integer
+                    let date_bytes = value.days.to_le_bytes();
+                    writer.write_byte_async(date_bytes[0]).await?;
+                    writer.write_byte_async(date_bytes[1]).await?;
+                    writer.write_byte_async(date_bytes[2]).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(total_value_length); // Length byte
+
+                    // Write time_value in little-endian format (variable bytes)
+                    for i in 0..time_length {
+                        let byte_val = ((time_value >> (i * 8)) & 0xFF) as u8;
+                        writer.write_byte_unchecked(byte_val);
+                    }
+
+                    // Write date as 3-byte little-endian unsigned integer
+                    let date_bytes = value.days.to_le_bytes();
+                    writer.write_byte_unchecked(date_bytes[0]);
+                    writer.write_byte_unchecked(date_bytes[1]);
+                    writer.write_byte_unchecked(date_bytes[2]);
+                }
+            }
+        } else {
+            // Fixed type - just write value (time + 3-byte date)
+            match writer.has_space(total_value_length as usize) {
+                false => {
+                    // Write time_value in little-endian format (variable bytes)
+                    for i in 0..time_length {
+                        writer
+                            .write_byte_async(((time_value >> (i * 8)) & 0xFF) as u8)
+                            .await?;
+                    }
+
+                    // Write date as 3-byte little-endian unsigned integer
+                    let date_bytes = value.days.to_le_bytes();
+                    writer.write_byte_async(date_bytes[0]).await?;
+                    writer.write_byte_async(date_bytes[1]).await?;
+                    writer.write_byte_async(date_bytes[2]).await?;
+                }
+                true => {
+                    // Write time_value in little-endian format (variable bytes)
+                    for i in 0..time_length {
+                        writer.write_byte_unchecked(((time_value >> (i * 8)) & 0xFF) as u8);
+                    }
+
+                    // Write date as 3-byte little-endian unsigned integer
+                    let date_bytes = value.days.to_le_bytes();
+                    writer.write_byte_unchecked(date_bytes[0]);
+                    writer.write_byte_unchecked(date_bytes[1]);
+                    writer.write_byte_unchecked(date_bytes[2]);
                 }
             }
         }

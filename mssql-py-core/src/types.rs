@@ -205,9 +205,46 @@ fn py_to_column_value_internal(
 
         let days = current_ordinal - base_ordinal;
 
-        // Check if target is SmallDateTime to determine which format to use
+        // Check if target is SmallDateTime or DateTime2 to determine which format to use
         if let Some(meta) = target_metadata {
-            if meta.sql_type == SqlDbType::SmallDateTime {
+            if meta.sql_type == SqlDbType::DateTime2 {
+                // Convert to DATETIME2 format
+                // DATETIME2 uses days since 0001-01-01 (0-based) instead of days since 1900-01-01
+                // Calculate days from year 1 using Python's toordinal
+                let current_ordinal = current_date
+                    .call_method0("toordinal")
+                    .and_then(|v| v.extract::<u32>())
+                    .map_err(|e| {
+                        Error::UsageError(format!(
+                            "Failed to get current ordinal for DATETIME2: {}",
+                            e
+                        ))
+                    })?;
+
+                // Python's toordinal() returns 1 for 0001-01-01, so subtract 1 to get 0-based days
+                let days_dt2 = current_ordinal.checked_sub(1).ok_or_else(|| {
+                    Error::UsageError("Date ordinal is 0, expected >= 1 for DATETIME2".to_string())
+                })?;
+
+                // Convert to 100-nanosecond units (DATETIME2/TIME uses 100ns precision)
+                let time_nanoseconds = (hour as u64) * 36_000_000_000
+                    + (minute as u64) * 600_000_000
+                    + (second as u64) * 10_000_000
+                    + (microsecond as u64) * 10;
+
+                // Use the scale from metadata, defaulting to 7 (max precision)
+                let scale = meta.scale;
+
+                return Ok(ColumnValues::DateTime2(
+                    mssql_tds::datatypes::column_values::SqlDateTime2 {
+                        days: days_dt2,
+                        time: mssql_tds::datatypes::column_values::SqlTime {
+                            time_nanoseconds,
+                            scale,
+                        },
+                    },
+                ));
+            } else if meta.sql_type == SqlDbType::SmallDateTime {
                 // Validate SMALLDATETIME range: 1900-01-01 00:00:00 to 2079-06-06 23:59:59
                 if days < 0 || days > 65535 {
                     return Err(Error::UsageError(format!(

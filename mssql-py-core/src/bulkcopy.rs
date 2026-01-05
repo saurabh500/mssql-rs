@@ -331,6 +331,18 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
+            // String → DateTime2: Parse ISO format datetime string for DATETIME2
+            (SourcePythonType::String, SqlDbType::DateTime2) => {
+                let result = Self::coerce_string_to_datetime2(py_obj, target_meta)?;
+                Ok(Some(result))
+            }
+
+            // DateTime → DateTime2: Convert Python datetime to DATETIME2
+            (SourcePythonType::DateTime, SqlDbType::DateTime2) => {
+                let result = Self::coerce_datetime_to_datetime2(py_obj, target_meta)?;
+                Ok(Some(result))
+            }
+
             // No coercion needed - use default conversion
             _ => Ok(None),
         }
@@ -1058,6 +1070,60 @@ impl PythonRowAdapter {
                 time: time_ticks,
             },
         ))
+    }
+
+    /// Coerce a Python string to a SQL Server DATETIME2 value.
+    ///
+    /// Parses an ISO format datetime string (YYYY-MM-DD HH:MM:SS[.ffffff])
+    /// and converts to SqlDateTime2 format.
+    fn coerce_string_to_datetime2(
+        py_obj: &Bound<'_, PyAny>,
+        target_meta: &BulkCopyColumnMetadata,
+    ) -> TdsResult<ColumnValues> {
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
+
+        let s = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+        // Use Python's datetime.datetime.fromisoformat() to parse ISO datetime string
+        let py = py_obj.py();
+        let datetime_module = py
+            .import("datetime")
+            .map_err(|e| Error::UsageError(format!("Failed to import datetime module: {}", e)))?;
+
+        let datetime_class = datetime_module
+            .getattr("datetime")
+            .map_err(|e| Error::UsageError(format!("Failed to get datetime class: {}", e)))?;
+
+        // Replace space with 'T' for ISO format compatibility if needed
+        let iso_str = s.replace(' ', "T");
+
+        let parsed_datetime = datetime_class
+            .call_method1("fromisoformat", (iso_str.as_str(),))
+            .map_err(|e| {
+                Error::UsageError(format!(
+                    "Invalid datetime format '{}'. Expected ISO format like '2024-01-15 09:30:00' or '2024-01-15T09:30:00': {}",
+                    s, e
+                ))
+            })?;
+
+        // Now convert the datetime object to ColumnValues using the metadata-aware conversion
+        crate::types::py_to_column_value(&parsed_datetime, Some(target_meta))
+    }
+
+    /// Coerce a Python datetime object to a SQL Server DATETIME2 value.
+    ///
+    /// This ensures Python datetime objects are properly converted to DATETIME2 format
+    /// when the target column is DATETIME2.
+    fn coerce_datetime_to_datetime2(
+        py_obj: &Bound<'_, PyAny>,
+        target_meta: &BulkCopyColumnMetadata,
+    ) -> TdsResult<ColumnValues> {
+        // Use the metadata-aware conversion to handle DATETIME2
+        crate::types::py_to_column_value(py_obj, Some(target_meta))
     }
 }
 
