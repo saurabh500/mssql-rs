@@ -325,6 +325,12 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
+            // String → DateTime/SmallDateTime: Parse ISO format datetime string
+            (SourcePythonType::String, SqlDbType::DateTime | SqlDbType::SmallDateTime) => {
+                let result = Self::coerce_string_to_datetime(py_obj)?;
+                Ok(Some(result))
+            }
+
             // No coercion needed - use default conversion
             _ => Ok(None),
         }
@@ -884,6 +890,124 @@ impl PythonRowAdapter {
             mssql_tds::datatypes::column_values::SqlTime {
                 time_nanoseconds,
                 scale: 7, // Use maximum scale (100ns precision)
+            },
+        ))
+    }
+
+    /// Coerce a Python string to SQL Server DATETIME or SMALLDATETIME.
+    ///
+    /// Parses ISO format datetime strings (YYYY-MM-DD HH:MM:SS or YYYY-MM-DDTHH:MM:SS)
+    /// and converts them to SqlDateTime format.
+    fn coerce_string_to_datetime(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
+
+        let s = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+        // Use Python's datetime.datetime.fromisoformat() to parse ISO datetime string
+        // This handles various ISO format variations automatically
+        let py = py_obj.py();
+        let datetime_module = py
+            .import("datetime")
+            .map_err(|e| Error::UsageError(format!("Failed to import datetime module: {}", e)))?;
+
+        let datetime_class = datetime_module
+            .getattr("datetime")
+            .map_err(|e| Error::UsageError(format!("Failed to get datetime class: {}", e)))?;
+
+        // Replace space with 'T' for ISO format compatibility if needed
+        let iso_str = s.replace(' ', "T");
+
+        let parsed_datetime = datetime_class
+            .call_method1("fromisoformat", (iso_str.as_str(),))
+            .map_err(|e| {
+                Error::UsageError(format!(
+                    "Invalid datetime format '{}'. Expected ISO format like '2024-01-15 09:30:00' or '2024-01-15T09:30:00': {}",
+                    s, e
+                ))
+            })?;
+
+        // Now convert the parsed datetime object to ColumnValues::DateTime
+        // This reuses the logic from py_to_column_value for datetime objects
+
+        // Extract components from parsed datetime
+        let year = parsed_datetime
+            .getattr("year")
+            .and_then(|v| v.extract::<i32>())
+            .map_err(|e| Error::UsageError(format!("Failed to get year from datetime: {}", e)))?;
+
+        let month = parsed_datetime
+            .getattr("month")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get month from datetime: {}", e)))?;
+
+        let day = parsed_datetime
+            .getattr("day")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get day from datetime: {}", e)))?;
+
+        let hour = parsed_datetime
+            .getattr("hour")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get hour from datetime: {}", e)))?;
+
+        let minute = parsed_datetime
+            .getattr("minute")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get minute from datetime: {}", e)))?;
+
+        let second = parsed_datetime
+            .getattr("second")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get second from datetime: {}", e)))?;
+
+        let microsecond = parsed_datetime
+            .getattr("microsecond")
+            .and_then(|v| v.extract::<u32>())
+            .map_err(|e| {
+                Error::UsageError(format!("Failed to get microsecond from datetime: {}", e))
+            })?;
+
+        // Calculate days since 1900-01-01
+        let date_class = datetime_module
+            .getattr("date")
+            .map_err(|e| Error::UsageError(format!("Failed to get date class: {}", e)))?;
+
+        let base_date = date_class
+            .call1((1900, 1, 1))
+            .map_err(|e| Error::UsageError(format!("Failed to create base date: {}", e)))?;
+
+        let base_ordinal = base_date
+            .call_method0("toordinal")
+            .and_then(|v| v.extract::<i32>())
+            .map_err(|e| Error::UsageError(format!("Failed to get base ordinal: {}", e)))?;
+
+        let current_date = date_class
+            .call1((year, month, day))
+            .map_err(|e| Error::UsageError(format!("Failed to create current date: {}", e)))?;
+
+        let current_ordinal = current_date
+            .call_method0("toordinal")
+            .and_then(|v| v.extract::<i32>())
+            .map_err(|e| Error::UsageError(format!("Failed to get current ordinal: {}", e)))?;
+
+        let days = current_ordinal - base_ordinal;
+
+        // Calculate time in 1/300th seconds
+        let total_ms = (hour as u64) * 3_600_000
+            + (minute as u64) * 60_000
+            + (second as u64) * 1_000
+            + (microsecond as u64) / 1_000;
+
+        let time_ticks = ((total_ms * 300) / 1000) as u32;
+
+        Ok(ColumnValues::DateTime(
+            mssql_tds::datatypes::column_values::SqlDateTime {
+                days,
+                time: time_ticks,
             },
         ))
     }

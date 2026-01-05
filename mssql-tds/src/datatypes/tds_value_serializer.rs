@@ -91,6 +91,7 @@ impl TdsValueSerializer {
             ColumnValues::Money(v) => Self::serialize_money(writer, v, ctx).await,
             ColumnValues::Date(v) => Self::serialize_date(writer, v, ctx).await,
             ColumnValues::Time(v) => Self::serialize_time(writer, v, ctx).await,
+            ColumnValues::DateTime(v) => Self::serialize_datetime(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -610,6 +611,64 @@ impl TdsValueSerializer {
                     for i in 0..time_length {
                         writer.write_byte_unchecked(((time_value >> (i * 8)) & 0xFF) as u8);
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_datetime<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &crate::datatypes::column_values::SqlDateTime,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // DATETIME format in TDS:
+        // - For DateTimeN (nullable, 0x6F): length byte (8) + 4-byte days + 4-byte time
+        // - For DateTime (fixed, 0x3D): 4-byte days + 4-byte time (8 bytes total)
+        //
+        // Days: Signed 32-bit integer representing days since January 1, 1900
+        //       (negative for dates before 1900, back to January 1, 1753)
+        // Time: Unsigned 32-bit integer representing 1/300th of a second since midnight
+        //       (300 ticks per second, range 0 to 25,919,999 for 23:59:59.997)
+
+        if !ctx.is_fixed_type() {
+            // DateTimeN with length 8: length byte + value (9 bytes total)
+            match writer.has_space(9) {
+                false => {
+                    writer.write_byte_async(8).await?; // Length for DateTimeN (8 bytes)
+                    writer.write_i32_async(value.days).await?;
+                    writer.write_u32_async(value.time).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(8); // Length for DateTimeN (8 bytes)
+                    writer.write_i32_unchecked(value.days);
+                    // Note: No unchecked version for u32, use the bytes directly
+                    let time_bytes = value.time.to_le_bytes();
+                    writer.write_byte_unchecked(time_bytes[0]);
+                    writer.write_byte_unchecked(time_bytes[1]);
+                    writer.write_byte_unchecked(time_bytes[2]);
+                    writer.write_byte_unchecked(time_bytes[3]);
+                }
+            }
+        } else {
+            // Fixed type (DateTime, 0x3D) - just write value (8 bytes)
+            match writer.has_space(8) {
+                false => {
+                    writer.write_i32_async(value.days).await?;
+                    writer.write_u32_async(value.time).await?;
+                }
+                true => {
+                    writer.write_i32_unchecked(value.days);
+                    // Note: No unchecked version for u32, use the bytes directly
+                    let time_bytes = value.time.to_le_bytes();
+                    writer.write_byte_unchecked(time_bytes[0]);
+                    writer.write_byte_unchecked(time_bytes[1]);
+                    writer.write_byte_unchecked(time_bytes[2]);
+                    writer.write_byte_unchecked(time_bytes[3]);
                 }
             }
         }

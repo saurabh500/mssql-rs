@@ -434,16 +434,107 @@ impl PyCoreCursor {
                 // Fallback to string if Decimal conversion fails
                 decimal_str.into_pyobject(py).unwrap().to_owned().into_any()
             }
-            ColumnValues::DateTime(dt) => format!("{:?}", dt)
-                .into_pyobject(py)
-                .unwrap()
-                .to_owned()
-                .into_any(),
-            ColumnValues::SmallDateTime(dt) => format!("{:?}", dt)
-                .into_pyobject(py)
-                .unwrap()
-                .to_owned()
-                .into_any(),
+            ColumnValues::DateTime(dt) => {
+                // Convert SqlDateTime to Python datetime.datetime object
+                // SqlDateTime: days since 1900-01-01 (signed i32), time in 1/300th seconds (u32)
+                if let Ok(datetime_module) = PyModule::import(py, "datetime") {
+                    if let Ok(date_class) = datetime_module.getattr("date") {
+                        if let Ok(datetime_class) = datetime_module.getattr("datetime") {
+                            // Calculate the date by adding days to 1900-01-01
+                            // 1900-01-01 has ordinal 693596 (days since 0001-01-01)
+                            let base_ordinal: i32 = 693596;
+                            let target_ordinal = base_ordinal + dt.days;
+
+                            // Get the date from ordinal
+                            if let Ok(date_obj) =
+                                date_class.call_method1("fromordinal", (target_ordinal,))
+                            {
+                                // Extract year, month, day from the date
+                                if let (Ok(year), Ok(month), Ok(day)) = (
+                                    date_obj.getattr("year").and_then(|v| v.extract::<i32>()),
+                                    date_obj.getattr("month").and_then(|v| v.extract::<u8>()),
+                                    date_obj.getattr("day").and_then(|v| v.extract::<u8>()),
+                                ) {
+                                    // Convert time ticks (1/300th seconds) to time components
+                                    // dt.time is in units of 1/300 second
+                                    let total_ms = ((dt.time as u64) * 1000) / 300;
+
+                                    let hour = (total_ms / 3_600_000) as u8;
+                                    let remainder = total_ms % 3_600_000;
+
+                                    let minute = (remainder / 60_000) as u8;
+                                    let remainder = remainder % 60_000;
+
+                                    let second = (remainder / 1_000) as u8;
+                                    let microsecond = ((remainder % 1_000) * 1_000) as u32;
+
+                                    if let Ok(datetime_obj) = datetime_class.call1((
+                                        year,
+                                        month,
+                                        day,
+                                        hour,
+                                        minute,
+                                        second,
+                                        microsecond,
+                                    )) {
+                                        return datetime_obj.into_any();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Fallback to string if datetime conversion fails
+                format!("{:?}", dt)
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
+                    .into_any()
+            }
+            ColumnValues::SmallDateTime(dt) => {
+                // Convert SqlSmallDateTime to Python datetime.datetime object
+                // SqlSmallDateTime: days since 1900-01-01 (unsigned u16), time in minutes (u16)
+                if let Ok(datetime_module) = PyModule::import(py, "datetime") {
+                    if let Ok(date_class) = datetime_module.getattr("date") {
+                        if let Ok(datetime_class) = datetime_module.getattr("datetime") {
+                            // Calculate the date by adding days to 1900-01-01
+                            // 1900-01-01 has ordinal 693596 (days since 0001-01-01)
+                            let base_ordinal: i32 = 693596;
+                            let target_ordinal = base_ordinal + (dt.days as i32);
+
+                            // Get the date from ordinal
+                            if let Ok(date_obj) =
+                                date_class.call_method1("fromordinal", (target_ordinal,))
+                            {
+                                // Extract year, month, day from the date
+                                if let (Ok(year), Ok(month), Ok(day)) = (
+                                    date_obj.getattr("year").and_then(|v| v.extract::<i32>()),
+                                    date_obj.getattr("month").and_then(|v| v.extract::<u8>()),
+                                    date_obj.getattr("day").and_then(|v| v.extract::<u8>()),
+                                ) {
+                                    // Convert time in minutes to time components
+                                    let total_minutes = dt.time as u32;
+
+                                    let hour = (total_minutes / 60) as u8;
+                                    let minute = (total_minutes % 60) as u8;
+
+                                    if let Ok(datetime_obj) =
+                                        datetime_class.call1((year, month, day, hour, minute, 0, 0))
+                                    {
+                                        return datetime_obj.into_any();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Fallback to string if datetime conversion fails
+                format!("{:?}", dt)
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
+                    .into_any()
+            }
             ColumnValues::Money(m) => {
                 // Convert SqlMoney to Python Decimal object
                 // Money values are stored as 8-byte integers representing units of 1/10000
