@@ -134,20 +134,97 @@ fn py_to_column_value_internal(
 
     // Check for datetime types (must check PyDateTime before PyDate since datetime is a subclass of date)
     if py_obj.is_instance_of::<PyDateTime>() {
-        match py_obj.call_method0("isoformat") {
-            Ok(result) => {
-                if let Ok(iso_str) = result.extract::<String>() {
-                    let sql_string = SqlString::from_utf8_string(iso_str);
-                    return Ok(ColumnValues::String(sql_string));
-                }
-            }
-            Err(e) => {
-                return Err(Error::UsageError(format!(
-                    "Failed to convert datetime: {}",
-                    e
-                )));
-            }
-        }
+        // Convert Python datetime to SqlDateTime
+        // SQL Server DATETIME: days since 1900-01-01, time in 1/300th seconds
+
+        // Extract components from Python datetime
+        let year = py_obj
+            .getattr("year")
+            .and_then(|v| v.extract::<i32>())
+            .map_err(|e| Error::UsageError(format!("Failed to get year from datetime: {}", e)))?;
+
+        let month = py_obj
+            .getattr("month")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get month from datetime: {}", e)))?;
+
+        let day = py_obj
+            .getattr("day")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get day from datetime: {}", e)))?;
+
+        let hour = py_obj
+            .getattr("hour")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get hour from datetime: {}", e)))?;
+
+        let minute = py_obj
+            .getattr("minute")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get minute from datetime: {}", e)))?;
+
+        let second = py_obj
+            .getattr("second")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get second from datetime: {}", e)))?;
+
+        let microsecond = py_obj
+            .getattr("microsecond")
+            .and_then(|v| v.extract::<u32>())
+            .map_err(|e| {
+                Error::UsageError(format!("Failed to get microsecond from datetime: {}", e))
+            })?;
+
+        // Calculate days since 1900-01-01
+        // Use Python's date.toordinal() which gives days since 0001-01-01 (1-based)
+        // Then subtract the ordinal of 1900-01-01
+        let py = py_obj.py();
+        let datetime_module = PyModule::import(py, "datetime")
+            .map_err(|e| Error::UsageError(format!("Failed to import datetime module: {}", e)))?;
+
+        let date_class = datetime_module
+            .getattr("date")
+            .map_err(|e| Error::UsageError(format!("Failed to get date class: {}", e)))?;
+
+        // Create date for 1900-01-01
+        let base_date = date_class
+            .call1((1900, 1, 1))
+            .map_err(|e| Error::UsageError(format!("Failed to create base date: {}", e)))?;
+
+        let base_ordinal = base_date
+            .call_method0("toordinal")
+            .and_then(|v| v.extract::<i32>())
+            .map_err(|e| Error::UsageError(format!("Failed to get base ordinal: {}", e)))?;
+
+        // Get ordinal of the current datetime's date part
+        let current_date = date_class
+            .call1((year, month, day))
+            .map_err(|e| Error::UsageError(format!("Failed to create current date: {}", e)))?;
+
+        let current_ordinal = current_date
+            .call_method0("toordinal")
+            .and_then(|v| v.extract::<i32>())
+            .map_err(|e| Error::UsageError(format!("Failed to get current ordinal: {}", e)))?;
+
+        let days = current_ordinal - base_ordinal;
+
+        // Calculate time in 1/300th seconds (SQL Server DATETIME precision ~3.33ms)
+        // Total milliseconds = hour*3600000 + minute*60000 + second*1000 + microsecond/1000
+        let total_ms = (hour as u64) * 3_600_000
+            + (minute as u64) * 60_000
+            + (second as u64) * 1_000
+            + (microsecond as u64) / 1_000;
+
+        // Convert to 1/300th seconds
+        // SQL Server rounds to nearest multiple of 3.33ms
+        let time_ticks = ((total_ms * 300) / 1000) as u32;
+
+        return Ok(ColumnValues::DateTime(
+            mssql_tds::datatypes::column_values::SqlDateTime {
+                days,
+                time: time_ticks,
+            },
+        ));
     }
 
     if py_obj.is_instance_of::<PyDate>() {
