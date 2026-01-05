@@ -324,11 +324,6 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
-            // Time → Time: Direct conversion (no coercion needed, handled in default path)
-            (SourcePythonType::Time, SqlDbType::Time) => {
-                Ok(None) // Will use default conversion in py_to_column_value
-            }
-
             // String → Time: Parse ISO format time string (HH:MM:SS or HH:MM:SS.ffffff)
             (SourcePythonType::String, SqlDbType::Time) => {
                 let result = Self::coerce_string_to_time(py_obj)?;
