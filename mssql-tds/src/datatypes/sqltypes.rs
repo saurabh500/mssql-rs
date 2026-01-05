@@ -1038,7 +1038,7 @@ pub(crate) fn get_time_length_from_scale(scale: u8) -> TdsResult<u8> {
 /// - Scale 5: hundred-thousandths (divide by 10^2)
 /// - Scale 6: microseconds (divide by 10^1)
 /// - Scale 7: 100-nanoseconds (no scaling)
-fn scale_time_value_for_serialization(time_nanoseconds: u64, scale: u8) -> u64 {
+pub(crate) fn scale_time_value_for_serialization(time_nanoseconds: u64, scale: u8) -> u64 {
     match scale {
         0 => time_nanoseconds / 10_000_000, // Seconds
         1 => time_nanoseconds / 1_000_000,  // Tenths
@@ -1103,7 +1103,9 @@ mod datetime_tests {
                 SqlSmallDateTime, SqlTime,
             },
             sqldatatypes::TdsDataType,
-            sqltypes::{NULL_LENGTH, SqlType, get_scale_based_length},
+            sqltypes::{
+                NULL_LENGTH, SqlType, get_scale_based_length, scale_time_value_for_serialization,
+            },
         },
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
@@ -1342,7 +1344,8 @@ mod datetime_tests {
         packet_writer.finalize().await.unwrap();
         let byte_len = get_scale_based_length(&time).unwrap() + 3;
         let mut written_bytes = vec![0u8; byte_len as usize];
-        let test_time_bytes = get_partial_bytes(time.time_nanoseconds, byte_len - 3);
+        let scaled_time = scale_time_value_for_serialization(time.time_nanoseconds, time.scale);
+        let test_time_bytes = get_partial_bytes(scaled_time, byte_len - 3);
         let test_days_bytes = get_partial_bytes(datetime2.days as u64, 3);
         let payload = mock_reader_writer.get_written_data();
 
@@ -1421,7 +1424,8 @@ mod datetime_tests {
         packet_writer.finalize().await.unwrap();
         let byte_len = get_scale_based_length(&time).unwrap() + 3 + 2;
         let mut written_bytes = vec![0u8; (byte_len - 2) as usize];
-        let test_time_bytes = get_partial_bytes(time.time_nanoseconds, byte_len - 5);
+        let scaled_time = scale_time_value_for_serialization(time.time_nanoseconds, time.scale);
+        let test_time_bytes = get_partial_bytes(scaled_time, byte_len - 5);
         let test_days_bytes = get_partial_bytes(datetime2.days as u64, 3);
         let payload = mock_reader_writer.get_written_data();
 
@@ -1495,7 +1499,8 @@ mod datetime_tests {
         packet_writer.finalize().await.unwrap();
         let byte_len = get_scale_based_length(&time).unwrap();
         let mut written_bytes = vec![0u8; byte_len as usize];
-        let test_bytes = get_partial_bytes(time.time_nanoseconds, byte_len);
+        let scaled_time = scale_time_value_for_serialization(time.time_nanoseconds, time.scale);
+        let test_bytes = get_partial_bytes(scaled_time, byte_len);
 
         let payload = mock_reader_writer.get_written_data();
 
