@@ -307,11 +307,6 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
-            // Date → Date: Direct conversion (no coercion needed, handled in default path)
-            (SourcePythonType::Date, SqlDbType::Date) => {
-                Ok(None) // Will use default conversion in py_to_column_value
-            }
-
             // DateTime → Date: Extract date part
             (SourcePythonType::DateTime, SqlDbType::Date) => {
                 let result = Self::coerce_datetime_to_date(py_obj)?;
