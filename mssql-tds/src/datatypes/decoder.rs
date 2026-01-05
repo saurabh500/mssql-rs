@@ -339,13 +339,36 @@ impl GenericDecoder {
     where
         T: TdsPacketReader + Send + Sync,
     {
-        let nanoseconds = match byte_len {
+        let scaled_value = match byte_len {
             3 => reader.read_uint24().await? as u64,
             4 => reader.read_uint32().await? as u64,
             _ => reader.read_uint40().await?,
         };
+
+        // The value from SQL Server is in scaled units based on the scale:
+        // Scale 0: seconds (need to multiply by 10^7)
+        // Scale 1: tenths of seconds (multiply by 10^6)
+        // Scale 2: hundredths (multiply by 10^5)
+        // Scale 3: milliseconds (multiply by 10^4)
+        // Scale 4: ten-thousandths (multiply by 10^3)
+        // Scale 5: hundred-thousandths (multiply by 10^2)
+        // Scale 6: microseconds (multiply by 10^1)
+        // Scale 7: 100-nanoseconds (multiply by 10^0 = no scaling)
+        // We need to convert to 100-nanosecond units for consistency
+        let time_nanoseconds = match scale {
+            0 => scaled_value * 10_000_000, // Seconds to 100ns
+            1 => scaled_value * 1_000_000,  // Tenths to 100ns
+            2 => scaled_value * 100_000,    // Hundredths to 100ns
+            3 => scaled_value * 10_000,     // Milliseconds to 100ns
+            4 => scaled_value * 1_000,      // Ten-thousandths to 100ns
+            5 => scaled_value * 100,        // Hundred-thousandths to 100ns
+            6 => scaled_value * 10,         // Microseconds to 100ns
+            7 => scaled_value,              // Already in 100ns
+            _ => scaled_value,              // Fallback
+        };
+
         Ok(SqlTime {
-            time_nanoseconds: nanoseconds,
+            time_nanoseconds,
             scale,
         })
     }

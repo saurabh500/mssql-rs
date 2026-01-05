@@ -773,9 +773,12 @@ impl SqlType {
 
                 packet_writer.write_byte_async(length).await?;
 
-                // Write the time in nanoseconds.
+                // Scale the time value before writing
+                let scaled_value = scale_time_value_for_serialization(t.time_nanoseconds, scale);
+
+                // Write the scaled time value
                 packet_writer
-                    .write_partial_u64_async(t.time_nanoseconds, byte_count_for_time)
+                    .write_partial_u64_async(scaled_value, byte_count_for_time)
                     .await?;
 
                 // Write the day count.
@@ -815,9 +818,12 @@ impl SqlType {
 
                 packet_writer.write_byte_async(length).await?;
 
-                // Write the time in nanoseconds.
+                // Scale the time value before writing
+                let scaled_value = scale_time_value_for_serialization(t.time_nanoseconds, scale);
+
+                // Write the scaled time value
                 packet_writer
-                    .write_partial_u64_async(t.time_nanoseconds, byte_count_for_time)
+                    .write_partial_u64_async(scaled_value, byte_count_for_time)
                     .await?;
                 // Write the day count.
                 packet_writer
@@ -859,9 +865,12 @@ impl SqlType {
                     .write_byte_async(scale_based_byte_length)
                     .await?;
 
-                // Write the time in nanoseconds.
+                // Scale the time value before writing
+                let scaled_value = scale_time_value_for_serialization(t.time_nanoseconds, scale);
+
+                // Write the scaled time value
                 packet_writer
-                    .write_partial_u64_async(t.time_nanoseconds, scale_based_byte_length)
+                    .write_partial_u64_async(scaled_value, scale_based_byte_length)
                     .await?;
             }
             None => {
@@ -1015,6 +1024,31 @@ pub(crate) fn get_time_length_from_scale(scale: u8) -> TdsResult<u8> {
         _ => Err(Error::UsageError(format!(
             "Invalid scale for Time type: {scale}"
         ))),
+    }
+}
+
+/// Scale the time value for serialization based on the scale.
+/// The time_nanoseconds field is always in 100-nanosecond units internally,
+/// but SQL Server expects values in units appropriate for the scale:
+/// - Scale 0: seconds (divide by 10^7)
+/// - Scale 1: tenths of seconds (divide by 10^6)
+/// - Scale 2: hundredths of seconds (divide by 10^5)
+/// - Scale 3: milliseconds (divide by 10^4)
+/// - Scale 4: ten-thousandths (divide by 10^3)
+/// - Scale 5: hundred-thousandths (divide by 10^2)
+/// - Scale 6: microseconds (divide by 10^1)
+/// - Scale 7: 100-nanoseconds (no scaling)
+fn scale_time_value_for_serialization(time_nanoseconds: u64, scale: u8) -> u64 {
+    match scale {
+        0 => time_nanoseconds / 10_000_000, // Seconds
+        1 => time_nanoseconds / 1_000_000,  // Tenths
+        2 => time_nanoseconds / 100_000,    // Hundredths
+        3 => time_nanoseconds / 10_000,     // Milliseconds
+        4 => time_nanoseconds / 1_000,      // Ten-thousandths
+        5 => time_nanoseconds / 100,        // Hundred-thousandths
+        6 => time_nanoseconds / 10,         // Microseconds
+        7 => time_nanoseconds,              // 100-nanoseconds (no scaling)
+        _ => time_nanoseconds,              // Fallback
     }
 }
 

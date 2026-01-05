@@ -60,7 +60,7 @@ pub fn py_to_column_value(
     py_obj: &Bound<'_, PyAny>,
     target_metadata: Option<&BulkCopyColumnMetadata>,
 ) -> TdsResult<ColumnValues> {
-    let result = py_to_column_value_internal(py_obj)?;
+    let result = py_to_column_value_internal(py_obj, target_metadata)?;
 
     // Validate type compatibility if metadata provided
     if let Some(meta) = target_metadata {
@@ -74,7 +74,10 @@ pub fn py_to_column_value(
 ///
 /// This is the core type conversion logic extracted to a separate function
 /// to keep the validation step clean and maintainable.
-fn py_to_column_value_internal(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+fn py_to_column_value_internal(
+    py_obj: &Bound<'_, PyAny>,
+    target_metadata: Option<&BulkCopyColumnMetadata>,
+) -> TdsResult<ColumnValues> {
     // Handle None (NULL) - most common check
     if py_obj.is_none() {
         return Ok(ColumnValues::Null);
@@ -173,17 +176,46 @@ fn py_to_column_value_internal(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnVal
     }
 
     if py_obj.is_instance_of::<PyTime>() {
-        match py_obj.call_method0("isoformat") {
-            Ok(result) => {
-                if let Ok(iso_str) = result.extract::<String>() {
-                    let sql_string = SqlString::from_utf8_string(iso_str);
-                    return Ok(ColumnValues::String(sql_string));
-                }
-            }
-            Err(e) => {
-                return Err(Error::UsageError(format!("Failed to convert time: {}", e)));
-            }
-        }
+        // Convert Python time object to SqlTime
+        // Extract hour, minute, second, microsecond from Python time
+        let hour = py_obj
+            .getattr("hour")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get hour from time: {}", e)))?;
+
+        let minute = py_obj
+            .getattr("minute")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get minute from time: {}", e)))?;
+
+        let second = py_obj
+            .getattr("second")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get second from time: {}", e)))?;
+
+        let microsecond = py_obj
+            .getattr("microsecond")
+            .and_then(|v| v.extract::<u32>())
+            .map_err(|e| {
+                Error::UsageError(format!("Failed to get microsecond from time: {}", e))
+            })?;
+
+        // Convert to 100-nanosecond units (SQL Server TIME uses 100ns precision)
+        // time_100ns = hour * 3600 * 10^7 + minute * 60 * 10^7 + second * 10^7 + microsecond * 10
+        let time_nanoseconds = (hour as u64) * 36_000_000_000
+            + (minute as u64) * 600_000_000
+            + (second as u64) * 10_000_000
+            + (microsecond as u64) * 10;
+
+        // Use the scale from target metadata if available, otherwise default to 7 (max precision)
+        let scale = target_metadata.map(|meta| meta.scale).unwrap_or(7);
+
+        return Ok(ColumnValues::Time(
+            mssql_tds::datatypes::column_values::SqlTime {
+                time_nanoseconds,
+                scale,
+            },
+        ));
     }
 
     // Check for decimal.Decimal type

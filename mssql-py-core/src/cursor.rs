@@ -506,6 +506,44 @@ impl PyCoreCursor {
                     .to_owned()
                     .into_any()
             }
+            ColumnValues::Time(sql_time) => {
+                // Convert SqlTime to Python datetime.time object
+                // SqlTime stores time as 100-nanosecond units since midnight
+                // We need to extract hours, minutes, seconds, and microseconds
+                if let Ok(datetime_module) = PyModule::import(py, "datetime") {
+                    if let Ok(time_class) = datetime_module.getattr("time") {
+                        let time_100ns = sql_time.time_nanoseconds;
+
+                        // Convert 100-nanosecond units to components
+                        // 1 hour = 36,000,000,000 units (100ns)
+                        // 1 minute = 600,000,000 units (100ns)
+                        // 1 second = 10,000,000 units (100ns)
+                        // 1 microsecond = 10 units (100ns)
+
+                        let hour = (time_100ns / 36_000_000_000) as u8;
+                        let remainder = time_100ns % 36_000_000_000;
+
+                        let minute = (remainder / 600_000_000) as u8;
+                        let remainder = remainder % 600_000_000;
+
+                        let second = (remainder / 10_000_000) as u8;
+                        let remainder = remainder % 10_000_000;
+
+                        let microsecond = (remainder / 10) as u32;
+
+                        if let Ok(time_obj) = time_class.call1((hour, minute, second, microsecond))
+                        {
+                            return time_obj.into_any();
+                        }
+                    }
+                }
+                // Fallback to string if time conversion fails
+                format!("{:?}", col_val)
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
+                    .into_any()
+            }
             _ => PyString::new(py, &format!("{:?}", col_val)).into_any(),
         }
     }
