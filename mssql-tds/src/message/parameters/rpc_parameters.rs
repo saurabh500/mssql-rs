@@ -220,13 +220,7 @@ fn build_parameter_list_string_impl(named_params: &Vec<RpcParameter>, params_lis
             } else {
                 params_list.push_str(", ");
             }
-            // Include OUTPUT for parameters marked as BY_REF_VALUE
-            let output_suffix = if param.options.contains(StatusFlags::BY_REF_VALUE) {
-                " OUTPUT"
-            } else {
-                ""
-            };
-            params_list.push_str(&format!("{param_name} {param_type_name}{output_suffix} "));
+            params_list.push_str(&format!("{param_name} {param_type_name} "));
         }
     }
 }

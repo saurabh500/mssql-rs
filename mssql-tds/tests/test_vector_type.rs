@@ -758,9 +758,10 @@ mod vector_integration_tests {
         );
 
         client
-            .execute_sp_executesql(
-                "EXEC #TestVectorOutput @OutputVector OUTPUT".to_string(),
-                vec![output_param],
+            .execute_stored_procedure(
+                "#TestVectorOutput".to_string(),
+                None,
+                Some(vec![output_param]),
                 None,
                 None,
             )
@@ -834,9 +835,10 @@ mod vector_integration_tests {
         ];
 
         client
-            .execute_sp_executesql(
-                "EXEC #TestVectorInOut @InputVector, @OutputVector OUTPUT".to_string(),
-                params,
+            .execute_stored_procedure(
+                "#TestVectorInOut".to_string(),
+                None,
+                Some(params),
                 None,
                 None,
             )
@@ -899,9 +901,10 @@ mod vector_integration_tests {
         );
 
         client
-            .execute_sp_executesql(
-                "EXEC #TestVectorOutputNull @OutputVector OUTPUT".to_string(),
-                vec![output_param],
+            .execute_stored_procedure(
+                "#TestVectorOutputNull".to_string(),
+                None,
+                Some(vec![output_param]),
                 None,
                 None,
             )
@@ -964,9 +967,10 @@ mod vector_integration_tests {
         );
 
         client
-            .execute_sp_executesql(
-                "EXEC #TestVectorOutputLarge @OutputVector OUTPUT".to_string(),
-                vec![output_param],
+            .execute_stored_procedure(
+                "#TestVectorOutputLarge".to_string(),
+                None,
+                Some(vec![output_param]),
                 None,
                 None,
             )
