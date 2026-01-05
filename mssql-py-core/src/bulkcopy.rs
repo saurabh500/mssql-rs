@@ -20,7 +20,7 @@ use mssql_tds::datatypes::decoder::DecimalParts;
 use mssql_tds::error::Error;
 use mssql_tds::message::bulk_load::StreamingBulkLoadWriter;
 use pyo3::prelude::*;
-use pyo3::types::{PyDate, PyDateTime};
+use pyo3::types::{PyDate, PyDateTime, PyTime};
 use pyo3::types::{PyString, PyTuple};
 use rust_decimal::prelude::*;
 use rust_decimal::Decimal;
@@ -37,6 +37,7 @@ enum SourcePythonType {
     Decimal,
     Date,
     DateTime,
+    Time,
     Other,
 }
 
@@ -61,6 +62,8 @@ impl SourcePythonType {
             SourcePythonType::DateTime
         } else if py_obj.is_instance_of::<PyDate>() {
             SourcePythonType::Date
+        } else if py_obj.is_instance_of::<PyTime>() {
+            SourcePythonType::Time
         } else {
             // Check for decimal.Decimal
             let py = py_obj.py();
@@ -304,11 +307,6 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
-            // Date → Date: Direct conversion (no coercion needed, handled in default path)
-            (SourcePythonType::Date, SqlDbType::Date) => {
-                Ok(None) // Will use default conversion in py_to_column_value
-            }
-
             // DateTime → Date: Extract date part
             (SourcePythonType::DateTime, SqlDbType::Date) => {
                 let result = Self::coerce_datetime_to_date(py_obj)?;
@@ -318,6 +316,12 @@ impl PythonRowAdapter {
             // String → Date: Parse ISO format date string (YYYY-MM-DD)
             (SourcePythonType::String, SqlDbType::Date) => {
                 let result = Self::coerce_string_to_date(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // String → Time: Parse ISO format time string (HH:MM:SS or HH:MM:SS.ffffff)
+            (SourcePythonType::String, SqlDbType::Time) => {
+                let result = Self::coerce_string_to_time(py_obj)?;
                 Ok(Some(result))
             }
 
@@ -811,6 +815,76 @@ impl PythonRowAdapter {
 
         Ok(ColumnValues::Date(
             mssql_tds::datatypes::column_values::SqlDate::create(days)?,
+        ))
+    }
+
+    /// Coerce a Python string to SQL Server TIME type.
+    ///
+    /// Parses ISO format time strings (HH:MM:SS or HH:MM:SS.ffffff) to TIME.
+    fn coerce_string_to_time(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
+
+        let s = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+        // Use Python's datetime.time.fromisoformat() to parse ISO time string
+        // This handles all ISO format variations and time validation automatically
+        let py = py_obj.py();
+        let datetime_module = py
+            .import("datetime")
+            .map_err(|e| Error::UsageError(format!("Failed to import datetime module: {}", e)))?;
+
+        let time_class = datetime_module
+            .getattr("time")
+            .map_err(|e| Error::UsageError(format!("Failed to get time class: {}", e)))?;
+
+        let parsed_time = time_class
+            .call_method1("fromisoformat", (s,))
+            .map_err(|e| {
+                Error::UsageError(format!(
+                    "Invalid ISO time format '{}'. Expected HH:MM:SS or HH:MM:SS.ffffff: {}",
+                    s, e
+                ))
+            })?;
+
+        // Extract hour, minute, second, microsecond
+        let hour = parsed_time
+            .getattr("hour")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get hour from time: {}", e)))?;
+
+        let minute = parsed_time
+            .getattr("minute")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get minute from time: {}", e)))?;
+
+        let second = parsed_time
+            .getattr("second")
+            .and_then(|v| v.extract::<u8>())
+            .map_err(|e| Error::UsageError(format!("Failed to get second from time: {}", e)))?;
+
+        let microsecond = parsed_time
+            .getattr("microsecond")
+            .and_then(|v| v.extract::<u32>())
+            .map_err(|e| {
+                Error::UsageError(format!("Failed to get microsecond from time: {}", e))
+            })?;
+
+        // Convert to 100-nanosecond units (SQL Server TIME uses 100ns precision)
+        // time_100ns = hour * 3600 * 10^7 + minute * 60 * 10^7 + second * 10^7 + microsecond * 10
+        let time_nanoseconds = (hour as u64) * 36_000_000_000
+            + (minute as u64) * 600_000_000
+            + (second as u64) * 10_000_000
+            + (microsecond as u64) * 10;
+
+        Ok(ColumnValues::Time(
+            mssql_tds::datatypes::column_values::SqlTime {
+                time_nanoseconds,
+                scale: 7, // Use maximum scale (100ns precision)
+            },
         ))
     }
 }

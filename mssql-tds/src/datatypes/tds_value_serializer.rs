@@ -90,6 +90,7 @@ impl TdsValueSerializer {
             ColumnValues::SmallMoney(v) => Self::serialize_smallmoney(writer, v, ctx).await,
             ColumnValues::Money(v) => Self::serialize_money(writer, v, ctx).await,
             ColumnValues::Date(v) => Self::serialize_date(writer, v, ctx).await,
+            ColumnValues::Time(v) => Self::serialize_time(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -108,8 +109,8 @@ impl TdsValueSerializer {
     {
         // Check type class and write appropriate NULL marker
         match ctx.tds_type {
-            // Nullable types (INTN, FLTN, BITN, MONEYN, DATETIMEN, DecimalN, NumericN, Guid, DateN) use length = 0x00
-            0x26 | 0x6D | 0x68 | 0x6E | 0x6F | 0x6A | 0x6C | 0x24 | 0x28 => {
+            // Nullable types (INTN, FLTN, BITN, MONEYN, DATETIMEN, DecimalN, NumericN, Guid, DateN, TimeN, DateTime2N, DateTimeOffsetN) use length = 0x00
+            0x26 | 0x6D | 0x68 | 0x6E | 0x6F | 0x6A | 0x6C | 0x24 | 0x28 | 0x29 | 0x2A | 0x2B => {
                 writer.write_byte_async(NULL_LENGTH).await?;
             }
             // Fixed BIT type (0x32) cannot be NULL - must use BitN (0x68) for nullable
@@ -514,6 +515,101 @@ impl TdsValueSerializer {
                     writer.write_byte_unchecked((days & 0xFF) as u8);
                     writer.write_byte_unchecked(((days >> 8) & 0xFF) as u8);
                     writer.write_byte_unchecked(((days >> 16) & 0xFF) as u8);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_time<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &crate::datatypes::column_values::SqlTime,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // TIME format in TDS:
+        // - For TimeN (nullable, 0x29): length byte + time_nanoseconds (3, 4, or 5 bytes)
+        // - For Time (fixed, 0x2A): time_nanoseconds only (3, 4, or 5 bytes)
+        // The value is stored as little-endian unsigned integer representing 100-nanosecond units
+        // Length depends on scale:
+        //   - Scale 0-2: 3 bytes
+        //   - Scale 3-4: 4 bytes
+        //   - Scale 5-7: 5 bytes
+
+        // Determine the byte length based on scale
+        let time_length = match value.scale {
+            0..=2 => 3u8,
+            3 | 4 => 4u8,
+            5..=7 => 5u8,
+            _ => {
+                return Err(Error::UsageError(format!(
+                    "Invalid scale for Time type: {}. Valid range: 0-7",
+                    value.scale
+                )));
+            }
+        };
+
+        // Scale the time value based on the scale
+        // The time_nanoseconds is always in 100-nanosecond units internally
+        // But SQL Server expects the value to be in units appropriate for the scale:
+        // Scale 0: seconds (divide by 10^7)
+        // Scale 1: tenths of seconds (divide by 10^6)
+        // Scale 2: hundredths of seconds (divide by 10^5)
+        // Scale 3: milliseconds (divide by 10^4)
+        // Scale 4: ten-thousandths (divide by 10^3)
+        // Scale 5: hundred-thousandths (divide by 10^2)
+        // Scale 6: microseconds (divide by 10^1)
+        // Scale 7: 100-nanoseconds (divide by 10^0 = no scaling)
+        let time_value = match value.scale {
+            0 => value.time_nanoseconds / 10_000_000, // Seconds
+            1 => value.time_nanoseconds / 1_000_000,  // Tenths
+            2 => value.time_nanoseconds / 100_000,    // Hundredths
+            3 => value.time_nanoseconds / 10_000,     // Milliseconds
+            4 => value.time_nanoseconds / 1_000,      // Ten-thousandths
+            5 => value.time_nanoseconds / 100,        // Hundred-thousandths
+            6 => value.time_nanoseconds / 10,         // Microseconds
+            7 => value.time_nanoseconds,              // 100-nanoseconds (no scaling)
+            _ => value.time_nanoseconds,
+        };
+
+        if !ctx.is_fixed_type() {
+            // TimeN with length prefix
+            let total_size = (1 + time_length) as usize;
+            match writer.has_space(total_size) {
+                false => {
+                    writer.write_byte_async(time_length).await?; // Length byte
+                    // Write time_value in little-endian format (variable bytes)
+                    for i in 0..time_length {
+                        let byte_val = ((time_value >> (i * 8)) & 0xFF) as u8;
+                        writer.write_byte_async(byte_val).await?;
+                    }
+                }
+                true => {
+                    writer.write_byte_unchecked(time_length); // Length byte
+                    // Write time_value in little-endian format (variable bytes)
+                    for i in 0..time_length {
+                        let byte_val = ((time_value >> (i * 8)) & 0xFF) as u8;
+                        writer.write_byte_unchecked(byte_val);
+                    }
+                }
+            }
+        } else {
+            // Fixed type (Time, 0x2A) - just write value (3, 4, or 5 bytes)
+            match writer.has_space(time_length as usize) {
+                false => {
+                    for i in 0..time_length {
+                        writer
+                            .write_byte_async(((time_value >> (i * 8)) & 0xFF) as u8)
+                            .await?;
+                    }
+                }
+                true => {
+                    for i in 0..time_length {
+                        writer.write_byte_unchecked(((time_value >> (i * 8)) & 0xFF) as u8);
+                    }
                 }
             }
         }

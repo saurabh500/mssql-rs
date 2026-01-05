@@ -139,31 +139,21 @@ export const fromNapiToJsTimeTransformer = (
     throw new Error(`Invalid scale: ${scale}. Must be between 0 and 7.`);
   }
 
-  // Lets say we get 1234567 from SQL with 7 scale, this means 0.123 seconds or 123 millis 456 micros and 700 nanos.
-  // Lets say we get 1234567 from SQL with 5 scale, this means 12 seconds or 345 millis 670 micros and 0 nanos.
-  let received_time = row.timeNanoseconds;
-  // Convert timeNanoseconds to milliseconds.
-  // Scale 7: 1234567 * 10 ^ (7-7) -> 1234567 * 10^0 = 001234567
-  // Scale 5: 1234567 * 10 ^ (7-5) -> 1234567 * 10^2 = 123456700
-  let normalize_time = Number(received_time) * 10 ** (7 - scale);
+  // The timeNanoseconds field is already in 100-nanosecond units after deserialization from Rust.
+  // No need to apply additional scaling here.
+  let time_in_100ns = Number(row.timeNanoseconds);
 
-  // Extract the milliseconds.
-  // Scale 7:  001234567 / 10000 = 123.4567 -> 123 millis
-  // Scale 5: 123456700 / 10000 = 12345.67 -> 12345 millis which is 12 seconds and 345 millis
-  let millis = Number(normalize_time) / 10_000; // Convert nanoseconds to milliseconds
+  // Convert 100-nanoseconds to milliseconds by dividing by 10,000
+  let millis = time_in_100ns / 10_000;
 
-  // Extract nanoseconds precision
-  // Scale 7:  001234567 % 10000 -> 4567 / 10_000_000 = 0.0004567
-  // Scale 5:  123456700 % 10000 -> 6700 / 10_000_000 = 0.00067
-  let nanos_precision = (normalize_time % 10_000) / Math.pow(10, 7);
+  // Extract nanoseconds precision for sub-millisecond accuracy
+  // The remainder after converting to millis represents the sub-millisecond nanoseconds
+  let nanos_precision = (time_in_100ns % 10_000) / Math.pow(10, 7);
 
   // Create a Date object starting from the epoch (1970-01-01)
   // and add the milliseconds to it.
   // Note: JavaScript Date uses UTC, so we can safely use UTC methods.
-  // The epoch for SQL Server is 1900-01-01, but we start from 1970-01-01
-  // and adjust the date accordingly.
   // The time part is represented as UTC, so we can directly use it.
-  // The date part is not used here, as we are only interested in the time.
   let datePart = new Date(Date.UTC(1970, 0, 1, 0, 0, 0, millis));
   (datePart as DateWithNanosecondsDelta).nanosecondsDelta = nanos_precision;
   return datePart as DateWithNanosecondsDelta;
@@ -180,21 +170,29 @@ export const fromJsToNapiTimeTransformer = (
   if (scale < 0 || scale > 7) {
     throw new Error(`Invalid scale: ${scale}. Must be between 0 and 7.`);
   }
+  
   let seconds =
     (time.getUTCHours() * 60 + time.getUTCMinutes()) * 60 +
     time.getUTCSeconds();
 
-  // We extract the millis from the date and create a number which repreents the input date in millis.
+  // We extract the millis from the date
   let millis = seconds * 1000 + time.getUTCMilliseconds();
 
-  // Millis by default have scale 3. Adjust the number based on the intended scale.
-  // E.g. If 1234567 millis are to be sent with scale 5, we need to multiply it by 10^(5-3) = 100, which gives us 123456700.
-  // If the scale is 2 then we need to multiply it by 10^(2-3) = 0.1, which gives us 123456.7.
-  let timeToSend = millis * Math.pow(10, scale - 3);
-  timeToSend = Math.round(timeToSend); // Round to avoid floating point issues
+  // Convert milliseconds to 100-nanosecond units (scale 7).
+  // 1 millisecond = 10,000 * 100-nanoseconds
+  let timeIn100ns = millis * 10_000;
+  
+  // Round to the scale precision if needed.
+  // This ensures values are rounded rather than truncated when they exceed scale precision.
+  if (scale < 7) {
+    const divisor = 10 ** (7 - scale);
+    const halfDivisor = Math.floor(divisor / 2);
+    timeIn100ns = Math.floor((timeIn100ns + halfDivisor) / divisor) * divisor;
+  }
+  
   return {
     scale: scale,
-    timeNanoseconds: BigInt(timeToSend),
+    timeNanoseconds: BigInt(timeIn100ns),
   };
 };
 
