@@ -388,7 +388,7 @@ def test_cursor_bulkcopy_date_max_boundary_9999_12_31(client_context):
         table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
     )
 
-    # Verify bulk copy succeeded
+    # Verify bulk copy succeeded    
     assert result is not None
     assert result["rows_copied"] == 4
 

@@ -11,6 +11,7 @@ pub mod handler;
 pub mod io;
 pub mod message;
 pub mod query;
+pub mod sql_identifier;
 pub mod token;
 
 // Expose internal APIs for fuzzing
