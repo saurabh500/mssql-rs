@@ -20,6 +20,10 @@ use crate::connection::tds_client::TdsClient;
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::bulk_copy_metadata::BulkCopyColumnMetadata;
 use crate::error::Error;
+use crate::sql_identifier::{
+    CATALOG_INDEX, TABLE_INDEX, build_multipart_name, escape_identifier, escape_string_literal,
+    parse_multipart_identifier,
+};
 use crate::token::tokens::ColMetadataToken;
 use async_trait::async_trait;
 use tracing::{debug, instrument, trace};
@@ -171,7 +175,11 @@ impl TryFrom<ColMetadataToken> for Vec<BulkCopyColumnMetadata> {
 /// # Arguments
 ///
 /// * `client` - Mutable reference to the TDS client
-/// * `table_name` - Name of the table (can include schema: "dbo.Users")
+/// * `table_name` - Name of the table, supporting multipart names:
+///   - 1-part: "table" (uses current database and default schema)
+///   - 2-part: "schema.table"
+///   - 3-part: "database.schema.table"
+///   - 4-part: "server.database.schema.table" (server part ignored in query context)
 /// * `timeout_sec` - Query timeout in seconds
 /// * `cancel_handle` - Optional cancellation handle
 ///
@@ -185,6 +193,7 @@ impl TryFrom<ColMetadataToken> for Vec<BulkCopyColumnMetadata> {
 /// - Table does not exist
 /// - No permission to access the table
 /// - Network errors during query execution
+/// - Invalid multipart identifier format
 ///
 /// # Implementation Notes
 ///
@@ -193,6 +202,7 @@ impl TryFrom<ColMetadataToken> for Vec<BulkCopyColumnMetadata> {
 /// list to:
 /// - Support hidden columns in temporal tables
 /// - Exclude SQL Graph columns that cannot be selected
+/// - Handle multipart table names with proper catalog prefix
 #[instrument(skip(client), level = "info")]
 pub(crate) async fn fetch_table_metadata(
     client: &mut TdsClient,
@@ -200,33 +210,66 @@ pub(crate) async fn fetch_table_metadata(
     timeout_sec: Option<u32>,
     cancel_handle: Option<&CancelHandle>,
 ) -> TdsResult<ColMetadataToken> {
+    // Parse the multipart identifier
+    let parts = parse_multipart_identifier(table_name, false)?;
+
+    // Validate table name exists
+    let table_part = parts[TABLE_INDEX]
+        .as_ref()
+        .ok_or_else(|| Error::UsageError(format!("Invalid table name: {}", table_name)))?;
+
+    // Check if temp table
+    let is_temp_table = table_part.starts_with('#');
+
+    // Determine catalog
+    let catalog = if is_temp_table && parts[CATALOG_INDEX].is_none() {
+        "tempdb".to_string()
+    } else if let Some(cat) = &parts[CATALOG_INDEX] {
+        escape_identifier(cat)
+    } else {
+        // No catalog specified, don't prefix
+        String::new()
+    };
+
+    // Build full object name for OBJECT_ID
+    let full_name = build_multipart_name(&parts);
+    let escaped_full_name = escape_string_literal(&full_name);
+
+    // Build query with catalog prefix
+    let catalog_prefix = if !catalog.is_empty() {
+        format!("{}.", catalog)
+    } else {
+        String::new()
+    };
+
     // Use SET FMTONLY ON to get metadata without query execution overhead.
     // This matches .NET SqlBulkCopy behavior and is more efficient than SELECT TOP 0.
     // It also dynamically builds the column list to:
     // - Support hidden columns in temporal tables
     // - Exclude SQL Graph columns that cannot be selected
+    // - Use catalog prefix to query correct database
     let query = format!(
         r#"DECLARE @Column_Names NVARCHAR(MAX) = NULL;
 IF EXISTS (SELECT TOP 1 * FROM sys.all_columns WHERE [object_id] = OBJECT_ID('sys.all_columns') AND [name] = 'graph_type')
 BEGIN
     SELECT @Column_Names = COALESCE(@Column_Names + ', ', '') + QUOTENAME([name]) 
-    FROM sys.all_columns 
-    WHERE [object_id] = OBJECT_ID('{table_name}') 
+    FROM {catalog_prefix}sys.all_columns 
+    WHERE [object_id] = OBJECT_ID('{escaped_full_name}') 
     AND COALESCE([graph_type], 0) NOT IN (1, 3, 4, 6, 7) 
     ORDER BY [column_id] ASC;
 END
 ELSE
 BEGIN
     SELECT @Column_Names = COALESCE(@Column_Names + ', ', '') + QUOTENAME([name]) 
-    FROM sys.all_columns 
-    WHERE [object_id] = OBJECT_ID('{table_name}') 
+    FROM {catalog_prefix}sys.all_columns 
+    WHERE [object_id] = OBJECT_ID('{escaped_full_name}') 
     ORDER BY [column_id] ASC;
 END
 
 SELECT @Column_Names = COALESCE(@Column_Names, '*');
 
 SET FMTONLY ON;
-EXEC(N'SELECT ' + @Column_Names + N' FROM {table_name}');
+EXEC(N'SELECT ' + @Column_Names + N' FROM {escaped_full_name}');
 SET FMTONLY OFF;"#
     );
 
