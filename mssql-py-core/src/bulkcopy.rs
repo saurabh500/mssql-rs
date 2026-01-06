@@ -327,7 +327,7 @@ impl PythonRowAdapter {
 
             // String → DateTime/SmallDateTime: Parse ISO format datetime string
             (SourcePythonType::String, SqlDbType::DateTime | SqlDbType::SmallDateTime) => {
-                let result = Self::coerce_string_to_datetime(py_obj)?;
+                let result = Self::coerce_string_to_datetime(py_obj, target_meta.sql_type)?;
                 Ok(Some(result))
             }
 
@@ -897,8 +897,11 @@ impl PythonRowAdapter {
     /// Coerce a Python string to SQL Server DATETIME or SMALLDATETIME.
     ///
     /// Parses ISO format datetime strings (YYYY-MM-DD HH:MM:SS or YYYY-MM-DDTHH:MM:SS)
-    /// and converts them to SqlDateTime format.
-    fn coerce_string_to_datetime(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+    /// and converts them to SqlDateTime or SqlSmallDateTime format depending on target type.
+    fn coerce_string_to_datetime(
+        py_obj: &Bound<'_, PyAny>,
+        target_type: SqlDbType,
+    ) -> TdsResult<ColumnValues> {
         let py_str = py_obj
             .cast::<PyString>()
             .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
@@ -929,9 +932,6 @@ impl PythonRowAdapter {
                     s, e
                 ))
             })?;
-
-        // Now convert the parsed datetime object to ColumnValues::DateTime
-        // This reuses the logic from py_to_column_value for datetime objects
 
         // Extract components from parsed datetime
         let year = parsed_datetime
@@ -996,6 +996,54 @@ impl PythonRowAdapter {
 
         let days = current_ordinal - base_ordinal;
 
+        // Check if target is SmallDateTime
+        if target_type == SqlDbType::SmallDateTime {
+            // Validate SMALLDATETIME range: 1900-01-01 00:00:00 to 2079-06-06 23:59:59
+            if !(0..=65535).contains(&days) {
+                return Err(Error::UsageError(format!(
+                    "DateTime value {}-{:02}-{:02} out of range for SMALLDATETIME (valid range: 1900-01-01 to 2079-06-06)",
+                    year, month, day
+                )));
+            }
+
+            // Calculate time in minutes since midnight with proper rounding
+            // SMALLDATETIME uses minute precision - round seconds >= 30 up to next minute
+            // This matches SQL Server's client-side behavior: add 30 seconds before converting
+            let mut rounded_minute = minute;
+            let mut rounded_hour = hour;
+            let mut rounded_days = days;
+
+            if second >= 30 {
+                rounded_minute += 1;
+                if rounded_minute >= 60 {
+                    rounded_minute = 0;
+                    rounded_hour += 1;
+                    if rounded_hour >= 24 {
+                        rounded_hour = 0;
+                        rounded_days += 1;
+                    }
+                }
+            }
+
+            // Validate again after rounding (could overflow into next day beyond max date)
+            if !(0..=65535).contains(&rounded_days) {
+                return Err(Error::UsageError(format!(
+                    "DateTime value {}-{:02}-{:02} {hour:02}:{minute:02}:{second:02} out of range for SMALLDATETIME after rounding (valid range: 1900-01-01 to 2079-06-06)",
+                    year, month, day
+                )));
+            }
+
+            let time_minutes = (rounded_hour as u16) * 60 + (rounded_minute as u16);
+
+            return Ok(ColumnValues::SmallDateTime(
+                mssql_tds::datatypes::column_values::SqlSmallDateTime {
+                    days: days as u16,
+                    time: time_minutes,
+                },
+            ));
+        }
+
+        // Default to DATETIME format
         // Calculate time in 1/300th seconds
         let total_ms = (hour as u64) * 3_600_000
             + (minute as u64) * 60_000

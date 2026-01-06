@@ -92,6 +92,7 @@ impl TdsValueSerializer {
             ColumnValues::Date(v) => Self::serialize_date(writer, v, ctx).await,
             ColumnValues::Time(v) => Self::serialize_time(writer, v, ctx).await,
             ColumnValues::DateTime(v) => Self::serialize_datetime(writer, v, ctx).await,
+            ColumnValues::SmallDateTime(v) => Self::serialize_smalldatetime(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -669,6 +670,54 @@ impl TdsValueSerializer {
                     writer.write_byte_unchecked(time_bytes[1]);
                     writer.write_byte_unchecked(time_bytes[2]);
                     writer.write_byte_unchecked(time_bytes[3]);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_smalldatetime<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &crate::datatypes::column_values::SqlSmallDateTime,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // SMALLDATETIME format in TDS:
+        // - For DateTimeN (nullable, 0x6F): length byte (4) + 2-byte days + 2-byte time
+        // - SMALLDATETIME always uses DateTimeN (0x6F) with length 4
+        //
+        // Days: Unsigned 16-bit integer representing days since January 1, 1900
+        //       (range 0 to 65535 for dates from 1900-01-01 to 2079-06-06)
+        // Time: Unsigned 16-bit integer representing minutes since midnight
+        //       (range 0 to 1439 for times from 00:00 to 23:59)
+
+        if !ctx.is_fixed_type() {
+            // DateTimeN with length 4: length byte + value (5 bytes total)
+            match writer.has_space(5) {
+                false => {
+                    writer.write_byte_async(4).await?; // Length for SmallDateTime (4 bytes)
+                    writer.write_u16_async(value.days).await?;
+                    writer.write_u16_async(value.time).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(4); // Length for SmallDateTime (4 bytes)
+                    writer.write_u16_unchecked(value.days);
+                    writer.write_u16_unchecked(value.time);
+                }
+            }
+        } else {
+            // Fixed type - just write value (4 bytes)
+            match writer.has_space(4) {
+                false => {
+                    writer.write_u16_async(value.days).await?;
+                    writer.write_u16_async(value.time).await?;
+                }
+                true => {
+                    writer.write_u16_unchecked(value.days);
+                    writer.write_u16_unchecked(value.time);
                 }
             }
         }
