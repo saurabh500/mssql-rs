@@ -84,6 +84,8 @@ impl TdsValueSerializer {
             ColumnValues::SmallInt(v) => Self::serialize_smallint(writer, *v, ctx).await,
             ColumnValues::Int(v) => Self::serialize_int(writer, *v, ctx).await,
             ColumnValues::BigInt(v) => Self::serialize_bigint(writer, *v, ctx).await,
+            ColumnValues::Real(v) => Self::serialize_real(writer, *v, ctx).await,
+            ColumnValues::Float(v) => Self::serialize_float(writer, *v, ctx).await,
             ColumnValues::Decimal(v) | ColumnValues::Numeric(v) => {
                 Self::serialize_decimal(writer, v, ctx).await
             }
@@ -318,6 +320,85 @@ impl TdsValueSerializer {
                 }
                 true => {
                     writer.write_i64_unchecked(value);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_real<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: f32,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // REAL is 4-byte IEEE 754 float
+        // TDS FloatN format: length byte + IEEE 754 bytes (little-endian)
+        if !ctx.is_fixed_type() {
+            // Nullable REAL (FLOATN with length 4): length byte + value (5 bytes total)
+            match writer.has_space(5) {
+                false => {
+                    writer.write_byte_async(4).await?; // Length for FLOATN (4 bytes)
+                    // Write f32 as i32 bytes (same bit pattern)
+                    writer.write_i32_async(value.to_bits() as i32).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(4); // Length for FLOATN (4 bytes)
+                    // Write f32 as i32 bytes (same bit pattern)
+                    writer.write_i32_unchecked(value.to_bits() as i32);
+                }
+            }
+        } else {
+            // Fixed type (FLT4, 0x3B) - just write value (4 bytes)
+            match writer.has_space(4) {
+                false => {
+                    // Write f32 as i32 bytes (same bit pattern)
+                    writer.write_i32_async(value.to_bits() as i32).await?;
+                }
+                true => {
+                    // Write f32 as i32 bytes (same bit pattern)
+                    writer.write_i32_unchecked(value.to_bits() as i32);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    async fn serialize_float<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: f64,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // FLOAT is 8-byte IEEE 754 double
+        // TDS FloatN format: length byte + IEEE 754 bytes (little-endian)
+        if !ctx.is_fixed_type() {
+            // Nullable FLOAT (FLOATN with length 8): length byte + value (9 bytes total)
+            match writer.has_space(9) {
+                false => {
+                    writer.write_byte_async(8).await?; // Length for FLOATN (8 bytes)
+                    writer.write_f64_unchecked(value);
+                }
+                true => {
+                    writer.write_byte_unchecked(8); // Length for FLOATN (8 bytes)
+                    writer.write_f64_unchecked(value);
+                }
+            }
+        } else {
+            // Fixed type (FLT8, 0x3E) - just write value (8 bytes)
+            match writer.has_space(8) {
+                false => {
+                    // Write f64 as i64 bytes (same bit pattern)
+                    writer.write_i64_async(value.to_bits() as i64).await?;
+                }
+                true => {
+                    writer.write_f64_unchecked(value);
                 }
             }
         }

@@ -121,6 +121,26 @@ fn py_to_column_value_internal(
         let val = py_obj
             .extract::<f64>()
             .map_err(|e| Error::UsageError(format!("Failed to extract float: {}", e)))?;
+
+        // Check if target metadata specifies REAL vs FLOAT
+        if let Some(meta) = target_metadata {
+            match meta.sql_type {
+                SqlDbType::Real => {
+                    // Convert to Real (f32) - may lose precision
+                    return Ok(ColumnValues::Real(val as f32));
+                }
+                SqlDbType::Float => {
+                    // Keep as Float (f64)
+                    return Ok(ColumnValues::Float(val));
+                }
+                _ => {
+                    // For other target types, use Float and let coercion handle it
+                    return Ok(ColumnValues::Float(val));
+                }
+            }
+        }
+
+        // No metadata provided - default to Float (f64)
         return Ok(ColumnValues::Float(val));
     }
 
