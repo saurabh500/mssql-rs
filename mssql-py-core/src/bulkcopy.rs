@@ -355,6 +355,42 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
+            // Float → Float: Direct mapping (no coercion needed, but validate range)
+            (SourcePythonType::Float, SqlDbType::Float) => {
+                let result = Self::coerce_float_to_float(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // Float → Real: Convert f64 to f32 with precision loss warning
+            (SourcePythonType::Float, SqlDbType::Real) => {
+                let result = Self::coerce_float_to_real(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // String → Float: Parse string as f64
+            (SourcePythonType::String, SqlDbType::Float) => {
+                let result = Self::coerce_string_to_float(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // String → Real: Parse string as f32
+            (SourcePythonType::String, SqlDbType::Real) => {
+                let result = Self::coerce_string_to_real(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // Int → Float: Convert integer to f64
+            (SourcePythonType::Int, SqlDbType::Float) => {
+                let result = Self::coerce_int_to_float(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // Int → Real: Convert integer to f32
+            (SourcePythonType::Int, SqlDbType::Real) => {
+                let result = Self::coerce_int_to_real(py_obj)?;
+                Ok(Some(result))
+            }
+
             // No coercion needed - use default conversion
             _ => Ok(None),
         }
@@ -1190,6 +1226,145 @@ impl PythonRowAdapter {
     ) -> TdsResult<ColumnValues> {
         // Use the metadata-aware conversion to handle DATETIMEOFFSET
         crate::types::py_to_column_value(py_obj, Some(target_meta))
+    }
+
+    /// Coerce a Python float to a SQL Server FLOAT (f64).
+    ///
+    /// This is a direct mapping with no precision loss.
+    fn coerce_float_to_float(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let value = py_obj
+            .extract::<f64>()
+            .map_err(|e| Error::UsageError(format!("Cannot extract Python float: {}", e)))?;
+
+        // Validate for special values
+        if value.is_nan() || value.is_infinite() {
+            return Err(Error::UsageError(format!(
+                "Cannot convert special float value {} to SQL FLOAT",
+                value
+            )));
+        }
+
+        Ok(ColumnValues::Float(value))
+    }
+
+    /// Coerce a Python float to a SQL Server REAL (f32).
+    ///
+    /// This involves converting f64 to f32, which may result in precision loss.
+    fn coerce_float_to_real(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let value = py_obj
+            .extract::<f64>()
+            .map_err(|e| Error::UsageError(format!("Cannot extract Python float: {}", e)))?;
+
+        // Validate for special values
+        if value.is_nan() || value.is_infinite() {
+            return Err(Error::UsageError(format!(
+                "Cannot convert special float value {} to SQL REAL",
+                value
+            )));
+        }
+
+        // Convert f64 to f32 - may lose precision
+        let real_value = value as f32;
+
+        // Check if conversion resulted in infinity (overflow)
+        if real_value.is_infinite() {
+            return Err(Error::UsageError(format!(
+                "Value {} is out of range for SQL REAL (±3.40E+38)",
+                value
+            )));
+        }
+
+        Ok(ColumnValues::Real(real_value))
+    }
+
+    /// Coerce a Python string to a SQL Server FLOAT (f64).
+    ///
+    /// Parses the string as a floating-point number.
+    fn coerce_string_to_float(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
+
+        let s = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+        let parsed = s.parse::<f64>().map_err(|e| {
+            Error::UsageError(format!("Cannot convert string '{}' to FLOAT: {}", s, e))
+        })?;
+
+        // Validate for special values
+        if parsed.is_nan() || parsed.is_infinite() {
+            return Err(Error::UsageError(format!(
+                "Cannot convert special float value {} to SQL FLOAT",
+                parsed
+            )));
+        }
+
+        Ok(ColumnValues::Float(parsed))
+    }
+
+    /// Coerce a Python string to a SQL Server REAL (f32).
+    ///
+    /// Parses the string as a floating-point number and converts to f32.
+    fn coerce_string_to_real(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
+
+        let s = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+        let parsed = s.parse::<f32>().map_err(|e| {
+            Error::UsageError(format!("Cannot convert string '{}' to REAL: {}", s, e))
+        })?;
+
+        // Validate for special values
+        if parsed.is_nan() || parsed.is_infinite() {
+            return Err(Error::UsageError(format!(
+                "Cannot convert special float value {} to SQL REAL",
+                parsed
+            )));
+        }
+
+        Ok(ColumnValues::Real(parsed))
+    }
+
+    /// Coerce a Python integer to a SQL Server FLOAT (f64).
+    ///
+    /// Converts the integer to a float with potential precision loss for very large integers.
+    fn coerce_int_to_float(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let value = py_obj
+            .extract::<i64>()
+            .map_err(|e| Error::UsageError(format!("Cannot extract Python integer: {}", e)))?;
+
+        // Convert to f64
+        let float_value = value as f64;
+
+        Ok(ColumnValues::Float(float_value))
+    }
+
+    /// Coerce a Python integer to a SQL Server REAL (f32).
+    ///
+    /// Converts the integer to a float with potential precision loss.
+    fn coerce_int_to_real(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let value = py_obj
+            .extract::<i64>()
+            .map_err(|e| Error::UsageError(format!("Cannot extract Python integer: {}", e)))?;
+
+        // Convert to f32
+        let real_value = value as f32;
+
+        // Check if conversion resulted in infinity (overflow)
+        if real_value.is_infinite() {
+            return Err(Error::UsageError(format!(
+                "Value {} is out of range for SQL REAL (±3.40E+38)",
+                value
+            )));
+        }
+
+        Ok(ColumnValues::Real(real_value))
     }
 }
 
