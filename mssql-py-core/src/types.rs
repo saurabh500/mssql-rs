@@ -259,7 +259,7 @@ fn py_to_column_value_internal(
                 };
 
                 // Validate offset range: -840 to +840 minutes (-14:00 to +14:00)
-                if offset_minutes < -840 || offset_minutes > 840 {
+                if !(-840..=840).contains(&offset_minutes) {
                     return Err(Error::UsageError(format!(
                         "Timezone offset {} minutes out of valid range for DATETIMEOFFSET (-840 to +840)",
                         offset_minutes
