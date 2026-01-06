@@ -207,7 +207,7 @@ macro_rules! impl_try_from_tdstypes {
 /// Vector layout format identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum VectorLayoutFormat {
+pub(crate) enum VectorLayoutFormat {
     /// Version 1 layout format (0xA9)
     V1 = 0xA9,
 }
@@ -229,7 +229,7 @@ impl TryFrom<u8> for VectorLayoutFormat {
 /// Vector layout version
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum VectorLayoutVersion {
+pub(crate) enum VectorLayoutVersion {
     /// Version 1 (0x01)
     V1 = 0x01,
 }
