@@ -693,6 +693,87 @@ impl PyCoreCursor {
                     .to_owned()
                     .into_any()
             }
+            ColumnValues::DateTimeOffset(dto) => {
+                // Convert SqlDateTimeOffset to Python datetime.datetime object with timezone
+                // SqlDateTimeOffset: datetime2 (SqlDateTime2) + offset (i16, minutes from UTC)
+                if let Ok(datetime_module) = PyModule::import(py, "datetime") {
+                    if let Ok(date_class) = datetime_module.getattr("date") {
+                        if let Ok(datetime_class) = datetime_module.getattr("datetime") {
+                            if let Ok(timezone_class) = datetime_module.getattr("timezone") {
+                                if let Ok(timedelta_class) = datetime_module.getattr("timedelta") {
+                                    // Calculate ordinal: SqlDateTime2.days is 0-based from 0001-01-01
+                                    // Python's fromordinal is 1-based (date(1,1,1) = ordinal 1)
+                                    // So we need to add 1
+                                    let ordinal = dto.datetime2.days + 1;
+
+                                    // Get the date from ordinal
+                                    if let Ok(date_obj) =
+                                        date_class.call_method1("fromordinal", (ordinal,))
+                                    {
+                                        // Extract year, month, day from the date
+                                        if let (Ok(year), Ok(month), Ok(day)) = (
+                                            date_obj
+                                                .getattr("year")
+                                                .and_then(|v| v.extract::<i32>()),
+                                            date_obj
+                                                .getattr("month")
+                                                .and_then(|v| v.extract::<u8>()),
+                                            date_obj.getattr("day").and_then(|v| v.extract::<u8>()),
+                                        ) {
+                                            // Convert time from 100-nanosecond units to time components
+                                            let time_100ns = dto.datetime2.time.time_nanoseconds;
+
+                                            let hour = (time_100ns / 36_000_000_000) as u8;
+                                            let remainder = time_100ns % 36_000_000_000;
+
+                                            let minute = (remainder / 600_000_000) as u8;
+                                            let remainder = remainder % 600_000_000;
+
+                                            let second = (remainder / 10_000_000) as u8;
+                                            let remainder = remainder % 10_000_000;
+
+                                            let microsecond = (remainder / 10) as u32;
+
+                                            // Create timezone from offset (minutes from UTC)
+                                            // Python's timezone expects a timedelta object
+                                            if let Ok(td_obj) = timedelta_class.call1((
+                                                0,
+                                                dto.offset as i32 * 60,
+                                                0,
+                                            )) {
+                                                // timedelta(days, seconds, microseconds)
+                                                if let Ok(tz_obj) = timezone_class.call1((td_obj,))
+                                                {
+                                                    if let Ok(datetime_obj) =
+                                                        datetime_class.call1((
+                                                            year,
+                                                            month,
+                                                            day,
+                                                            hour,
+                                                            minute,
+                                                            second,
+                                                            microsecond,
+                                                            tz_obj,
+                                                        ))
+                                                    {
+                                                        return datetime_obj.into_any();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Fallback to string if datetimeoffset conversion fails
+                format!("{:?}", dto)
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
+                    .into_any()
+            }
             _ => PyString::new(py, &format!("{:?}", col_val)).into_any(),
         }
     }

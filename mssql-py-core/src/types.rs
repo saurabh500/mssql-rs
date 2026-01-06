@@ -205,9 +205,80 @@ fn py_to_column_value_internal(
 
         let days = current_ordinal - base_ordinal;
 
-        // Check if target is SmallDateTime or DateTime2 to determine which format to use
+        // Check if target is DateTimeOffset, SmallDateTime or DateTime2 to determine which format to use
         if let Some(meta) = target_metadata {
-            if meta.sql_type == SqlDbType::DateTime2 {
+            if meta.sql_type == SqlDbType::DateTimeOffset {
+                // Convert to DATETIMEOFFSET format
+                // DATETIMEOFFSET uses DATETIME2 + timezone offset (i16, minutes from UTC)
+                // Calculate days from year 1 using Python's toordinal
+                let current_ordinal = current_date
+                    .call_method0("toordinal")
+                    .and_then(|v| v.extract::<u32>())
+                    .map_err(|e| {
+                        Error::UsageError(format!(
+                            "Failed to get current ordinal for DATETIMEOFFSET: {}",
+                            e
+                        ))
+                    })?;
+
+                // Python's toordinal() returns 1 for 0001-01-01, so subtract 1 to get 0-based days
+                let days_dto = current_ordinal.checked_sub(1).ok_or_else(|| {
+                    Error::UsageError(
+                        "Date ordinal is 0, expected >= 1 for DATETIMEOFFSET".to_string(),
+                    )
+                })?;
+
+                // Convert to 100-nanosecond units (DATETIME2/TIME uses 100ns precision)
+                let time_nanoseconds = (hour as u64) * 36_000_000_000
+                    + (minute as u64) * 600_000_000
+                    + (second as u64) * 10_000_000
+                    + (microsecond as u64) * 10;
+
+                // Use the scale from metadata, defaulting to 7 (max precision)
+                let scale = meta.scale;
+
+                // Extract timezone offset
+                let offset_minutes = match py_obj.call_method0("utcoffset") {
+                    Ok(offset_delta) if !offset_delta.is_none() => {
+                        // Get offset in seconds and convert to minutes
+                        let offset_seconds = offset_delta
+                            .call_method0("total_seconds")
+                            .and_then(|v| v.extract::<f64>())
+                            .map_err(|e| {
+                                Error::UsageError(format!(
+                                    "Failed to get timezone offset seconds: {}",
+                                    e
+                                ))
+                            })?;
+                        (offset_seconds / 60.0).round() as i16
+                    }
+                    _ => {
+                        // No timezone info, default to UTC (0 offset)
+                        0
+                    }
+                };
+
+                // Validate offset range: -840 to +840 minutes (-14:00 to +14:00)
+                if offset_minutes < -840 || offset_minutes > 840 {
+                    return Err(Error::UsageError(format!(
+                        "Timezone offset {} minutes out of valid range for DATETIMEOFFSET (-840 to +840)",
+                        offset_minutes
+                    )));
+                }
+
+                return Ok(ColumnValues::DateTimeOffset(
+                    mssql_tds::datatypes::column_values::SqlDateTimeOffset {
+                        datetime2: mssql_tds::datatypes::column_values::SqlDateTime2 {
+                            days: days_dto,
+                            time: mssql_tds::datatypes::column_values::SqlTime {
+                                time_nanoseconds,
+                                scale,
+                            },
+                        },
+                        offset: offset_minutes,
+                    },
+                ));
+            } else if meta.sql_type == SqlDbType::DateTime2 {
                 // Convert to DATETIME2 format
                 // DATETIME2 uses days since 0001-01-01 (0-based) instead of days since 1900-01-01
                 // Calculate days from year 1 using Python's toordinal
@@ -471,6 +542,7 @@ fn validate_type_compatibility(
         // Date/Time
         (ColumnValues::Date(_), SqlDbType::Date) => true,
         (ColumnValues::DateTime2(_), SqlDbType::DateTime2) => true,
+        (ColumnValues::DateTimeOffset(_), SqlDbType::DateTimeOffset) => true,
         (ColumnValues::DateTime(_), SqlDbType::DateTime) => true,
         (ColumnValues::SmallDateTime(_), SqlDbType::SmallDateTime) => true,
         (ColumnValues::Time(_), SqlDbType::Time) => true,

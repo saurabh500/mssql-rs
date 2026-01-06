@@ -93,6 +93,7 @@ impl TdsValueSerializer {
             ColumnValues::Time(v) => Self::serialize_time(writer, v, ctx).await,
             ColumnValues::DateTime(v) => Self::serialize_datetime(writer, v, ctx).await,
             ColumnValues::DateTime2(v) => Self::serialize_datetime2(writer, v, ctx).await,
+            ColumnValues::DateTimeOffset(v) => Self::serialize_datetimeoffset(writer, v, ctx).await,
             ColumnValues::SmallDateTime(v) => Self::serialize_smalldatetime(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
@@ -835,6 +836,115 @@ impl TdsValueSerializer {
                     writer.write_byte_unchecked(date_bytes[0]);
                     writer.write_byte_unchecked(date_bytes[1]);
                     writer.write_byte_unchecked(date_bytes[2]);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Serialize a DATETIMEOFFSET value to the TDS stream.
+    ///
+    /// DATETIMEOFFSET wire format:
+    /// - 1 byte: length (0 for NULL, or time_length + 3 + 2 for date + offset)
+    /// - time_length bytes: time component (3, 4, or 5 bytes based on scale)
+    /// - 3 bytes: date component (days since 0001-01-01, little-endian)
+    /// - 2 bytes: timezone offset in minutes (little-endian, signed i16)
+    ///
+    /// Time length by scale:
+    /// - Scale 0-2: 3 bytes
+    /// - Scale 3-4: 4 bytes
+    /// - Scale 5-7: 5 bytes
+    async fn serialize_datetimeoffset<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &crate::datatypes::column_values::SqlDateTimeOffset,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // DATETIMEOFFSET format in TDS:
+        // - For DateTimeOffsetN (nullable, 0x2B): length byte + time + 3-byte days + 2-byte offset
+        // - Time portion: 3, 4, or 5 bytes (same encoding as TIME/DATETIME2 type)
+        // - Date portion: 3 bytes (unsigned, days since 0001-01-01)
+        // - Offset portion: 2 bytes (signed i16, minutes from UTC)
+        // Total length depends on scale:
+        //   - Scale 0-2: 8 bytes (3 for time + 3 for date + 2 for offset)
+        //   - Scale 3-4: 9 bytes (4 for time + 3 for date + 2 for offset)
+        //   - Scale 5-7: 10 bytes (5 for time + 3 for date + 2 for offset)
+
+        // Determine the time length based on scale
+        let time_length = match value.datetime2.time.scale {
+            0..=2 => 3u8,
+            3 | 4 => 4u8,
+            5..=7 => 5u8,
+            _ => {
+                return Err(Error::UsageError(format!(
+                    "Invalid scale for DateTimeOffset type: {}. Valid range: 0-7",
+                    value.datetime2.time.scale
+                )));
+            }
+        };
+
+        let date_length = 3u8;
+        let offset_length = 2u8;
+        let total_value_length = time_length + date_length + offset_length;
+
+        // Scale the time value based on the scale (same logic as serialize_time)
+        let time_value = match value.datetime2.time.scale {
+            0 => value.datetime2.time.time_nanoseconds / 10_000_000, // Seconds
+            1 => value.datetime2.time.time_nanoseconds / 1_000_000,  // Tenths
+            2 => value.datetime2.time.time_nanoseconds / 100_000,    // Hundredths
+            3 => value.datetime2.time.time_nanoseconds / 10_000,     // Milliseconds
+            4 => value.datetime2.time.time_nanoseconds / 1_000,      // Ten-thousandths
+            5 => value.datetime2.time.time_nanoseconds / 100,        // Hundred-thousandths
+            6 => value.datetime2.time.time_nanoseconds / 10,         // Microseconds
+            7 => value.datetime2.time.time_nanoseconds,              // 100-nanoseconds (no scaling)
+            _ => value.datetime2.time.time_nanoseconds,
+        };
+
+        if !ctx.is_fixed_type() {
+            // DateTimeOffsetN with length prefix
+            let total_size = (1 + total_value_length) as usize;
+            match writer.has_space(total_size) {
+                false => {
+                    writer.write_byte_async(total_value_length).await?; // Length byte
+
+                    // Write time_value in little-endian format (variable bytes)
+                    for i in 0..time_length {
+                        let byte_val = ((time_value >> (i * 8)) & 0xFF) as u8;
+                        writer.write_byte_async(byte_val).await?;
+                    }
+
+                    // Write date as 3-byte little-endian unsigned integer
+                    let date_bytes = value.datetime2.days.to_le_bytes();
+                    writer.write_byte_async(date_bytes[0]).await?;
+                    writer.write_byte_async(date_bytes[1]).await?;
+                    writer.write_byte_async(date_bytes[2]).await?;
+
+                    // Write timezone offset as 2-byte little-endian signed integer
+                    let offset_bytes = value.offset.to_le_bytes();
+                    writer.write_byte_async(offset_bytes[0]).await?;
+                    writer.write_byte_async(offset_bytes[1]).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(total_value_length); // Length byte
+
+                    // Write time_value in little-endian format (variable bytes)
+                    for i in 0..time_length {
+                        let byte_val = ((time_value >> (i * 8)) & 0xFF) as u8;
+                        writer.write_byte_unchecked(byte_val);
+                    }
+
+                    // Write date as 3-byte little-endian unsigned integer
+                    let date_bytes = value.datetime2.days.to_le_bytes();
+                    writer.write_byte_unchecked(date_bytes[0]);
+                    writer.write_byte_unchecked(date_bytes[1]);
+                    writer.write_byte_unchecked(date_bytes[2]);
+
+                    // Write timezone offset as 2-byte little-endian signed integer
+                    let offset_bytes = value.offset.to_le_bytes();
+                    writer.write_byte_unchecked(offset_bytes[0]);
+                    writer.write_byte_unchecked(offset_bytes[1]);
                 }
             }
         }
