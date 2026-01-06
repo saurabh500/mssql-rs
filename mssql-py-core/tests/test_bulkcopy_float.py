@@ -275,8 +275,9 @@ def test_cursor_bulkcopy_float_boundary_values(client_context):
     rows = cursor.fetchall()
 
     assert len(rows) == 5
-    assert rows[0][1] > 1e308
-    assert rows[1][1] < -1e308
+    # Use relative tolerance for boundary values (0.1% tolerance)
+    assert abs(rows[0][1] - 1.79e308) / 1.79e308 < 0.001
+    assert abs(rows[1][1] - (-1.79e308)) / 1.79e308 < 0.001
     assert rows[4][1] == 0.0
 
 
