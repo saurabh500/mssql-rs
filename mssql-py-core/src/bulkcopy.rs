@@ -1023,7 +1023,7 @@ impl PythonRowAdapter {
         // Check if target is SmallDateTime
         if target_type == SqlDbType::SmallDateTime {
             // Validate SMALLDATETIME range: 1900-01-01 00:00:00 to 2079-06-06 23:59:59
-            if days < 0 || days > 65535 {
+            if !(0..=65535).contains(&days) {
                 return Err(Error::UsageError(format!(
                     "DateTime value {}-{:02}-{:02} out of range for SMALLDATETIME (valid range: 1900-01-01 to 2079-06-06)",
                     year, month, day
@@ -1050,7 +1050,7 @@ impl PythonRowAdapter {
             }
 
             // Validate again after rounding (could overflow into next day beyond max date)
-            if rounded_days < 0 || rounded_days > 65535 {
+            if !(0..=65535).contains(&rounded_days) {
                 return Err(Error::UsageError(format!(
                     "DateTime value {}-{:02}-{:02} {hour:02}:{minute:02}:{second:02} out of range for SMALLDATETIME after rounding (valid range: 1900-01-01 to 2079-06-06)",
                     year, month, day
