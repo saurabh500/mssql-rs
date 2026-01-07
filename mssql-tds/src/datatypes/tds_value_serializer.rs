@@ -15,8 +15,11 @@ use crate::io::packet_writer::{PacketWriter, TdsPacketWriter, TdsPacketWriterUnc
 // NULL markers for different type classes
 const NULL_LENGTH: u8 = 0x00;
 const VARNULL: u16 = 0xFFFF;
-const PLP_NULL: u64 = 0xFFFFFFFFFFFFFFFF;
-const PLP_TERMINATOR: u32 = 0x00000000;
+
+// PLP (Partial Length Prefix) constants - made public for reuse in bulk_load.rs
+pub const PLP_NULL: u64 = 0xFFFFFFFFFFFFFFFF;
+pub const PLP_UNKNOWN_LEN: u64 = 0xFFFFFFFFFFFFFFFE; // -2 in signed i64, used when total length is unknown
+pub const PLP_TERMINATOR: u32 = 0x00000000;
 
 /// Context for value serialization, containing type metadata needed for encoding.
 ///
@@ -32,6 +35,10 @@ pub struct TdsTypeContext {
 
     /// Whether this is a PLP (Partial Length Prefix) type (MAX types)
     pub is_plp: bool,
+
+    /// Whether this is a fixed-length type (e.g., BINARY(n) vs VARBINARY(n))
+    /// Fixed-length types write exactly max_size bytes with no length prefix in ROW tokens
+    pub is_fixed_length: bool,
 
     /// For Decimal/Numeric: precision
     pub precision: Option<u8>,
@@ -97,6 +104,7 @@ impl TdsValueSerializer {
             ColumnValues::DateTime2(v) => Self::serialize_datetime2(writer, v, ctx).await,
             ColumnValues::DateTimeOffset(v) => Self::serialize_datetimeoffset(writer, v, ctx).await,
             ColumnValues::SmallDateTime(v) => Self::serialize_smalldatetime(writer, v, ctx).await,
+            ColumnValues::Bytes(v) => Self::serialize_bytes(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -1027,6 +1035,82 @@ impl TdsValueSerializer {
                     writer.write_byte_unchecked(offset_bytes[0]);
                     writer.write_byte_unchecked(offset_bytes[1]);
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Serialize BINARY/VARBINARY data to the TDS stream.
+    ///
+    /// BINARY/VARBINARY wire format:
+    /// - For variable-length types (BINARY/VARBINARY):
+    ///   - If length <= 8000:
+    ///     - 2 bytes: actual length (0xFFFF for NULL)
+    ///     - n bytes: actual byte data
+    ///   - If length > 8000 (MAX types, not common for BINARY):
+    ///     - 8 bytes: total length (0xFFFFFFFFFFFFFFFF for NULL)
+    ///     - chunks of data with 4-byte length prefixes
+    ///     - 4-byte terminator (0x00000000)
+    ///
+    /// For BINARY(n): If data length < n, pad with zeros to reach fixed length
+    /// For VARBINARY(n): Use exact data length, no padding
+    ///
+    /// TDS types:
+    /// - 0xAD: BINARY(n) / VARBINARY(n) - fixed/variable-length binary
+    /// - 0xA5: VARBINARY(MAX) - variable-length binary with PLP encoding
+    #[inline(always)]
+    async fn serialize_bytes<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &[u8],
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        let data_len = value.len();
+        let schema_size = ctx.max_size as usize;
+
+        // Check for size overflow (skip for PLP types which support up to 2GB)
+        if !ctx.is_plp && data_len > schema_size {
+            return Err(Error::UsageError(format!(
+                "Binary data length ({}) exceeds schema size ({})",
+                data_len, schema_size
+            )));
+        }
+
+        // For PLP types (MAX types), use PLP encoding
+        if ctx.is_plp {
+            // Write PLP_UNKNOWN_LEN (0xFFFFFFFFFFFFFFFE) to indicate total length is unknown
+            // This matches .NET SqlBulkCopy behavior
+            writer.write_u64_async(PLP_UNKNOWN_LEN).await?;
+
+            // Write chunk length (4 bytes)
+            writer.write_u32_async(data_len as u32).await?;
+
+            // Write actual data
+            writer.write_async(value).await?;
+
+            // Write terminator (4 bytes of 0x00)
+            writer.write_u32_async(PLP_TERMINATOR).await?;
+        } else if ctx.is_fixed_length {
+            // Fixed-length BINARY(n): Write exactly n bytes (no length prefix)
+            // Write actual data
+            for &byte in value {
+                writer.write_byte_async(byte).await?;
+            }
+
+            // Pad with zeros to reach fixed size
+            let padding_needed = schema_size.saturating_sub(data_len);
+            for _ in 0..padding_needed {
+                writer.write_byte_async(0u8).await?;
+            }
+        } else {
+            // Variable-length VARBINARY(n): Write 2-byte length prefix + data (no padding)
+            writer.write_u16_async(data_len as u16).await?;
+
+            // Write actual data
+            for &byte in value {
+                writer.write_byte_async(byte).await?;
             }
         }
         Ok(())
