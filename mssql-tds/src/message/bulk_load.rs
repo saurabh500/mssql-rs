@@ -27,9 +27,7 @@ const TOKEN_DONE: u8 = 0xFD;
 // NULL markers for different type classes
 const FIXEDNULL: u8 = 0x00;
 const VARNULL: u16 = 0xFFFF;
-const PLP_NULL: u64 = 0xFFFFFFFFFFFFFFFF;
-const PLP_UNKNOWN: u64 = 0xFFFFFFFFFFFFFFFE;
-const PLP_TERMINATOR: u32 = 0x00000000;
+// PLP constants imported from tds_value_serializer
 
 /// Streaming bulk load writer for transmitting bulk copy data row-by-row.
 ///
@@ -125,6 +123,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
                 tds_type: col_meta.tds_type,
                 max_size: col_meta.length as u8,
                 is_plp: col_meta.length_type.is_plp(),
+                is_fixed_length: col_meta.length_type.is_fixed(),
                 precision: if col_meta.precision > 0 {
                     Some(col_meta.precision)
                 } else {

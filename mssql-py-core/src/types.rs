@@ -10,7 +10,9 @@ use mssql_tds::datatypes::decoder::DecimalParts;
 use mssql_tds::datatypes::sql_string::SqlString;
 use mssql_tds::error::Error;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyDate, PyDateTime, PyInt, PyModule, PyString, PyTime};
+use pyo3::types::{
+    PyBool, PyByteArray, PyBytes, PyDate, PyDateTime, PyInt, PyModule, PyString, PyTime,
+};
 
 /// Convert a Python object to ColumnValues for TDS serialization
 ///
@@ -149,6 +151,14 @@ fn py_to_column_value_internal(
         let bytes = py_obj
             .extract::<Vec<u8>>()
             .map_err(|e| Error::UsageError(format!("Failed to extract bytes: {}", e)))?;
+        return Ok(ColumnValues::Bytes(bytes));
+    }
+
+    // Check for bytearray (mutable bytes)
+    if py_obj.is_instance_of::<PyByteArray>() {
+        let bytes = py_obj
+            .extract::<Vec<u8>>()
+            .map_err(|e| Error::UsageError(format!("Failed to extract bytearray: {}", e)))?;
         return Ok(ColumnValues::Bytes(bytes));
     }
 
