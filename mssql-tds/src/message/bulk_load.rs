@@ -107,11 +107,6 @@ impl<'a> StreamingBulkLoadWriter<'a> {
     /// - Metadata has already been written
     /// - Network errors occur during transmission
     pub async fn begin(&mut self) -> TdsResult<()> {
-        println!(
-            "DEBUG bulk_load: begin() called - {} columns",
-            self.column_metadata.len()
-        );
-
         if self.metadata_written {
             return Err(Error::ProtocolError(
                 "Metadata already written - cannot call begin() twice".to_string(),
@@ -123,15 +118,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
         self.column_contexts.clear();
         self.column_contexts.reserve(self.column_metadata.len());
 
-        println!(
-            "DEBUG bulk_load: Processing {} columns for contexts",
-            self.column_metadata.len()
-        );
         for (i, col_meta) in self.column_metadata.iter().enumerate() {
-            println!(
-                "  Column {}: name='{}', tds_type=0x{:02X}, sql_type={:?}",
-                i, col_meta.column_name, col_meta.tds_type, col_meta.sql_type
-            );
             let ctx = TdsTypeContext {
                 tds_type: col_meta.tds_type,
                 max_size: col_meta.length as u8,
@@ -404,31 +391,12 @@ impl<'a> StreamingBulkLoadWriter<'a> {
 
     /// Internal method to write metadata.
     async fn write_metadata_internal(&mut self) -> TdsResult<()> {
-        eprintln!(
-            "DEBUG write_metadata_internal: {} columns",
-            self.column_metadata.len()
-        );
-        for (i, col_meta) in self.column_metadata.iter().enumerate() {
-            eprintln!(
-                "  Column {}: name='{}', tds_type=0x{:02X}, sql_type={:?}",
-                i, col_meta.column_name, col_meta.tds_type, col_meta.sql_type
-            );
-        }
-
         self.packet_writer
             .write_byte_async(TOKEN_COLMETADATA)
             .await?;
 
         // Column count (2 bytes)
         let column_count = self.column_metadata.len();
-        eprintln!(
-            "DEBUG: Writing COLMETADATA token: 0x{:02X}",
-            TOKEN_COLMETADATA
-        );
-        eprintln!(
-            "DEBUG: Writing column count: {} (0x{:04X})",
-            column_count, column_count
-        );
         self.packet_writer
             .write_u16_async(column_count as u16)
             .await?;
@@ -443,18 +411,6 @@ impl<'a> StreamingBulkLoadWriter<'a> {
             self.write_column_descriptor_internal(&col_meta).await?;
         }
 
-        // DEBUG: Capture and display the COMPLETE packet buffer state after all metadata written
-        eprintln!("\n========== DEBUG: Attempting to get cursor ==========");
-        // Try a simpler approach - just log what we know was written
-        eprintln!("Metadata writing completed. Expected sequence:");
-        eprintln!(
-            "  81 01 00 | 00 00 00 00 | 09 00 | A7 | FF FF | 00 00 00 00 00 | 04 | 64 00 61 00 74 00 61 00"
-        );
-        eprintln!(
-            "  ^token   ^UserType     ^Flags  ^Type ^Len   ^Collation       ^Len ^'d' 'a' 't' 'a'"
-        );
-        eprintln!("====================================================\n");
-
         Ok(())
     }
 
@@ -463,17 +419,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
         &mut self,
         col_meta: &BulkCopyColumnMetadata,
     ) -> TdsResult<()> {
-        eprintln!(
-            "DEBUG: write_column_descriptor_internal: name='{}', tds_type=0x{:02X}",
-            col_meta.column_name, col_meta.tds_type
-        );
-
-        // Collect all metadata bytes for debugging
-        let mut metadata_bytes = Vec::new();
-
         // User type (4 bytes) - always 0 for standard types (TDS 7.2+)
-        eprintln!("DEBUG: Writing UserType: 0x00000000 (4 bytes)");
-        metadata_bytes.extend_from_slice(&0u32.to_le_bytes());
         self.packet_writer.write_u32_async(0).await?;
 
         // Flags (2 bytes)
@@ -484,16 +430,9 @@ impl<'a> StreamingBulkLoadWriter<'a> {
         if col_meta.is_identity {
             flags |= 0x0010; // Identity
         }
-        eprintln!("DEBUG: Writing Flags: 0x{:04X} (2 bytes)", flags);
-        metadata_bytes.extend_from_slice(&flags.to_le_bytes());
         self.packet_writer.write_u16_async(flags).await?;
 
         // TDS type byte
-        eprintln!(
-            "DEBUG: Writing TDS Type: 0x{:02X} (1 byte)",
-            col_meta.tds_type
-        );
-        metadata_bytes.push(col_meta.tds_type);
         self.packet_writer
             .write_byte_async(col_meta.tds_type)
             .await?;
@@ -503,31 +442,12 @@ impl<'a> StreamingBulkLoadWriter<'a> {
 
         // Column name (B_VARCHAR format)
         let name_utf16: Vec<u16> = col_meta.column_name.encode_utf16().collect();
-        eprintln!(
-            "DEBUG: Writing column name length: 0x{:02X} ({} UTF-16 code units)",
-            (name_utf16.len() & 0xFF) as u8,
-            name_utf16.len()
-        );
-        metadata_bytes.push((name_utf16.len() & 0xFF) as u8);
         self.packet_writer
             .write_byte_async((name_utf16.len() & 0xFF) as u8)
             .await?;
         for c in name_utf16 {
-            metadata_bytes.extend_from_slice(&c.to_le_bytes());
             self.packet_writer.write_u16_async(c).await?;
         }
-
-        // Print complete metadata hex dump for this column
-        eprintln!(
-            "DEBUG: Complete column metadata bytes ({} bytes):",
-            metadata_bytes.len()
-        );
-        let hex_str: String = metadata_bytes
-            .iter()
-            .map(|b| format!("{:02X}", b))
-            .collect::<Vec<_>>()
-            .join(" ");
-        eprintln!("  {}", hex_str);
 
         Ok(())
     }
@@ -537,18 +457,6 @@ impl<'a> StreamingBulkLoadWriter<'a> {
         &mut self,
         col_meta: &BulkCopyColumnMetadata,
     ) -> TdsResult<()> {
-        eprintln!(
-            "DEBUG bulk_load: write_type_info_internal: tds_type=0x{:02X}, sql_type={:?}, is_plp={}",
-            col_meta.tds_type,
-            col_meta.sql_type,
-            col_meta.is_plp()
-        );
-        eprintln!(
-            "  Checking against TdsDataType::Json=0x{:02X}, TdsDataType::BigVarChar=0x{:02X}",
-            TdsDataType::Json as u8,
-            TdsDataType::BigVarChar as u8
-        );
-
         match col_meta.tds_type {
             // DECIMAL/NUMERIC - precision and scale
             x if x == TdsDataType::Decimal as u8
@@ -595,34 +503,20 @@ impl<'a> StreamingBulkLoadWriter<'a> {
                 || x == TdsDataType::Char as u8
                 || x == TdsDataType::BigVarChar as u8
                 || x == TdsDataType::BigChar as u8 => {
-                eprintln!("DEBUG: BigVarChar/VarChar path: tds_type=0x{:02X}, is_plp={}, collation={:?}", 
-                    x, col_meta.is_plp(), col_meta.collation);
-                
                 if col_meta.is_plp() {
-                    eprintln!("DEBUG: Writing Length: 0xFFFF (PLP marker, 2 bytes)");
                     self.packet_writer.write_u16_async(0xFFFF).await?;
                 } else {
-                    eprintln!("DEBUG: Writing Length: 0x{:04X} (2 bytes)", col_meta.length);
                     self.packet_writer
                         .write_u16_async(col_meta.length as u16)
                         .await?;
                 }
 
                 if let Some(collation) = col_meta.collation {
-                    eprintln!("DEBUG: Writing collation bytes:");
-                    eprintln!("  info=0x{:08X} (bytes: {:02X} {:02X} {:02X} {:02X})", 
-                        collation.info, 
-                        (collation.info & 0xFF) as u8,
-                        ((collation.info >> 8) & 0xFF) as u8,
-                        ((collation.info >> 16) & 0xFF) as u8,
-                        ((collation.info >> 24) & 0xFF) as u8);
-                    eprintln!("  sort_id=0x{:02X}", collation.sort_id);
                     self.packet_writer.write_u32_async(collation.info).await?;
                     self.packet_writer
                         .write_byte_async(collation.sort_id)
                         .await?;
                 } else {
-                    eprintln!("DEBUG: No collation provided, writing default 0x00000409");
                     self.packet_writer.write_u32_async(0x00000409).await?;
                     self.packet_writer.write_byte_async(0).await?;
                 }
@@ -631,9 +525,6 @@ impl<'a> StreamingBulkLoadWriter<'a> {
             // NVARCHAR/NCHAR types - length + collation
             x if x == TdsDataType::NChar as u8
                 || x == TdsDataType::NVarChar as u8 => {
-                eprintln!("DEBUG bulk_load: Writing NVarChar metadata: tds_type=0x{:02X}, is_plp={}, collation={:?}, length={}", 
-                    x, col_meta.is_plp(), col_meta.collation, col_meta.length);
-                
                 if col_meta.is_plp() {
                     self.packet_writer.write_u16_async(0xFFFF).await?;
                 } else {
@@ -643,14 +534,11 @@ impl<'a> StreamingBulkLoadWriter<'a> {
                 }
 
                 if let Some(collation) = col_meta.collation {
-                    eprintln!("DEBUG: Writing collation: info=0x{:08X}, sort_id={}", collation.info, collation.sort_id);
                     self.packet_writer.write_u32_async(collation.info).await?;
                     self.packet_writer
                         .write_byte_async(collation.sort_id)
                         .await?;
                 } else {
-                    eprintln!("DEBUG: Using default collation: info=0x{:08X}, sort_id={}", 
-                        self.default_collation.info, self.default_collation.sort_id);
                     // Use connection's default collation (matches .NET SqlBulkCopy behavior)
                     self.packet_writer
                         .write_u32_async(self.default_collation.info)
