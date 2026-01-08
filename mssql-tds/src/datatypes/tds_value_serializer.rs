@@ -107,7 +107,6 @@ impl TdsValueSerializer {
             ColumnValues::SmallDateTime(v) => Self::serialize_smalldatetime(writer, v, ctx).await,
             ColumnValues::Bytes(v) => Self::serialize_bytes(writer, v, ctx).await,
             ColumnValues::Json(v) => Self::serialize_json(writer, v, ctx).await,
-            ColumnValues::Xml(v) => Self::serialize_xml(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -1152,48 +1151,6 @@ impl TdsValueSerializer {
         for code_unit in utf16_data {
             writer.write_u16_async(code_unit).await?;
         }
-
-        // Write terminator (4 bytes of 0x00)
-        writer.write_u32_async(PLP_TERMINATOR).await?;
-
-        Ok(())
-    }
-
-    /// Serialize an XML value using PLP encoding.
-    ///
-    /// XML type uses UTF-16 LE encoding with BOM and PLP structure.
-    /// Format: PLP_UNKNOWN_LEN (8 bytes) + chunk_len (4 bytes) + BOM + data + terminator (4 bytes)
-    async fn serialize_xml<'a, 'b>(
-        writer: &'a mut PacketWriter<'b>,
-        value: &SqlXml,
-        ctx: &TdsTypeContext,
-    ) -> TdsResult<()>
-    where
-        'b: 'a,
-    {
-        let data = &value.bytes;
-
-        // Calculate total length including BOM if needed
-        let data_len = if value.has_bom() {
-            data.len()
-        } else {
-            data.len() + 2 // Add 2 bytes for BOM
-        };
-
-        // Write PLP_UNKNOWN_LEN (0xFFFFFFFFFFFFFFFE)
-        writer.write_u64_async(PLP_UNKNOWN_LEN).await?;
-
-        // Write chunk length (4 bytes)
-        writer.write_u32_async(data_len as u32).await?;
-
-        // Write BOM if not present (0xFF 0xFE for UTF-16 LE)
-        if !value.has_bom() {
-            writer.write_byte_async(0xFF).await?;
-            writer.write_byte_async(0xFE).await?;
-        }
-
-        // Write actual data
-        writer.write_async(data).await?;
 
         // Write terminator (4 bytes of 0x00)
         writer.write_u32_async(PLP_TERMINATOR).await?;

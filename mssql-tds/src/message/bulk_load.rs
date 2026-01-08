@@ -419,7 +419,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
         &mut self,
         col_meta: &BulkCopyColumnMetadata,
     ) -> TdsResult<()> {
-        // User type (4 bytes) - always 0 for standard types (TDS 7.2+)
+        // User type (4 bytes) - always 0 for standard types
         self.packet_writer.write_u32_async(0).await?;
 
         // Flags (2 bytes)
