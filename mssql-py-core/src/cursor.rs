@@ -48,7 +48,7 @@ impl PyCoreCursor {
 
                 // Close any open result set before executing new query
                 if let Some(resultset) = client.get_current_resultset() {
-                    info!("🔥 execute: Closing previous result set before new query");
+                    info!(" execute: Closing previous result set before new query");
                     resultset.close().await.map_err(|e| {
                         error!("execute: Failed to close previous result set: {}", e);
                         pyo3::exceptions::PyRuntimeError::new_err(format!(
@@ -56,7 +56,6 @@ impl PyCoreCursor {
                             e
                         ))
                     })?;
-                    info!("🔥 execute: Previous result set closed successfully");
                 }
 
                 info!("execute: Calling TDS client execute");
@@ -108,7 +107,7 @@ impl PyCoreCursor {
                         return Ok(Some(row));
                     } else {
                         // No more rows - close the result set to clear has_open_batch flag
-                        info!("🔥 fetchone: No more rows, closing result set");
+                        info!("No more rows, closing result set");
                         resultset.close().await.map_err(|e| {
                             error!("fetchone: Failed to close result set: {}", e);
                             pyo3::exceptions::PyRuntimeError::new_err(format!(
@@ -116,7 +115,7 @@ impl PyCoreCursor {
                                 e
                             ))
                         })?;
-                        info!("🔥 fetchone: Result set closed successfully");
+                        info!("Result set closed successfully");
                     }
                 }
 

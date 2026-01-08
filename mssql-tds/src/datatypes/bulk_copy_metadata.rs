@@ -794,7 +794,7 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
         // For example, JSON (0xF4) must be sent as NVarChar(MAX) (0xE7) for bulk copy
         let tds_type = sql_type.to_tds_type();
         eprintln!(
-            "🔥🔥🔥 TIMESTAMP: {} - line 809: sql_type={:?} → to_tds_type() returned 0x{:02X}",
+            " TIMESTAMP: {} - line 809: sql_type={:?} → to_tds_type() returned 0x{:02X}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
