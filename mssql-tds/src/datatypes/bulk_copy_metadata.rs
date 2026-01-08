@@ -139,10 +139,31 @@ impl SqlDbType {
             // Other types
             SqlDbType::UniqueIdentifier => 0x24, // TdsDataType::Guid
             SqlDbType::Xml => 0xF1,              // TdsDataType::Xml
-            SqlDbType::Json => 0xE7, // TdsDataType::NVarChar(MAX) - CRITICAL: 0xE7 not 0xA7!
-            SqlDbType::Variant => 0x62, // TdsDataType::SsVariant
-            SqlDbType::Udt => 0xF0,  // TdsDataType::Udt
-            SqlDbType::Vector => 0xF5, // TdsDataType::Vector
+            SqlDbType::Json => 0xF4,             // TdsDataType::Json
+            SqlDbType::Variant => 0x62,          // TdsDataType::SsVariant
+            SqlDbType::Udt => 0xF0,              // TdsDataType::Udt
+            SqlDbType::Vector => 0xF5,           // TdsDataType::Vector
+        }
+    }
+
+    /// Map SqlDbType to TDS protocol type byte for bulk copy operations.
+    ///
+    /// This method returns the TDS type that should actually be used when sending
+    /// data via bulk copy. For most types, this is the same as `to_tds_type()`,
+    /// but some types require special handling:
+    ///
+    /// - JSON: Returns 0xE7 (NVarChar) because SQL Server doesn't support sending
+    ///   JSON type directly in bulk copy operations. JSON data must be sent as
+    ///   NVARCHAR(MAX) with UTF-16LE encoding.
+    ///
+    /// This makes the intention explicit in code: JSON is a JSON type, but for
+    /// bulk copy purposes we transmit it as NVARCHAR.
+    pub fn to_bulk_copy_tds_type(&self) -> u8 {
+        match self {
+            // JSON must be sent as NVARCHAR(MAX) in bulk copy
+            SqlDbType::Json => 0xE7, // TdsDataType::NVarChar - bulk copy workaround
+            // All other types use their standard TDS type
+            _ => self.to_tds_type(),
         }
     }
 
@@ -782,9 +803,9 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
 
         // Get the correct TDS type for bulk copy (may differ from server's type)
         // For example, JSON (0xF4) must be sent as NVarChar(MAX) (0xE7) for bulk copy
-        let tds_type = sql_type.to_tds_type();
+        let tds_type = sql_type.to_bulk_copy_tds_type();
         eprintln!(
-            " TIMESTAMP: {} - line 809: sql_type={:?} → to_tds_type() returned 0x{:02X}",
+            " TIMESTAMP: {} - line 809: sql_type={:?} → to_bulk_copy_tds_type() returned 0x{:02X}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

@@ -8,7 +8,7 @@
 //! It separates the concerns of type metadata encoding from value encoding.
 
 use crate::core::TdsResult;
-use crate::datatypes::column_values::{ColumnValues, SqlXml};
+use crate::datatypes::column_values::ColumnValues;
 use crate::datatypes::sql_json::SqlJson;
 use crate::error::Error;
 use crate::io::packet_writer::{PacketWriter, TdsPacketWriter, TdsPacketWriterUnchecked};

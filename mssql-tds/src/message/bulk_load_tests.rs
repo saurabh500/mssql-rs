@@ -90,4 +90,53 @@ mod tests {
             SqlDbType::NVarChar.to_tds_type()
         );
     }
+
+    #[test]
+    fn test_bulk_copy_tds_type_mapping() {
+        // Test that most types return the same TDS type for bulk copy
+        assert_eq!(
+            SqlDbType::Int.to_bulk_copy_tds_type(),
+            SqlDbType::Int.to_tds_type()
+        );
+        assert_eq!(
+            SqlDbType::VarChar.to_bulk_copy_tds_type(),
+            SqlDbType::VarChar.to_tds_type()
+        );
+        assert_eq!(
+            SqlDbType::NVarChar.to_bulk_copy_tds_type(),
+            SqlDbType::NVarChar.to_tds_type()
+        );
+        assert_eq!(
+            SqlDbType::DateTime.to_bulk_copy_tds_type(),
+            SqlDbType::DateTime.to_tds_type()
+        );
+
+        // Test that JSON is properly identified as 0xF4
+        assert_eq!(
+            SqlDbType::Json.to_tds_type(),
+            0xF4,
+            "JSON should return 0xF4 (TdsDataType::Json) from to_tds_type()"
+        );
+
+        // Test that JSON returns NVARCHAR for bulk copy
+        assert_eq!(
+            SqlDbType::Json.to_bulk_copy_tds_type(),
+            0xE7,
+            "JSON should return 0xE7 (TdsDataType::NVarChar) from to_bulk_copy_tds_type() for bulk copy operations"
+        );
+
+        // Verify JSON is treated differently than NVARCHAR
+        assert_ne!(
+            SqlDbType::Json.to_tds_type(),
+            SqlDbType::NVarChar.to_tds_type(),
+            "JSON type identifier (0xF4) should differ from NVARCHAR (0xE7)"
+        );
+
+        // Verify JSON uses NVARCHAR for bulk copy
+        assert_eq!(
+            SqlDbType::Json.to_bulk_copy_tds_type(),
+            SqlDbType::NVarChar.to_tds_type(),
+            "JSON should use NVARCHAR encoding (0xE7) for bulk copy"
+        );
+    }
 }
