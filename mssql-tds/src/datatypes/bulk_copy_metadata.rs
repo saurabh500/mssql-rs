@@ -7,7 +7,10 @@
 //! column information during bulk copy operations, matching the .NET SqlBulkCopy
 //! implementation's metadata handling.
 
-use crate::{datatypes::sqldatatypes::PartialLengthType, token::tokens::SqlCollation};
+use crate::{
+    datatypes::sqldatatypes::PartialLengthType, query::metadata::ColumnMetadata,
+    token::tokens::SqlCollation,
+};
 use tracing::warn;
 
 /// Newtype wrapper for SQL Server's system_type_id values.
@@ -646,112 +649,90 @@ impl Default for BulkCopyColumnMetadata {
 ///
 /// This function extracts the TDS type and other metadata directly from the server's
 /// COLMETADATA response, ensuring we use the exact types that SQL Server expects.
-impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
+impl From<&ColumnMetadata> for BulkCopyColumnMetadata {
     fn from(col: &crate::query::metadata::ColumnMetadata) -> Self {
         use crate::datatypes::sqldatatypes::TdsDataType;
         use crate::datatypes::sqldatatypes::TypeInfoVariant;
-        eprintln!("Column: {}", col.column_name);
-        eprintln!(
-            "data_type: {:?} (0x{:02X})",
-            col.data_type, col.data_type as u8
-        );
-        eprintln!("type_info_variant: {:?}", col.type_info.type_info_variant);
-
-        // Extract TDS type byte from server (may need remapping for bulk copy)
-        let _server_tds_type = col.data_type as u8;
-
-        // Check if this is actually a JSON column by inspecting TypeInfoVariant
-        // JSON columns come with PartialLen(Json, ...) even if data_type is BigVarChar
-        let is_json_column = matches!(
-            &col.type_info.type_info_variant,
-            TypeInfoVariant::PartialLen(PartialLengthType::Json, _, _, _, _)
-        );
 
         // Map TDS type to SqlDbType
-        let sql_type = if is_json_column {
-            // Override: JSON columns come through as BigVarChar but should be treated as JSON
-
-            SqlDbType::Json
-        } else {
-            match col.data_type {
-                TdsDataType::Int8 => SqlDbType::BigInt,
-                TdsDataType::Int4 => SqlDbType::Int,
-                TdsDataType::IntN => {
-                    // INTN can represent TinyInt, SmallInt, Int, or BigInt depending on length
-                    // For bulk copy, we'll infer from type_info
-                    match &col.type_info.type_info_variant {
-                        TypeInfoVariant::VarLen(_var_type, len) => match *len {
-                            1 => SqlDbType::TinyInt,
-                            2 => SqlDbType::SmallInt,
-                            4 => SqlDbType::Int,
-                            8 => SqlDbType::BigInt,
-                            _ => SqlDbType::Int,
-                        },
-                        _ => SqlDbType::Int,
-                    }
-                }
-                TdsDataType::Int2 => SqlDbType::SmallInt,
-                TdsDataType::Int1 => SqlDbType::TinyInt,
-                TdsDataType::Bit => SqlDbType::Bit,
-                TdsDataType::BitN => SqlDbType::Bit,
-                TdsDataType::Flt8 => SqlDbType::Float,
-                TdsDataType::Flt4 => SqlDbType::Real,
-                TdsDataType::FltN => {
-                    // FLTN can be Float or Real
-                    match &col.type_info.type_info_variant {
-                        TypeInfoVariant::VarLen(_var_type, len) => match *len {
-                            4 => SqlDbType::Real,
-                            8 => SqlDbType::Float,
-                            _ => SqlDbType::Float,
-                        },
-                        _ => SqlDbType::Float,
-                    }
-                }
-                TdsDataType::Money => SqlDbType::Money,
-                TdsDataType::Money4 => SqlDbType::SmallMoney,
-                TdsDataType::MoneyN => match &col.type_info.type_info_variant {
+        let sql_type = match col.data_type {
+            TdsDataType::Int8 => SqlDbType::BigInt,
+            TdsDataType::Int4 => SqlDbType::Int,
+            TdsDataType::IntN => {
+                // INTN can represent TinyInt, SmallInt, Int, or BigInt depending on length
+                // For bulk copy, we'll infer from type_info
+                match &col.type_info.type_info_variant {
                     TypeInfoVariant::VarLen(_var_type, len) => match *len {
-                        4 => SqlDbType::SmallMoney,
-                        8 => SqlDbType::Money,
-                        _ => SqlDbType::Money,
+                        1 => SqlDbType::TinyInt,
+                        2 => SqlDbType::SmallInt,
+                        4 => SqlDbType::Int,
+                        8 => SqlDbType::BigInt,
+                        _ => SqlDbType::Int,
                     },
+                    _ => SqlDbType::Int,
+                }
+            }
+            TdsDataType::Int2 => SqlDbType::SmallInt,
+            TdsDataType::Int1 => SqlDbType::TinyInt,
+            TdsDataType::Bit => SqlDbType::Bit,
+            TdsDataType::BitN => SqlDbType::Bit,
+            TdsDataType::Flt8 => SqlDbType::Float,
+            TdsDataType::Flt4 => SqlDbType::Real,
+            TdsDataType::FltN => {
+                // FLTN can be Float or Real
+                match &col.type_info.type_info_variant {
+                    TypeInfoVariant::VarLen(_var_type, len) => match *len {
+                        4 => SqlDbType::Real,
+                        8 => SqlDbType::Float,
+                        _ => SqlDbType::Float,
+                    },
+                    _ => SqlDbType::Float,
+                }
+            }
+            TdsDataType::Money => SqlDbType::Money,
+            TdsDataType::Money4 => SqlDbType::SmallMoney,
+            TdsDataType::MoneyN => match &col.type_info.type_info_variant {
+                TypeInfoVariant::VarLen(_var_type, len) => match *len {
+                    4 => SqlDbType::SmallMoney,
+                    8 => SqlDbType::Money,
                     _ => SqlDbType::Money,
                 },
-                TdsDataType::DateTime => SqlDbType::DateTime,
-                TdsDataType::DateTim4 => SqlDbType::SmallDateTime,
-                TdsDataType::DateTimeN => match &col.type_info.type_info_variant {
-                    TypeInfoVariant::VarLen(_var_type, len) => match *len {
-                        4 => SqlDbType::SmallDateTime,
-                        8 => SqlDbType::DateTime,
-                        _ => SqlDbType::DateTime,
-                    },
+                _ => SqlDbType::Money,
+            },
+            TdsDataType::DateTime => SqlDbType::DateTime,
+            TdsDataType::DateTim4 => SqlDbType::SmallDateTime,
+            TdsDataType::DateTimeN => match &col.type_info.type_info_variant {
+                TypeInfoVariant::VarLen(_var_type, len) => match *len {
+                    4 => SqlDbType::SmallDateTime,
+                    8 => SqlDbType::DateTime,
                     _ => SqlDbType::DateTime,
                 },
-                TdsDataType::DateN => SqlDbType::Date,
-                TdsDataType::TimeN => SqlDbType::Time,
-                TdsDataType::DateTime2N => SqlDbType::DateTime2,
-                TdsDataType::DateTimeOffsetN => SqlDbType::DateTimeOffset,
-                TdsDataType::BigChar => SqlDbType::Char,
-                TdsDataType::BigVarChar => SqlDbType::VarChar,
-                TdsDataType::VarChar => SqlDbType::VarChar,
-                TdsDataType::Text => SqlDbType::Text,
-                TdsDataType::NChar => SqlDbType::NChar,
-                TdsDataType::NVarChar => SqlDbType::NVarChar,
-                TdsDataType::NText => SqlDbType::NText,
-                TdsDataType::Binary => SqlDbType::Binary,
-                TdsDataType::BigBinary => SqlDbType::Binary,
-                TdsDataType::BigVarBinary => SqlDbType::VarBinary,
-                TdsDataType::VarBinary => SqlDbType::VarBinary,
-                TdsDataType::Image => SqlDbType::Image,
-                TdsDataType::Guid => SqlDbType::UniqueIdentifier,
-                TdsDataType::DecimalN | TdsDataType::Decimal => SqlDbType::Decimal,
-                TdsDataType::NumericN | TdsDataType::Numeric => SqlDbType::Numeric,
-                TdsDataType::Xml => SqlDbType::Xml,
-                TdsDataType::Json => SqlDbType::Json,
-                TdsDataType::Udt => SqlDbType::Udt,
-                TdsDataType::SsVariant => SqlDbType::Variant,
-                _ => SqlDbType::VarChar, // Default fallback
-            }
+                _ => SqlDbType::DateTime,
+            },
+            TdsDataType::DateN => SqlDbType::Date,
+            TdsDataType::TimeN => SqlDbType::Time,
+            TdsDataType::DateTime2N => SqlDbType::DateTime2,
+            TdsDataType::DateTimeOffsetN => SqlDbType::DateTimeOffset,
+            TdsDataType::BigChar => SqlDbType::Char,
+            TdsDataType::BigVarChar => SqlDbType::VarChar,
+            TdsDataType::VarChar => SqlDbType::VarChar,
+            TdsDataType::Text => SqlDbType::Text,
+            TdsDataType::NChar => SqlDbType::NChar,
+            TdsDataType::NVarChar => SqlDbType::NVarChar,
+            TdsDataType::NText => SqlDbType::NText,
+            TdsDataType::Binary => SqlDbType::Binary,
+            TdsDataType::BigBinary => SqlDbType::Binary,
+            TdsDataType::BigVarBinary => SqlDbType::VarBinary,
+            TdsDataType::VarBinary => SqlDbType::VarBinary,
+            TdsDataType::Image => SqlDbType::Image,
+            TdsDataType::Guid => SqlDbType::UniqueIdentifier,
+            TdsDataType::DecimalN | TdsDataType::Decimal => SqlDbType::Decimal,
+            TdsDataType::NumericN | TdsDataType::Numeric => SqlDbType::Numeric,
+            TdsDataType::Xml => SqlDbType::Xml,
+            TdsDataType::Json => SqlDbType::Json,
+            TdsDataType::Udt => SqlDbType::Udt,
+            TdsDataType::SsVariant => SqlDbType::Variant,
+            _ => SqlDbType::VarChar, // Default fallback
         };
 
         // Extract length, precision, scale from TypeInfo
@@ -804,15 +785,6 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
         // Get the correct TDS type for bulk copy (may differ from server's type)
         // For example, JSON (0xF4) must be sent as NVarChar(MAX) (0xE7) for bulk copy
         let tds_type = sql_type.to_bulk_copy_tds_type();
-        eprintln!(
-            " TIMESTAMP: {} - line 809: sql_type={:?} → to_bulk_copy_tds_type() returned 0x{:02X}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            sql_type,
-            tds_type
-        );
 
         let mut metadata = BulkCopyColumnMetadata::new(&col.column_name, sql_type, tds_type)
             .with_length(length, type_length)
