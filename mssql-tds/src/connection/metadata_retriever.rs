@@ -21,12 +21,22 @@ use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::bulk_copy_metadata::BulkCopyColumnMetadata;
 use crate::error::Error;
 use crate::sql_identifier::{
-    CATALOG_INDEX, TABLE_INDEX, build_multipart_name, escape_identifier, escape_string_literal,
-    parse_multipart_identifier,
+    CATALOG_INDEX, SCHEMA_INDEX, TABLE_INDEX, build_multipart_name, escape_identifier,
+    escape_string_literal, parse_multipart_identifier,
 };
 use crate::token::tokens::ColMetadataToken;
 use async_trait::async_trait;
 use tracing::{debug, instrument, trace};
+
+/// Result of fetching table metadata, including collation information.
+#[derive(Debug, Clone)]
+pub(crate) struct TableMetadataResult {
+    /// Column metadata from the COLMETADATA token
+    pub col_metadata: ColMetadataToken,
+    /// Collation names for each column (index matches column order)
+    /// Only populated for character type columns
+    pub collation_names: Vec<Option<String>>,
+}
 
 /// Trait for retrieving destination table metadata.
 ///
@@ -136,12 +146,41 @@ impl MetadataRetriever for FmtOnlyMetadataRetriever {
         table_name: &str,
         timeout_sec: u32,
     ) -> TdsResult<Vec<BulkCopyColumnMetadata>> {
-        // Fetch metadata using SET FMTONLY ON
-        let col_metadata_token =
+        // Fetch metadata using SET FMTONLY ON and sp_tablecollations_100
+        let metadata_result =
             fetch_table_metadata(client, table_name, Some(timeout_sec), None).await?;
 
         // Convert using TryFrom trait - directly to BulkCopyColumnMetadata
-        Vec::<BulkCopyColumnMetadata>::try_from(col_metadata_token)
+        Vec::<BulkCopyColumnMetadata>::try_from(metadata_result)
+    }
+}
+
+impl TryFrom<TableMetadataResult> for Vec<BulkCopyColumnMetadata> {
+    type Error = Error;
+
+    fn try_from(result: TableMetadataResult) -> Result<Self, Self::Error> {
+        if result.col_metadata.columns.is_empty() {
+            return Err(Error::UsageError(
+                "Table not found or has no columns".to_string(),
+            ));
+        }
+
+        // Convert each column using the existing From<&ColumnMetadata> implementation
+        let mut metadata: Vec<BulkCopyColumnMetadata> = result
+            .col_metadata
+            .columns
+            .iter()
+            .map(BulkCopyColumnMetadata::from)
+            .collect();
+
+        // Add collation names to the metadata
+        for (i, col_meta) in metadata.iter_mut().enumerate() {
+            if i < result.collation_names.len() {
+                col_meta.collation_name = result.collation_names[i].clone();
+            }
+        }
+
+        Ok(metadata)
     }
 }
 
@@ -170,7 +209,8 @@ impl TryFrom<ColMetadataToken> for Vec<BulkCopyColumnMetadata> {
 ///
 /// This function retrieves column metadata for a table by executing a
 /// query with `SET FMTONLY ON`, which returns only the COLMETADATA
-/// token without any row data.
+/// token without any row data. It also fetches collation information
+/// by calling sp_tablecollations_100.
 ///
 /// # Arguments
 ///
@@ -185,7 +225,7 @@ impl TryFrom<ColMetadataToken> for Vec<BulkCopyColumnMetadata> {
 ///
 /// # Returns
 ///
-/// A `ColMetadataToken` containing the column metadata from the server.
+/// A `TableMetadataResult` containing column metadata and collation names.
 ///
 /// # Errors
 ///
@@ -203,13 +243,14 @@ impl TryFrom<ColMetadataToken> for Vec<BulkCopyColumnMetadata> {
 /// - Support hidden columns in temporal tables
 /// - Exclude SQL Graph columns that cannot be selected
 /// - Handle multipart table names with proper catalog prefix
+/// - Retrieve collation names for character columns via sp_tablecollations_100
 #[instrument(skip(client), level = "info")]
 pub(crate) async fn fetch_table_metadata(
     client: &mut TdsClient,
     table_name: &str,
     timeout_sec: Option<u32>,
     cancel_handle: Option<&CancelHandle>,
-) -> TdsResult<ColMetadataToken> {
+) -> TdsResult<TableMetadataResult> {
     // Parse the multipart identifier
     let parts = parse_multipart_identifier(table_name, false)?;
 
@@ -242,12 +283,24 @@ pub(crate) async fn fetch_table_metadata(
         String::new()
     };
 
+    // Prepare schema and table names for sp_tablecollations_100
+    // Match C# behavior: escape for use in TSQL literal block
+    let schema_name = parts[SCHEMA_INDEX]
+        .as_ref()
+        .map(|s| escape_identifier(&escape_string_literal(s)))
+        .unwrap_or_else(|| "dbo".to_string());
+
+    let table_name_escaped = escape_identifier(&escape_string_literal(table_part));
+
     // Use SET FMTONLY ON to get metadata without query execution overhead.
     // This matches .NET SqlBulkCopy behavior and is more efficient than SELECT TOP 0.
     // It also dynamically builds the column list to:
     // - Support hidden columns in temporal tables
     // - Exclude SQL Graph columns that cannot be selected
     // - Use catalog prefix to query correct database
+    //
+    // Additionally, we call sp_tablecollations_100 to retrieve collation names
+    // for character type columns (matches .NET SqlBulkCopy behavior).
     let query = format!(
         r#"DECLARE @Column_Names NVARCHAR(MAX) = NULL;
 IF EXISTS (SELECT TOP 1 * FROM sys.all_columns WHERE [object_id] = OBJECT_ID('sys.all_columns') AND [name] = 'graph_type')
@@ -270,16 +323,18 @@ SELECT @Column_Names = COALESCE(@Column_Names, '*');
 
 SET FMTONLY ON;
 EXEC(N'SELECT ' + @Column_Names + N' FROM {escaped_full_name}');
-SET FMTONLY OFF;"#
+SET FMTONLY OFF;
+
+EXEC {catalog_prefix}sp_tablecollations_100 N'{schema_name}.{table_name_escaped}';"#
     );
 
-    debug!("Fetching table metadata with FMTONLY");
+    debug!("Fetching table metadata with FMTONLY and collations");
 
     // Execute the query
     client.execute(query, timeout_sec, cancel_handle).await?;
 
-    // Get the metadata from the result and clone it immediately
-    let metadata = client
+    // Get the metadata from the first result set (FMTONLY result)
+    let col_metadata = client
         .get_current_metadata()
         .ok_or_else(|| {
             Error::UsageError(format!("Failed to fetch metadata for table {table_name}"))
@@ -288,9 +343,9 @@ SET FMTONLY OFF;"#
 
     debug!(
         "Fetched {} columns from table metadata",
-        metadata.columns.len()
+        col_metadata.columns.len()
     );
-    for (i, col) in metadata.columns.iter().enumerate() {
+    for (i, col) in col_metadata.columns.iter().enumerate() {
         trace!(
             "Column {}: name='{}', tds_type=0x{:02X}, nullable={}",
             i,
@@ -300,8 +355,53 @@ SET FMTONLY OFF;"#
         );
     }
 
+    // Move to the next result set (collations from sp_tablecollations_100)
+    // This will consume the DONE token from the first result set and read until
+    // the next COLMETADATA token is encountered
+    client.move_to_column_metadata().await?;
+
+    // Read collation names from the result set
+    // sp_tablecollations_100 returns columns: TableName, ColumnName, column_id, collation_name
+    // We need the collation_name (column index 3)
+    let mut collation_names: Vec<Option<String>> = Vec::new();
+
+    while let Some(row) = client.get_next_row().await? {
+        // Column 3 (0-indexed) is the collation_name
+        if row.len() > 3 {
+            let collation_value = &row[3];
+            let collation_name = match collation_value {
+                crate::datatypes::column_values::ColumnValues::String(s) => Some(s.to_string()),
+                crate::datatypes::column_values::ColumnValues::Null => None,
+                _ => {
+                    trace!("Unexpected collation value type: {:?}", collation_value);
+                    None
+                }
+            };
+
+            if let Some(name) = &collation_name {
+                trace!("Column {} collation: {}", collation_names.len(), name);
+            }
+
+            collation_names.push(collation_name);
+        } else {
+            // If row doesn't have enough columns, push None
+            collation_names.push(None);
+        }
+    }
+
+    debug!("Fetched {} collation names", collation_names.len());
+
+    // Ensure we have the same number of collations as columns
+    // If not, pad with None
+    while collation_names.len() < col_metadata.columns.len() {
+        collation_names.push(None);
+    }
+
     // Close the query to free up the connection
     client.close_query().await?;
 
-    Ok(metadata)
+    Ok(TableMetadataResult {
+        col_metadata,
+        collation_names,
+    })
 }

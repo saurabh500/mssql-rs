@@ -139,4 +139,147 @@ mod tests {
             "JSON should use NVARCHAR encoding (0xE7) for bulk copy"
         );
     }
+
+    #[test]
+    fn test_insert_bulk_with_collation() {
+        use crate::connection::bulk_copy::BulkCopyOptions;
+        use crate::message::bulk_load::build_insert_bulk_command;
+
+        // Create metadata with collation names
+        let mut col1 = create_int_column("Id");
+        let mut col2 = create_nvarchar_column("Name", 100);
+        col2.collation_name = Some("SQL_Latin1_General_CP1_CI_AS".to_string());
+        let mut col3 = create_varchar_column("Description", 255);
+        col3.collation_name = Some("Latin1_General_BIN".to_string());
+
+        let metadata = vec![col1, col2, col3];
+        let options = BulkCopyOptions::default();
+
+        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options);
+
+        // Verify COLLATE is included for character types
+        assert!(
+            command.contains("COLLATE SQL_Latin1_General_CP1_CI_AS"),
+            "Expected COLLATE clause for nvarchar column, got: {}",
+            command
+        );
+        assert!(
+            command.contains("COLLATE Latin1_General_BIN"),
+            "Expected COLLATE clause for varchar column, got: {}",
+            command
+        );
+
+        // Verify COLLATE is NOT included for int column
+        let int_section = &command[..command.find("Name").unwrap()];
+        assert!(
+            !int_section.contains("COLLATE"),
+            "Int column should not have COLLATE clause, got: {}",
+            command
+        );
+    }
+
+    #[test]
+    fn test_insert_bulk_without_collation() {
+        use crate::connection::bulk_copy::BulkCopyOptions;
+        use crate::message::bulk_load::build_insert_bulk_command;
+
+        // Create metadata without collation names
+        let col1 = create_int_column("Id");
+        let col2 = create_nvarchar_column("Name", 100);
+        let col3 = create_varchar_column("Description", 255);
+
+        let metadata = vec![col1, col2, col3];
+        let options = BulkCopyOptions::default();
+
+        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options);
+
+        // Verify no COLLATE clauses are present
+        assert!(
+            !command.contains("COLLATE"),
+            "Should not have COLLATE clause when collation_name is None, got: {}",
+            command
+        );
+
+        // Verify basic structure is correct
+        assert!(command.starts_with("INSERT BULK dbo.TestTable ("));
+        assert!(command.contains("[Id] int"));
+        assert!(command.contains("[Name] nvarchar(100)"));
+        assert!(command.contains("[Description] varchar(255)"));
+    }
+
+    #[test]
+    fn test_insert_bulk_mixed_collation() {
+        use crate::connection::bulk_copy::BulkCopyOptions;
+        use crate::message::bulk_load::build_insert_bulk_command;
+
+        // Create metadata with some columns having collation and some not
+        let mut col1 = create_nvarchar_column("Name", 50);
+        col1.collation_name = Some("SQL_Latin1_General_CP1_CI_AS".to_string());
+
+        let col2 = create_nvarchar_column("Description", 200); // No collation
+
+        let mut col3 = create_varchar_column("Code", 10);
+        col3.collation_name = Some("Latin1_General_BIN".to_string());
+
+        let metadata = vec![col1, col2, col3];
+        let options = BulkCopyOptions::default();
+
+        let command = build_insert_bulk_command("dbo.MixedTable", &metadata, &options);
+
+        // Verify first column has COLLATE
+        assert!(
+            command.contains("[Name] nvarchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS"),
+            "First column should have COLLATE, got: {}",
+            command
+        );
+
+        // Verify second column does NOT have COLLATE
+        let desc_pos = command.find("Description").unwrap();
+        let next_comma_pos = command[desc_pos..]
+            .find(',')
+            .unwrap_or(command.len() - desc_pos);
+        let desc_section = &command[desc_pos..desc_pos + next_comma_pos];
+        assert!(
+            !desc_section.contains("COLLATE"),
+            "Description column should not have COLLATE, got: {}",
+            desc_section
+        );
+
+        // Verify third column has COLLATE
+        assert!(
+            command.contains("[Code] varchar(10) COLLATE Latin1_General_BIN"),
+            "Third column should have COLLATE, got: {}",
+            command
+        );
+    }
+
+    #[test]
+    fn test_insert_bulk_collation_with_options() {
+        use crate::connection::bulk_copy::BulkCopyOptions;
+        use crate::message::bulk_load::build_insert_bulk_command;
+
+        let mut col1 = create_nvarchar_column("Name", 100);
+        col1.collation_name = Some("SQL_Latin1_General_CP1_CI_AS".to_string());
+
+        let metadata = vec![col1];
+        let mut options = BulkCopyOptions::default();
+        options.keep_nulls = true;
+        options.table_lock = true;
+
+        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options);
+
+        // Verify COLLATE clause is present
+        assert!(
+            command.contains("COLLATE SQL_Latin1_General_CP1_CI_AS"),
+            "Expected COLLATE clause, got: {}",
+            command
+        );
+
+        // Verify WITH clause is present with options
+        assert!(
+            command.contains("WITH (KEEP_NULLS, TABLOCK)"),
+            "Expected WITH clause with options, got: {}",
+            command
+        );
+    }
 }
