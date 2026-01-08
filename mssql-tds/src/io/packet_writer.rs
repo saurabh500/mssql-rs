@@ -318,6 +318,12 @@ impl<'a> PacketWriter<'a> {
     pub(crate) fn get_cursor(&self) -> &Cursor<Vec<u8>> {
         &self.payload_cursor
     }
+
+    /// Debug helper: Get the current buffer for inspection
+    #[cfg(debug_assertions)]
+    pub(crate) fn get_cursor_debug(&self) -> &Cursor<Vec<u8>> {
+        &self.payload_cursor
+    }
 }
 
 #[async_trait]
@@ -333,7 +339,18 @@ impl TdsPacketWriter for PacketWriter<'_> {
 
     /// Writes a byte to the buffer.
     async fn write_byte_async(&mut self, value: u8) -> TdsResult<()> {
+        // Get position before writing for debugging
+        let pos_before = self.payload_cursor.position();
         let _ = WriteBytesExt::write_u8(&mut self.payload_cursor, value);
+
+        // Debug: Show actual byte written
+        event!(
+            tracing::Level::DEBUG,
+            "write_byte_async: value=0x{:02X} at position {}",
+            value,
+            pos_before
+        );
+
         self.handle_overflow_if_needed().await
     }
 
@@ -344,8 +361,23 @@ impl TdsPacketWriter for PacketWriter<'_> {
     }
 
     async fn write_u16_async(&mut self, value: u16) -> TdsResult<()> {
+        // Get position before writing for debugging
+        let pos_before = self.payload_cursor.position();
         let _ =
             WriteBytesExt::write_u16::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+        let pos_after = self.payload_cursor.position();
+
+        // Debug: Show actual bytes written
+        let buffer = self.payload_cursor.get_ref();
+        let bytes_written = &buffer[pos_before as usize..pos_after as usize];
+        event!(
+            tracing::Level::DEBUG,
+            "write_u16_async: value=0x{:04X}, bytes={:02X?} at position {}",
+            value,
+            bytes_written,
+            pos_before
+        );
+
         self.handle_overflow_if_needed().await
     }
 
@@ -356,8 +388,23 @@ impl TdsPacketWriter for PacketWriter<'_> {
     }
 
     async fn write_u32_async(&mut self, value: u32) -> TdsResult<()> {
+        // Get position before writing for debugging
+        let pos_before = self.payload_cursor.position();
         let _ =
             WriteBytesExt::write_u32::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+        let pos_after = self.payload_cursor.position();
+
+        // Debug: Show actual bytes written
+        let buffer = self.payload_cursor.get_ref();
+        let bytes_written = &buffer[pos_before as usize..pos_after as usize];
+        event!(
+            tracing::Level::DEBUG,
+            "write_u32_async: value=0x{:08X}, bytes={:02X?} at position {}",
+            value,
+            bytes_written,
+            pos_before
+        );
+
         self.handle_overflow_if_needed().await
     }
 

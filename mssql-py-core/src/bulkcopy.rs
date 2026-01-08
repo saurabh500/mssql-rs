@@ -38,6 +38,8 @@ enum SourcePythonType {
     Date,
     DateTime,
     Time,
+    Dict,
+    List,
     Other,
 }
 
@@ -57,6 +59,10 @@ impl SourcePythonType {
             SourcePythonType::Bytes
         } else if py_obj.is_instance_of::<pyo3::types::PyBool>() {
             SourcePythonType::Bool
+        } else if py_obj.is_instance_of::<pyo3::types::PyDict>() {
+            SourcePythonType::Dict
+        } else if py_obj.is_instance_of::<pyo3::types::PyList>() {
+            SourcePythonType::List
         } else if py_obj.is_instance_of::<PyDateTime>() {
             // Check for datetime before date, since datetime is a subclass of date
             SourcePythonType::DateTime
@@ -388,6 +394,24 @@ impl PythonRowAdapter {
             // Int → Real: Convert integer to f32
             (SourcePythonType::Int, SqlDbType::Real) => {
                 let result = Self::coerce_int_to_real(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // String → JSON: Parse string as JSON (validate it's valid JSON)
+            (SourcePythonType::String, SqlDbType::Json) => {
+                let result = Self::coerce_string_to_json(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // Dict → JSON: Serialize Python dict to JSON
+            (SourcePythonType::Dict, SqlDbType::Json) => {
+                let result = Self::coerce_dict_to_json(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // List → JSON: Serialize Python list to JSON
+            (SourcePythonType::List, SqlDbType::Json) => {
+                let result = Self::coerce_list_to_json(py_obj)?;
                 Ok(Some(result))
             }
 
@@ -1365,6 +1389,75 @@ impl PythonRowAdapter {
         }
 
         Ok(ColumnValues::Real(real_value))
+    }
+
+    /// Coerce a Python string to SQL Server JSON.
+    ///
+    /// Validates that the string contains valid JSON and converts to SqlJson.
+    fn coerce_string_to_json(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
+
+        let json_str = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+        // Validate JSON using serde_json
+        serde_json::from_str::<serde_json::Value>(json_str)
+            .map_err(|e| Error::UsageError(format!("Invalid JSON string: {}", e)))?;
+
+        // Convert to UTF-8 bytes for SqlJson
+        let bytes = json_str.as_bytes().to_vec();
+        Ok(ColumnValues::Json(
+            mssql_tds::datatypes::sql_json::SqlJson { bytes },
+        ))
+    }
+
+    /// Coerce a Python dict to SQL Server JSON.
+    ///
+    /// Serializes the Python dict to a JSON string using Python's json module.
+    fn coerce_dict_to_json(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let py = py_obj.py();
+        let json_module = py
+            .import("json")
+            .map_err(|e| Error::UsageError(format!("Failed to import json module: {}", e)))?;
+
+        // Use json.dumps() to serialize the dict
+        let json_str = json_module
+            .getattr("dumps")
+            .and_then(|dumps| dumps.call1((py_obj,)))
+            .and_then(|result| result.extract::<String>())
+            .map_err(|e| Error::UsageError(format!("Failed to serialize dict to JSON: {}", e)))?;
+
+        // Convert to UTF-8 bytes for SqlJson
+        let bytes = json_str.as_bytes().to_vec();
+        Ok(ColumnValues::Json(
+            mssql_tds::datatypes::sql_json::SqlJson { bytes },
+        ))
+    }
+
+    /// Coerce a Python list to SQL Server JSON.
+    ///
+    /// Serializes the Python list to a JSON array string using Python's json module.
+    fn coerce_list_to_json(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let py = py_obj.py();
+        let json_module = py
+            .import("json")
+            .map_err(|e| Error::UsageError(format!("Failed to import json module: {}", e)))?;
+
+        // Use json.dumps() to serialize the list
+        let json_str = json_module
+            .getattr("dumps")
+            .and_then(|dumps| dumps.call1((py_obj,)))
+            .and_then(|result| result.extract::<String>())
+            .map_err(|e| Error::UsageError(format!("Failed to serialize list to JSON: {}", e)))?;
+
+        // Convert to UTF-8 bytes for SqlJson
+        let bytes = json_str.as_bytes().to_vec();
+        Ok(ColumnValues::Json(
+            mssql_tds::datatypes::sql_json::SqlJson { bytes },
+        ))
     }
 }
 

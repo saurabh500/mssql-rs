@@ -581,6 +581,9 @@ fn validate_type_compatibility(
         (ColumnValues::Money(_), SqlDbType::Money) => true,
         (ColumnValues::SmallMoney(_), SqlDbType::SmallMoney) => true,
 
+        // JSON
+        (ColumnValues::Json(_), SqlDbType::Json) => true,
+
         // NULL is always compatible
         (ColumnValues::Null, _) => true,
 
