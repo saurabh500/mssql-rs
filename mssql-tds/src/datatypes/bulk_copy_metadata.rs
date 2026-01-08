@@ -7,10 +7,7 @@
 //! column information during bulk copy operations, matching the .NET SqlBulkCopy
 //! implementation's metadata handling.
 
-use crate::{
-    datatypes::sqldatatypes::PartialLengthType, query::metadata::ColumnMetadata,
-    token::tokens::SqlCollation,
-};
+use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 use tracing::warn;
 
 /// Newtype wrapper for SQL Server's system_type_id values.

@@ -17,6 +17,7 @@ use mssql_tds::core::TdsResult;
 use mssql_tds::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType};
 use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::datatypes::decoder::DecimalParts;
+use mssql_tds::datatypes::sql_json::SqlJson;
 use mssql_tds::error::Error;
 use mssql_tds::message::bulk_load::StreamingBulkLoadWriter;
 use pyo3::prelude::*;
@@ -1409,9 +1410,7 @@ impl PythonRowAdapter {
 
         // Convert to UTF-8 bytes for SqlJson
         let bytes = json_str.as_bytes().to_vec();
-        Ok(ColumnValues::Json(
-            mssql_tds::datatypes::sql_json::SqlJson { bytes },
-        ))
+        Ok(ColumnValues::Json(SqlJson { bytes }))
     }
 
     /// Coerce a Python dict to SQL Server JSON.
@@ -1432,9 +1431,7 @@ impl PythonRowAdapter {
 
         // Convert to UTF-8 bytes for SqlJson
         let bytes = json_str.as_bytes().to_vec();
-        Ok(ColumnValues::Json(
-            mssql_tds::datatypes::sql_json::SqlJson { bytes },
-        ))
+        Ok(ColumnValues::Json(SqlJson { bytes }))
     }
 
     /// Coerce a Python list to SQL Server JSON.
@@ -1455,9 +1452,7 @@ impl PythonRowAdapter {
 
         // Convert to UTF-8 bytes for SqlJson
         let bytes = json_str.as_bytes().to_vec();
-        Ok(ColumnValues::Json(
-            mssql_tds::datatypes::sql_json::SqlJson { bytes },
-        ))
+        Ok(ColumnValues::Json(SqlJson { bytes }))
     }
 }
 
