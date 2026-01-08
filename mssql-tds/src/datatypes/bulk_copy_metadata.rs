@@ -7,7 +7,7 @@
 //! column information during bulk copy operations, matching the .NET SqlBulkCopy
 //! implementation's metadata handling.
 
-use crate::token::tokens::SqlCollation;
+use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 use tracing::warn;
 
 /// Newtype wrapper for SQL Server's system_type_id values.
@@ -143,6 +143,27 @@ impl SqlDbType {
             SqlDbType::Variant => 0x62,          // TdsDataType::SsVariant
             SqlDbType::Udt => 0xF0,              // TdsDataType::Udt
             SqlDbType::Vector => 0xF5,           // TdsDataType::Vector
+        }
+    }
+
+    /// Map SqlDbType to TDS protocol type byte for bulk copy operations.
+    ///
+    /// This method returns the TDS type that should actually be used when sending
+    /// data via bulk copy. For most types, this is the same as `to_tds_type()`,
+    /// but some types require special handling:
+    ///
+    /// - JSON: Returns 0xE7 (NVarChar) because SQL Server doesn't support sending
+    ///   JSON type directly in bulk copy operations. JSON data must be sent as
+    ///   NVARCHAR(MAX) with UTF-16LE encoding.
+    ///
+    /// This makes the intention explicit in code: JSON is a JSON type, but for
+    /// bulk copy purposes we transmit it as NVARCHAR.
+    pub fn to_bulk_copy_tds_type(&self) -> u8 {
+        match self {
+            // JSON must be sent as NVARCHAR(MAX) in bulk copy
+            SqlDbType::Json => 0xE7, // TdsDataType::NVarChar - bulk copy workaround
+            // All other types use their standard TDS type
+            _ => self.to_tds_type(),
         }
     }
 
@@ -625,13 +646,10 @@ impl Default for BulkCopyColumnMetadata {
 ///
 /// This function extracts the TDS type and other metadata directly from the server's
 /// COLMETADATA response, ensuring we use the exact types that SQL Server expects.
-impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
+impl From<&ColumnMetadata> for BulkCopyColumnMetadata {
     fn from(col: &crate::query::metadata::ColumnMetadata) -> Self {
         use crate::datatypes::sqldatatypes::TdsDataType;
         use crate::datatypes::sqldatatypes::TypeInfoVariant;
-
-        // Extract TDS type byte
-        let tds_type = col.data_type as u8;
 
         // Map TDS type to SqlDbType
         let sql_type = match col.data_type {
@@ -761,6 +779,10 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
             }
         };
 
+        // Get the correct TDS type for bulk copy (may differ from server's type)
+        // For example, JSON (0xF4) must be sent as NVarChar(MAX) (0xE7) for bulk copy
+        let tds_type = sql_type.to_bulk_copy_tds_type();
+
         let mut metadata = BulkCopyColumnMetadata::new(&col.column_name, sql_type, tds_type)
             .with_length(length, type_length)
             .with_nullable(col.is_nullable());
@@ -771,6 +793,17 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
 
         if let Some(collation) = col.get_collation() {
             metadata = metadata.with_collation(collation);
+        } else if sql_type == SqlDbType::Json {
+            // JSON columns don't have collation in server metadata, but we need it
+            // when sending as VARCHAR(MAX) (0xA7) for bulk copy workaround.
+            // Use all-zero collation like .NET SqlBulkCopy does for JSON columns.
+
+            metadata = metadata.with_collation(crate::token::tokens::SqlCollation {
+                info: 0x00000000, // All zeros for JSON (UTF-8 encoding)
+                lcid_language_id: 0,
+                col_flags: 0,
+                sort_id: 0,
+            });
         }
 
         if col.is_identity() {

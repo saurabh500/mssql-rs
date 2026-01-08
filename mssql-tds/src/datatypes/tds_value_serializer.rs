@@ -9,6 +9,7 @@
 
 use crate::core::TdsResult;
 use crate::datatypes::column_values::ColumnValues;
+use crate::datatypes::sql_json::SqlJson;
 use crate::error::Error;
 use crate::io::packet_writer::{PacketWriter, TdsPacketWriter, TdsPacketWriterUnchecked};
 
@@ -105,6 +106,7 @@ impl TdsValueSerializer {
             ColumnValues::DateTimeOffset(v) => Self::serialize_datetimeoffset(writer, v, ctx).await,
             ColumnValues::SmallDateTime(v) => Self::serialize_smalldatetime(writer, v, ctx).await,
             ColumnValues::Bytes(v) => Self::serialize_bytes(writer, v, ctx).await,
+            ColumnValues::Json(v) => Self::serialize_json(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -1113,6 +1115,46 @@ impl TdsValueSerializer {
                 writer.write_byte_async(byte).await?;
             }
         }
+        Ok(())
+    }
+
+    /// Serialize a JSON value using PLP encoding.
+    ///
+    /// JSON type (0xF4) uses UTF-8 encoding and PLP (Partially Length Prefixed) structure.
+    /// Format: PLP_UNKNOWN_LEN (8 bytes) + chunk_len (4 bytes) + data + terminator (4 bytes)
+    async fn serialize_json<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &SqlJson,
+        _ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // CRITICAL: JSON bulk copy uses NVARCHAR (0xE7) encoding, which requires UTF-16LE
+        // Convert UTF-8 JSON to UTF-16LE like .NET SqlBulkCopy does
+        let json_str = std::str::from_utf8(&value.bytes).map_err(|e| {
+            Error::TypeConversionError(format!("Invalid UTF-8 in JSON data: {}", e))
+        })?;
+
+        // Encode as UTF-16LE (no BOM needed for NVARCHAR)
+        let utf16_data: Vec<u16> = json_str.encode_utf16().collect();
+        let byte_len = utf16_data.len() * 2; // Each u16 is 2 bytes
+
+        // JSON uses PLP encoding with UTF-16LE for NVARCHAR type
+        // Write PLP_UNKNOWN_LEN (0xFFFFFFFFFFFFFFFE)
+        writer.write_u64_async(PLP_UNKNOWN_LEN).await?;
+
+        // Write chunk length (4 bytes)
+        writer.write_u32_async(byte_len as u32).await?;
+
+        // Write UTF-16LE encoded data
+        for code_unit in utf16_data {
+            writer.write_u16_async(code_unit).await?;
+        }
+
+        // Write terminator (4 bytes of 0x00)
+        writer.write_u32_async(PLP_TERMINATOR).await?;
+
         Ok(())
     }
 }

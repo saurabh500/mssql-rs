@@ -568,6 +568,11 @@ impl<'a> StreamingBulkLoadWriter<'a> {
                 self.packet_writer.write_byte_async(0).await?;
             }
 
+            // JSON - schema info (similar to XML, no schema support yet)
+            x if x == TdsDataType::Json as u8 => {
+                self.packet_writer.write_byte_async(0).await?;
+            }
+
             // Time types - scale only
             x if x == TdsDataType::TimeN as u8
                 || x == TdsDataType::DateTime2N as u8

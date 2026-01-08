@@ -44,7 +44,19 @@ impl PyCoreCursor {
         py.detach(|| {
             runtime_handle.block_on(async {
                 let mut client = tds_client.lock().await;
-                info!("execute: Locked TDS client, calling execute");
+                info!("execute: Locked TDS client");
+
+                // Close any open result set before executing new query
+                if let Some(resultset) = client.get_current_resultset() {
+                    info!(" execute: Closing previous result set before new query");
+                    resultset.close().await.map_err(|e| {
+                        error!("execute: Failed to close previous result set: {}", e);
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Failed to close previous result set: {}",
+                            e
+                        ))
+                    })?;
+                }
 
                 // Execute with 30 second timeout
                 client.execute(query, Some(30), None).await.map_err(|e| {
@@ -91,6 +103,17 @@ impl PyCoreCursor {
                     })? {
                         info!("fetchone: Got row with {} columns", row.len());
                         return Ok(Some(row));
+                    } else {
+                        // No more rows - close the result set to clear has_open_batch flag
+                        info!("No more rows, closing result set");
+                        resultset.close().await.map_err(|e| {
+                            error!("fetchone: Failed to close result set: {}", e);
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "Failed to close result set: {}",
+                                e
+                            ))
+                        })?;
+                        info!("Result set closed successfully");
                     }
                 }
 
@@ -110,6 +133,8 @@ impl PyCoreCursor {
                 Ok(Some(py_tuple.into()))
             })
         } else {
+            // Mark that we no longer have a result set since it's been fully consumed
+            self.has_resultset = false;
             Ok(None)
         }
     }
@@ -769,6 +794,14 @@ impl PyCoreCursor {
                 }
                 // Fallback to string if datetimeoffset conversion fails
                 format!("{:?}", dto)
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
+                    .into_any()
+            }
+            ColumnValues::Json(json) => {
+                // Return JSON as a plain string (not wrapped with debug format)
+                json.as_string()
                     .into_pyobject(py)
                     .unwrap()
                     .to_owned()
