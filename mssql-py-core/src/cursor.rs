@@ -58,8 +58,6 @@ impl PyCoreCursor {
                     })?;
                 }
 
-                info!("execute: Calling TDS client execute");
-
                 // Execute with 30 second timeout
                 client.execute(query, Some(30), None).await.map_err(|e| {
                     error!("execute: Failed to execute query: {}", e);

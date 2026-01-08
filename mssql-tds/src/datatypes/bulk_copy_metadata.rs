@@ -7,7 +7,7 @@
 //! column information during bulk copy operations, matching the .NET SqlBulkCopy
 //! implementation's metadata handling.
 
-use crate::token::tokens::SqlCollation;
+use crate::{datatypes::sqldatatypes::PartialLengthType, token::tokens::SqlCollation};
 use tracing::warn;
 
 /// Newtype wrapper for SQL Server's system_type_id values.
@@ -139,10 +139,6 @@ impl SqlDbType {
             // Other types
             SqlDbType::UniqueIdentifier => 0x24, // TdsDataType::Guid
             SqlDbType::Xml => 0xF1,              // TdsDataType::Xml
-            // WORKAROUND: SQL Server doesn't support JSON (0xF4) type for bulk copy yet.
-            // Map JSON to NVarChar(MAX) (0xE7) like .NET SqlBulkCopy does. TDS trace confirms
-            // .NET uses 0xE7 (NVARCHAR) with PLP encoding, NOT 0xA7 (VARCHAR).
-            // This allows bulk inserting into JSON columns using UTF-16LE Unicode encoding.
             SqlDbType::Json => 0xE7, // TdsDataType::NVarChar(MAX) - CRITICAL: 0xE7 not 0xA7!
             SqlDbType::Variant => 0x62, // TdsDataType::SsVariant
             SqlDbType::Udt => 0xF0,  // TdsDataType::Udt
@@ -647,13 +643,7 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
         // JSON columns come with PartialLen(Json, ...) even if data_type is BigVarChar
         let is_json_column = matches!(
             &col.type_info.type_info_variant,
-            TypeInfoVariant::PartialLen(
-                crate::datatypes::sqldatatypes::PartialLengthType::Json,
-                _,
-                _,
-                _,
-                _
-            )
+            TypeInfoVariant::PartialLen(PartialLengthType::Json, _, _, _, _)
         );
 
         // Map TDS type to SqlDbType
