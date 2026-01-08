@@ -1125,7 +1125,7 @@ impl TdsValueSerializer {
     async fn serialize_json<'a, 'b>(
         writer: &'a mut PacketWriter<'b>,
         value: &SqlJson,
-        ctx: &TdsTypeContext,
+        _ctx: &TdsTypeContext,
     ) -> TdsResult<()>
     where
         'b: 'a,
