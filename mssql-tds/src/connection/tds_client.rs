@@ -328,15 +328,6 @@ impl TdsClient {
         // STEP 5: Read the final response with row count
         let rows_affected = self.consume_done_token().await?;
 
-        // Clear the open batch flag after successful completion
-        info!(" Bulk load complete, clearing has_open_batch flag");
-        self.execution_context.set_has_open_batch(false);
-        self.current_result_set_has_been_read_till_end = true;
-        info!(
-            " has_open_batch is now: {}",
-            self.execution_context.has_open_batch()
-        );
-
         Ok(rows_affected)
     }
 
@@ -1023,10 +1014,6 @@ impl TdsClient {
 
     #[instrument(skip(self), level = "info")]
     pub async fn close_query(&mut self) -> TdsResult<()> {
-        eprintln!(
-            " close_query() called, has_open_batch = {}",
-            self.execution_context.has_open_batch()
-        );
         if !self.execution_context.has_open_batch() {
             return Ok(());
         }
@@ -1040,10 +1027,6 @@ impl TdsClient {
         self.remaining_request_timeout = None;
         self.cancel_handle = None;
         self.execution_context.set_has_open_batch(false);
-        eprintln!(
-            " close_query() done, has_open_batch now = {}",
-            self.execution_context.has_open_batch()
-        );
         Ok(())
     }
 
