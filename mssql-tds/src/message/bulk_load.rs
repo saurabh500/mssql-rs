@@ -118,7 +118,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
         self.column_contexts.clear();
         self.column_contexts.reserve(self.column_metadata.len());
 
-        for (i, col_meta) in self.column_metadata.iter().enumerate() {
+        for col_meta in &self.column_metadata {
             let ctx = TdsTypeContext {
                 tds_type: col_meta.tds_type,
                 max_size: col_meta.length as u8,

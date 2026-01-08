@@ -641,7 +641,7 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
         eprintln!("type_info_variant: {:?}", col.type_info.type_info_variant);
 
         // Extract TDS type byte from server (may need remapping for bulk copy)
-        let server_tds_type = col.data_type as u8;
+        let _server_tds_type = col.data_type as u8;
 
         // Check if this is actually a JSON column by inspecting TypeInfoVariant
         // JSON columns come with PartialLen(Json, ...) even if data_type is BigVarChar
