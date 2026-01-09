@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 //! Integration tests for no-protocol connection resolution
-//! 
+//!
 //! These tests verify ODBC-compatible behavior when no explicit protocol is specified
 //! in the connection string. The driver should automatically try protocols in order:
 //! 1. Shared Memory (local only, Windows only)
@@ -145,11 +145,40 @@ mod no_protocol_resolution {
         init_tracing();
         dotenv().ok();
 
-        // Test explicit Named Pipe protocol
+        // Test explicit Named Pipe protocol with full pipe path
         let datasource = r"np:\\.\pipe\sql\query";
         let mut client = create_client_from_datasource(datasource).await?;
         test_simple_query(&mut client).await?;
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_explicit_shared_memory() -> TdsResult<()> {
+        init_tracing();
+        dotenv().ok();
+
+        // Test explicit Shared Memory protocol (lpc: - Local Procedure Call)
+        // Only works for local connections
+        let datasource = "lpc:.";
+        let mut client = create_client_from_datasource(datasource).await?;
+        test_simple_query(&mut client).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_explicit_named_pipe_with_server() -> TdsResult<()> {
+        init_tracing();
+        dotenv().ok();
+
+        // Test explicit Named Pipe protocol with server name
+        // Parser should construct the appropriate pipe path
+        let datasource = "np:localhost";
+        let mut client = create_client_from_datasource(datasource).await?;
+        test_simple_query(&mut client).await?;
 
         Ok(())
     }
@@ -245,7 +274,6 @@ mod no_protocol_resolution {
         let datasource = r"\\.\pipe\sql\query";
         let mut client = create_client_from_datasource(datasource).await?;
         test_simple_query(&mut client).await?;
-
 
         Ok(())
     }
@@ -392,7 +420,11 @@ mod no_protocol_resolution {
         dotenv().ok();
 
         // Test that protocol names are case-insensitive (ODBC behavior)
-        let datasources = vec!["tcp:localhost,1433", "TCP:localhost,1433", "Tcp:localhost,1433"];
+        let datasources = vec![
+            "tcp:localhost,1433",
+            "TCP:localhost,1433",
+            "Tcp:localhost,1433",
+        ];
 
         for datasource in datasources {
             let mut client = create_client_from_datasource(datasource).await?;

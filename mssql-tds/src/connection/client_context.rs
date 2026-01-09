@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 
-use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
 use crate::connection::datasource_parser::{ParsedDataSource, ProtocolType};
+use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
 use crate::message::login_options::{ApplicationIntent, TdsVersion};
 use hostname;
 
@@ -377,9 +377,10 @@ impl TransportContext {
         match parsed.get_protocol_type() {
             ProtocolType::Tcp => {
                 let port = if !parsed.protocol_parameter.is_empty() {
-                    parsed.protocol_parameter.parse::<u16>().map_err(|e| {
-                        Error::ProtocolError(format!("Invalid port number: {}", e))
-                    })?
+                    parsed
+                        .protocol_parameter
+                        .parse::<u16>()
+                        .map_err(|e| Error::ProtocolError(format!("Invalid port number: {}", e)))?
                 } else {
                     1433 // Default SQL Server port
                 };
@@ -394,7 +395,9 @@ impl TransportContext {
                     parsed.protocol_parameter.clone()
                 } else if !parsed.instance_name.is_empty() {
                     // Build standard named pipe path
-                    if parsed.instance_name.to_lowercase() == "default" || parsed.instance_name.is_empty() {
+                    if parsed.instance_name.to_lowercase() == "default"
+                        || parsed.instance_name.is_empty()
+                    {
                         format!("\\\\{}\\pipe\\sql\\query", parsed.server_name)
                     } else {
                         format!(
@@ -856,4 +859,3 @@ mod tests {
         assert!(ctx3.is_local());
     }
 }
-

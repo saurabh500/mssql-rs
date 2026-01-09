@@ -150,9 +150,7 @@ impl ParsedDataSource {
     fn parse_named_pipe(input: &str, result: &mut ParsedDataSource) -> TdsResult<ParsedDataSource> {
         // Named pipe format: \\server\pipe\...
         if !input.starts_with("\\\\") {
-            return Err(Error::ProtocolError(
-                "Invalid named pipe path".to_string(),
-            ));
+            return Err(Error::ProtocolError("Invalid named pipe path".to_string()));
         }
 
         // Extract server name (between \\ and next \)
@@ -196,9 +194,8 @@ impl ParsedDataSource {
             result.standard_instance_name = true;
         }
         // Non-standard pipe
-        else if pipe_path.starts_with("\\pipe\\") {
+        else if let Some(custom_path) = pipe_path.strip_prefix("\\pipe\\") {
             // Use "pipe<rest_of_path>" format
-            let custom_path = &pipe_path["\\pipe\\".len()..];
             result.instance_name = format!("pipe{}", custom_path);
             result.standard_instance_name = false;
         } else {
@@ -213,10 +210,7 @@ impl ParsedDataSource {
     }
 
     /// Parse protocol parameter (port for TCP)
-    fn parse_parameter<'a>(
-        input: &'a str,
-        result: &mut ParsedDataSource,
-    ) -> TdsResult<&'a str> {
+    fn parse_parameter<'a>(input: &'a str, result: &mut ParsedDataSource) -> TdsResult<&'a str> {
         // Look for comma separator
         if let Some(comma_pos) = input.find(',') {
             let parameter = input[comma_pos + 1..].trim();
@@ -293,7 +287,8 @@ impl ParsedDataSource {
                 result.server_name = "localhost".to_string();
             } else {
                 // For other protocols, resolve to actual computer name
-                result.server_name = Self::get_computer_name().unwrap_or_else(|| server.to_string());
+                result.server_name =
+                    Self::get_computer_name().unwrap_or_else(|| server.to_string());
             }
         } else {
             result.server_name = server.to_string();
@@ -308,7 +303,9 @@ impl ParsedDataSource {
         if result.protocol_name == "lpc" {
             let is_local = result.original_server_name == "."
                 || result.original_server_name == "(local)"
-                || result.original_server_name.eq_ignore_ascii_case("localhost")
+                || result
+                    .original_server_name
+                    .eq_ignore_ascii_case("localhost")
                 || Self::is_computer_name(&result.original_server_name);
 
             if !is_local {
@@ -357,7 +354,9 @@ impl ParsedDataSource {
             result.can_use_cache = false;
         }
 
-        if matches!(result.protocol_name.as_str(), "lpc" | "admin") && !result.instance_name.is_empty() {
+        if matches!(result.protocol_name.as_str(), "lpc" | "admin")
+            && !result.instance_name.is_empty()
+        {
             result.can_use_cache = false;
         }
 
@@ -379,9 +378,7 @@ impl ParsedDataSource {
         } else if input.starts_with("(localdb)/") {
             "(localdb)/".len()
         } else {
-            return Err(Error::ProtocolError(
-                "Invalid LocalDB format".to_string(),
-            ));
+            return Err(Error::ProtocolError("Invalid LocalDB format".to_string()));
         };
 
         let instance_name = input[instance_start..].trim();
@@ -633,4 +630,3 @@ mod tests {
         assert_eq!(parsed.protocol_parameter, "1433");
     }
 }
-
