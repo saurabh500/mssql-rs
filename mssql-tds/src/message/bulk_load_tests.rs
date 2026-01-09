@@ -26,10 +26,12 @@ mod tests {
     }
 
     // Helper function to create an nvarchar column
-    fn create_nvarchar_column(name: &str, length: i32) -> BulkCopyColumnMetadata {
+    // Note: length parameter is in CHARACTERS, but internally stored as BYTES (length * 2)
+    fn create_nvarchar_column(name: &str, char_length: i32) -> BulkCopyColumnMetadata {
+        let byte_length = char_length * 2; // NVARCHAR uses 2 bytes per character
         BulkCopyColumnMetadata::new(name, SqlDbType::NVarChar, 0xE7)
             .with_nullable(true)
-            .with_length(length, TypeLength::Variable(length))
+            .with_length(byte_length, TypeLength::Variable(byte_length))
             .with_collation(SqlCollation::default())
     }
 
