@@ -596,10 +596,16 @@ impl BulkCopyColumnMetadata {
                 if self.is_plp() {
                     "nvarchar(max)".to_string()
                 } else {
-                    format!("nvarchar({})", self.length)
+                    // CRITICAL: self.length is in BYTES for NVARCHAR
+                    // T-SQL requires CHARACTER count, so divide by 2
+                    format!("nvarchar({})", self.length / 2)
                 }
             }
-            SqlDbType::NChar => format!("nchar({})", self.length),
+            SqlDbType::NChar => {
+                // CRITICAL: self.length is in BYTES for NCHAR
+                // T-SQL requires CHARACTER count, so divide by 2
+                format!("nchar({})", self.length / 2)
+            }
             SqlDbType::VarChar => {
                 if self.is_plp() {
                     "varchar(max)".to_string()
