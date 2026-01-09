@@ -1074,7 +1074,7 @@ impl TdsValueSerializer {
         'b: 'a,
     {
         let data_len = value.len();
-        let schema_size = ctx.max_size as usize;
+        let schema_size = ctx.max_size;
 
         // Check for size overflow (skip for PLP types which support up to 2GB)
         if !ctx.is_plp && data_len > schema_size {
