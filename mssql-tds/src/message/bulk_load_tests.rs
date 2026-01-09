@@ -146,7 +146,7 @@ mod tests {
         use crate::message::bulk_load::build_insert_bulk_command;
 
         // Create metadata with collation names
-        let mut col1 = create_int_column("Id");
+        let col1 = create_int_column("Id");
         let mut col2 = create_nvarchar_column("Name", 100);
         col2.collation_name = Some("SQL_Latin1_General_CP1_CI_AS".to_string());
         let mut col3 = create_varchar_column("Description", 255);
@@ -262,9 +262,11 @@ mod tests {
         col1.collation_name = Some("SQL_Latin1_General_CP1_CI_AS".to_string());
 
         let metadata = vec![col1];
-        let mut options = BulkCopyOptions::default();
-        options.keep_nulls = true;
-        options.table_lock = true;
+        let options = BulkCopyOptions {
+            keep_nulls: true,
+            table_lock: true,
+            ..BulkCopyOptions::default()
+        };
 
         let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options);
 

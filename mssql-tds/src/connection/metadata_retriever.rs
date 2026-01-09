@@ -16,7 +16,7 @@
 //! You can implement the [`MetadataRetriever`] trait to provide custom metadata
 //! retrieval strategies, such as caching or alternative sources.
 
-use crate::connection::tds_client::TdsClient;
+use crate::connection::tds_client::{ResultSetClient, TdsClient};
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::bulk_copy_metadata::BulkCopyColumnMetadata;
 use crate::error::Error;
@@ -276,9 +276,16 @@ pub(crate) async fn fetch_table_metadata(
     let full_name = build_multipart_name(&parts);
     let escaped_full_name = escape_string_literal(&full_name);
 
-    // Build query with catalog prefix
+    // Build query with catalog prefix for sys views (single dot)
+    // and catalog spec for stored procedures (double dot)
     let catalog_prefix = if !catalog.is_empty() {
         format!("{}.", catalog)
+    } else {
+        String::new()
+    };
+
+    let catalog_for_sproc = if !catalog.is_empty() {
+        format!("{}..", catalog)
     } else {
         String::new()
     };
@@ -294,15 +301,16 @@ pub(crate) async fn fetch_table_metadata(
 
     // Use SET FMTONLY ON to get metadata without query execution overhead.
     // This matches .NET SqlBulkCopy behavior and is more efficient than SELECT TOP 0.
-    // It also dynamically builds the column list to:
-    // - Support hidden columns in temporal tables
-    // - Exclude SQL Graph columns that cannot be selected
-    // - Use catalog prefix to query correct database
-    //
-    // Additionally, we call sp_tablecollations_100 to retrieve collation names
-    // for character type columns (matches .NET SqlBulkCopy behavior).
+    // The query structure matches C# SqlBulkCopy.CreateInitialQuery():
+    // 1. SELECT @@TRANCOUNT - produces a result set we need to skip
+    // 2. Dynamic column building with graph_type check
+    // 3. SET FMTONLY ON to get column metadata without data
+    // 4. sp_tablecollations_100 to get collation information
+    // Note: Use double-dot notation (catalog..sproc) for system stored procedures.
     let query = format!(
-        r#"DECLARE @Column_Names NVARCHAR(MAX) = NULL;
+        r#"SELECT @@TRANCOUNT;
+
+DECLARE @Column_Names NVARCHAR(MAX) = NULL;
 IF EXISTS (SELECT TOP 1 * FROM sys.all_columns WHERE [object_id] = OBJECT_ID('sys.all_columns') AND [name] = 'graph_type')
 BEGIN
     SELECT @Column_Names = COALESCE(@Column_Names + ', ', '') + QUOTENAME([name]) 
@@ -325,7 +333,7 @@ SET FMTONLY ON;
 EXEC(N'SELECT ' + @Column_Names + N' FROM {escaped_full_name}');
 SET FMTONLY OFF;
 
-EXEC {catalog_prefix}sp_tablecollations_100 N'{schema_name}.{table_name_escaped}';"#
+EXEC {catalog_for_sproc}sp_tablecollations_100 N'{schema_name}.{table_name_escaped}';"#
     );
 
     debug!("Fetching table metadata with FMTONLY and collations");
@@ -333,7 +341,25 @@ EXEC {catalog_prefix}sp_tablecollations_100 N'{schema_name}.{table_name_escaped}
     // Execute the query
     client.execute(query, timeout_sec, cancel_handle).await?;
 
-    // Get the metadata from the first result set (FMTONLY result)
+    // Result set 1: @@TRANCOUNT - execute() positions us at the first ColMetadata
+    // Consume this result set (should have exactly 1 row)
+    trace!("Consuming @@TRANCOUNT result set");
+    while let Some(_row) = client.get_next_row().await? {
+        // Skip rows from @@TRANCOUNT (just 1 row with value 0)
+    }
+
+    // Move to result set 2: FMTONLY metadata
+    // This will navigate through multiple DONE tokens from the variable declarations
+    // and SET FMTONLY statements until it finds the COLMETADATA for the EXEC() result
+    trace!("Moving to FMTONLY metadata result set");
+    if !client.move_to_next().await? {
+        return Err(Error::UsageError(format!(
+            "Failed to move to FMTONLY metadata for table {}",
+            table_name
+        )));
+    }
+
+    // Get the metadata from the FMTONLY result set
     let col_metadata = client
         .get_current_metadata()
         .ok_or_else(|| {
@@ -355,16 +381,30 @@ EXEC {catalog_prefix}sp_tablecollations_100 N'{schema_name}.{table_name_escaped}
         );
     }
 
-    // Move to the next result set (collations from sp_tablecollations_100)
-    // This will consume the DONE token from the first result set and read until
-    // the next COLMETADATA token is encountered
-    client.move_to_column_metadata().await?;
+    // The FMTONLY query doesn't return any rows, just metadata
+    // Consume any rows (should be none with FMTONLY)
+    trace!("Consuming FMTONLY result set rows (should be none)");
+    while let Some(_row) = client.get_next_row().await? {
+        // Skip any rows (FMTONLY should return 0 rows)
+    }
+
+    // Move to result set 3: collations from sp_tablecollations_100
+    // This will navigate through SET FMTONLY OFF, EXEC sp_tablecollations_100,
+    // ReturnStatus, and DoneProc tokens until it finds the COLMETADATA
+    trace!("Moving to sp_tablecollations_100 result set");
+    if !client.move_to_next().await? {
+        return Err(Error::UsageError(format!(
+            "Failed to move to collation metadata for table {}",
+            table_name
+        )));
+    }
 
     // Read collation names from the result set
-    // sp_tablecollations_100 returns columns: TableName, ColumnName, column_id, collation_name
-    // We need the collation_name (column index 3)
+    // sp_tablecollations_100 returns columns: colid, name, tds_collation, collation
+    // We need the collation (column index 3, the string collation name)
     let mut collation_names: Vec<Option<String>> = Vec::new();
 
+    trace!("Reading collation data from sp_tablecollations_100");
     while let Some(row) = client.get_next_row().await? {
         // Column 3 (0-indexed) is the collation_name
         if row.len() > 3 {
@@ -385,6 +425,7 @@ EXEC {catalog_prefix}sp_tablecollations_100 N'{schema_name}.{table_name_escaped}
             collation_names.push(collation_name);
         } else {
             // If row doesn't have enough columns, push None
+            trace!("Row has fewer than 4 columns, using None for collation");
             collation_names.push(None);
         }
     }
