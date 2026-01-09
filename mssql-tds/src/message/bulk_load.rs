@@ -643,6 +643,12 @@ pub(crate) fn build_insert_bulk_command(
         // Type definition
         let type_def = col_meta.get_sql_type_definition();
         command.push_str(&type_def);
+
+        // Add COLLATE clause if the column needs collation and has a collation name
+        if let (true, Some(collation_name)) = (col_meta.needs_collation(), &col_meta.collation_name)
+        {
+            command.push_str(&format!(" COLLATE {}", collation_name));
+        }
     }
 
     command.push(')');

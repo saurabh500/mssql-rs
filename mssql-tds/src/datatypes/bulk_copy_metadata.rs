@@ -427,6 +427,11 @@ pub struct BulkCopyColumnMetadata {
     /// Collation information (for character types)
     pub collation: Option<SqlCollation>,
 
+    /// Collation name (e.g., "SQL_Latin1_General_CP1_CI_AS")
+    /// This is the collation name retrieved from sp_tablecollations_100
+    /// and used in the INSERT BULK SQL command.
+    pub collation_name: Option<String>,
+
     /// Character encoding (for character types)
     pub encoding: Option<EncodingType>,
 
@@ -455,6 +460,7 @@ impl BulkCopyColumnMetadata {
             precision: 0,
             scale: 0,
             collation: None,
+            collation_name: None,
             encoding: None,
             is_nullable: true,
             is_identity: false,
@@ -486,6 +492,13 @@ impl BulkCopyColumnMetadata {
     /// Set collation (for character types).
     pub fn with_collation(mut self, collation: SqlCollation) -> Self {
         self.collation = Some(collation);
+        self
+    }
+
+    /// Set collation name (for character types).
+    /// This is used in the INSERT BULK SQL command.
+    pub fn with_collation_name(mut self, collation_name: impl Into<String>) -> Self {
+        self.collation_name = Some(collation_name.into());
         self
     }
 
@@ -633,6 +646,7 @@ impl Default for BulkCopyColumnMetadata {
             precision: 0,
             scale: 0,
             collation: None,
+            collation_name: None,
             encoding: None,
             is_nullable: true,
             is_identity: false,
