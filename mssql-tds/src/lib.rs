@@ -12,6 +12,7 @@ pub mod io;
 pub mod message;
 pub mod query;
 pub mod sql_identifier;
+pub mod ssrp;
 pub mod token;
 
 // Expose internal APIs for fuzzing

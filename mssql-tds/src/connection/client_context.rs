@@ -4,6 +4,7 @@
 use async_trait::async_trait;
 
 use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
+use crate::connection::datasource_parser::{ParsedDataSource, ProtocolType};
 use crate::message::login_options::{ApplicationIntent, TdsVersion};
 use hostname;
 
@@ -93,6 +94,9 @@ pub struct ClientContext {
     pub access_token: Option<String>,
     pub transport_context: TransportContext,
     pub vector_version: VectorVersion,
+    /// Whether a protocol was explicitly specified in the datasource (e.g., "tcp:", "np:", "lpc:")
+    /// When true, only that protocol should be tried. When false, try default protocol list.
+    pub explicit_protocol: bool,
 }
 
 impl ClientContext {
@@ -129,6 +133,7 @@ impl ClientContext {
                 port: 1433,
             },
             vector_version: VectorVersion::V1,
+            explicit_protocol: false,
         }
     }
 
@@ -182,6 +187,68 @@ impl ClientContext {
             hostname
         }
     }
+
+    /// Parse a data source string and update the ClientContext with the parsed transport
+    ///
+    /// This method parses the data source string (e.g., "tcp:server,1433", "server\instance")
+    /// and updates the transport_context field of the ClientContext.
+    ///
+    /// # Arguments
+    /// * `datasource` - The data source string to parse
+    ///
+    /// # Returns
+    /// A Result containing the parsed data source information
+    ///
+    /// # Example
+    /// ```
+    /// let mut context = ClientContext::new();
+    /// let parsed = context.parse_datasource("tcp:myserver,1433")?;
+    /// ```
+    pub fn parse_datasource(&mut self, datasource: &str) -> TdsResult<ParsedDataSource> {
+        let parsed = ParsedDataSource::parse(datasource, false)?;
+
+        // Update transport context based on parsed data source
+        self.transport_context = TransportContext::from_parsed_datasource(&parsed)?;
+
+        // Store instance name for protocol resolution
+        if !parsed.instance_name.is_empty() {
+            self.database_instance = parsed.instance_name.clone();
+        }
+
+        // Track if protocol was explicitly specified (tcp:, np:, lpc:, admin:)
+        self.explicit_protocol = !parsed.protocol_name.is_empty();
+
+        Ok(parsed)
+    }
+
+    /// Parse a data source string with MultiSubnetFailover support
+    ///
+    /// Similar to parse_datasource but allows specifying MultiSubnetFailover option
+    /// which restricts protocol selection to TCP only.
+    ///
+    /// # Arguments
+    /// * `datasource` - The data source string to parse
+    /// * `multi_subnet_failover` - Whether MultiSubnetFailover is enabled
+    pub fn parse_datasource_with_options(
+        &mut self,
+        datasource: &str,
+        multi_subnet_failover: bool,
+    ) -> TdsResult<ParsedDataSource> {
+        let parsed = ParsedDataSource::parse(datasource, multi_subnet_failover)?;
+
+        // Update transport context based on parsed data source
+        self.transport_context = TransportContext::from_parsed_datasource(&parsed)?;
+
+        // Store instance name for protocol resolution
+        if !parsed.instance_name.is_empty() {
+            self.database_instance = parsed.instance_name.clone();
+        }
+
+        // Track if protocol was explicitly specified (tcp:, np:, lpc:, admin:)
+        self.explicit_protocol = !parsed.protocol_name.is_empty();
+
+        Ok(parsed)
+    }
 }
 
 impl Clone for ClientContext {
@@ -215,6 +282,7 @@ impl Clone for ClientContext {
             access_token: self.access_token.clone(),
             transport_context: self.transport_context.clone(),
             vector_version: self.vector_version,
+            explicit_protocol: self.explicit_protocol,
         }
     }
 }
@@ -296,6 +364,74 @@ impl TransportContext {
             TransportContext::SharedMemory { .. } => true,
             #[cfg(windows)]
             TransportContext::LocalDB { .. } => true, // LocalDB is always local
+        }
+    }
+
+    /// Create TransportContext from a parsed data source
+    ///
+    /// This method converts a ParsedDataSource into a TransportContext,
+    /// determining the appropriate transport method based on the parsed data.
+    pub fn from_parsed_datasource(parsed: &ParsedDataSource) -> TdsResult<Self> {
+        use crate::error::Error;
+
+        match parsed.get_protocol_type() {
+            ProtocolType::Tcp => {
+                let port = if !parsed.protocol_parameter.is_empty() {
+                    parsed.protocol_parameter.parse::<u16>().map_err(|e| {
+                        Error::ProtocolError(format!("Invalid port number: {}", e))
+                    })?
+                } else {
+                    1433 // Default SQL Server port
+                };
+
+                Ok(TransportContext::Tcp {
+                    host: parsed.server_name.clone(),
+                    port,
+                })
+            }
+            ProtocolType::NamedPipe => {
+                let pipe_name = if !parsed.protocol_parameter.is_empty() {
+                    parsed.protocol_parameter.clone()
+                } else if !parsed.instance_name.is_empty() {
+                    // Build standard named pipe path
+                    if parsed.instance_name.to_lowercase() == "default" || parsed.instance_name.is_empty() {
+                        format!("\\\\{}\\pipe\\sql\\query", parsed.server_name)
+                    } else {
+                        format!(
+                            "\\\\{}\\pipe\\MSSQL${}\\sql\\query",
+                            parsed.server_name, parsed.instance_name
+                        )
+                    }
+                } else {
+                    // Default instance
+                    format!("\\\\{}\\pipe\\sql\\query", parsed.server_name)
+                };
+
+                Ok(TransportContext::NamedPipe { pipe_name })
+            }
+            ProtocolType::SharedMemory => {
+                let instance_name = if !parsed.instance_name.is_empty() {
+                    parsed.instance_name.clone()
+                } else {
+                    "MSSQLSERVER".to_string()
+                };
+
+                Ok(TransportContext::SharedMemory { instance_name })
+            }
+            ProtocolType::Admin => {
+                // DAC always uses TCP on port 1434 by default
+                Ok(TransportContext::Tcp {
+                    host: parsed.server_name.clone(),
+                    port: 1434,
+                })
+            }
+            ProtocolType::Auto => {
+                // Auto-detect: prefer TCP with default port
+                Ok(TransportContext::Tcp {
+                    host: parsed.server_name.clone(),
+                    port: 1433,
+                })
+            }
         }
     }
 
@@ -720,3 +856,4 @@ mod tests {
         assert!(ctx3.is_local());
     }
 }
+
