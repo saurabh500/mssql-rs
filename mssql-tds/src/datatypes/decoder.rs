@@ -1038,13 +1038,13 @@ impl SqlTypeDecode for StringDecoder {
             //    - For TEXT: encoded per collation (LCID-based)
             //
             // CURRENT IMPLEMENTATION STATUS:
-            // ✅ Reads textptr_len (1 byte)
-            // ✅ Skips textptr (16 bytes) and timestamp (8 bytes)
-            // ✅ Reads data_length (4 bytes, uint32)
-            // ✅ Allocates buffer and reads data
-            // ✅ Creates SqlString with appropriate encoding type
-            // ✅ NULL handling works (textptr_len = 0)
-            // ✅ LCID-based decoding implemented (see sql_string.rs)
+            // Reads textptr_len (1 byte)
+            // Skips textptr (16 bytes) and timestamp (8 bytes)
+            // Reads data_length (4 bytes, uint32)
+            // Allocates buffer and reads data
+            // Creates SqlString with appropriate encoding type
+            // NULL handling works (textptr_len = 0)
+            // LCID-based decoding implemented (see sql_string.rs)
             //
             // FUTURE ENHANCEMENTS:
             // 1. Add chunked reading for very large TEXT/NTEXT values
