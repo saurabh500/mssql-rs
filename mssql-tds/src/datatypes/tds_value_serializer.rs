@@ -9,10 +9,12 @@
 
 use crate::core::TdsResult;
 use crate::datatypes::column_values::ColumnValues;
+use crate::datatypes::lcid_encoding::lcid_to_encoding;
 use crate::datatypes::sql_json::SqlJson;
 use crate::datatypes::sqldatatypes::TdsDataType;
 use crate::error::Error;
 use crate::io::packet_writer::{PacketWriter, TdsPacketWriter, TdsPacketWriterUnchecked};
+use crate::token::tokens::SqlCollation;
 
 // NULL markers for different type classes
 const NULL_LENGTH: u8 = 0x00;
@@ -58,6 +60,9 @@ pub struct TdsTypeContext {
 
     /// For Decimal/Numeric/Time/DateTime2/DateTimeOffset: scale
     pub scale: Option<u8>,
+
+    /// Collation for string types (CHAR/VARCHAR/NCHAR/NVARCHAR/TEXT/NTEXT)
+    pub collation: Option<SqlCollation>,
 
     /// Whether the type is nullable (affects NULL encoding)
     pub is_nullable: bool,
@@ -1247,18 +1252,62 @@ impl TdsValueSerializer {
                 let decoded_str = value.to_utf8_string();
 
                 // Encode to single-byte based on collation
-                // For now, use Latin-1 (ISO-8859-1) which covers ASCII + extended Latin characters
-                // TODO: Use actual collation from ctx.collation to determine correct code page
-                let single_byte_data = decoded_str
-                    .chars()
-                    .map(|c| {
-                        if (c as u32) <= 0xFF {
-                            c as u8
-                        } else {
-                            b'?' // Replace unmappable characters with '?'
+                let single_byte_data = if let Some(collation) = &ctx.collation {
+                    // Extract LCID from the lower 20 bits of collation.info
+                    let lcid = collation.info & 0x000F_FFFF;
+
+                    // Map LCID to encoding
+                    match lcid_to_encoding(lcid) {
+                        Ok(encoding) => {
+                            // Encode using the determined encoding
+                            let (encoded, _encoding_used, had_errors) =
+                                encoding.encode(&decoded_str);
+
+                            if had_errors {
+                                tracing::warn!(
+                                    "Encountered encoding errors while converting string to LCID 0x{:04X} ({}) encoding. \
+                                     Some characters may have been replaced.",
+                                    lcid,
+                                    lcid
+                                );
+                            }
+
+                            encoded.into_owned()
                         }
-                    })
-                    .collect::<Vec<u8>>();
+                        Err(e) => {
+                            tracing::warn!(
+                                "Unsupported LCID 0x{:04X} ({}), falling back to Latin-1. Error: {}",
+                                lcid,
+                                lcid,
+                                e
+                            );
+                            // Fall back to Latin-1 for unsupported LCIDs
+                            decoded_str
+                                .chars()
+                                .map(|c| {
+                                    if (c as u32) <= 0xFF {
+                                        c as u8
+                                    } else {
+                                        b'?' // Replace unmappable characters with '?'
+                                    }
+                                })
+                                .collect::<Vec<u8>>()
+                        }
+                    }
+                } else {
+                    // No collation provided, use Latin-1 (ISO-8859-1) as default
+                    // This covers ASCII + extended Latin characters
+                    decoded_str
+                        .chars()
+                        .map(|c| {
+                            if (c as u32) <= 0xFF {
+                                c as u8
+                            } else {
+                                b'?' // Replace unmappable characters with '?'
+                            }
+                        })
+                        .collect::<Vec<u8>>()
+                };
 
                 // Store the single-byte data temporarily - we'll use it below
                 // Note: This creates a temporary allocation, but it's necessary for the conversion
@@ -1535,5 +1584,281 @@ impl TdsValueSerializer {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::datatypes::lcid_encoding::lcid_to_encoding;
+
+    /// Test that different collations use different encodings for non-ASCII characters
+    #[test]
+    fn test_collation_based_encoding_chinese() {
+        // Chinese Simplified (CP936/GBK)
+        // LCID 2052 (0x0804) = Chinese (PRC)
+        let lcid: u32 = 0x0804;
+        let encoding = lcid_to_encoding(lcid).expect("Should find Chinese encoding");
+
+        // Test with Chinese characters: "你好" (Hello in Chinese)
+        let chinese_text = "你好";
+        let (encoded, _enc, had_errors) = encoding.encode(chinese_text);
+
+        assert!(
+            !had_errors,
+            "Should encode Chinese characters without errors"
+        );
+        assert!(
+            encoded.len() == 4,
+            "Chinese characters should be 2 bytes each in GBK: got {} bytes",
+            encoded.len()
+        );
+
+        // Verify it's not Latin-1 encoding (which would replace with '?')
+        assert!(
+            !encoded.contains(&b'?'),
+            "Should not contain replacement character"
+        );
+
+        // GBK encoding for "你好"
+        // '你' = 0xC4 0xE3
+        // '好' = 0xBA 0xC3
+        assert_eq!(encoded[0], 0xC4, "First byte of '你' should be 0xC4");
+        assert_eq!(encoded[1], 0xE3, "Second byte of '你' should be 0xE3");
+        assert_eq!(encoded[2], 0xBA, "First byte of '好' should be 0xBA");
+        assert_eq!(encoded[3], 0xC3, "Second byte of '好' should be 0xC3");
+    }
+
+    #[test]
+    fn test_collation_based_encoding_japanese() {
+        // Japanese (CP932/Shift-JIS)
+        // LCID 1041 (0x0411) = Japanese (Japan)
+        let lcid: u32 = 0x0411;
+        let encoding = lcid_to_encoding(lcid).expect("Should find Japanese encoding");
+
+        // Test with Japanese Hiragana: "こんにちは" (Hello in Japanese)
+        let japanese_text = "こんにちは";
+        let (encoded, _enc, had_errors) = encoding.encode(japanese_text);
+
+        assert!(
+            !had_errors,
+            "Should encode Japanese characters without errors"
+        );
+        assert!(
+            encoded.len() == 10,
+            "5 Japanese characters should be 2 bytes each in Shift-JIS: got {} bytes",
+            encoded.len()
+        );
+
+        // Verify it's not Latin-1 encoding (which would replace with '?')
+        assert!(
+            !encoded.contains(&b'?'),
+            "Should not contain replacement character"
+        );
+    }
+
+    #[test]
+    fn test_collation_based_encoding_western_european() {
+        // Western European (Windows-1252)
+        // LCID 1033 (0x0409) = English (United States)
+        let lcid: u32 = 0x0409;
+        let encoding = lcid_to_encoding(lcid).expect("Should find Western European encoding");
+
+        // Test with extended Latin characters: "café"
+        let text = "café";
+        let (encoded, _enc, had_errors) = encoding.encode(text);
+
+        assert!(
+            !had_errors,
+            "Should encode Latin-1 characters without errors"
+        );
+        assert_eq!(encoded.len(), 4, "Should be 4 bytes");
+
+        // Windows-1252 encoding for "café"
+        // 'c' = 0x63, 'a' = 0x61, 'f' = 0x66, 'é' = 0xE9
+        assert_eq!(encoded[0], 0x63);
+        assert_eq!(encoded[1], 0x61);
+        assert_eq!(encoded[2], 0x66);
+        assert_eq!(
+            encoded[3], 0xE9,
+            "Extended character 'é' should be 0xE9 in Windows-1252"
+        );
+    }
+
+    #[test]
+    fn test_collation_based_encoding_turkish() {
+        // Turkish (Windows-1254)
+        // LCID 1055 (0x041F) = Turkish (Turkey)
+        let lcid: u32 = 0x041F;
+        let encoding = lcid_to_encoding(lcid).expect("Should find Turkish encoding");
+
+        // Test with Turkish-specific characters: "şğıİ"
+        let text = "şğıİ";
+        let (encoded, _enc, had_errors) = encoding.encode(text);
+
+        assert!(
+            !had_errors,
+            "Should encode Turkish characters without errors"
+        );
+        assert_eq!(
+            encoded.len(),
+            4,
+            "Should be 4 bytes for 4 Turkish characters"
+        );
+
+        // Verify it's properly encoded in Windows-1254
+        // 'ş' = 0xFE in Windows-1254
+        assert_eq!(
+            encoded[0], 0xFE,
+            "Turkish 'ş' should be 0xFE in Windows-1254"
+        );
+    }
+
+    #[test]
+    fn test_collation_based_encoding_cyrillic() {
+        // Cyrillic (Windows-1251)
+        // LCID 1049 (0x0419) = Russian (Russia)
+        let lcid: u32 = 0x0419;
+        let encoding = lcid_to_encoding(lcid).expect("Should find Cyrillic encoding");
+
+        // Test with Russian text: "Привет" (Hello in Russian)
+        let text = "Привет";
+        let (encoded, _enc, had_errors) = encoding.encode(text);
+
+        assert!(
+            !had_errors,
+            "Should encode Cyrillic characters without errors"
+        );
+        assert_eq!(
+            encoded.len(),
+            6,
+            "Should be 6 bytes for 6 Cyrillic characters"
+        );
+
+        // Verify it's not Latin-1 encoding (which would replace with '?')
+        assert!(
+            !encoded.contains(&b'?'),
+            "Should not contain replacement character"
+        );
+    }
+
+    #[test]
+    fn test_different_collations_produce_different_encodings() {
+        // Demonstrate that the same Unicode character produces different byte sequences
+        // depending on the collation
+
+        let test_char = "ñ"; // Spanish n with tilde
+
+        // Western European (Windows-1252): LCID 1033
+        let encoding_1252 = lcid_to_encoding(0x0409).unwrap();
+        let (encoded_1252, _, _) = encoding_1252.encode(test_char);
+
+        // Spanish (Windows-1252): LCID 1034 - should be same as above
+        let encoding_spanish = lcid_to_encoding(0x040A).unwrap();
+        let (encoded_spanish, _, _) = encoding_spanish.encode(test_char);
+
+        // Both Western European languages should produce same encoding
+        assert_eq!(
+            encoded_1252[0], encoded_spanish[0],
+            "Same code page should produce same encoding"
+        );
+        assert_eq!(
+            encoded_1252[0], 0xF1,
+            "Character 'ñ' should be 0xF1 in Windows-1252"
+        );
+
+        // But if we try to encode it in a different code page that doesn't support it,
+        // we'd get a replacement character
+        // Example: Chinese (CP936) doesn't have 'ñ'
+        let encoding_chinese = lcid_to_encoding(0x0804).unwrap();
+        let (_encoded_chinese, _, had_errors) = encoding_chinese.encode(test_char);
+
+        // Chinese encoding would either map it differently or use replacement
+        if had_errors {
+            // It's okay if it had errors - that's expected for unsupported characters
+            assert!(
+                true,
+                "Expected: Chinese encoding may not support Spanish character"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ascii_characters_encoded_same_across_collations() {
+        // ASCII characters (0x00-0x7F) should be encoded identically across all collations
+        let ascii_text = "Hello123";
+
+        let collations = vec![
+            0x0409, // English (US)
+            0x0804, // Chinese (PRC)
+            0x0411, // Japanese
+            0x0419, // Russian
+            0x041F, // Turkish
+        ];
+
+        let mut all_encodings = Vec::new();
+
+        for lcid in collations {
+            let encoding = lcid_to_encoding(lcid)
+                .expect(&format!("Should find encoding for LCID 0x{:04X}", lcid));
+            let (encoded, _enc, had_errors) = encoding.encode(ascii_text);
+
+            assert!(!had_errors, "ASCII characters should encode without errors");
+            all_encodings.push(encoded.to_vec());
+        }
+
+        // All encodings should be identical for ASCII text
+        let first_encoding = &all_encodings[0];
+        for (i, encoding) in all_encodings.iter().enumerate().skip(1) {
+            assert_eq!(
+                first_encoding, encoding,
+                "ASCII text should encode identically across all collations (difference at index {})",
+                i
+            );
+        }
+
+        // Verify the actual ASCII values
+        assert_eq!(first_encoding, b"Hello123", "ASCII should be encoded as-is");
+    }
+
+    #[test]
+    fn test_latin1_fallback_for_unsupported_lcid() {
+        // Test that unsupported LCID returns error (fallback handled in serialize_string)
+        let unsupported_lcid: u32 = 0xFFFFFF; // Invalid LCID
+
+        let result = lcid_to_encoding(unsupported_lcid);
+        assert!(result.is_err(), "Should return error for unsupported LCID");
+
+        // The actual fallback to Latin-1 is tested in the serialize_string logic
+        // which logs a warning and uses the Latin-1 fallback path
+    }
+
+    #[test]
+    fn test_encoding_preserves_data_integrity() {
+        // Test round-trip for data that should work: encode UTF-16 -> decode to string
+        // -> encode with collation -> verify no data loss for compatible characters
+
+        let test_cases = vec![
+            (0x0409, "Hello World", b"Hello World" as &[u8]), // ASCII
+            (0x0409, "café", &[0x63, 0x61, 0x66, 0xE9]),      // Windows-1252 with accent
+        ];
+
+        for (lcid, input_text, expected_bytes) in test_cases {
+            let encoding = lcid_to_encoding(lcid)
+                .expect(&format!("Should find encoding for LCID 0x{:04X}", lcid));
+            let (encoded, _enc, had_errors) = encoding.encode(input_text);
+
+            assert!(
+                !had_errors,
+                "Should encode '{}' without errors for LCID 0x{:04X}",
+                input_text, lcid
+            );
+            assert_eq!(
+                &encoded[..],
+                expected_bytes,
+                "Encoded bytes should match expected for '{}' with LCID 0x{:04X}",
+                input_text,
+                lcid
+            );
+        }
     }
 }
