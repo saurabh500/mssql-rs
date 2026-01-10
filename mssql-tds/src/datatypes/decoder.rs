@@ -1179,7 +1179,7 @@ impl DecimalParts {
             let mut part: i32 = 0;
             for j in 0..4 {
                 if i + j < bytes.len() {
-                    part |= (bytes[i + j] as u8 as i32) << (j * 8);
+                    part |= (bytes[i + j] as i32) << (j * 8);
                 }
             }
             int_parts.push(part);
