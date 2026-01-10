@@ -52,18 +52,16 @@ impl TdsConnectionProvider {
     ///
     /// # Returns
     /// A connected TdsClient
+    /// Deprecated: Use create_client() instead.
+    /// This method is kept for backward compatibility.
+    #[deprecated(since = "0.1.0", note = "Use create_client() instead")]
     pub async fn create_client_from_datasource(
         &self,
-        mut context: ClientContext,
+        context: ClientContext,
         datasource: &str,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<TdsClient> {
-        // Parse the data source string and update context
-        let _parsed = context.parse_datasource(datasource)?;
-
-        // The transport_context has been updated by parse_datasource
-        // Now use the standard create_client which handles all protocols including LocalDB
-        self.create_client(context, cancel_handle).await
+        self.create_client(context, datasource, cancel_handle).await
     }
 
     /// Create a client with a custom transport (used for fuzzing)
@@ -88,7 +86,27 @@ impl TdsConnectionProvider {
         ))
     }
 
+    /// Create a client from a datasource string.
+    /// This is the primary API for creating connections.
+    /// 
+    /// # Arguments
+    /// * `context` - Client context with credentials and options (without transport_context set)
+    /// * `datasource` - The data source string (e.g., "tcp:server,1433", "server\\instance", "lpc:.")
+    /// * `cancel_handle` - Optional cancellation handle
     pub async fn create_client(
+        &self,
+        mut context: ClientContext,
+        datasource: &str,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<TdsClient> {
+        // Parse the datasource and populate transport_context
+        let _parsed = context.parse_datasource(datasource)?;
+        self.create_client_internal(context, cancel_handle).await
+    }
+
+    /// Internal method for creating clients with transport context already resolved.
+    /// This is used internally after datasource parsing.
+    pub(crate) async fn create_client_internal(
         &self,
         context: ClientContext,
         cancel_handle: Option<&CancelHandle>,
@@ -304,12 +322,22 @@ impl TdsConnectionProvider {
         // such as in tests or direct API usage, use it as-is without protocol fallback.
         let has_complete_transport = matches!(&context.transport_context,
             TransportContext::Tcp { port, .. } if *port != 0 && *port != 1433
-        ) || matches!(
-            &context.transport_context,
-            TransportContext::LocalDB { .. }
-                | TransportContext::SharedMemory { .. }
-                | TransportContext::NamedPipe { .. }
-        );
+        ) || {
+            #[cfg(windows)]
+            {
+                matches!(
+                    &context.transport_context,
+                    TransportContext::LocalDB { .. }
+                        | TransportContext::SharedMemory { .. }
+                        | TransportContext::NamedPipe { .. }
+                )
+            }
+            #[cfg(not(windows))]
+            {
+                // On non-Windows, only TCP is supported as a complete transport
+                false
+            }
+        };
 
         if context.explicit_protocol || has_complete_transport {
             debug!(

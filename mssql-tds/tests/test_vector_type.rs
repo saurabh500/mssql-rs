@@ -13,7 +13,7 @@ mod common;
 
 #[cfg(test)]
 mod vector_integration_tests {
-    use crate::common::{begin_connection, create_context, init_tracing};
+    use crate::common::{begin_connection, build_tcp_datasource, init_tracing};
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::datatypes::column_values::ColumnValues;
     use mssql_tds::datatypes::sqldatatypes::VectorBaseType;
@@ -26,8 +26,7 @@ mod vector_integration_tests {
     /// Test basic vector deserialization with a simple 3-dimensional vector
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vector_basic_deserialization() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Query a simple 3-dimensional vector
         let query = "SELECT CAST('[1.0, 2.0, 3.0]' AS VECTOR(3)) AS VectorColumn";
@@ -72,8 +71,7 @@ mod vector_integration_tests {
     async fn test_vector_metadata_fields() {
         use mssql_tds::datatypes::sqldatatypes::{TdsDataType, VECTOR_HEADER_SIZE, VectorBaseType};
 
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         let query = "SELECT
             CAST('[1.0, 2.0, 3.0]' AS VECTOR(3)) AS NonNullVec,
@@ -115,8 +113,7 @@ mod vector_integration_tests {
     /// Test vector with single dimension
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vector_single_dimension() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         let query = "SELECT CAST('[42.5]' AS VECTOR(1)) AS SingleVector";
 
@@ -143,8 +140,7 @@ mod vector_integration_tests {
     /// Test vector with maximum dimensions (1998)
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vector_max_dimensions() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create a vector with 1998 dimensions (max supported)
         let vector_values: Vec<String> = (0..1998).map(|i| format!("{}.0", i)).collect();
@@ -182,8 +178,7 @@ mod vector_integration_tests {
     /// Test NULL vector value
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vector_null_value() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         let query = "SELECT CAST(NULL AS VECTOR(3)) AS NullVector";
 
@@ -207,8 +202,7 @@ mod vector_integration_tests {
     /// Test vector with mixed positive/negative/zero values
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vector_mixed_values() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         let query = "SELECT CAST('[0.0, -1.0, 1.0, -100.5, 100.5]' AS VECTOR(5)) AS MixedVector";
 
@@ -239,8 +233,7 @@ mod vector_integration_tests {
     /// Test multiple vector columns in a single query
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_multiple_vector_columns() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         let query = "SELECT 
             CAST('[1.0, 2.0]' AS VECTOR(2)) AS Vec1,
@@ -298,8 +291,8 @@ mod vector_integration_tests {
     /// Test vector in a table with multiple rows
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vector_multiple_rows() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create temp table with vector column
         let setup = "
@@ -372,8 +365,7 @@ mod vector_integration_tests {
     /// Test vector with very small float values (near zero)
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vector_small_values() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         let query = "SELECT CAST('[0.0001, 0.0002, 0.0003]' AS VECTOR(3)) AS SmallVector";
 
@@ -402,8 +394,8 @@ mod vector_integration_tests {
     /// Test vector with large float values
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vector_large_values() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         let query = "SELECT CAST('[123456.79, -987654.3, 0.0]' AS VECTOR(3)) AS LargeVector";
 
@@ -436,8 +428,7 @@ mod vector_integration_tests {
         use mssql_tds::datatypes::sqltypes::SqlType;
         use mssql_tds::message::parameters::rpc_parameters::{RpcParameter, StatusFlags};
 
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create a vector to send as parameter
         let values = vec![1.0f32, 2.0f32, 3.0f32];
@@ -485,8 +476,7 @@ mod vector_integration_tests {
         use mssql_tds::datatypes::sqltypes::SqlType;
         use mssql_tds::message::parameters::rpc_parameters::{RpcParameter, StatusFlags};
 
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create NULL vector parameter
         let param = RpcParameter::new(
@@ -536,8 +526,7 @@ mod vector_integration_tests {
         use mssql_tds::datatypes::sqltypes::SqlType;
         use mssql_tds::message::parameters::rpc_parameters::{RpcParameter, StatusFlags};
 
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create a temporary table with vectors
         let create_table = "
@@ -611,8 +600,7 @@ mod vector_integration_tests {
         use mssql_tds::datatypes::sqltypes::SqlType;
         use mssql_tds::message::parameters::rpc_parameters::{RpcParameter, StatusFlags};
 
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create a 100-dimensional vector
         let values: Vec<f32> = (0..100).map(|i| i as f32 * 0.5).collect();
@@ -660,8 +648,7 @@ mod vector_integration_tests {
         use mssql_tds::datatypes::sqltypes::SqlType;
         use mssql_tds::message::parameters::rpc_parameters::{RpcParameter, StatusFlags};
 
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create two vectors
         let vec1 = SqlVector::try_from_f32(vec![1.0f32, 2.0f32, 3.0f32]).unwrap();
@@ -727,8 +714,7 @@ mod vector_integration_tests {
         use mssql_tds::datatypes::sqltypes::SqlType;
         use mssql_tds::message::parameters::rpc_parameters::{RpcParameter, StatusFlags};
 
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create a stored procedure that returns a vector as output parameter
         let create_proc = "
@@ -794,8 +780,7 @@ mod vector_integration_tests {
         use mssql_tds::datatypes::sqltypes::SqlType;
         use mssql_tds::message::parameters::rpc_parameters::{RpcParameter, StatusFlags};
 
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create a stored procedure that takes vector input and returns modified vector as output
         let create_proc = "
@@ -870,8 +855,7 @@ mod vector_integration_tests {
         use mssql_tds::datatypes::sqltypes::SqlType;
         use mssql_tds::message::parameters::rpc_parameters::{RpcParameter, StatusFlags};
 
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create a stored procedure that returns NULL vector as output
         let create_proc = "
@@ -932,8 +916,7 @@ mod vector_integration_tests {
         use mssql_tds::datatypes::sqltypes::SqlType;
         use mssql_tds::message::parameters::rpc_parameters::{RpcParameter, StatusFlags};
 
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create a stored procedure that returns a large-dimensional vector
         let vector_literal = (0..100)

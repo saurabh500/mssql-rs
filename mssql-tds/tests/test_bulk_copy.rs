@@ -5,7 +5,7 @@
 mod common;
 
 mod bulk_copy_integration_tests {
-    use crate::common::{begin_connection, create_context, init_tracing};
+    use crate::common::{begin_connection, build_tcp_datasource, init_tracing};
     use async_trait::async_trait;
     use mssql_tds::connection::bulk_copy::{BulkCopy, BulkLoadRow};
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
@@ -82,8 +82,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_bulk_copy_simple_insert() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create temp table (automatically cleaned up)
         client
@@ -205,8 +204,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_bulk_copy_large_batch() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create test table
         client
@@ -271,8 +269,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_bulk_copy_with_nulls() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create test table with nullable columns
         client
@@ -431,8 +428,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_bulk_copy_empty_dataset() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         client
             .execute(
@@ -464,8 +460,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_bulk_copy_null_to_non_nullable_column() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create test table where all columns are non-nullable
         client

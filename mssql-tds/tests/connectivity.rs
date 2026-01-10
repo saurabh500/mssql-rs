@@ -94,21 +94,16 @@ mod connectivity {
         );
         init_tracing();
 
-        ClientContext {
-            transport_context: mssql_tds::connection::client_context::TransportContext::Tcp {
-                host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
-                port: 1433,
-            },
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::On,
-                trust_server_certificate: false,
-                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
-            },
-            tds_authentication_method: TdsAuthenticationMethod::AccessToken,
-            access_token: Some(access_token),
-            ..Default::default()
-        }
+        let mut context = ClientContext::default();
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::On,
+            trust_server_certificate: false,
+            host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+        };
+        context.tds_authentication_method = TdsAuthenticationMethod::AccessToken;
+        context.access_token = Some(access_token);
+        context
     }
 
     pub fn create_context_with_auth_method(auth_method: TdsAuthenticationMethod) -> ClientContext {
@@ -129,30 +124,27 @@ mod connectivity {
             factory.clone_box(),
         );
 
-        ClientContext {
-            transport_context: mssql_tds::connection::client_context::TransportContext::Tcp {
-                host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
-                port: 1433,
-            },
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::On,
-                trust_server_certificate: false,
-                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
-            },
-            tds_authentication_method: auth_method,
-            auth_method_map,
-            connect_timeout: 3600,
-            ..Default::default()
-        }
+        let mut context = ClientContext::default();
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::On,
+            trust_server_certificate: false,
+            host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+        };
+        context.tds_authentication_method = auth_method;
+        context.auth_method_map = auth_method_map;
+        context.connect_timeout = 3600;
+        context
     }
 
     #[tokio::test]
     pub async fn select_1() {
         let access_token = generate_access_token().await;
         let context = create_context_with_accesstoken(access_token);
+        let host = env::var("DB_HOST").expect("DB_HOST environment variable not set");
+        let datasource = format!("tcp:{},1433", host);
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_client(context, None).await;
+        let connection_result = provider.create_client(context, &datasource, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
         connection.execute(command, None, None).await.unwrap();
@@ -171,8 +163,10 @@ mod connectivity {
     pub async fn test_authentication_provider() {
         let context =
             create_context_with_auth_method(TdsAuthenticationMethod::ActiveDirectoryDefault);
+        let host = env::var("DB_HOST").expect("DB_HOST environment variable not set");
+        let datasource = format!("tcp:{},1433", host);
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_client(context, None).await;
+        let connection_result = provider.create_client(context, &datasource, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
         connection.execute(command, None, None).await.unwrap();
@@ -220,8 +214,10 @@ mod connectivity {
         let access_token = generate_access_token().await;
         let mut context = create_context_with_accesstoken(access_token);
         context.encryption_options.trust_server_certificate = true;
+        let host = env::var("DB_HOST").expect("DB_HOST environment variable not set");
+        let datasource = format!("tcp:{},1433", host);
         let provider = TdsConnectionProvider {};
-        let connection_result = provider.create_client(context, None).await;
+        let connection_result = provider.create_client(context, &datasource, None).await;
         let mut connection = connection_result.unwrap();
         let command = "select 1".to_string();
         connection.execute(command, None, None).await.unwrap();
@@ -240,8 +236,9 @@ mod connectivity {
     pub async fn validate_host_name() {
         let context = create_context();
         let workstation_id = context.workstation_id.clone();
+        let datasource = format!("tcp:{},{}", env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string()), env::var("DB_PORT").unwrap_or_else(|_| "1433".to_string()));
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await.unwrap();
+        let mut client = provider.create_client(context, &datasource, None).await.unwrap();
         let command =
             "select host_name from sys.dm_exec_sessions where client_interface_name = 'TdsX'"
                 .to_string();
@@ -263,8 +260,9 @@ mod connectivity {
     pub async fn validate_app_intent_doesnt_cause_problems() {
         let mut context = create_context();
         context.application_intent = ApplicationIntent::ReadOnly;
+        let datasource = format!("tcp:{},{}", env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string()), env::var("DB_PORT").unwrap_or_else(|_| "1433".to_string()));
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await.unwrap();
+        let mut client = provider.create_client(context, &datasource, None).await.unwrap();
         let command = "select 1".to_string();
         client.execute(command, None, None).await.unwrap();
         let col_hostname = get_scalar_value(&mut client).await.unwrap();

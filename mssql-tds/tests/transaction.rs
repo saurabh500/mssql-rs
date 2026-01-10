@@ -6,7 +6,7 @@ mod common;
 #[cfg(test)]
 mod transactions {
     use crate::common::{
-        ExpectedQueryResultType, begin_connection, create_context, run_query_and_check_results,
+        ExpectedQueryResultType, begin_connection, build_tcp_datasource, run_query_and_check_results,
         validate_results,
     };
     use mssql_tds::message::transaction_management::{CreateTxnParams, TransactionIsolationLevel};
@@ -14,8 +14,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_sql_rollback_transaction() {
         let expected = [ExpectedQueryResultType::Update(0)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
         run_query_and_check_results(
             &mut connection,
             "SET IMPLICIT_TRANSACTIONS ON".to_string(),
@@ -51,8 +50,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_sql_commit_transaction() {
         let expected = [ExpectedQueryResultType::Update(0)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
         run_query_and_check_results(
             &mut connection,
             "SET IMPLICIT_TRANSACTIONS ON".to_string(),
@@ -84,8 +82,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_sql_switch_back_to_autocommit() {
         let expected = [ExpectedQueryResultType::Update(0)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
         run_query_and_check_results(
             &mut connection,
             "SET IMPLICIT_TRANSACTIONS ON".to_string(),
@@ -121,8 +118,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_getdtc() {
         let expected = [ExpectedQueryResultType::Result(1)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         connection.get_dtc_address().await.unwrap();
         validate_results(&mut connection, &expected).await.unwrap();
@@ -130,8 +126,7 @@ mod transactions {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_begin_named_rollback() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Begin transaction with name
         connection
@@ -151,8 +146,7 @@ mod transactions {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_begin_unnamed_rollback() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Begin transaction without name
         connection
@@ -166,8 +160,7 @@ mod transactions {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_begin_named_no_rollback() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Begin transaction with name (no rollback)
         connection
@@ -181,8 +174,7 @@ mod transactions {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_begin_unnamed_no_rollback() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Begin transaction without name (no rollback)
         connection
@@ -194,8 +186,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_commit_no_new_transaction() {
         let expected = [ExpectedQueryResultType::Update(0)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Begin transaction with name
         connection
@@ -231,8 +222,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_commit_new_transaction_named() {
         let expected = [ExpectedQueryResultType::Update(0)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Begin transaction with name "test03"
         connection
@@ -280,8 +270,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_commit_new_unnamed() {
         let expected = [ExpectedQueryResultType::Update(0)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Begin transaction with name "test05"
         connection
@@ -326,8 +315,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_commit_new_unnamed_loop_10x() {
         let expected = [ExpectedQueryResultType::Update(0)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         let mut counter = 0;
         loop {
@@ -387,8 +375,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_rollback_no_new_transaction() {
         let expected = [ExpectedQueryResultType::Update(0)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Begin transaction with name "test06"
         connection
@@ -444,8 +431,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_rollback_new_transaction_named() {
         let expected = [ExpectedQueryResultType::Update(0)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Begin transaction with name "test08"
         connection
@@ -513,8 +499,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_rollback_new_unnamed() {
         let expected = [ExpectedQueryResultType::Update(0)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Begin transaction with name "test11"
         connection
@@ -579,8 +564,7 @@ mod transactions {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_req_savepoint() {
         let expected = [ExpectedQueryResultType::Update(0)];
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Begin transaction with name "test13"
         connection

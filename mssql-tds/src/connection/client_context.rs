@@ -92,11 +92,11 @@ pub struct ClientContext {
     pub user_name: String,
     pub workstation_id: String,
     pub access_token: Option<String>,
-    pub transport_context: TransportContext,
+    pub(crate) transport_context: TransportContext,
     pub vector_version: VectorVersion,
     /// Whether a protocol was explicitly specified in the datasource (e.g., "tcp:", "np:", "lpc:")
     /// When true, only that protocol should be tried. When false, try default protocol list.
-    pub explicit_protocol: bool,
+    pub(crate) explicit_protocol: bool,
 }
 
 impl ClientContext {

@@ -6,7 +6,7 @@
 #[cfg(test)]
 mod mock_server_tests {
     use mssql_mock_tds::MockTdsServer;
-    use mssql_tds::connection::client_context::{ClientContext, TransportContext};
+    use mssql_tds::connection::client_context::ClientContext;
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
     use mssql_tds::core::{EncryptionOptions, EncryptionSetting};
@@ -39,25 +39,20 @@ mod mock_server_tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Create client context pointing to mock server
-        let context = ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: server_addr.ip().to_string(),
-                port: server_addr.port(),
-            },
-            user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: true,
-                host_name_in_cert: None,
-            },
-            ..Default::default()
+        let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
+        let mut context = ClientContext::default();
+        context.user_name = "sa".to_string();
+        context.password = "TestPassword123!".to_string();
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
         };
 
         // Connect to mock server
         let provider = TdsConnectionProvider {};
-        let client = provider.create_client(context, None).await?;
+        let client = provider.create_client(context, &datasource, None).await?;
 
         println!("Successfully connected to mock server at {server_addr}");
 
@@ -85,24 +80,19 @@ mod mock_server_tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Create and connect client
-        let context = ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: server_addr.ip().to_string(),
-                port: server_addr.port(),
-            },
-            user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: true,
-                host_name_in_cert: None,
-            },
-            ..Default::default()
+        let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
+        let mut context = ClientContext::default();
+        context.user_name = "sa".to_string();
+        context.password = "TestPassword123!".to_string();
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
         };
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider.create_client(context, &datasource, None).await?;
 
         // Execute query
         client.execute("SELECT 1".to_string(), None, None).await?;
@@ -150,24 +140,19 @@ mod mock_server_tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Create and connect client
-        let context = ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: server_addr.ip().to_string(),
-                port: server_addr.port(),
-            },
-            user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: true,
-                host_name_in_cert: None,
-            },
-            ..Default::default()
+        let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
+        let mut context = ClientContext::default();
+        context.user_name = "sa".to_string();
+        context.password = "TestPassword123!".to_string();
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
         };
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider.create_client(context, &datasource, None).await?;
 
         // Execute first query
         client.execute("SELECT 1".to_string(), None, None).await?;
@@ -211,20 +196,15 @@ mod mock_server_tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Create context
-        let context = ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: server_addr.ip().to_string(),
-                port: server_addr.port(),
-            },
-            user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: true,
-                host_name_in_cert: None,
-            },
-            ..Default::default()
+        let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
+        let mut context = ClientContext::default();
+        context.user_name = "sa".to_string();
+        context.password = "TestPassword123!".to_string();
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
         };
 
         let provider = TdsConnectionProvider {};
@@ -232,7 +212,7 @@ mod mock_server_tests {
         // Create multiple clients (simulating connection reuse scenario)
         for i in 0..3 {
             println!("Connecting client {i}");
-            let mut client = provider.create_client(context.clone(), None).await?;
+            let mut client = provider.create_client(context.clone(), &datasource, None).await?;
 
             client.execute("SELECT 1".to_string(), None, None).await?;
             client.close_query().await?;
@@ -287,24 +267,19 @@ mod mock_server_tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Create and connect client
-        let context = ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: server_addr.ip().to_string(),
-                port: server_addr.port(),
-            },
-            user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: true,
-                host_name_in_cert: None,
-            },
-            ..Default::default()
+        let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
+        let mut context = ClientContext::default();
+        context.user_name = "sa".to_string();
+        context.password = "TestPassword123!".to_string();
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
         };
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider.create_client(context, &datasource, None).await?;
 
         // Execute the custom query
         client
@@ -379,24 +354,19 @@ mod mock_server_tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Create and connect client
-        let context = ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: server_addr.ip().to_string(),
-                port: server_addr.port(),
-            },
-            user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: true,
-                host_name_in_cert: None,
-            },
-            ..Default::default()
+        let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
+        let mut context = ClientContext::default();
+        context.user_name = "sa".to_string();
+        context.password = "TestPassword123!".to_string();
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
         };
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider.create_client(context, &datasource, None).await?;
 
         // Execute query with NULL
         client

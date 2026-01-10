@@ -8,7 +8,7 @@ mod rpc_datatypes {
     use std::str::FromStr;
 
     use crate::common::{
-        begin_connection, create_client, create_context, get_first_row, init_tracing,
+        begin_connection, build_tcp_datasource, create_client, get_first_row, init_tracing,
     };
     use mssql_tds::core::TdsResult;
     use mssql_tds::datatypes::column_values::{
@@ -128,8 +128,7 @@ mod rpc_datatypes {
             named_parameters.push(param);
         }
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
@@ -243,8 +242,7 @@ mod rpc_datatypes {
             named_parameters.push(param);
         }
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
@@ -284,8 +282,7 @@ mod rpc_datatypes {
             named_parameters.push(param);
         }
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
@@ -307,8 +304,7 @@ mod rpc_datatypes {
 
     #[tokio::test]
     async fn test_bad_sql_statement_with_trailing_comma() -> TdsResult<()> {
-        let context = create_context();
-        let mut client = create_client(context).await?;
+        let mut client = create_client(&build_tcp_datasource()).await?;
 
         let query = "SELECT @bit AS bit,;".to_string();
 

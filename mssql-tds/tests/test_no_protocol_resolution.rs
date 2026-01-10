@@ -15,7 +15,7 @@ mod common;
 #[cfg(test)]
 mod no_protocol_resolution {
     use dotenv::dotenv;
-    use mssql_tds::connection::client_context::{ClientContext, TransportContext};
+    use mssql_tds::connection::client_context::ClientContext;
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
     use mssql_tds::core::{EncryptionOptions, EncryptionSetting, TdsResult};
@@ -61,27 +61,18 @@ mod no_protocol_resolution {
     ) -> TdsResult<TdsClient> {
         let (username, password) = get_db_credentials();
 
-        let mut client_context = ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: "placeholder".to_string(),
-                port: 1433,
-            },
-            user_name: username,
-            password,
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: encryption_mode,
-                trust_server_certificate: trust_server_certificate(),
-                host_name_in_cert: get_cert_hostname(),
-            },
-            ..Default::default()
+        let mut client_context = ClientContext::default();
+        client_context.user_name = username;
+        client_context.password = password;
+        client_context.database = "master".to_string();
+        client_context.encryption_options = EncryptionOptions {
+            mode: encryption_mode,
+            trust_server_certificate: trust_server_certificate(),
+            host_name_in_cert: get_cert_hostname(),
         };
 
-        // Parse datasource will update transport_context
-        client_context.parse_datasource(datasource)?;
-
         let provider = TdsConnectionProvider {};
-        provider.create_client(client_context, None).await
+        provider.create_client(client_context, datasource, None).await
     }
 
     /// Create a client using parse_datasource with default encryption
