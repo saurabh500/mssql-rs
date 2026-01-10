@@ -1105,92 +1105,105 @@ impl fmt::Display for DecimalParts {
 }
 
 impl DecimalParts {
-    /// Create a DecimalParts from a decimal string representation.
+    /// Create a DecimalParts from a decimal string using BigDecimal.
+    ///
+    /// Supports SQL Server's full 38-digit precision using arbitrary-precision arithmetic.
+    /// More efficient and robust than manual parsing.
     ///
     /// # Arguments
-    /// * `s` - String like "123.45", "-0.01", "99999999.99"
-    /// * `precision` - Total number of digits
-    /// * `scale` - Number of digits after decimal point
+    /// * `s` - String like "123.45", "-0.01", "99999999999999999999999999999999999999"
+    /// * `precision` - Total number of digits (1-38 for SQL Server)
+    /// * `scale` - Number of digits after decimal point (0-precision)
     ///
     /// # Returns
     /// DecimalParts or Error if parsing fails or precision/scale validation fails
     pub fn from_string(s: &str, precision: u8, scale: u8) -> TdsResult<Self> {
-        let s = s.trim();
-        let is_positive = !s.starts_with('-');
-        let s = s.trim_start_matches('-').trim_start_matches('+');
+        use bigdecimal::num_bigint::{BigInt, Sign};
+        use bigdecimal::{BigDecimal, Zero};
+        use std::str::FromStr;
 
-        // Split on decimal point
-        let parts: Vec<&str> = s.split('.').collect();
-        if parts.len() > 2 {
-            return Err(crate::error::Error::TypeConversionError(format!(
-                "Invalid decimal string: {}",
-                s
-            )));
-        }
+        let trimmed = s.trim();
 
-        let integer_part = parts.first().unwrap_or(&"0");
-        let fractional_part = parts.get(1).unwrap_or(&"");
+        // Check for negative zero in the original string before parsing
+        // BigDecimal normalizes -0 to 0, so we need to detect it early
+        let has_negative_sign = trimmed.starts_with('-');
 
-        // Validate that integer and fractional parts contain only digits
-        if !integer_part.chars().all(|c| c.is_ascii_digit()) {
-            return Err(crate::error::Error::TypeConversionError(format!(
-                "Failed to parse decimal '{}': invalid digit found in string",
-                s
-            )));
-        }
-        if !fractional_part.is_empty() && !fractional_part.chars().all(|c| c.is_ascii_digit()) {
-            return Err(crate::error::Error::TypeConversionError(format!(
-                "Failed to parse decimal '{}': invalid digit found in string",
-                s
-            )));
-        }
-
-        // Check scale
-        if fractional_part.len() > scale as usize {
-            return Err(crate::error::Error::TypeConversionError(format!(
-                "Decimal scale {} exceeds target scale {}",
-                fractional_part.len(),
-                scale
-            )));
-        }
-
-        // Trim leading zeros from integer part for precision check
-        let integer_part_trimmed = integer_part.trim_start_matches('0');
-        let integer_part_trimmed = if integer_part_trimmed.is_empty() {
-            "0"
-        } else {
-            integer_part_trimmed
-        };
-
-        // Check precision: count actual significant digits (integer part + fractional part)
-        let actual_precision = integer_part_trimmed.len() + fractional_part.len();
-        if actual_precision > precision as usize {
-            return Err(crate::error::Error::TypeConversionError(format!(
-                "Decimal precision {} exceeds target precision {}",
-                actual_precision, precision
-            )));
-        }
-
-        // Construct the full number string without decimal point, padded to scale
-        let mut full_num = integer_part.to_string();
-        full_num.push_str(fractional_part);
-        // Pad with zeros if needed to match scale
-        full_num.push_str(&"0".repeat(scale as usize - fractional_part.len()));
-
-        // Parse as u128
-        let value = full_num.parse::<u128>().map_err(|e| {
+        // Parse the string into a BigDecimal
+        let decimal = BigDecimal::from_str(trimmed).map_err(|e| {
             crate::error::Error::TypeConversionError(format!(
-                "Failed to parse decimal '{}': {}",
+                "Invalid decimal string '{}': {}",
                 s, e
             ))
         })?;
 
-        // Convert to int_parts (array of i32)
+        // Check if input has more fractional digits than target scale
+        // Get the scale of the input decimal
+        let input_scale = decimal.fractional_digit_count();
+        if input_scale > scale as i64 {
+            return Err(crate::error::Error::TypeConversionError(format!(
+                "Input decimal scale {} exceeds target scale {}",
+                input_scale, scale
+            )));
+        }
+
+        // Handle zero case (but preserve sign from original string)
+        if decimal.is_zero() {
+            return Ok(DecimalParts {
+                is_positive: !has_negative_sign,
+                scale,
+                precision,
+                int_parts: vec![0],
+            });
+        }
+
+        // Extract sign for non-zero values
+        let is_positive = decimal.sign() != Sign::Minus;
+        let abs_decimal = decimal.abs();
+
+        // Scale the decimal: multiply by 10^scale to shift to integer representation
+        let scale_factor = BigDecimal::from(10u64).powi(scale as i64);
+        let scaled = abs_decimal * scale_factor;
+
+        // Round to nearest integer
+        let rounded = scaled.round(0);
+
+        // Extract as BigInt, handling any remaining exponent
+        let (bigint, exponent) = rounded.into_bigint_and_exponent();
+        let final_bigint = if exponent > 0 {
+            bigint * BigInt::from(10u64).pow(exponent as u32)
+        } else if exponent < 0 {
+            bigint / BigInt::from(10u64).pow((-exponent) as u32)
+        } else {
+            bigint
+        };
+
+        // Validate precision
+        let digits_str = final_bigint.to_string();
+        if digits_str.len() > precision as usize {
+            return Err(crate::error::Error::TypeConversionError(format!(
+                "Decimal value has {} digits, exceeds target precision {}",
+                digits_str.len(),
+                precision
+            )));
+        }
+
+        // Convert BigInt to Vec<i32> for TDS wire format (little-endian 32-bit chunks)
+        let bytes = final_bigint.to_signed_bytes_le();
         let mut int_parts = Vec::new();
-        let mut remaining = value;
-        while remaining > 0 || int_parts.is_empty() {
-            int_parts.push((remaining & 0xFFFFFFFF) as i32);
-            remaining >>= 32;
+        let mut i = 0;
+        while i < bytes.len() {
+            let mut part: i32 = 0;
+            for j in 0..4 {
+                if i + j < bytes.len() {
+                    part |= (bytes[i + j] as i32) << (j * 8);
+                }
+            }
+            int_parts.push(part);
+            i += 4;
+        }
+
+        if int_parts.is_empty() {
+            int_parts.push(0);
         }
 
         Ok(DecimalParts {
