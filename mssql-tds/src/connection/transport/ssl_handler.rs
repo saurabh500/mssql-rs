@@ -483,16 +483,18 @@ impl<S: Stream> Stream for TlsOverTdsStream<S> {
 #[cfg(target_os = "macos")]
 impl Stream for BufferedTdsStream {
     fn tls_handshake_starting(&mut self) {
+        self.is_executing_tls_handshake = true;
         self.tls_over_tds_stream.tls_handshake_starting();
     }
 
     fn tls_handshake_completed(&mut self) {
+        self.is_executing_tls_handshake = false;
         self.tls_over_tds_stream.tls_handshake_completed();
     }
 }
 
 #[cfg(target_os = "macos")]
-struct BufferedTdsStream {
+pub(crate) struct BufferedTdsStream {
     buffer: Option<Vec<u8>>,
     tls_over_tds_stream: TlsOverTdsStream<Box<dyn Stream>>,
     is_executing_tls_handshake: bool,
@@ -501,7 +503,7 @@ struct BufferedTdsStream {
 
 #[cfg(target_os = "macos")]
 impl BufferedTdsStream {
-    fn new(tls_over_tds_stream: TlsOverTdsStream<Box<dyn Stream>>) -> Self {
+    pub(crate) fn new(tls_over_tds_stream: TlsOverTdsStream<Box<dyn Stream>>) -> Self {
         BufferedTdsStream {
             buffer: Some(Vec::with_capacity(
                 ActiveWriteState::MAX_PACKET_SIZE_WITHOUT_HEADER,
