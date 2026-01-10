@@ -151,7 +151,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
                 } else {
                     None
                 },
-                collation: col_meta.collation.clone(),
+                collation: col_meta.collation,
                 is_nullable: col_meta.is_nullable,
             };
             self.column_contexts.push(ctx);

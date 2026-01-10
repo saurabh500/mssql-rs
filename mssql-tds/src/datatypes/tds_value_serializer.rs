@@ -1775,10 +1775,7 @@ mod tests {
         // Chinese encoding would either map it differently or use replacement
         if had_errors {
             // It's okay if it had errors - that's expected for unsupported characters
-            assert!(
-                true,
-                "Expected: Chinese encoding may not support Spanish character"
-            );
+            assert!(had_errors, "Chinese encoding should not support Spanish 'ñ' character");
         }
     }
 
@@ -1799,7 +1796,7 @@ mod tests {
 
         for lcid in collations {
             let encoding = lcid_to_encoding(lcid)
-                .expect(&format!("Should find encoding for LCID 0x{:04X}", lcid));
+                .unwrap_or_else(|_| panic!("Should find encoding for LCID 0x{:04X}", lcid));
             let (encoded, _enc, had_errors) = encoding.encode(ascii_text);
 
             assert!(!had_errors, "ASCII characters should encode without errors");
@@ -1844,7 +1841,7 @@ mod tests {
 
         for (lcid, input_text, expected_bytes) in test_cases {
             let encoding = lcid_to_encoding(lcid)
-                .expect(&format!("Should find encoding for LCID 0x{:04X}", lcid));
+                .unwrap_or_else(|_| panic!("Should find encoding for LCID 0x{:04X}", lcid));
             let (encoded, _enc, had_errors) = encoding.encode(input_text);
 
             assert!(
