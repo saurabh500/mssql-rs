@@ -416,6 +416,42 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
+            // Int → NVarChar/VarChar/NChar/Char: Convert integer to string
+            (
+                SourcePythonType::Int,
+                SqlDbType::NVarChar | SqlDbType::VarChar | SqlDbType::NChar | SqlDbType::Char,
+            ) => {
+                let result = Self::coerce_int_to_string(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // Float → NVarChar/VarChar/NChar/Char: Convert float to string
+            (
+                SourcePythonType::Float,
+                SqlDbType::NVarChar | SqlDbType::VarChar | SqlDbType::NChar | SqlDbType::Char,
+            ) => {
+                let result = Self::coerce_float_to_string(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // Bool → NVarChar/VarChar/NChar/Char: Convert boolean to string ('True'/'False')
+            (
+                SourcePythonType::Bool,
+                SqlDbType::NVarChar | SqlDbType::VarChar | SqlDbType::NChar | SqlDbType::Char,
+            ) => {
+                let result = Self::coerce_bool_to_string(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // Decimal → NVarChar/VarChar/NChar/Char: Convert decimal to string
+            (
+                SourcePythonType::Decimal,
+                SqlDbType::NVarChar | SqlDbType::VarChar | SqlDbType::NChar | SqlDbType::Char,
+            ) => {
+                let result = Self::coerce_decimal_to_string(py_obj)?;
+                Ok(Some(result))
+            }
+
             // No coercion needed - use default conversion
             _ => Ok(None),
         }
@@ -1453,6 +1489,75 @@ impl PythonRowAdapter {
         // Convert to UTF-8 bytes for SqlJson
         let bytes = json_str.as_bytes().to_vec();
         Ok(ColumnValues::Json(SqlJson { bytes }))
+    }
+
+    /// Coerce a Python integer to a SQL Server string type (NVARCHAR/VARCHAR/NCHAR/CHAR).
+    ///
+    /// Converts the integer to its string representation.
+    fn coerce_int_to_string(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let value = py_obj
+            .extract::<i64>()
+            .map_err(|e| Error::UsageError(format!("Failed to extract integer: {}", e)))?;
+
+        // Convert integer to string
+        let string_value = value.to_string();
+
+        // Create SqlString with UTF-16 encoding (standard for NVARCHAR)
+        let sql_string =
+            mssql_tds::datatypes::sql_string::SqlString::from_utf8_string(string_value);
+        Ok(ColumnValues::String(sql_string))
+    }
+
+    /// Coerce a Python float to a SQL Server string type (NVARCHAR/VARCHAR/NCHAR/CHAR).
+    ///
+    /// Converts the float to its string representation.
+    fn coerce_float_to_string(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let value = py_obj
+            .extract::<f64>()
+            .map_err(|e| Error::UsageError(format!("Failed to extract float: {}", e)))?;
+
+        // Convert float to string
+        let string_value = value.to_string();
+
+        // Create SqlString with UTF-16 encoding (standard for NVARCHAR)
+        let sql_string =
+            mssql_tds::datatypes::sql_string::SqlString::from_utf8_string(string_value);
+        Ok(ColumnValues::String(sql_string))
+    }
+
+    /// Coerce a Python boolean to a SQL Server string type (NVARCHAR/VARCHAR/NCHAR/CHAR).
+    ///
+    /// Converts boolean to 'True' or 'False' string (matching Python's str() behavior).
+    fn coerce_bool_to_string(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let value = py_obj
+            .extract::<bool>()
+            .map_err(|e| Error::UsageError(format!("Failed to extract boolean: {}", e)))?;
+
+        // Convert boolean to string ('True' or 'False')
+        let string_value = if value { "True" } else { "False" }.to_string();
+
+        // Create SqlString with UTF-16 encoding (standard for NVARCHAR)
+        let sql_string =
+            mssql_tds::datatypes::sql_string::SqlString::from_utf8_string(string_value);
+        Ok(ColumnValues::String(sql_string))
+    }
+
+    /// Coerce a Python Decimal to a SQL Server string type (NVARCHAR/VARCHAR/NCHAR/CHAR).
+    ///
+    /// Converts the decimal to its string representation.
+    fn coerce_decimal_to_string(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        // Call str() on the Decimal object to get its string representation
+        let string_value = py_obj
+            .str()
+            .and_then(|s| s.extract::<String>())
+            .map_err(|e| {
+                Error::UsageError(format!("Failed to convert Decimal to string: {}", e))
+            })?;
+
+        // Create SqlString with UTF-16 encoding (standard for NVARCHAR)
+        let sql_string =
+            mssql_tds::datatypes::sql_string::SqlString::from_utf8_string(string_value);
+        Ok(ColumnValues::String(sql_string))
     }
 }
 

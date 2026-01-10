@@ -114,7 +114,8 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| "localhost".to_string());
 
-        let port: u16 = 1433; // Default port, could be extracted from server string if it contains :port
+        // Parse server string to get TransportContext (handles host:port, host,port, named pipes, localdb, etc.)
+        let transport_context = TransportContext::parse_server_name(&server, 1433);
 
         let user_name = dict
             .get_item("user_name")?
@@ -196,9 +197,14 @@ impl PyCoreConnection {
                     .to_string()
             });
 
+        let language = dict
+            .get_item("language")?
+            .and_then(|v| v.extract::<String>().ok())
+            .unwrap_or_else(|| "us_english".to_string());
+
         // Create ClientContext
         let mut context = ClientContext::new();
-        context.transport_context = TransportContext::Tcp { host: server, port };
+        context.transport_context = transport_context;
         context.user_name = user_name;
         context.password = password;
         context.database = database;
@@ -209,6 +215,7 @@ impl PyCoreConnection {
         context.encryption_options = encryption_options;
         context.application_intent = application_intent;
         context.workstation_id = workstation_id;
+        context.language = language;
         context.tds_authentication_method = TdsAuthenticationMethod::Password;
 
         Ok(context)

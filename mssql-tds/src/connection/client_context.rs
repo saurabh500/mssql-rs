@@ -469,20 +469,13 @@ impl TransportContext {
             return TransportContext::SharedMemory { instance_name };
         }
 
-        // Parse TCP format: hostname or hostname:port
-        // Be careful with IPv6 addresses (e.g., ::1) which contain colons but are not hostname:port
-
-        // Check if it looks like an IPv6 address (contains :: or multiple colons)
-        let is_ipv6 = server_name.contains("::") || server_name.matches(':').count() > 1;
-
-        if !is_ipv6 {
-            // For non-IPv6, check for port separator
-            if let Some(colon_idx) = server_name.find(':') {
-                let host = server_name[..colon_idx].to_string();
-                let port_str = &server_name[colon_idx + 1..];
-                if let Ok(port) = port_str.parse::<u16>() {
-                    return TransportContext::Tcp { host, port };
-                }
+        // Parse TCP format: hostname or hostname,port
+        // SQL Server connection strings use comma as the port separator (e.g., localhost,1433)
+        if let Some(comma_idx) = server_name.rfind(',') {
+            let host = server_name[..comma_idx].to_string();
+            let port_str = &server_name[comma_idx + 1..];
+            if let Ok(port) = port_str.parse::<u16>() {
+                return TransportContext::Tcp { host, port };
             }
         }
 
@@ -732,8 +725,8 @@ mod tests {
             panic!("Expected Tcp variant");
         }
 
-        // Hostname with port
-        let ctx2 = TransportContext::parse_server_name("myserver:1434", 1433);
+        // Hostname with port (SQL Server uses comma as separator)
+        let ctx2 = TransportContext::parse_server_name("myserver,1434", 1433);
         if let TransportContext::Tcp { host, port } = ctx2 {
             assert_eq!(host, "myserver");
             assert_eq!(port, 1434);
@@ -750,8 +743,8 @@ mod tests {
             panic!("Expected Tcp variant");
         }
 
-        // IP address
-        let ctx4 = TransportContext::parse_server_name("192.168.1.100:5000", 1433);
+        // IP address with port
+        let ctx4 = TransportContext::parse_server_name("192.168.1.100,5000", 1433);
         if let TransportContext::Tcp { host, port } = ctx4 {
             assert_eq!(host, "192.168.1.100");
             assert_eq!(port, 5000);

@@ -119,9 +119,26 @@ impl<'a> StreamingBulkLoadWriter<'a> {
         self.column_contexts.reserve(self.column_metadata.len());
 
         for col_meta in &self.column_metadata {
+            // CRITICAL: For NVARCHAR/NCHAR types, max_size must be in CHARACTERS, not bytes!
+            // SQL Server's metadata returns byte length (e.g., 8000 for NVARCHAR(4000)),
+            // but TDS wire format uses character count for length prefixes.
+            // For NVARCHAR: character_count = byte_length / 2
+            // For VARCHAR: character_count = byte_length (same as bytes)
+            let max_size = match col_meta.tds_type {
+                0xE7 | 0xEF => {
+                    // NVARCHAR(n) or NCHAR(n): Convert byte length to character count
+                    // Each UTF-16 character is 2 bytes
+                    (col_meta.length / 2) as usize
+                }
+                _ => {
+                    // All other types: Use length as-is
+                    col_meta.length as usize
+                }
+            };
+
             let ctx = TdsTypeContext {
                 tds_type: col_meta.tds_type,
-                max_size: col_meta.length as u8,
+                max_size,
                 is_plp: col_meta.length_type.is_plp(),
                 is_fixed_length: col_meta.length_type.is_fixed(),
                 precision: if col_meta.precision > 0 {
@@ -528,8 +545,13 @@ impl<'a> StreamingBulkLoadWriter<'a> {
                 if col_meta.is_plp() {
                     self.packet_writer.write_u16_async(0xFFFF).await?;
                 } else {
+                    // CRITICAL: For NVARCHAR/NCHAR, COLMETADATA length is in CHARACTERS, not bytes
+                    // col_meta.length is in bytes (e.g., 8000 for NVARCHAR(4000))
+                    // We must divide by 2 to get character count for COLMETADATA
+                    // This is different from row data length prefix which uses byte count!
+                    let char_count = (col_meta.length / 2) as u16;
                     self.packet_writer
-                        .write_u16_async(col_meta.length as u16)
+                        .write_u16_async(char_count)
                         .await?;
                 }
 
@@ -643,6 +665,12 @@ pub(crate) fn build_insert_bulk_command(
         // Type definition
         let type_def = col_meta.get_sql_type_definition();
         command.push_str(&type_def);
+
+        // Add COLLATE clause if the column needs collation and has a collation name
+        if let (true, Some(collation_name)) = (col_meta.needs_collation(), &col_meta.collation_name)
+        {
+            command.push_str(&format!(" COLLATE {}", collation_name));
+        }
     }
 
     command.push(')');

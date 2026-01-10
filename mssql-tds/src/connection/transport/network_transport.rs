@@ -436,8 +436,25 @@ impl NetworkTransport {
 
         // For TDS 7.4, wrap the stream in TlsOverTdsStream before TLS handshake
         // This is required because TLS packets must be framed within TDS packets during the handshake
-        let base_stream = if self.use_tds74_tls_wrapping {
-            Box::new(crate::connection::transport::ssl_handler::TlsOverTdsStream::new(base_stream))
+        let base_stream: Box<dyn Stream> = if self.use_tds74_tls_wrapping {
+            #[cfg(target_os = "macos")]
+            {
+                // On macOS, wrap in BufferedTdsStream to handle Security.framework's
+                // multiple small writes during TLS handshake. Security.framework makes
+                // separate poll_write calls for ClientKeyExchange, ChangeCipherSpec, and
+                // Finished messages, but SQL Server expects them as a single TDS packet.
+                let tls_over_tds =
+                    crate::connection::transport::ssl_handler::TlsOverTdsStream::new(base_stream);
+                Box::new(
+                    crate::connection::transport::ssl_handler::BufferedTdsStream::new(tls_over_tds),
+                )
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Box::new(
+                    crate::connection::transport::ssl_handler::TlsOverTdsStream::new(base_stream),
+                )
+            }
         } else {
             base_stream
         };
