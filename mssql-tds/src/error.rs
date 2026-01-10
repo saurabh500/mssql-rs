@@ -56,6 +56,11 @@ pub enum Error {
 
     #[error("Type Conversion Error: {0}")]
     TypeConversionError(String),
+
+    #[error(
+        "Unsupported Encoding: LCID {lcid} (0x{lcid:04X}). Consider using NVARCHAR instead of VARCHAR/TEXT for better compatibility."
+    )]
+    UnsupportedEncoding { lcid: u32 },
 }
 
 #[cfg(test)]

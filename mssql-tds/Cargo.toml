@@ -23,6 +23,8 @@ pretty-hex = "0.4"
 # Added for setting the keep alives on the socket.
 socket2 = { version = "0.5", features = ["all"] }
 hostname = "0.4.2"
+# For LCID-based encoding conversion (TEXT/NTEXT reading)
+encoding_rs = "0.8"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["namedpipeapi", "winerror"] }
