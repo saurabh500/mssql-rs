@@ -221,12 +221,8 @@ pub fn lcid_to_encoding(lcid: u32) -> Result<&'static Encoding, Error> {
         => Ok(encoding_rs::WINDOWS_1256),
 
         // Baltic (CP1257 - Windows-1257)
-        // Estonian
-        0x0425 | // et-EE (Estonia)
-        // Latvian
-        0x0426 | // lv-LV (Latvia)
-        // Lithuanian
-        0x0427   // lt-LT (Lithuania)
+        // Estonian, Latvian, Lithuanian
+        0x0425..=0x0427 // et-EE, lv-LV, lt-LT
         => Ok(encoding_rs::WINDOWS_1257),
 
         // Vietnamese (CP1258 - Windows-1258)
