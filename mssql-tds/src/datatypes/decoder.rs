@@ -1122,25 +1122,41 @@ impl DecimalParts {
         use bigdecimal::{BigDecimal, Zero};
         use std::str::FromStr;
 
+        let trimmed = s.trim();
+
+        // Check for negative zero in the original string before parsing
+        // BigDecimal normalizes -0 to 0, so we need to detect it early
+        let has_negative_sign = trimmed.starts_with('-');
+
         // Parse the string into a BigDecimal
-        let decimal = BigDecimal::from_str(s.trim()).map_err(|e| {
+        let decimal = BigDecimal::from_str(trimmed).map_err(|e| {
             crate::error::Error::TypeConversionError(format!(
-                "Failed to parse decimal string '{}': {}",
+                "Invalid decimal string '{}': {}",
                 s, e
             ))
         })?;
 
-        // Handle zero case
+        // Check if input has more fractional digits than target scale
+        // Get the scale of the input decimal
+        let input_scale = decimal.fractional_digit_count();
+        if input_scale > scale as i64 {
+            return Err(crate::error::Error::TypeConversionError(format!(
+                "Input decimal scale {} exceeds target scale {}",
+                input_scale, scale
+            )));
+        }
+
+        // Handle zero case (but preserve sign from original string)
         if decimal.is_zero() {
             return Ok(DecimalParts {
-                is_positive: true,
+                is_positive: !has_negative_sign,
                 scale,
                 precision,
                 int_parts: vec![0],
             });
         }
 
-        // Extract sign
+        // Extract sign for non-zero values
         let is_positive = decimal.sign() != Sign::Minus;
         let abs_decimal = decimal.abs();
 
