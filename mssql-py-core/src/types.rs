@@ -560,7 +560,12 @@ fn validate_type_compatibility(
         // String
         (
             ColumnValues::String(_),
-            SqlDbType::VarChar | SqlDbType::NVarChar | SqlDbType::Char | SqlDbType::NChar,
+            SqlDbType::VarChar
+            | SqlDbType::NVarChar
+            | SqlDbType::Char
+            | SqlDbType::NChar
+            | SqlDbType::Text
+            | SqlDbType::NText,
         ) => true,
 
         // Binary

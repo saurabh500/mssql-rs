@@ -129,6 +129,10 @@ impl TdsValueSerializer {
     {
         // Check type class and write appropriate NULL marker
         match ctx.tds_type {
+            // Legacy LOB types (TEXT, NTEXT, IMAGE) use single byte 0x00 for NULL
+            0x23 | 0x63 | 0x22 => {
+                writer.write_byte_async(0x00).await?;
+            }
             // Nullable types (INTN, FLTN, BITN, MONEYN, DATETIMEN, DecimalN, NumericN, Guid, DateN, TimeN, DateTime2N, DateTimeOffsetN) use length = 0x00
             0x26 | 0x6D | 0x68 | 0x6E | 0x6F | 0x6A | 0x6C | 0x24 | 0x28 | 0x29 | 0x2A | 0x2B => {
                 writer.write_byte_async(NULL_LENGTH).await?;
@@ -1215,8 +1219,20 @@ impl TdsValueSerializer {
                 };
                 (bytes, true)
             }
-            0xA7 | 0xAF => {
-                // VARCHAR/CHAR - single-byte encoding (for now, treat as UTF-8)
+            0x63 => {
+                // NTEXT - UTF-16LE encoding required (legacy LOB type)
+                // For NTEXT, we need UTF-16 encoding but will handle serialization differently
+                if let Some(utf16_data) = value.as_utf16_bytes() {
+                    // Already UTF-16 encoded, use directly
+                    (utf16_data, true)
+                } else {
+                    // UTF-8 bytes that need conversion to UTF-16
+                    (&value.bytes[..], false)
+                }
+            }
+            0xA7 | 0xAF | 0x23 => {
+                // VARCHAR/CHAR/TEXT - single-byte encoding (for now, treat as UTF-8)
+                // 0xA7 = VARCHAR, 0xAF = CHAR, 0x23 = TEXT
                 // TODO: Proper collation-based encoding support
                 (&value.bytes[..], false)
             }
@@ -1258,7 +1274,51 @@ impl TdsValueSerializer {
         }
 
         // Serialize based on type classification
-        if ctx.is_plp {
+        if ctx.tds_type == 0x63 || ctx.tds_type == 0x23 {
+            // Legacy LOB types (NTEXT=0x63, TEXT=0x23): Use special format matching .NET SqlClient
+            // Format: textptr_len (1) + textptr (16 × 0xFF) + timestamp (8 × 0xFF) + length (4) + data
+            // Reference: TdsParser.cs s_longDataHeader constant
+
+            // Write textptr length as 16 (0x10)
+            writer.write_byte_async(0x10).await?;
+
+            // Write 16-byte textptr (all 0xFF as per .NET SqlClient)
+            for _ in 0..16 {
+                writer.write_byte_async(0xFF).await?;
+            }
+
+            // Write 8-byte timestamp (all 0xFF as per .NET SqlClient)
+            for _ in 0..8 {
+                writer.write_byte_async(0xFF).await?;
+            }
+
+            // For NTEXT, we need to ensure we have UTF-16LE encoded data
+            if ctx.tds_type == 0x63 {
+                // NTEXT - need UTF-16LE encoding
+                if is_unicode {
+                    // Already UTF-16, use as-is
+                    writer.write_u32_async(data_len as u32).await?;
+                    writer.write_async(utf16_bytes).await?;
+                } else {
+                    // Need to convert UTF-8 to UTF-16LE
+                    let utf8_str = value.to_utf8_string();
+                    let utf16_vec: Vec<u16> = utf8_str.encode_utf16().collect();
+                    let utf16_byte_len = utf16_vec.len() * 2;
+
+                    // Write data length (4 bytes)
+                    writer.write_u32_async(utf16_byte_len as u32).await?;
+
+                    // Write UTF-16LE data
+                    for code_unit in &utf16_vec {
+                        writer.write_u16_async(*code_unit).await?;
+                    }
+                }
+            } else {
+                // TEXT - single-byte encoding
+                writer.write_u32_async(data_len as u32).await?;
+                writer.write_async(utf16_bytes).await?;
+            }
+        } else if ctx.is_plp {
             // PLP types (NVARCHAR(MAX), VARCHAR(MAX)): Use PLP encoding
             // Write PLP_UNKNOWN_LEN (0xFFFFFFFFFFFFFFFE) to indicate total length is unknown
             writer.write_u64_async(PLP_UNKNOWN_LEN).await?;
