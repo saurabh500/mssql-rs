@@ -1775,7 +1775,10 @@ mod tests {
         // Chinese encoding would either map it differently or use replacement
         if had_errors {
             // It's okay if it had errors - that's expected for unsupported characters
-            assert!(had_errors, "Chinese encoding should not support Spanish 'ñ' character");
+            assert!(
+                had_errors,
+                "Chinese encoding should not support Spanish 'ñ' character"
+            );
         }
     }
 
