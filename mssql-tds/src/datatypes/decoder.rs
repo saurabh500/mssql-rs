@@ -1020,7 +1020,54 @@ impl SqlTypeDecode for StringDecoder {
                 None => Ok(ColumnValues::Null),
             }
         } else if Self::is_long_len_type(metadata.data_type) {
-            // If it is a long length type (NText, Text), read the length as uint16.
+            // Legacy LOB types (TEXT/NTEXT/IMAGE) reading implementation
+            //
+            // WIRE FORMAT (from .NET TdsParser.cs:6517-6600):
+            // 1. textptr_len (1 byte): Length of text pointer
+            //    - 0x00 = NULL value
+            //    - 0x10 (16) = Valid pointer (typical)
+            // 2. textptr (textptr_len bytes): Text pointer (usually 16 bytes)
+            //    - Server-managed pointer, client treats as opaque
+            // 3. timestamp (8 bytes): Row timestamp
+            //    - Used for optimistic concurrency
+            // 4. data_length (4 bytes, uint32): Actual data length in bytes
+            //    - For NTEXT: byte count (divide by 2 for char count)
+            //    - For TEXT: byte count in the collation's encoding
+            // 5. data (data_length bytes): The actual string data
+            //    - For NTEXT: UTF-16LE encoded
+            //    - For TEXT: encoded per collation (LCID-based)
+            //
+            // CURRENT IMPLEMENTATION STATUS:
+            // ✅ Reads textptr_len (1 byte)
+            // ✅ Skips textptr (16 bytes) and timestamp (8 bytes)
+            // ✅ Reads data_length (4 bytes, uint32)
+            // ✅ Allocates buffer and reads data
+            // ✅ Creates SqlString with appropriate encoding type
+            // ✅ NULL handling works (textptr_len = 0)
+            // ✅ LCID-based decoding implemented (see sql_string.rs)
+            //
+            // FUTURE ENHANCEMENTS:
+            // 1. Add chunked reading for very large TEXT/NTEXT values
+            //    - SQL Server may send data in chunks for values > ~8KB
+            //    - .NET: TdsParserStateObject.TryReadStringWithEncoding() handles this
+            //    - Consider streaming API for large values
+            //
+            // 2. Validate textptr_len values:
+            //    - Common values: 0x00 (NULL), 0x10 (16 bytes)
+            //    - Handle unexpected lengths gracefully
+            //
+            // 3. Add tracing/logging for debugging:
+            //    - Log textptr_len, data_length for troubleshooting
+            //    - Especially useful for large values or encoding issues
+            //
+            // 4. Performance optimization:
+            //    - Consider pre-allocating common buffer sizes
+            //    - Reuse buffers for multiple rows
+            //
+            // REFERENCES:
+            // - .NET: TdsParser.cs:6517 (case TdsEnums.SQLTEXT)
+            // - .NET: TdsParser.cs:6548 (case TdsEnums.SQLNTEXT)
+            // - .NET: TdsParserStateObject.TryReadStringWithEncoding()
             let text_ptr_len = reader.read_byte().await? as usize;
 
             let length = if text_ptr_len > 0 {
@@ -1029,22 +1076,26 @@ impl SqlTypeDecode for StringDecoder {
                 reader.skip_bytes(TIMESTAMP_BYTE_COUNT).await?;
                 reader.read_uint32().await? as usize
             } else {
-                0
+                // text_ptr_len == 0 means NULL value
+                return Ok(ColumnValues::Null);
             };
 
-            if length == 0 {
-                return Ok(ColumnValues::Null);
+            // Empty string (length == 0 but textptr_len > 0) is valid - return empty string, not NULL
+            if length > MAX_ALLOC_SIZE {
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "Text data length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+                )));
+            }
+
+            let sql_string = if length == 0 {
+                // Create empty SqlString with appropriate encoding
+                SqlString::new(Vec::new(), encoding_type)
             } else {
-                if length > MAX_ALLOC_SIZE {
-                    return Err(crate::error::Error::ProtocolError(format!(
-                        "Text data length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
-                    )));
-                }
                 let mut buffer = vec![0u8; length];
                 reader.read_bytes(&mut buffer).await?;
-                let sql_string = SqlString::new(buffer, encoding_type);
-                Ok(ColumnValues::String(sql_string))
-            }
+                SqlString::new(buffer, encoding_type)
+            };
+            Ok(ColumnValues::String(sql_string))
         } else {
             let length = reader.read_uint16().await? as usize;
             if length == 0xFFFF {

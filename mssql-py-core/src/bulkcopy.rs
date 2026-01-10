@@ -416,37 +416,57 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
-            // Int → NVarChar/VarChar/NChar/Char: Convert integer to string
+            // Int → NVarChar/VarChar/NChar/Char/NText/Text: Convert integer to string
             (
                 SourcePythonType::Int,
-                SqlDbType::NVarChar | SqlDbType::VarChar | SqlDbType::NChar | SqlDbType::Char,
+                SqlDbType::NVarChar
+                | SqlDbType::VarChar
+                | SqlDbType::NChar
+                | SqlDbType::Char
+                | SqlDbType::NText
+                | SqlDbType::Text,
             ) => {
                 let result = Self::coerce_int_to_string(py_obj)?;
                 Ok(Some(result))
             }
 
-            // Float → NVarChar/VarChar/NChar/Char: Convert float to string
+            // Float → NVarChar/VarChar/NChar/Char/NText/Text: Convert float to string
             (
                 SourcePythonType::Float,
-                SqlDbType::NVarChar | SqlDbType::VarChar | SqlDbType::NChar | SqlDbType::Char,
+                SqlDbType::NVarChar
+                | SqlDbType::VarChar
+                | SqlDbType::NChar
+                | SqlDbType::Char
+                | SqlDbType::NText
+                | SqlDbType::Text,
             ) => {
                 let result = Self::coerce_float_to_string(py_obj)?;
                 Ok(Some(result))
             }
 
-            // Bool → NVarChar/VarChar/NChar/Char: Convert boolean to string ('True'/'False')
+            // Bool → NVarChar/VarChar/NChar/Char/NText/Text: Convert boolean to string ('True'/'False')
             (
                 SourcePythonType::Bool,
-                SqlDbType::NVarChar | SqlDbType::VarChar | SqlDbType::NChar | SqlDbType::Char,
+                SqlDbType::NVarChar
+                | SqlDbType::VarChar
+                | SqlDbType::NChar
+                | SqlDbType::Char
+                | SqlDbType::NText
+                | SqlDbType::Text,
             ) => {
                 let result = Self::coerce_bool_to_string(py_obj)?;
                 Ok(Some(result))
             }
 
-            // Decimal → NVarChar/VarChar/NChar/Char: Convert decimal to string
+            // Decimal → NVarChar/VarChar/NChar/Char/NText/Text: Convert decimal to string
             (
                 SourcePythonType::Decimal,
-                SqlDbType::NVarChar | SqlDbType::VarChar | SqlDbType::NChar | SqlDbType::Char,
+                SqlDbType::NVarChar
+                | SqlDbType::VarChar
+                | SqlDbType::NChar
+                | SqlDbType::Char
+                | SqlDbType::NText
+                | SqlDbType::Text,
             ) => {
                 let result = Self::coerce_decimal_to_string(py_obj)?;
                 Ok(Some(result))
