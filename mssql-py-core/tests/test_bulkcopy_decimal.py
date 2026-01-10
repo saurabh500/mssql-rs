@@ -338,8 +338,8 @@ def test_cursor_bulkcopy_decimal_invalid_string_to_decimal_conversion(client_con
         error_raised
     ), "Expected a ValueError to be raised for invalid string-to-decimal conversion"
     assert (
-        "failed to parse decimal" in error_message
-    ), f"Expected 'failed to parse decimal' message, got: {error_message}"
+        "invalid decimal string" in error_message
+    ), f"Expected 'invalid decimal string' message, got: {error_message}"
     # Verify that the original parse error message is preserved
     assert (
         "invalid" in error_message and "not_a_number" in error_message
