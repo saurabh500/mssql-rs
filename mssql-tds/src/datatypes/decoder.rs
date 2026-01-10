@@ -1045,29 +1045,6 @@ impl SqlTypeDecode for StringDecoder {
             // Creates SqlString with appropriate encoding type
             // NULL handling works (textptr_len = 0)
             // LCID-based decoding implemented (see sql_string.rs)
-            //
-            // FUTURE ENHANCEMENTS:
-            // 1. Add chunked reading for very large TEXT/NTEXT values
-            //    - SQL Server may send data in chunks for values > ~8KB
-            //    - .NET: TdsParserStateObject.TryReadStringWithEncoding() handles this
-            //    - Consider streaming API for large values
-            //
-            // 2. Validate textptr_len values:
-            //    - Common values: 0x00 (NULL), 0x10 (16 bytes)
-            //    - Handle unexpected lengths gracefully
-            //
-            // 3. Add tracing/logging for debugging:
-            //    - Log textptr_len, data_length for troubleshooting
-            //    - Especially useful for large values or encoding issues
-            //
-            // 4. Performance optimization:
-            //    - Consider pre-allocating common buffer sizes
-            //    - Reuse buffers for multiple rows
-            //
-            // REFERENCES:
-            // - .NET: TdsParser.cs:6517 (case TdsEnums.SQLTEXT)
-            // - .NET: TdsParser.cs:6548 (case TdsEnums.SQLNTEXT)
-            // - .NET: TdsParserStateObject.TryReadStringWithEncoding()
             let text_ptr_len = reader.read_byte().await? as usize;
 
             let length = if text_ptr_len > 0 {
