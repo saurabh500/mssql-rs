@@ -10,6 +10,7 @@
 use crate::core::TdsResult;
 use crate::datatypes::column_values::ColumnValues;
 use crate::datatypes::sql_json::SqlJson;
+use crate::datatypes::sqldatatypes::TdsDataType;
 use crate::error::Error;
 use crate::io::packet_writer::{PacketWriter, TdsPacketWriter, TdsPacketWriterUnchecked};
 
@@ -21,6 +22,14 @@ const VARNULL: u16 = 0xFFFF;
 pub const PLP_NULL: u64 = 0xFFFFFFFFFFFFFFFF;
 pub const PLP_UNKNOWN_LEN: u64 = 0xFFFFFFFFFFFFFFFE; // -2 in signed i64, used when total length is unknown
 pub const PLP_TERMINATOR: u32 = 0x00000000;
+
+// TDS type byte constants for string types
+const NVARCHAR: u8 = TdsDataType::NVarChar as u8; // 0xE7
+const NCHAR: u8 = TdsDataType::NChar as u8; // 0xEF
+const NTEXT: u8 = TdsDataType::NText as u8; // 0x63
+const VARCHAR: u8 = TdsDataType::BigVarChar as u8; // 0xA7
+const CHAR: u8 = TdsDataType::BigChar as u8; // 0xAF
+const TEXT: u8 = TdsDataType::Text as u8; // 0x23
 
 /// Context for value serialization, containing type metadata needed for encoding.
 ///
@@ -1201,10 +1210,10 @@ impl TdsValueSerializer {
     where
         'b: 'a,
     {
-        // For NVARCHAR/NCHAR types (0xE7, 0xEF), we need UTF-16LE encoding
+        // For NVARCHAR/NCHAR types, we need UTF-16LE encoding
         // The SqlString might already be UTF-16 encoded, so check first to avoid re-encoding
         let (utf16_bytes, is_unicode) = match ctx.tds_type {
-            0xE7 | 0xEF => {
+            NVARCHAR | NCHAR => {
                 // NVARCHAR/NCHAR - UTF-16LE encoding required
                 let bytes = if let Some(utf16_data) = value.as_utf16_bytes() {
                     // Already UTF-16 encoded, use directly (zero-copy optimization)
@@ -1219,7 +1228,7 @@ impl TdsValueSerializer {
                 };
                 (bytes, true)
             }
-            0x63 => {
+            NTEXT => {
                 // NTEXT - UTF-16LE encoding required (legacy LOB type)
                 // For NTEXT, we need UTF-16 encoding but will handle serialization differently
                 if let Some(utf16_data) = value.as_utf16_bytes() {
@@ -1230,11 +1239,30 @@ impl TdsValueSerializer {
                     (&value.bytes[..], false)
                 }
             }
-            0xA7 | 0xAF | 0x23 => {
-                // VARCHAR/CHAR/TEXT - single-byte encoding (for now, treat as UTF-8)
+            VARCHAR | CHAR | TEXT => {
+                // VARCHAR/CHAR/TEXT - single-byte encoding
                 // 0xA7 = VARCHAR, 0xAF = CHAR, 0x23 = TEXT
-                // TODO: Proper collation-based encoding support
-                (&value.bytes[..], false)
+                // The incoming bytes are UTF-16LE, but we need single-byte encoding for these types
+                // Decode UTF-16LE to string first
+                let decoded_str = value.to_utf8_string();
+
+                // Encode to single-byte based on collation
+                // For now, use Latin-1 (ISO-8859-1) which covers ASCII + extended Latin characters
+                // TODO: Use actual collation from ctx.collation to determine correct code page
+                let single_byte_data = decoded_str
+                    .chars()
+                    .map(|c| {
+                        if (c as u32) <= 0xFF {
+                            c as u8
+                        } else {
+                            b'?' // Replace unmappable characters with '?'
+                        }
+                    })
+                    .collect::<Vec<u8>>();
+
+                // Store the single-byte data temporarily - we'll use it below
+                // Note: This creates a temporary allocation, but it's necessary for the conversion
+                return Self::serialize_char_varchar_direct(writer, &single_byte_data, ctx).await;
             }
             _ => {
                 return Err(Error::UsageError(format!(
@@ -1274,7 +1302,7 @@ impl TdsValueSerializer {
         }
 
         // Serialize based on type classification
-        if ctx.tds_type == 0x63 || ctx.tds_type == 0x23 {
+        if ctx.tds_type == NTEXT || ctx.tds_type == TEXT {
             // Legacy LOB types (NTEXT=0x63, TEXT=0x23): Use special format matching .NET SqlClient
             // Format: textptr_len (1) + textptr (16 × 0xFF) + timestamp (8 × 0xFF) + length (4) + data
             // Reference: TdsParser.cs s_longDataHeader constant
@@ -1293,7 +1321,7 @@ impl TdsValueSerializer {
             }
 
             // For NTEXT, we need to ensure we have UTF-16LE encoded data
-            if ctx.tds_type == 0x63 {
+            if ctx.tds_type == NTEXT {
                 // NTEXT - need UTF-16LE encoding
                 if is_unicode {
                     // Already UTF-16, use as-is
@@ -1435,6 +1463,75 @@ impl TdsValueSerializer {
             for code_unit in &utf16_data {
                 writer.write_u16_async(*code_unit).await?;
             }
+        }
+
+        Ok(())
+    }
+
+    /// Helper to serialize a single-byte string for CHAR/VARCHAR types.
+    ///
+    /// Takes single-byte encoded data and serializes it according to the TDS type context.
+    async fn serialize_char_varchar_direct<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        single_byte_data: &[u8],
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        let char_count = single_byte_data.len();
+        let schema_char_count = ctx.max_size;
+
+        // Check for size overflow (skip for PLP types)
+        if !ctx.is_plp && char_count > schema_char_count {
+            return Err(Error::UsageError(format!(
+                "String length ({} characters) exceeds schema size ({} characters)",
+                char_count, schema_char_count
+            )));
+        }
+
+        // Serialize based on type classification
+        if ctx.tds_type == TEXT {
+            // Legacy TEXT type: Use special format
+            // Write textptr length as 16 (0x10)
+            writer.write_byte_async(0x10).await?;
+
+            // Write 16-byte textptr (all 0xFF)
+            for _ in 0..16 {
+                writer.write_byte_async(0xFF).await?;
+            }
+
+            // Write 8-byte timestamp (all 0xFF)
+            for _ in 0..8 {
+                writer.write_byte_async(0xFF).await?;
+            }
+
+            // Write 4-byte length
+            writer.write_u32_async(char_count as u32).await?;
+
+            // Write actual data
+            writer.write_async(single_byte_data).await?;
+        } else if ctx.is_plp {
+            // PLP types (VARCHAR(MAX)): Use PLP encoding
+            writer.write_u64_async(PLP_UNKNOWN_LEN).await?;
+            writer.write_u32_async(char_count as u32).await?;
+            writer.write_async(single_byte_data).await?;
+            writer.write_u32_async(PLP_TERMINATOR).await?;
+        } else if ctx.is_fixed_length {
+            // Fixed-length CHAR(n): Write exactly n bytes with padding
+            // Write actual data
+            writer.write_async(single_byte_data).await?;
+
+            // Pad with ASCII space (0x20) to reach fixed size
+            let padding_count = schema_char_count.saturating_sub(char_count);
+            for _ in 0..padding_count {
+                writer.write_byte_async(0x20).await?;
+            }
+        } else {
+            // Variable-length VARCHAR(n): Write length prefix + data
+            // Length prefix is byte count (2 bytes)
+            writer.write_u16_async(char_count as u16).await?;
+            writer.write_async(single_byte_data).await?;
         }
 
         Ok(())
