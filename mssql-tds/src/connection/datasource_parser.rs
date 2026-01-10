@@ -98,7 +98,8 @@ impl ParsedDataSource {
         }
 
         // Step 3: Parse protocol prefix (tcp:, np:, lpc:, admin:)
-        let (after_protocol_norm, after_protocol_orig) = Self::parse_protocol(original, &normalized, &mut result)?;
+        let (after_protocol_norm, after_protocol_orig) =
+            Self::parse_protocol(original, &normalized, &mut result)?;
 
         // Step 4: Check for named pipe (starts with \\)
         if after_protocol_norm.starts_with("\\\\") {
@@ -106,10 +107,12 @@ impl ParsedDataSource {
         }
 
         // Step 5: Parse parameter (port) - look for comma
-        let (after_parameter_norm, after_parameter_orig) = Self::parse_parameter(after_protocol_orig, after_protocol_norm, &mut result)?;
+        let (after_parameter_norm, after_parameter_orig) =
+            Self::parse_parameter(after_protocol_orig, after_protocol_norm, &mut result)?;
 
         // Step 6: Parse instance name - look for backslash
-        let (after_instance_norm, after_instance_orig) = Self::parse_instance(after_parameter_orig, after_parameter_norm, &mut result)?;
+        let (after_instance_norm, after_instance_orig) =
+            Self::parse_instance(after_parameter_orig, after_parameter_norm, &mut result)?;
 
         // Step 7: Parse and resolve server name
         Self::parse_server(after_instance_orig, after_instance_norm, &mut result)?;
@@ -124,7 +127,11 @@ impl ParsedDataSource {
     }
 
     /// Parse protocol prefix (tcp:, np:, lpc:, admin:)
-    fn parse_protocol<'a>(original: &'a str, normalized: &'a str, result: &mut ParsedDataSource) -> TdsResult<(&'a str, &'a str)> {
+    fn parse_protocol<'a>(
+        original: &'a str,
+        normalized: &'a str,
+        result: &mut ParsedDataSource,
+    ) -> TdsResult<(&'a str, &'a str)> {
         // Look for colon delimiter in normalized string
         if let Some(colon_pos) = normalized.find(':') {
             // Check if this is IPv6 address (multiple colons)
@@ -140,7 +147,7 @@ impl ParsedDataSource {
                     result.protocol_name = protocol.to_string();
                     return Ok((
                         normalized[colon_pos + 1..].trim_start(),
-                        original[colon_pos + 1..].trim_start()
+                        original[colon_pos + 1..].trim_start(),
                     ));
                 }
             }
@@ -210,15 +217,19 @@ impl ParsedDataSource {
         }
 
         result.can_use_cache = false;
-        
+
         // Validate protocol constraints (including parallel connect)
         Self::validate_protocol(result)?;
-        
+
         Ok(result.clone())
     }
 
     /// Parse protocol parameter (port for TCP)
-    fn parse_parameter<'a>(original: &'a str, normalized: &'a str, result: &mut ParsedDataSource) -> TdsResult<(&'a str, &'a str)> {
+    fn parse_parameter<'a>(
+        original: &'a str,
+        normalized: &'a str,
+        result: &mut ParsedDataSource,
+    ) -> TdsResult<(&'a str, &'a str)> {
         // Look for comma separator in normalized string
         if let Some(comma_pos) = normalized.find(',') {
             let parameter = original[comma_pos + 1..].trim();
@@ -249,7 +260,7 @@ impl ParsedDataSource {
             // Return the part before comma (server and possibly instance)
             return Ok((
                 normalized[..comma_pos].trim_end(),
-                original[..comma_pos].trim_end()
+                original[..comma_pos].trim_end(),
             ));
         }
 
@@ -257,7 +268,11 @@ impl ParsedDataSource {
     }
 
     /// Parse instance name (after backslash)
-    fn parse_instance<'a>(original: &'a str, normalized: &'a str, result: &mut ParsedDataSource) -> TdsResult<(&'a str, &'a str)> {
+    fn parse_instance<'a>(
+        original: &'a str,
+        normalized: &'a str,
+        result: &mut ParsedDataSource,
+    ) -> TdsResult<(&'a str, &'a str)> {
         // Look for backslash separator in normalized string
         if let Some(backslash_pos) = normalized.find('\\') {
             let instance = original[backslash_pos + 1..].trim();
@@ -277,7 +292,7 @@ impl ParsedDataSource {
             // Return server part (before backslash)
             return Ok((
                 normalized[..backslash_pos].trim_end(),
-                original[..backslash_pos].trim_end()
+                original[..backslash_pos].trim_end(),
             ));
         }
 
@@ -285,7 +300,11 @@ impl ParsedDataSource {
     }
 
     /// Parse and resolve server name
-    fn parse_server(original: &str, normalized: &str, result: &mut ParsedDataSource) -> TdsResult<()> {
+    fn parse_server(
+        original: &str,
+        normalized: &str,
+        result: &mut ParsedDataSource,
+    ) -> TdsResult<()> {
         let server = original.trim();
         result.original_server_name = server.to_string();
 
@@ -386,7 +405,11 @@ impl ParsedDataSource {
 
     /// Parse LocalDB connection string (Windows only)
     #[cfg(windows)]
-    fn parse_localdb(original: &str, normalized: &str, parallel_connect: bool) -> TdsResult<ParsedDataSource> {
+    fn parse_localdb(
+        original: &str,
+        normalized: &str,
+        parallel_connect: bool,
+    ) -> TdsResult<ParsedDataSource> {
         // Format: (localdb)\instancename or (localdb)/instancename
         let instance_start = if normalized.starts_with("(localdb)\\") {
             "(localdb)\\".len()
@@ -489,6 +512,17 @@ mod tests {
         assert_eq!(parsed.protocol_parameter, "1433");
         assert_eq!(parsed.instance_name, "");
         assert_eq!(parsed.alias, "myserver");
+        assert!(!parsed.can_use_cache);
+    }
+
+    #[test]
+    fn test_port_without_protocol_prefix() {
+        // When comma with port is specified, should default to TCP
+        let parsed = ParsedDataSource::parse("myserver,1433", false).unwrap();
+        assert_eq!(parsed.protocol_name, "tcp");
+        assert_eq!(parsed.server_name, "myserver");
+        assert_eq!(parsed.protocol_parameter, "1433");
+        assert_eq!(parsed.instance_name, "");
         assert!(!parsed.can_use_cache);
     }
 

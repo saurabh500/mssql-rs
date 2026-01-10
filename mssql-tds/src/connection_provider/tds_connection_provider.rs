@@ -298,10 +298,22 @@ impl TdsConnectionProvider {
         }
 
         // Check if we have an explicit protocol specified (tcp:, np:, lpc:, admin:)
-        // When a protocol is explicitly specified, only try that protocol
-        if context.explicit_protocol {
+        // When a protocol is explicitly specified (via datasource string like "tcp:server,1433"
+        // or "server,1433"), only try that single protocol.
+        // Also, if a complete transport context was set directly (not via datasource parsing),
+        // such as in tests or direct API usage, use it as-is without protocol fallback.
+        let has_complete_transport = matches!(&context.transport_context,
+            TransportContext::Tcp { port, .. } if *port != 0 && *port != 1433
+        ) || matches!(
+            &context.transport_context,
+            TransportContext::LocalDB { .. }
+                | TransportContext::SharedMemory { .. }
+                | TransportContext::NamedPipe { .. }
+        );
+
+        if context.explicit_protocol || has_complete_transport {
             debug!(
-                "Explicit protocol specified, using single transport: {:?}",
+                "Explicit protocol or complete transport specified, using single transport: {:?}",
                 context.transport_context
             );
             return Ok(vec![context.transport_context.clone()]);
@@ -328,19 +340,22 @@ impl TdsConnectionProvider {
         }
 
         // 2. TCP (always available)
-        if let TransportContext::Tcp { host, port } = &context.transport_context {
-            debug!("Adding TCP to protocol list: {}:{}", host, port);
-            transports.push(TransportContext::Tcp {
-                host: host.clone(),
-                port: *port,
-            });
-        } else {
-            // Default TCP port if no port specified
-            debug!("Adding TCP with default port 1433");
-            transports.push(TransportContext::Tcp {
-                host: server.clone(),
-                port: 1433,
-            });
+        match &context.transport_context {
+            TransportContext::Tcp { host, port } => {
+                debug!("Adding TCP to protocol list: {}:{}", host, port);
+                transports.push(TransportContext::Tcp {
+                    host: host.clone(),
+                    port: *port,
+                });
+            }
+            _ => {
+                // Default TCP port if no port specified
+                debug!("Adding TCP with default port 1433");
+                transports.push(TransportContext::Tcp {
+                    host: server.clone(),
+                    port: 1433,
+                });
+            }
         }
 
         // 3. Named Pipes (Windows only, not for LocalDB)
