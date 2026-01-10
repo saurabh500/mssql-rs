@@ -83,7 +83,8 @@ impl ParsedDataSource {
         result.parallel_connect = parallel_connect;
 
         // Step 1: Normalize the string (lowercase, trim whitespace)
-        let normalized = datasource.trim().to_lowercase();
+        let original = datasource.trim();
+        let normalized = original.to_lowercase();
         if normalized.is_empty() {
             return Err(Error::ProtocolError(
                 "Data source string cannot be empty".to_string(),
@@ -93,25 +94,25 @@ impl ParsedDataSource {
         // Step 2: Check for LocalDB format (Windows only)
         #[cfg(windows)]
         if normalized.starts_with("(localdb)\\") || normalized.starts_with("(localdb)/") {
-            return Self::parse_localdb(&normalized);
+            return Self::parse_localdb(original, &normalized, parallel_connect);
         }
 
         // Step 3: Parse protocol prefix (tcp:, np:, lpc:, admin:)
-        let after_protocol = Self::parse_protocol(&normalized, &mut result)?;
+        let (after_protocol_norm, after_protocol_orig) = Self::parse_protocol(original, &normalized, &mut result)?;
 
         // Step 4: Check for named pipe (starts with \\)
-        if after_protocol.starts_with("\\\\") {
-            return Self::parse_named_pipe(after_protocol, &mut result);
+        if after_protocol_norm.starts_with("\\\\") {
+            return Self::parse_named_pipe(after_protocol_orig, &mut result);
         }
 
         // Step 5: Parse parameter (port) - look for comma
-        let after_parameter = Self::parse_parameter(after_protocol, &mut result)?;
+        let (after_parameter_norm, after_parameter_orig) = Self::parse_parameter(after_protocol_orig, after_protocol_norm, &mut result)?;
 
         // Step 6: Parse instance name - look for backslash
-        let after_instance = Self::parse_instance(after_parameter, &mut result)?;
+        let (after_instance_norm, after_instance_orig) = Self::parse_instance(after_parameter_orig, after_parameter_norm, &mut result)?;
 
         // Step 7: Parse and resolve server name
-        Self::parse_server(after_instance, &mut result)?;
+        Self::parse_server(after_instance_orig, after_instance_norm, &mut result)?;
 
         // Step 8: Validate protocol constraints
         Self::validate_protocol(&mut result)?;
@@ -123,27 +124,30 @@ impl ParsedDataSource {
     }
 
     /// Parse protocol prefix (tcp:, np:, lpc:, admin:)
-    fn parse_protocol<'a>(input: &'a str, result: &mut ParsedDataSource) -> TdsResult<&'a str> {
-        // Look for colon delimiter
-        if let Some(colon_pos) = input.find(':') {
+    fn parse_protocol<'a>(original: &'a str, normalized: &'a str, result: &mut ParsedDataSource) -> TdsResult<(&'a str, &'a str)> {
+        // Look for colon delimiter in normalized string
+        if let Some(colon_pos) = normalized.find(':') {
             // Check if this is IPv6 address (multiple colons)
-            let before_colon = &input[..colon_pos];
+            let before_colon = &normalized[..colon_pos];
 
             // IPv6 addresses contain :: or multiple colons
-            let is_ipv6 = input.contains("::") || input.matches(':').count() > 1;
+            let is_ipv6 = normalized.contains("::") || normalized.matches(':').count() > 1;
 
             if !is_ipv6 && !before_colon.is_empty() {
                 // Valid protocol prefix
                 let protocol = before_colon.trim();
                 if matches!(protocol, "tcp" | "np" | "lpc" | "admin") {
                     result.protocol_name = protocol.to_string();
-                    return Ok(input[colon_pos + 1..].trim_start());
+                    return Ok((
+                        normalized[colon_pos + 1..].trim_start(),
+                        original[colon_pos + 1..].trim_start()
+                    ));
                 }
             }
         }
 
         // No protocol or IPv6 address - return as-is
-        Ok(input)
+        Ok((normalized, original))
     }
 
     /// Parse named pipe path (\\server\pipe\...)
@@ -206,14 +210,18 @@ impl ParsedDataSource {
         }
 
         result.can_use_cache = false;
+        
+        // Validate protocol constraints (including parallel connect)
+        Self::validate_protocol(result)?;
+        
         Ok(result.clone())
     }
 
     /// Parse protocol parameter (port for TCP)
-    fn parse_parameter<'a>(input: &'a str, result: &mut ParsedDataSource) -> TdsResult<&'a str> {
-        // Look for comma separator
-        if let Some(comma_pos) = input.find(',') {
-            let parameter = input[comma_pos + 1..].trim();
+    fn parse_parameter<'a>(original: &'a str, normalized: &'a str, result: &mut ParsedDataSource) -> TdsResult<(&'a str, &'a str)> {
+        // Look for comma separator in normalized string
+        if let Some(comma_pos) = normalized.find(',') {
+            let parameter = original[comma_pos + 1..].trim();
 
             // If no protocol specified, default to TCP
             if result.protocol_name.is_empty() {
@@ -239,21 +247,24 @@ impl ParsedDataSource {
             result.can_use_cache = false;
 
             // Return the part before comma (server and possibly instance)
-            return Ok(input[..comma_pos].trim_end());
+            return Ok((
+                normalized[..comma_pos].trim_end(),
+                original[..comma_pos].trim_end()
+            ));
         }
 
-        Ok(input)
+        Ok((normalized, original))
     }
 
     /// Parse instance name (after backslash)
-    fn parse_instance<'a>(input: &'a str, result: &mut ParsedDataSource) -> TdsResult<&'a str> {
-        // Look for backslash separator
-        if let Some(backslash_pos) = input.find('\\') {
-            let instance = input[backslash_pos + 1..].trim();
+    fn parse_instance<'a>(original: &'a str, normalized: &'a str, result: &mut ParsedDataSource) -> TdsResult<(&'a str, &'a str)> {
+        // Look for backslash separator in normalized string
+        if let Some(backslash_pos) = normalized.find('\\') {
+            let instance = original[backslash_pos + 1..].trim();
 
             // Port takes priority - if port is already set, ignore instance
             if result.protocol_parameter.is_empty() {
-                // Validate: "mssqlserver" is reserved and invalid
+                // Validate: "mssqlserver" is reserved and invalid (case-insensitive check)
                 if instance.eq_ignore_ascii_case("mssqlserver") {
                     return Err(Error::ProtocolError(
                         "Instance name 'MSSQLSERVER' is reserved".to_string(),
@@ -264,22 +275,26 @@ impl ParsedDataSource {
             }
 
             // Return server part (before backslash)
-            return Ok(input[..backslash_pos].trim_end());
+            return Ok((
+                normalized[..backslash_pos].trim_end(),
+                original[..backslash_pos].trim_end()
+            ));
         }
 
-        Ok(input)
+        Ok((normalized, original))
     }
 
     /// Parse and resolve server name
-    fn parse_server(input: &str, result: &mut ParsedDataSource) -> TdsResult<()> {
-        let server = input.trim();
+    fn parse_server(original: &str, normalized: &str, result: &mut ParsedDataSource) -> TdsResult<()> {
+        let server = original.trim();
         result.original_server_name = server.to_string();
 
-        // Check if this is a local host alias
-        let is_local = server == "."
-            || server == "(local)"
-            || server.eq_ignore_ascii_case("localhost")
-            || Self::is_computer_name(server);
+        // Check if this is a local host alias (use normalized for comparison)
+        let normalized_server = normalized.trim();
+        let is_local = normalized_server == "."
+            || normalized_server == "(local)"
+            || normalized_server == "localhost"
+            || Self::is_computer_name(normalized_server);
 
         if is_local {
             // For admin (DAC) protocol, always use "localhost"
@@ -371,17 +386,17 @@ impl ParsedDataSource {
 
     /// Parse LocalDB connection string (Windows only)
     #[cfg(windows)]
-    fn parse_localdb(input: &str) -> TdsResult<ParsedDataSource> {
+    fn parse_localdb(original: &str, normalized: &str, parallel_connect: bool) -> TdsResult<ParsedDataSource> {
         // Format: (localdb)\instancename or (localdb)/instancename
-        let instance_start = if input.starts_with("(localdb)\\") {
+        let instance_start = if normalized.starts_with("(localdb)\\") {
             "(localdb)\\".len()
-        } else if input.starts_with("(localdb)/") {
+        } else if normalized.starts_with("(localdb)/") {
             "(localdb)/".len()
         } else {
             return Err(Error::ProtocolError("Invalid LocalDB format".to_string()));
         };
 
-        let instance_name = input[instance_start..].trim();
+        let instance_name = original[instance_start..].trim();
         if instance_name.is_empty() {
             return Err(Error::ProtocolError(
                 "LocalDB instance name cannot be empty".to_string(),
@@ -392,11 +407,12 @@ impl ParsedDataSource {
         // For now, return a placeholder that indicates LocalDB
         let mut result = ParsedDataSource::new();
         result.protocol_name = "localdb".to_string();
-        result.server_name = input.to_string(); // Store original for later resolution
-        result.original_server_name = input.to_string();
+        result.server_name = original.to_string(); // Store original for later resolution
+        result.original_server_name = original.to_string();
         result.instance_name = instance_name.to_string();
         result.can_use_cache = false; // LocalDB connections are never cached
-        result.alias = input.to_string();
+        result.alias = original.to_string();
+        result.parallel_connect = parallel_connect;
 
         Ok(result)
     }
@@ -619,7 +635,7 @@ mod tests {
         assert_eq!(parsed.protocol_name, "tcp"); // Normalized to lowercase
 
         let parsed = ParsedDataSource::parse("MyServer\\SqlExpress", false).unwrap();
-        assert_eq!(parsed.instance_name, "sqlexpress"); // Normalized to lowercase
+        assert_eq!(parsed.instance_name, "SqlExpress"); // Case preserved
     }
 
     #[test]

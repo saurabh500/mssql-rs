@@ -311,6 +311,7 @@ impl TdsConnectionProvider {
         debug!("No explicit protocol, building default protocol list");
 
         let server = context.transport_context.get_server_name();
+        #[cfg_attr(not(windows), allow(unused_variables))]
         let is_local = Self::is_local_server(&server);
 
         let mut transports = Vec::new();
