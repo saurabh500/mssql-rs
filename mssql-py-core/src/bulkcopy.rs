@@ -18,6 +18,8 @@ use mssql_tds::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType
 use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::datatypes::decoder::DecimalParts;
 use mssql_tds::datatypes::sql_json::SqlJson;
+use mssql_tds::datatypes::sql_vector::SqlVector;
+use mssql_tds::datatypes::sqldatatypes::VectorBaseType;
 use mssql_tds::error::Error;
 use mssql_tds::message::bulk_load::StreamingBulkLoadWriter;
 use pyo3::prelude::*;
@@ -469,6 +471,12 @@ impl PythonRowAdapter {
                 | SqlDbType::Text,
             ) => {
                 let result = Self::coerce_decimal_to_string(py_obj)?;
+                Ok(Some(result))
+            }
+
+            // List → Vector: Convert Python list to SQL Server vector type
+            (SourcePythonType::List, SqlDbType::Vector) => {
+                let result = Self::coerce_list_to_vector(py_obj, target_meta)?;
                 Ok(Some(result))
             }
 
@@ -1509,6 +1517,81 @@ impl PythonRowAdapter {
         // Convert to UTF-8 bytes for SqlJson
         let bytes = json_str.as_bytes().to_vec();
         Ok(ColumnValues::Json(SqlJson { bytes }))
+    }
+
+    /// Coerce a Python list to a SQL Server VECTOR value.
+    ///
+    /// - Validates the target VECTOR base type is supported (Float32)
+    /// - Ensures the Python list length matches expected dimensions from metadata
+    /// - Converts elements to f32, rejecting NaN/Infinity
+    fn coerce_list_to_vector(
+        py_obj: &Bound<'_, PyAny>,
+        target_meta: &BulkCopyColumnMetadata,
+    ) -> TdsResult<ColumnValues> {
+        // Validate base type support
+        let base_type = VectorBaseType::try_from(target_meta.scale).map_err(|e| {
+            Error::UsageError(format!(
+                "Invalid VECTOR base type for column '{}': {}",
+                target_meta.column_name, e
+            ))
+        })?;
+
+        // Expected dimensions from metadata
+        let expected_dims = target_meta.vector_dimensions()?;
+
+        // Extract list and validate length
+        let py_list = py_obj.cast::<pyo3::types::PyList>().map_err(|e| {
+            Error::UsageError(format!(
+                "Expected Python list for VECTOR column '{}': {}",
+                target_meta.column_name, e
+            ))
+        })?;
+
+        let seq_len = py_list.len();
+        if seq_len != expected_dims {
+            return Err(Error::UsageError(format!(
+                "Vector dimension mismatch for column '{}': got {}, expected {}",
+                target_meta.column_name, seq_len, expected_dims
+            )));
+        }
+
+        match base_type {
+            VectorBaseType::Float32 => {
+                // Convert elements to f32 with validation (reject NaN/Inf)
+                let mut values: Vec<f32> = Vec::with_capacity(seq_len);
+                for (idx, item) in py_list.iter().enumerate() {
+                    let as_f64 = item
+                        .extract::<f64>()
+                        .or_else(|_| item.extract::<i64>().map(|i| i as f64))
+                        .map_err(|e| {
+                            Error::UsageError(format!(
+                                "VECTOR element conversion error at index {} in column '{}': {}",
+                                idx, target_meta.column_name, e
+                            ))
+                        })?;
+
+                    if !as_f64.is_finite() {
+                        return Err(Error::UsageError(format!(
+                            "VECTOR element at index {} in column '{}' is NaN or Infinity",
+                            idx, target_meta.column_name
+                        )));
+                    }
+
+                    let real_value = as_f64 as f32;
+                    if !real_value.is_finite() {
+                        return Err(Error::UsageError(format!(
+                            "VECTOR element at index {} in column '{}' overflows/underflows when converted to f32",
+                            idx, target_meta.column_name
+                        )));
+                    }
+
+                    values.push(real_value);
+                }
+
+                let vector = SqlVector::try_from_f32(values)?;
+                Ok(ColumnValues::Vector(vector))
+            }
+        }
     }
 
     /// Coerce a Python integer to a SQL Server string type (NVARCHAR/VARCHAR/NCHAR/CHAR).

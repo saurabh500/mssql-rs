@@ -6,6 +6,7 @@ use mssql_tds::connection::bulk_copy::{
 };
 use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
 use mssql_tds::datatypes::column_values::ColumnValues;
+use mssql_tds::datatypes::sqldatatypes::VectorBaseType;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyIterator, PyTuple};
 use std::sync::Arc;
@@ -422,7 +423,7 @@ impl PyCoreCursor {
 impl PyCoreCursor {
     /// Convert a TDS ColumnValue to a Python object
     fn column_value_to_python<'py>(py: Python<'py>, col_val: &ColumnValues) -> Bound<'py, PyAny> {
-        use pyo3::types::{PyBytes, PyModule, PyString};
+        use pyo3::types::{PyBytes, PyList, PyModule, PyString};
 
         match col_val {
             ColumnValues::Null => py.None().into_bound(py),
@@ -446,6 +447,23 @@ impl PyCoreCursor {
                 .to_owned()
                 .into_any(),
             ColumnValues::Bytes(b) => PyBytes::new(py, b).into_any(),
+            ColumnValues::Vector(v) => {
+                // Return Python list of floats for vectors
+                match v.base_type() {
+                    VectorBaseType::Float32 => {
+                        if let Some(vals) = v.as_f32() {
+                            let list = PyList::new(py, vals.iter().map(|f| *f as f64)).unwrap();
+                            return list.into_any();
+                        }
+                    }
+                }
+                // Fallback to string if conversion fails
+                format!("{:?}", v)
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
+                    .into_any()
+            }
             ColumnValues::Numeric(n) | ColumnValues::Decimal(n) => {
                 // Convert DecimalParts to Python Decimal object
                 let decimal_str = n.to_string();

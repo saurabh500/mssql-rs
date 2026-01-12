@@ -11,6 +11,7 @@ use crate::core::TdsResult;
 use crate::datatypes::column_values::ColumnValues;
 use crate::datatypes::lcid_encoding::lcid_to_encoding;
 use crate::datatypes::sql_json::SqlJson;
+use crate::datatypes::sql_vector::{SqlVector, VectorData};
 use crate::datatypes::sqldatatypes::TdsDataType;
 use crate::error::Error;
 use crate::io::packet_writer::{PacketWriter, TdsPacketWriter, TdsPacketWriterUnchecked};
@@ -125,6 +126,7 @@ impl TdsValueSerializer {
             ColumnValues::Bytes(v) => Self::serialize_bytes(writer, v, ctx).await,
             ColumnValues::Json(v) => Self::serialize_json(writer, v, ctx).await,
             ColumnValues::String(v) => Self::serialize_string(writer, v, ctx).await,
+            ColumnValues::Vector(v) => Self::serialize_vector(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -1511,6 +1513,45 @@ impl TdsValueSerializer {
             // Write UTF-16LE data
             for code_unit in &utf16_data {
                 writer.write_u16_async(*code_unit).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Serialize VECTOR value to the TDS stream.
+    ///
+    /// Wire format for VECTOR (non-PLP):
+    /// - 2 bytes: actual length (USHORT) = 8 (header) + dims * element_size
+    /// - 8 bytes: header [layout_format=0xA9, version=0x01, dims:u16, base_type:u8, 0,0,0]
+    /// - n bytes: element values (little-endian)
+    #[inline(always)]
+    async fn serialize_vector<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &SqlVector,
+        _ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // Compute total payload size
+        let dims = value.dimension_count();
+        let total_size = value.total_size();
+
+        // Length prefix (USHORT)
+        writer.write_u16_async(total_size as u16).await?;
+
+        // Header
+        crate::datatypes::sqltypes::SqlType::encode_vector_header(writer, dims, value.base_type())
+            .await?;
+
+        // Values
+        match &value.data {
+            VectorData::Float32(vs) => {
+                for f in vs {
+                    // Write f32 as i32 little-endian (bit-compatible)
+                    writer.write_i32_async((*f).to_bits() as i32).await?;
+                }
             }
         }
 
