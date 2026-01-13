@@ -9,6 +9,9 @@
 use crate::core::TdsResult;
 use crate::error::Error;
 
+/// Named pipe path prefix (UNC path format)
+const NAMED_PIPE_PREFIX: &str = "\\\\";
+
 /// Represents a parsed data source string with all connection parameters
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedDataSource {
@@ -102,7 +105,7 @@ impl ParsedDataSource {
             Self::parse_protocol(original, &normalized, &mut result)?;
 
         // Step 4: Check for named pipe (starts with \\)
-        if after_protocol_norm.starts_with("\\\\") {
+        if after_protocol_norm.starts_with(NAMED_PIPE_PREFIX) {
             return Self::parse_named_pipe(after_protocol_orig, &mut result);
         }
 
@@ -126,7 +129,76 @@ impl ParsedDataSource {
         Ok(result)
     }
 
-    /// Parse protocol prefix (tcp:, np:, lpc:, admin:)
+    /// Parse protocol prefix from the data source string
+    ///
+    /// Extracts the optional protocol prefix (tcp:, np:, lpc:, admin:) from the beginning
+    /// of the data source string. The function intelligently distinguishes between protocol
+    /// prefixes and IPv6 addresses, which also contain colons.
+    ///
+    /// # ODBC Compatibility
+    ///
+    /// This implementation matches ODBC/SNI behavior for connection string parsing:
+    /// - Protocol prefixes are extracted using colon (`:`) delimiter
+    /// - IPv6 addresses are detected and not treated as protocol prefixes
+    /// - When a comma (`,`) is found later (in parse_parameter), TCP is automatically
+    ///   selected as the default protocol if no protocol prefix was specified
+    ///
+    /// # Protocol Detection Logic
+    ///
+    /// 1. Searches for the first colon (`:`) delimiter in the normalized string
+    /// 2. Checks if the string is an IPv6 address by detecting:
+    ///    - Double colon (`::`) patterns
+    ///    - Multiple colons (more than one)
+    /// 3. If not IPv6, validates the prefix against known protocols
+    /// 4. Stores the protocol in `result.protocol_name` if valid
+    ///
+    /// # Supported Protocols
+    ///
+    /// - `tcp` - TCP/IP protocol
+    /// - `np` - Named Pipes protocol
+    /// - `lpc` - Local Procedure Call (Shared Memory)
+    /// - `admin` - Dedicated Admin Connection (DAC)
+    ///
+    /// # Arguments
+    ///
+    /// * `original` - The original data source string (preserves case)
+    /// * `normalized` - The lowercase version for case-insensitive matching
+    /// * `result` - Mutable reference to store the extracted protocol name
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple of two string slices (normalized, original) representing
+    /// the remaining portion of the string after the protocol prefix is removed.
+    /// If no valid protocol is found, returns the input strings unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Valid protocol prefix
+    /// // Input: "tcp:myserver,1433"
+    /// // Extracts: protocol_name = "tcp"
+    /// // Returns: ("myserver,1433", "myserver,1433")
+    ///
+    /// // IPv6 address (not a protocol)
+    /// // Input: "::1"
+    /// // Extracts: nothing (IPv6 detected)
+    /// // Returns: ("::1", "::1")
+    ///
+    /// // IPv6 with port
+    /// // Input: "2001:db8::1,1433"
+    /// // Extracts: nothing (multiple colons = IPv6)
+    /// // Returns: ("2001:db8::1,1433", "2001:db8::1,1433")
+    ///
+    /// // No protocol specified
+    /// // Input: "myserver\instance"
+    /// // Extracts: nothing
+    /// // Returns: ("myserver\instance", "myserver\instance")
+    ///
+    /// // Invalid protocol ignored
+    /// // Input: "http:myserver"
+    /// // Extracts: nothing (http not in allowed list)
+    /// // Returns: ("http:myserver", "http:myserver")
+    /// ```
     fn parse_protocol<'a>(
         original: &'a str,
         normalized: &'a str,
@@ -160,7 +232,7 @@ impl ParsedDataSource {
     /// Parse named pipe path (\\server\pipe\...)
     fn parse_named_pipe(input: &str, result: &mut ParsedDataSource) -> TdsResult<ParsedDataSource> {
         // Named pipe format: \\server\pipe\...
-        if !input.starts_with("\\\\") {
+        if !input.starts_with(NAMED_PIPE_PREFIX) {
             return Err(Error::ProtocolError("Invalid named pipe path".to_string()));
         }
 
@@ -225,6 +297,34 @@ impl ParsedDataSource {
     }
 
     /// Parse protocol parameter (port for TCP)
+    ///
+    /// # ODBC Compatibility - Comma Detection
+    ///
+    /// This function implements ODBC/SNI behavior for comma (`,`) handling:
+    /// - When a comma is found, it indicates port separation: `<servername>,<port>`
+    /// - **Automatically defaults to TCP protocol** if no protocol prefix was specified
+    /// - Port takes priority over instance name (instance name is stripped if both present)
+    /// - Returns an error if a non-TCP protocol was explicitly specified with a comma
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Comma defaults to TCP (ODBC behavior)
+    /// // Input: "myserver,1433"
+    /// // Result: protocol_name = "tcp", protocol_parameter = "1433", server = "myserver"
+    ///
+    /// // Explicit protocol with comma
+    /// // Input: "tcp:myserver,1433"
+    /// // Result: protocol_name = "tcp", protocol_parameter = "1433", server = "myserver"
+    ///
+    /// // Port takes priority over instance
+    /// // Input: "myserver\instance,1433"
+    /// // Result: protocol_parameter = "1433", instance_name = "" (ignored)
+    ///
+    /// // Error: Non-TCP protocol with comma
+    /// // Input: "np:myserver,1433"
+    /// // Result: Error (port only valid for TCP)
+    /// ```
     fn parse_parameter<'a>(
         original: &'a str,
         normalized: &'a str,
@@ -234,7 +334,8 @@ impl ParsedDataSource {
         if let Some(comma_pos) = normalized.find(',') {
             let parameter = original[comma_pos + 1..].trim();
 
-            // If no protocol specified, default to TCP
+            // ODBC Compatibility: If no protocol specified, default to TCP
+            // This matches ODBC/SNI behavior where comma implies TCP connection
             if result.protocol_name.is_empty() {
                 result.protocol_name = "tcp".to_string();
             }
@@ -598,6 +699,64 @@ mod tests {
         // LPC with remote server should fail
         let result = ParsedDataSource::parse("lpc:remoteserver", false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_np_with_localhost() {
+        // Named Pipes protocol with localhost explicitly specified
+        // Note: server_name is resolved to actual computer name for np protocol
+        let parsed = ParsedDataSource::parse("np:localhost", false).unwrap();
+        assert_eq!(parsed.protocol_name, "np");
+        assert_eq!(parsed.original_server_name, "localhost");
+        assert!(parsed.is_local());
+        // server_name will be the actual computer name, not "localhost"
+        
+        // Named Pipes with dot (local) notation
+        let parsed = ParsedDataSource::parse("np:.", false).unwrap();
+        assert_eq!(parsed.protocol_name, "np");
+        assert_eq!(parsed.original_server_name, ".");
+        assert!(parsed.is_local());
+        // server_name resolved to computer name
+        
+        // Named Pipes with (local) notation
+        let parsed = ParsedDataSource::parse("np:(local)", false).unwrap();
+        assert_eq!(parsed.protocol_name, "np");
+        assert_eq!(parsed.original_server_name, "(local)");
+        assert!(parsed.is_local());
+        // server_name resolved to computer name
+    }
+
+    #[test]
+    fn test_lpc_shared_memory_local_variants() {
+        // Shared Memory (LPC) with localhost
+        // Note: server_name is resolved to actual computer name for lpc protocol
+        let parsed = ParsedDataSource::parse("lpc:localhost", false).unwrap();
+        assert_eq!(parsed.protocol_name, "lpc");
+        assert_eq!(parsed.original_server_name, "localhost");
+        assert!(parsed.is_local());
+        // server_name will be the actual computer name, not "localhost"
+        
+        // Shared Memory with dot notation
+        let parsed = ParsedDataSource::parse("lpc:.", false).unwrap();
+        assert_eq!(parsed.protocol_name, "lpc");
+        assert_eq!(parsed.original_server_name, ".");
+        assert!(parsed.is_local());
+        // server_name resolved to computer name
+        
+        // Shared Memory with (local) notation
+        let parsed = ParsedDataSource::parse("lpc:(local)", false).unwrap();
+        assert_eq!(parsed.protocol_name, "lpc");
+        assert_eq!(parsed.original_server_name, "(local)");
+        assert!(parsed.is_local());
+        // server_name resolved to computer name
+        
+        // Shared Memory with instance name
+        let parsed = ParsedDataSource::parse("lpc:.\\SQLEXPRESS", false).unwrap();
+        assert_eq!(parsed.protocol_name, "lpc");
+        assert_eq!(parsed.original_server_name, ".");
+        assert_eq!(parsed.instance_name, "SQLEXPRESS");
+        assert!(parsed.is_local());
+        // server_name resolved to computer name
     }
 
     #[test]
