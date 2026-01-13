@@ -1560,9 +1560,9 @@ impl PythonRowAdapter {
                 // Convert elements to f32 with validation (reject NaN/Inf)
                 let mut values: Vec<f32> = Vec::with_capacity(seq_len);
                 for (idx, item) in py_list.iter().enumerate() {
-                    let as_f64 = item
-                        .extract::<f64>()
-                        .or_else(|_| item.extract::<i64>().map(|i| i as f64))
+                    let as_f32 = item
+                        .extract::<f32>()
+                        .or_else(|_| item.extract::<i32>().map(|i| i as f32))
                         .map_err(|e| {
                             Error::UsageError(format!(
                                 "VECTOR element conversion error at index {} in column '{}': {}",
@@ -1570,22 +1570,14 @@ impl PythonRowAdapter {
                             ))
                         })?;
 
-                    if !as_f64.is_finite() {
+                    if !as_f32.is_finite() {
                         return Err(Error::UsageError(format!(
-                            "VECTOR element at index {} in column '{}' is NaN or Infinity",
+                            "VECTOR element at index {} in column '{}' is NaN or Infinity when converting to Float32",
                             idx, target_meta.column_name
                         )));
                     }
 
-                    let real_value = as_f64 as f32;
-                    if !real_value.is_finite() {
-                        return Err(Error::UsageError(format!(
-                            "VECTOR element at index {} in column '{}' overflows/underflows when converted to f32",
-                            idx, target_meta.column_name
-                        )));
-                    }
-
-                    values.push(real_value);
+                    values.push(as_f32);
                 }
 
                 let vector = SqlVector::try_from_f32(values)?;
