@@ -85,7 +85,7 @@ pub enum SqlDbType {
 
     Json,
 
-    // SQL Server 2025+ types (future)
+    // SQL Server 2025+ types
     Vector,
 }
 
@@ -636,8 +636,52 @@ impl BulkCopyColumnMetadata {
             SqlDbType::Udt => format!("varbinary({})", self.length),
             SqlDbType::Variant => "sql_variant".to_string(),
             SqlDbType::Json => "nvarchar(max)".to_string(),
-            SqlDbType::Vector => format!("vector({})", self.length),
+            SqlDbType::Vector => {
+                let dims = self.vector_dimensions().unwrap_or_else(|e| {
+                    panic!(
+                        "Invalid VECTOR metadata for column '{}': {}",
+                        self.column_name, e
+                    )
+                });
+                format!("vector({})", dims)
+            }
         }
+    }
+
+    /// Compute VECTOR dimensions from total `length` and base type encoded in `scale`.
+    ///
+    /// Returns an error if the column is not a VECTOR, if `length` is smaller
+    /// than the header size, or if the payload is not divisible by the element size.
+    pub fn vector_dimensions(&self) -> crate::core::TdsResult<usize> {
+        use crate::datatypes::sqldatatypes::{VECTOR_HEADER_SIZE, VectorBaseType};
+
+        if self.sql_type != SqlDbType::Vector {
+            return Err(crate::error::Error::UsageError(format!(
+                "Column '{}' is not a VECTOR type",
+                self.column_name
+            )));
+        }
+
+        let base_type = VectorBaseType::try_from(self.scale)?;
+        let elem_size = base_type.element_size_bytes();
+        let length = self.length as usize;
+
+        if length < VECTOR_HEADER_SIZE {
+            return Err(crate::error::Error::UsageError(format!(
+                "Invalid VECTOR metadata length ({}). Must be >= header size {}.",
+                length, VECTOR_HEADER_SIZE
+            )));
+        }
+
+        let payload_bytes = length - VECTOR_HEADER_SIZE;
+        if !payload_bytes.is_multiple_of(elem_size) {
+            return Err(crate::error::Error::UsageError(format!(
+                "Invalid VECTOR metadata length: payload {} not divisible by element size {}",
+                payload_bytes, elem_size
+            )));
+        }
+
+        Ok(payload_bytes / elem_size)
     }
 }
 
@@ -749,6 +793,7 @@ impl From<&ColumnMetadata> for BulkCopyColumnMetadata {
             TdsDataType::Json => SqlDbType::Json,
             TdsDataType::Udt => SqlDbType::Udt,
             TdsDataType::SsVariant => SqlDbType::Variant,
+            TdsDataType::Vector => SqlDbType::Vector,
             _ => SqlDbType::VarChar, // Default fallback
         };
 

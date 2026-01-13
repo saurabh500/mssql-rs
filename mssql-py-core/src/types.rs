@@ -589,6 +589,9 @@ fn validate_type_compatibility(
         // JSON
         (ColumnValues::Json(_), SqlDbType::Json) => true,
 
+        // Vector
+        (ColumnValues::Vector(_), SqlDbType::Vector) => true,
+
         // NULL is always compatible
         (ColumnValues::Null, _) => true,
 
