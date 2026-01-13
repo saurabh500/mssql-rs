@@ -27,7 +27,20 @@ pub struct ParsedDataSource {
     pub protocol_parameter: String,
     /// Alias used for connection caching (server\instance format)
     pub alias: String,
-    /// Whether this connection can use the connection cache
+    /// Whether this connection can use the connection cache (LastConnectCache in ODBC)
+    ///
+    /// Connection caching stores previously successful connection protocol details
+    /// (typically from SQL Browser/SSRP resolutions) to speed up subsequent connections.
+    /// Caching is disabled when sufficient connection information is already provided:
+    ///
+    /// - Port explicitly specified (e.g., `server,1433`)
+    /// - Named pipe path provided (e.g., `\\server\pipe\sql\query`)
+    /// - Parallel connect enabled (MultiSubnetFailover)
+    /// - Non-standard instance names
+    /// - LocalDB connections
+    ///
+    /// Caching is only useful for simple connection strings like `server\instance`
+    /// that require SSRP resolution to discover the port.
     pub can_use_cache: bool,
     /// Whether the instance name follows standard naming convention
     pub standard_instance_name: bool,
@@ -710,14 +723,14 @@ mod tests {
         assert_eq!(parsed.original_server_name, "localhost");
         assert!(parsed.is_local());
         // server_name will be the actual computer name, not "localhost"
-        
+
         // Named Pipes with dot (local) notation
         let parsed = ParsedDataSource::parse("np:.", false).unwrap();
         assert_eq!(parsed.protocol_name, "np");
         assert_eq!(parsed.original_server_name, ".");
         assert!(parsed.is_local());
         // server_name resolved to computer name
-        
+
         // Named Pipes with (local) notation
         let parsed = ParsedDataSource::parse("np:(local)", false).unwrap();
         assert_eq!(parsed.protocol_name, "np");
@@ -735,21 +748,21 @@ mod tests {
         assert_eq!(parsed.original_server_name, "localhost");
         assert!(parsed.is_local());
         // server_name will be the actual computer name, not "localhost"
-        
+
         // Shared Memory with dot notation
         let parsed = ParsedDataSource::parse("lpc:.", false).unwrap();
         assert_eq!(parsed.protocol_name, "lpc");
         assert_eq!(parsed.original_server_name, ".");
         assert!(parsed.is_local());
         // server_name resolved to computer name
-        
+
         // Shared Memory with (local) notation
         let parsed = ParsedDataSource::parse("lpc:(local)", false).unwrap();
         assert_eq!(parsed.protocol_name, "lpc");
         assert_eq!(parsed.original_server_name, "(local)");
         assert!(parsed.is_local());
         // server_name resolved to computer name
-        
+
         // Shared Memory with instance name
         let parsed = ParsedDataSource::parse("lpc:.\\SQLEXPRESS", false).unwrap();
         assert_eq!(parsed.protocol_name, "lpc");
