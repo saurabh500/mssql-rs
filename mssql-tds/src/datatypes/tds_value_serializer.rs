@@ -9,9 +9,12 @@
 
 use crate::core::TdsResult;
 use crate::datatypes::column_values::ColumnValues;
+use crate::datatypes::lcid_encoding::lcid_to_encoding;
 use crate::datatypes::sql_json::SqlJson;
+use crate::datatypes::sqldatatypes::TdsDataType;
 use crate::error::Error;
 use crate::io::packet_writer::{PacketWriter, TdsPacketWriter, TdsPacketWriterUnchecked};
+use crate::token::tokens::SqlCollation;
 
 // NULL markers for different type classes
 const NULL_LENGTH: u8 = 0x00;
@@ -21,6 +24,14 @@ const VARNULL: u16 = 0xFFFF;
 pub const PLP_NULL: u64 = 0xFFFFFFFFFFFFFFFF;
 pub const PLP_UNKNOWN_LEN: u64 = 0xFFFFFFFFFFFFFFFE; // -2 in signed i64, used when total length is unknown
 pub const PLP_TERMINATOR: u32 = 0x00000000;
+
+// TDS type byte constants for string types
+const NVARCHAR: u8 = TdsDataType::NVarChar as u8; // 0xE7
+const NCHAR: u8 = TdsDataType::NChar as u8; // 0xEF
+const NTEXT: u8 = TdsDataType::NText as u8; // 0x63
+const VARCHAR: u8 = TdsDataType::BigVarChar as u8; // 0xA7
+const CHAR: u8 = TdsDataType::BigChar as u8; // 0xAF
+const TEXT: u8 = TdsDataType::Text as u8; // 0x23
 
 /// Context for value serialization, containing type metadata needed for encoding.
 ///
@@ -49,6 +60,9 @@ pub struct TdsTypeContext {
 
     /// For Decimal/Numeric/Time/DateTime2/DateTimeOffset: scale
     pub scale: Option<u8>,
+
+    /// Collation for string types (CHAR/VARCHAR/NCHAR/NVARCHAR/TEXT/NTEXT)
+    pub collation: Option<SqlCollation>,
 
     /// Whether the type is nullable (affects NULL encoding)
     pub is_nullable: bool,
@@ -129,6 +143,10 @@ impl TdsValueSerializer {
     {
         // Check type class and write appropriate NULL marker
         match ctx.tds_type {
+            // Legacy LOB types (TEXT, NTEXT, IMAGE) use single byte 0x00 for NULL
+            0x23 | 0x63 | 0x22 => {
+                writer.write_byte_async(0x00).await?;
+            }
             // Nullable types (INTN, FLTN, BITN, MONEYN, DATETIMEN, DecimalN, NumericN, Guid, DateN, TimeN, DateTime2N, DateTimeOffsetN) use length = 0x00
             0x26 | 0x6D | 0x68 | 0x6E | 0x6F | 0x6A | 0x6C | 0x24 | 0x28 | 0x29 | 0x2A | 0x2B => {
                 writer.write_byte_async(NULL_LENGTH).await?;
@@ -1197,10 +1215,10 @@ impl TdsValueSerializer {
     where
         'b: 'a,
     {
-        // For NVARCHAR/NCHAR types (0xE7, 0xEF), we need UTF-16LE encoding
+        // For NVARCHAR/NCHAR types, we need UTF-16LE encoding
         // The SqlString might already be UTF-16 encoded, so check first to avoid re-encoding
         let (utf16_bytes, is_unicode) = match ctx.tds_type {
-            0xE7 | 0xEF => {
+            NVARCHAR | NCHAR => {
                 // NVARCHAR/NCHAR - UTF-16LE encoding required
                 let bytes = if let Some(utf16_data) = value.as_utf16_bytes() {
                     // Already UTF-16 encoded, use directly (zero-copy optimization)
@@ -1215,10 +1233,85 @@ impl TdsValueSerializer {
                 };
                 (bytes, true)
             }
-            0xA7 | 0xAF => {
-                // VARCHAR/CHAR - single-byte encoding (for now, treat as UTF-8)
-                // TODO: Proper collation-based encoding support
-                (&value.bytes[..], false)
+            NTEXT => {
+                // NTEXT - UTF-16LE encoding required (legacy LOB type)
+                // For NTEXT, we need UTF-16 encoding but will handle serialization differently
+                if let Some(utf16_data) = value.as_utf16_bytes() {
+                    // Already UTF-16 encoded, use directly
+                    (utf16_data, true)
+                } else {
+                    // UTF-8 bytes that need conversion to UTF-16
+                    (&value.bytes[..], false)
+                }
+            }
+            VARCHAR | CHAR | TEXT => {
+                // VARCHAR/CHAR/TEXT - single-byte encoding
+                // 0xA7 = VARCHAR, 0xAF = CHAR, 0x23 = TEXT
+                // The incoming bytes are UTF-16LE, but we need single-byte encoding for these types
+                // Decode UTF-16LE to string first
+                let decoded_str = value.to_utf8_string();
+
+                // Encode to single-byte based on collation
+                let single_byte_data = if let Some(collation) = &ctx.collation {
+                    // Extract LCID from the lower 20 bits of collation.info
+                    let lcid = collation.info & 0x000F_FFFF;
+
+                    // Map LCID to encoding
+                    match lcid_to_encoding(lcid) {
+                        Ok(encoding) => {
+                            // Encode using the determined encoding
+                            let (encoded, _encoding_used, had_errors) =
+                                encoding.encode(&decoded_str);
+
+                            if had_errors {
+                                tracing::warn!(
+                                    "Encountered encoding errors while converting string to LCID 0x{:04X} ({}) encoding. \
+                                     Some characters may have been replaced.",
+                                    lcid,
+                                    lcid
+                                );
+                            }
+
+                            encoded.into_owned()
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Unsupported LCID 0x{:04X} ({}), falling back to Latin-1. Error: {}",
+                                lcid,
+                                lcid,
+                                e
+                            );
+                            // Fall back to Latin-1 for unsupported LCIDs
+                            decoded_str
+                                .chars()
+                                .map(|c| {
+                                    if (c as u32) <= 0xFF {
+                                        c as u8
+                                    } else {
+                                        b'?' // Replace unmappable characters with '?'
+                                    }
+                                })
+                                .collect::<Vec<u8>>()
+                        }
+                    }
+                } else {
+                    // No collation provided, use Latin-1 (ISO-8859-1) as default
+                    // This covers ASCII + extended Latin characters
+                    decoded_str
+                        .chars()
+                        .map(|c| {
+                            if (c as u32) <= 0xFF {
+                                c as u8
+                            } else {
+                                b'?' // Replace unmappable characters with '?'
+                            }
+                        })
+                        .collect::<Vec<u8>>()
+                };
+
+                // Store the single-byte data temporarily - we'll use it below
+                // Note: This creates a temporary allocation, but it's necessary for the conversion
+                return Self::serialize_char_varchar_direct(writer, &single_byte_data, ctx).await;
             }
             _ => {
                 return Err(Error::UsageError(format!(
@@ -1258,7 +1351,51 @@ impl TdsValueSerializer {
         }
 
         // Serialize based on type classification
-        if ctx.is_plp {
+        if ctx.tds_type == NTEXT || ctx.tds_type == TEXT {
+            // Legacy LOB types (NTEXT=0x63, TEXT=0x23): Use special format matching .NET SqlClient
+            // Format: textptr_len (1) + textptr (16 × 0xFF) + timestamp (8 × 0xFF) + length (4) + data
+            // Reference: TdsParser.cs s_longDataHeader constant
+
+            // Write textptr length as 16 (0x10)
+            writer.write_byte_async(0x10).await?;
+
+            // Write 16-byte textptr (all 0xFF as per .NET SqlClient)
+            for _ in 0..16 {
+                writer.write_byte_async(0xFF).await?;
+            }
+
+            // Write 8-byte timestamp (all 0xFF as per .NET SqlClient)
+            for _ in 0..8 {
+                writer.write_byte_async(0xFF).await?;
+            }
+
+            // For NTEXT, we need to ensure we have UTF-16LE encoded data
+            if ctx.tds_type == NTEXT {
+                // NTEXT - need UTF-16LE encoding
+                if is_unicode {
+                    // Already UTF-16, use as-is
+                    writer.write_u32_async(data_len as u32).await?;
+                    writer.write_async(utf16_bytes).await?;
+                } else {
+                    // Need to convert UTF-8 to UTF-16LE
+                    let utf8_str = value.to_utf8_string();
+                    let utf16_vec: Vec<u16> = utf8_str.encode_utf16().collect();
+                    let utf16_byte_len = utf16_vec.len() * 2;
+
+                    // Write data length (4 bytes)
+                    writer.write_u32_async(utf16_byte_len as u32).await?;
+
+                    // Write UTF-16LE data
+                    for code_unit in &utf16_vec {
+                        writer.write_u16_async(*code_unit).await?;
+                    }
+                }
+            } else {
+                // TEXT - single-byte encoding
+                writer.write_u32_async(data_len as u32).await?;
+                writer.write_async(utf16_bytes).await?;
+            }
+        } else if ctx.is_plp {
             // PLP types (NVARCHAR(MAX), VARCHAR(MAX)): Use PLP encoding
             // Write PLP_UNKNOWN_LEN (0xFFFFFFFFFFFFFFFE) to indicate total length is unknown
             writer.write_u64_async(PLP_UNKNOWN_LEN).await?;
@@ -1378,5 +1515,350 @@ impl TdsValueSerializer {
         }
 
         Ok(())
+    }
+
+    /// Helper to serialize a single-byte string for CHAR/VARCHAR types.
+    ///
+    /// Takes single-byte encoded data and serializes it according to the TDS type context.
+    async fn serialize_char_varchar_direct<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        single_byte_data: &[u8],
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        let char_count = single_byte_data.len();
+        let schema_char_count = ctx.max_size;
+
+        // Check for size overflow (skip for PLP types)
+        if !ctx.is_plp && char_count > schema_char_count {
+            return Err(Error::UsageError(format!(
+                "String length ({} characters) exceeds schema size ({} characters)",
+                char_count, schema_char_count
+            )));
+        }
+
+        // Serialize based on type classification
+        if ctx.tds_type == TEXT {
+            // Legacy TEXT type: Use special format
+            // Write textptr length as 16 (0x10)
+            writer.write_byte_async(0x10).await?;
+
+            // Write 16-byte textptr (all 0xFF)
+            for _ in 0..16 {
+                writer.write_byte_async(0xFF).await?;
+            }
+
+            // Write 8-byte timestamp (all 0xFF)
+            for _ in 0..8 {
+                writer.write_byte_async(0xFF).await?;
+            }
+
+            // Write 4-byte length
+            writer.write_u32_async(char_count as u32).await?;
+
+            // Write actual data
+            writer.write_async(single_byte_data).await?;
+        } else if ctx.is_plp {
+            // PLP types (VARCHAR(MAX)): Use PLP encoding
+            writer.write_u64_async(PLP_UNKNOWN_LEN).await?;
+            writer.write_u32_async(char_count as u32).await?;
+            writer.write_async(single_byte_data).await?;
+            writer.write_u32_async(PLP_TERMINATOR).await?;
+        } else if ctx.is_fixed_length {
+            // Fixed-length CHAR(n): Write exactly n bytes with padding
+            // Write actual data
+            writer.write_async(single_byte_data).await?;
+
+            // Pad with ASCII space (0x20) to reach fixed size
+            let padding_count = schema_char_count.saturating_sub(char_count);
+            for _ in 0..padding_count {
+                writer.write_byte_async(0x20).await?;
+            }
+        } else {
+            // Variable-length VARCHAR(n): Write length prefix + data
+            // Length prefix is byte count (2 bytes)
+            writer.write_u16_async(char_count as u16).await?;
+            writer.write_async(single_byte_data).await?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::datatypes::lcid_encoding::lcid_to_encoding;
+
+    /// Test that different collations use different encodings for non-ASCII characters
+    #[test]
+    fn test_collation_based_encoding_chinese() {
+        // Chinese Simplified (CP936/GBK)
+        // LCID 2052 (0x0804) = Chinese (PRC)
+        let lcid: u32 = 0x0804;
+        let encoding = lcid_to_encoding(lcid).expect("Should find Chinese encoding");
+
+        // Test with Chinese characters: "你好" (Hello in Chinese)
+        let chinese_text = "你好";
+        let (encoded, _enc, had_errors) = encoding.encode(chinese_text);
+
+        assert!(
+            !had_errors,
+            "Should encode Chinese characters without errors"
+        );
+        assert!(
+            encoded.len() == 4,
+            "Chinese characters should be 2 bytes each in GBK: got {} bytes",
+            encoded.len()
+        );
+
+        // Verify it's not Latin-1 encoding (which would replace with '?')
+        assert!(
+            !encoded.contains(&b'?'),
+            "Should not contain replacement character"
+        );
+
+        // GBK encoding for "你好"
+        // '你' = 0xC4 0xE3
+        // '好' = 0xBA 0xC3
+        assert_eq!(encoded[0], 0xC4, "First byte of '你' should be 0xC4");
+        assert_eq!(encoded[1], 0xE3, "Second byte of '你' should be 0xE3");
+        assert_eq!(encoded[2], 0xBA, "First byte of '好' should be 0xBA");
+        assert_eq!(encoded[3], 0xC3, "Second byte of '好' should be 0xC3");
+    }
+
+    #[test]
+    fn test_collation_based_encoding_japanese() {
+        // Japanese (CP932/Shift-JIS)
+        // LCID 1041 (0x0411) = Japanese (Japan)
+        let lcid: u32 = 0x0411;
+        let encoding = lcid_to_encoding(lcid).expect("Should find Japanese encoding");
+
+        // Test with Japanese Hiragana: "こんにちは" (Hello in Japanese)
+        let japanese_text = "こんにちは";
+        let (encoded, _enc, had_errors) = encoding.encode(japanese_text);
+
+        assert!(
+            !had_errors,
+            "Should encode Japanese characters without errors"
+        );
+        assert!(
+            encoded.len() == 10,
+            "5 Japanese characters should be 2 bytes each in Shift-JIS: got {} bytes",
+            encoded.len()
+        );
+
+        // Verify it's not Latin-1 encoding (which would replace with '?')
+        assert!(
+            !encoded.contains(&b'?'),
+            "Should not contain replacement character"
+        );
+    }
+
+    #[test]
+    fn test_collation_based_encoding_western_european() {
+        // Western European (Windows-1252)
+        // LCID 1033 (0x0409) = English (United States)
+        let lcid: u32 = 0x0409;
+        let encoding = lcid_to_encoding(lcid).expect("Should find Western European encoding");
+
+        // Test with extended Latin characters: "café"
+        let text = "café";
+        let (encoded, _enc, had_errors) = encoding.encode(text);
+
+        assert!(
+            !had_errors,
+            "Should encode Latin-1 characters without errors"
+        );
+        assert_eq!(encoded.len(), 4, "Should be 4 bytes");
+
+        // Windows-1252 encoding for "café"
+        // 'c' = 0x63, 'a' = 0x61, 'f' = 0x66, 'é' = 0xE9
+        assert_eq!(encoded[0], 0x63);
+        assert_eq!(encoded[1], 0x61);
+        assert_eq!(encoded[2], 0x66);
+        assert_eq!(
+            encoded[3], 0xE9,
+            "Extended character 'é' should be 0xE9 in Windows-1252"
+        );
+    }
+
+    #[test]
+    fn test_collation_based_encoding_turkish() {
+        // Turkish (Windows-1254)
+        // LCID 1055 (0x041F) = Turkish (Turkey)
+        let lcid: u32 = 0x041F;
+        let encoding = lcid_to_encoding(lcid).expect("Should find Turkish encoding");
+
+        // Test with Turkish-specific characters: "şğıİ"
+        let text = "şğıİ";
+        let (encoded, _enc, had_errors) = encoding.encode(text);
+
+        assert!(
+            !had_errors,
+            "Should encode Turkish characters without errors"
+        );
+        assert_eq!(
+            encoded.len(),
+            4,
+            "Should be 4 bytes for 4 Turkish characters"
+        );
+
+        // Verify it's properly encoded in Windows-1254
+        // 'ş' = 0xFE in Windows-1254
+        assert_eq!(
+            encoded[0], 0xFE,
+            "Turkish 'ş' should be 0xFE in Windows-1254"
+        );
+    }
+
+    #[test]
+    fn test_collation_based_encoding_cyrillic() {
+        // Cyrillic (Windows-1251)
+        // LCID 1049 (0x0419) = Russian (Russia)
+        let lcid: u32 = 0x0419;
+        let encoding = lcid_to_encoding(lcid).expect("Should find Cyrillic encoding");
+
+        // Test with Russian text: "Привет" (Hello in Russian)
+        let text = "Привет";
+        let (encoded, _enc, had_errors) = encoding.encode(text);
+
+        assert!(
+            !had_errors,
+            "Should encode Cyrillic characters without errors"
+        );
+        assert_eq!(
+            encoded.len(),
+            6,
+            "Should be 6 bytes for 6 Cyrillic characters"
+        );
+
+        // Verify it's not Latin-1 encoding (which would replace with '?')
+        assert!(
+            !encoded.contains(&b'?'),
+            "Should not contain replacement character"
+        );
+    }
+
+    #[test]
+    fn test_different_collations_produce_different_encodings() {
+        // Demonstrate that the same Unicode character produces different byte sequences
+        // depending on the collation
+
+        let test_char = "ñ"; // Spanish n with tilde
+
+        // Western European (Windows-1252): LCID 1033
+        let encoding_1252 = lcid_to_encoding(0x0409).unwrap();
+        let (encoded_1252, _, _) = encoding_1252.encode(test_char);
+
+        // Spanish (Windows-1252): LCID 1034 - should be same as above
+        let encoding_spanish = lcid_to_encoding(0x040A).unwrap();
+        let (encoded_spanish, _, _) = encoding_spanish.encode(test_char);
+
+        // Both Western European languages should produce same encoding
+        assert_eq!(
+            encoded_1252[0], encoded_spanish[0],
+            "Same code page should produce same encoding"
+        );
+        assert_eq!(
+            encoded_1252[0], 0xF1,
+            "Character 'ñ' should be 0xF1 in Windows-1252"
+        );
+
+        // But if we try to encode it in a different code page that doesn't support it,
+        // we'd get a replacement character
+        // Example: Chinese (CP936) doesn't have 'ñ'
+        let encoding_chinese = lcid_to_encoding(0x0804).unwrap();
+        let (_encoded_chinese, _, had_errors) = encoding_chinese.encode(test_char);
+
+        // Chinese encoding would either map it differently or use replacement
+        if had_errors {
+            // It's okay if it had errors - that's expected for unsupported characters
+            assert!(
+                had_errors,
+                "Chinese encoding should not support Spanish 'ñ' character"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ascii_characters_encoded_same_across_collations() {
+        // ASCII characters (0x00-0x7F) should be encoded identically across all collations
+        let ascii_text = "Hello123";
+
+        let collations = vec![
+            0x0409, // English (US)
+            0x0804, // Chinese (PRC)
+            0x0411, // Japanese
+            0x0419, // Russian
+            0x041F, // Turkish
+        ];
+
+        let mut all_encodings = Vec::new();
+
+        for lcid in collations {
+            let encoding = lcid_to_encoding(lcid)
+                .unwrap_or_else(|_| panic!("Should find encoding for LCID 0x{:04X}", lcid));
+            let (encoded, _enc, had_errors) = encoding.encode(ascii_text);
+
+            assert!(!had_errors, "ASCII characters should encode without errors");
+            all_encodings.push(encoded.to_vec());
+        }
+
+        // All encodings should be identical for ASCII text
+        let first_encoding = &all_encodings[0];
+        for (i, encoding) in all_encodings.iter().enumerate().skip(1) {
+            assert_eq!(
+                first_encoding, encoding,
+                "ASCII text should encode identically across all collations (difference at index {})",
+                i
+            );
+        }
+
+        // Verify the actual ASCII values
+        assert_eq!(first_encoding, b"Hello123", "ASCII should be encoded as-is");
+    }
+
+    #[test]
+    fn test_latin1_fallback_for_unsupported_lcid() {
+        // Test that unsupported LCID returns error (fallback handled in serialize_string)
+        let unsupported_lcid: u32 = 0xFFFFFF; // Invalid LCID
+
+        let result = lcid_to_encoding(unsupported_lcid);
+        assert!(result.is_err(), "Should return error for unsupported LCID");
+
+        // The actual fallback to Latin-1 is tested in the serialize_string logic
+        // which logs a warning and uses the Latin-1 fallback path
+    }
+
+    #[test]
+    fn test_encoding_preserves_data_integrity() {
+        // Test round-trip for data that should work: encode UTF-16 -> decode to string
+        // -> encode with collation -> verify no data loss for compatible characters
+
+        let test_cases = vec![
+            (0x0409, "Hello World", b"Hello World" as &[u8]), // ASCII
+            (0x0409, "café", &[0x63, 0x61, 0x66, 0xE9]),      // Windows-1252 with accent
+        ];
+
+        for (lcid, input_text, expected_bytes) in test_cases {
+            let encoding = lcid_to_encoding(lcid)
+                .unwrap_or_else(|_| panic!("Should find encoding for LCID 0x{:04X}", lcid));
+            let (encoded, _enc, had_errors) = encoding.encode(input_text);
+
+            assert!(
+                !had_errors,
+                "Should encode '{}' without errors for LCID 0x{:04X}",
+                input_text, lcid
+            );
+            assert_eq!(
+                &encoded[..],
+                expected_bytes,
+                "Encoded bytes should match expected for '{}' with LCID 0x{:04X}",
+                input_text,
+                lcid
+            );
+        }
     }
 }

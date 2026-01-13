@@ -811,7 +811,10 @@ where
 }
 
 pub fn is_unicode_type(data_type: TdsDataType) -> bool {
-    matches!(data_type, TdsDataType::NVarChar | TdsDataType::NChar)
+    matches!(
+        data_type,
+        TdsDataType::NVarChar | TdsDataType::NChar | TdsDataType::NText
+    )
 }
 
 // Reads the variable length data type from the reader and returns the length of the data.

@@ -45,11 +45,14 @@ mod query_result_reads {
                 NumericColumn NUMERIC(18,2),
                 FloatColumn FLOAT,
                 RealColumn REAL,
+                NCharColumn NCHAR(50),
+                NTextColumn NTEXT
             );
 
             INSERT INTO #AllDataTypes (
                 TinyIntColumn, SmallIntColumn, IntColumn, BigIntColumn, BitColumn,
-                DecimalColumn, NumericColumn, FloatColumn, RealColumn
+                DecimalColumn, NumericColumn, FloatColumn, RealColumn,
+                NCharColumn, NTextColumn
             )
             VALUES (
                 CAST(255 AS TINYINT), -- TinyIntColumn
@@ -60,7 +63,9 @@ mod query_result_reads {
                 CAST(272.01 AS DECIMAL(18, 2)), --DecimalColumn
                 CAST(12345678901234.98 AS NUMERIC(18,2)), -- NumericColumn
                 CAST(1234.22231 AS FLOAT), -- FloatColumn
-                CAST(11.11 AS REAL) -- RealColumn
+                CAST(11.11 AS REAL), -- RealColumn
+                N'Hello 世界 🌍', -- NCharColumn with Unicode
+                CAST(N'NTEXT data with Unicode: Привет мир' AS NTEXT) -- NTextColumn
             ),
             (
                 CAST(128 AS TINYINT), -- TinyIntColumn
@@ -71,7 +76,9 @@ mod query_result_reads {
                 CAST(19.01 AS DECIMAL(18, 2)), --DecimalColumn
                 CAST(18.98 AS NUMERIC(18,2)), -- NumericColumn
                 CAST(100.22231 AS FLOAT), -- FloatColumn
-                CAST(5.11 AS REAL) -- RealColumn
+                CAST(5.11 AS REAL), -- RealColumn
+                N'', -- NCharColumn with empty string
+                CAST(N'' AS NTEXT) -- NTextColumn with empty string (tests empty string fix)
             );
 
             select * from #AllDataTypes;"
@@ -79,6 +86,146 @@ mod query_result_reads {
             &expected,
         )
         .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_ntext_and_nchar_types() {
+        // Dedicated test for NTEXT and NCHAR with edge cases including:
+        // - Empty strings (tests the decoder fix for textptr_len > 0 but data_length == 0)
+        // - Unicode characters (tests UTF-16LE encoding)
+        // - NULL values
+        // - Large text for NTEXT
+        let expected = [
+            ExpectedQueryResultType::Update(0),
+            ExpectedQueryResultType::Update(5),
+            ExpectedQueryResultType::Result(5),
+        ];
+        connect_query_and_validate(
+            "
+            CREATE TABLE #NTextNCharTest (
+                id INT PRIMARY KEY,
+                nchar_col NCHAR(50),
+                ntext_col NTEXT,
+                description VARCHAR(100)
+            );
+
+            INSERT INTO #NTextNCharTest (id, nchar_col, ntext_col, description)
+            VALUES 
+                (1, N'Hello 世界', CAST(N'NTEXT with Unicode: Привет мир 🌍' AS NTEXT), 'Unicode test'),
+                (2, N'', CAST(N'' AS NTEXT), 'Empty string test'),
+                (3, NULL, NULL, 'NULL test'),
+                (4, N'Spaces   ', CAST(N'Trailing spaces   ' AS NTEXT), 'Whitespace test'),
+                (5, N'emoji 🚀', CAST(N'Long NTEXT: ' + REPLICATE(N'A', 1000) AS NTEXT), 'Large text test');
+
+            SELECT id, nchar_col, ntext_col, description FROM #NTextNCharTest ORDER BY id;"
+                .to_string(),
+            &expected,
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_ntext_nchar_values_validation() {
+        // Test that validates the actual values read from NTEXT and NCHAR columns
+        // This ensures proper UTF-16LE decoding and empty string handling
+        let context = create_context();
+        let mut connection = begin_connection(context).await;
+
+        connection
+            .execute(
+                "
+                CREATE TABLE #NTextValidation (
+                    id INT PRIMARY KEY,
+                    nchar_val NCHAR(20),
+                    ntext_val NTEXT
+                );
+
+                INSERT INTO #NTextValidation (id, nchar_val, ntext_val)
+                VALUES 
+                    (1, N'Test', CAST(N'NTEXT Value' AS NTEXT)),
+                    (2, N'', CAST(N'' AS NTEXT)),
+                    (3, N'Unicode 世界', CAST(N'Мир 🌍' AS NTEXT));
+
+                SELECT id, nchar_val, ntext_val FROM #NTextValidation ORDER BY id;"
+                    .to_string(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Collect all result sets
+        let mut all_rows = Vec::new();
+        loop {
+            if let Some(resultset) = connection.get_current_resultset() {
+                while let Some(row) = resultset.next_row().await.unwrap() {
+                    all_rows.push(row);
+                }
+            }
+            if !connection.move_to_next().await.unwrap() {
+                break;
+            }
+        }
+
+        // Should have 3 rows from the SELECT
+        assert_eq!(all_rows.len(), 3, "Should have 3 rows");
+
+        // Row 1: Regular text
+        if let ColumnValues::Int(id) = &all_rows[0][0] {
+            assert_eq!(*id, 1);
+        }
+        if let ColumnValues::String(nchar_val) = &all_rows[0][1] {
+            let s = nchar_val.to_utf8_string();
+            assert!(
+                s.starts_with("Test"),
+                "NCHAR should start with 'Test', got: '{}'",
+                s
+            );
+        }
+        if let ColumnValues::String(ntext_val) = &all_rows[0][2] {
+            assert_eq!(ntext_val.to_utf8_string(), "NTEXT Value");
+        }
+
+        // Row 2: Empty strings (tests the decoder fix)
+        if let ColumnValues::Int(id) = &all_rows[1][0] {
+            assert_eq!(*id, 2);
+        }
+        if let ColumnValues::String(nchar_val) = &all_rows[1][1] {
+            let s = nchar_val.to_utf8_string();
+            // NCHAR pads with spaces, so empty string becomes spaces
+            assert!(
+                s.chars().all(|c| c.is_whitespace() || c == '\0'),
+                "NCHAR empty should be whitespace/null, got: '{}'",
+                s
+            );
+        }
+        if let ColumnValues::String(ntext_val) = &all_rows[1][2] {
+            // NTEXT empty string should be truly empty (the fix we made)
+            assert_eq!(
+                ntext_val.to_utf8_string(),
+                "",
+                "NTEXT empty string should be empty, not NULL"
+            );
+        }
+
+        // Row 3: Unicode text
+        if let ColumnValues::Int(id) = &all_rows[2][0] {
+            assert_eq!(*id, 3);
+        }
+        if let ColumnValues::String(nchar_val) = &all_rows[2][1] {
+            let s = nchar_val.to_utf8_string();
+            assert!(
+                s.contains("Unicode 世界"),
+                "NCHAR should contain Unicode, got: '{}'",
+                s
+            );
+        }
+        if let ColumnValues::String(ntext_val) = &all_rows[2][2] {
+            let s = ntext_val.to_utf8_string();
+            assert_eq!(s, "Мир 🌍", "NTEXT should contain Cyrillic and emoji");
+        }
+
+        connection.close_query().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

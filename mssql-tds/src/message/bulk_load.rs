@@ -151,6 +151,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
                 } else {
                     None
                 },
+                collation: col_meta.collation,
                 is_nullable: col_meta.is_nullable,
             };
             self.column_contexts.push(ctx);
@@ -568,6 +569,42 @@ impl<'a> StreamingBulkLoadWriter<'a> {
                     self.packet_writer
                         .write_byte_async(self.default_collation.sort_id)
                         .await?;
+                }
+            }
+
+            // TEXT/NTEXT/IMAGE (Legacy LOB types) - length (4 bytes) + collation (5 bytes for text types) + table parts (1 byte)
+            x if x == TdsDataType::Text as u8
+                || x == TdsDataType::NText as u8
+                || x == TdsDataType::Image as u8 => {
+                // Write length as 4-byte integer (max length for legacy LOB types)
+                // For TEXT/NTEXT/IMAGE, use 0x7FFFFFFE (2147483646) as per TDS spec
+                self.packet_writer.write_u32_async(0x7FFFFFFE).await?;
+
+                // TEXT and NTEXT require collation, IMAGE does not
+                if x == TdsDataType::Text as u8 || x == TdsDataType::NText as u8 {
+                    if let Some(collation) = col_meta.collation {
+                        self.packet_writer.write_u32_async(collation.info).await?;
+                        self.packet_writer
+                            .write_byte_async(collation.sort_id)
+                            .await?;
+                    } else {
+                        // Use connection's default collation
+                        self.packet_writer
+                            .write_u32_async(self.default_collation.info)
+                            .await?;
+                        self.packet_writer
+                            .write_byte_async(self.default_collation.sort_id)
+                            .await?;
+                    }
+                }
+
+                // For legacy LOB types, write table name
+                let table_name_utf16: Vec<u16> = self.table_name.encode_utf16().collect();
+                // Table name length as SHORT (2 bytes) - this is the character count
+                self.packet_writer.write_u16_async(table_name_utf16.len() as u16).await?;
+                // Table name as UTF-16 string
+                for c in table_name_utf16 {
+                    self.packet_writer.write_u16_async(c).await?;
                 }
             }
 
