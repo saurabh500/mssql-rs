@@ -385,7 +385,7 @@ impl PyCoreCursor {
                 )
             });
 
-                // Execute bulk copy with zero-copy streaming
+            // Execute bulk copy with zero-copy streaming
             info!("bulkcopy: Calling write_to_server_zerocopy");
             let bulk_result = bulk_copy
                 .write_to_server_zerocopy(row_adapters)
@@ -536,9 +536,9 @@ impl PyCoreCursor {
                 }
                 // Fallback to string if datetime conversion fails
                 format!("{:?}", dt)
-                .into_pyobject(py)
-                .unwrap()
-                .to_owned()
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
                     .into_any()
             }
             ColumnValues::SmallDateTime(dt) => {
@@ -580,9 +580,9 @@ impl PyCoreCursor {
                 }
                 // Fallback to string if datetime conversion fails
                 format!("{:?}", dt)
-                .into_pyobject(py)
-                .unwrap()
-                .to_owned()
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
                     .into_any()
             }
             ColumnValues::Money(m) => {
@@ -642,9 +642,9 @@ impl PyCoreCursor {
                 }
                 // Fallback to string if date conversion fails
                 format!("{:?}", col_val)
-                .into_pyobject(py)
-                .unwrap()
-                .to_owned()
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
                     .into_any()
             }
             ColumnValues::Time(sql_time) => {
@@ -680,9 +680,9 @@ impl PyCoreCursor {
                 }
                 // Fallback to string if time conversion fails
                 format!("{:?}", col_val)
-                .into_pyobject(py)
-                .unwrap()
-                .to_owned()
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
                     .into_any()
             }
             ColumnValues::DateTime2(dt2) => {
