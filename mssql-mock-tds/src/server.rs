@@ -5,16 +5,18 @@
 
 use crate::protocol::{
     PACKET_HEADER_SIZE, PacketHeader, PacketType, ProtocolError, build_done_token,
-    build_error_response, build_login_ack, build_prelogin_response, build_query_result,
-    parse_sql_batch,
+    build_error_response, build_login_ack, build_prelogin_response,
+    build_prelogin_response_with_encryption, build_query_result, parse_sql_batch,
 };
 use crate::query_response::QueryRegistry;
 use bytes::BytesMut;
+use native_tls::Identity;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
+use tokio_native_tls::{TlsAcceptor, TlsStream};
 use tracing::{debug, error, info, warn};
 
 /// Mock TDS Server
@@ -22,20 +24,44 @@ pub struct MockTdsServer {
     listener: TcpListener,
     local_addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
+    tls_acceptor: Option<TlsAcceptor>,
 }
 
 impl MockTdsServer {
-    /// Create a new mock TDS server
+    /// Create a new mock TDS server without TLS
     pub async fn new(addr: &str) -> Result<Self, std::io::Error> {
+        Self::new_with_tls(addr, None).await
+    }
+
+    /// Create a new mock TDS server with optional TLS support
+    pub async fn new_with_tls(
+        addr: &str,
+        identity: Option<Identity>,
+    ) -> Result<Self, std::io::Error> {
         let listener = TcpListener::bind(addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!("Mock TDS Server listening on {}", local_addr);
+        let tls_acceptor = identity.map(|id| {
+            let acceptor = native_tls::TlsAcceptor::builder(id)
+                .build()
+                .expect("Failed to build TLS acceptor");
+            TlsAcceptor::from(acceptor)
+        });
+
+        if tls_acceptor.is_some() {
+            info!(
+                "Mock TDS Server listening on {} with TLS enabled",
+                local_addr
+            );
+        } else {
+            info!("Mock TDS Server listening on {} (no TLS)", local_addr);
+        }
 
         Ok(Self {
             listener,
             local_addr,
             query_registry: Arc::new(Mutex::new(QueryRegistry::new())),
+            tls_acceptor,
         })
     }
 
@@ -53,16 +79,21 @@ impl MockTdsServer {
     pub async fn run(self) -> Result<(), std::io::Error> {
         let listener = Arc::new(self.listener);
         let registry = self.query_registry;
+        let tls_acceptor = self.tls_acceptor.map(Arc::new);
 
         loop {
             let (socket, addr) = listener.accept().await?;
             info!("New connection from {}", addr);
 
             let registry_clone = Arc::clone(&registry);
+            let tls_acceptor_clone = tls_acceptor.clone();
 
             // Spawn a task to handle this connection
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(socket, addr, registry_clone).await {
+                if let Err(e) =
+                    handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone)
+                        .await
+                {
                     error!("Error handling connection from {}: {}", addr, e);
                 }
             });
@@ -76,6 +107,7 @@ impl MockTdsServer {
     ) -> Result<(), std::io::Error> {
         let listener = Arc::new(Mutex::new(self.listener));
         let registry = self.query_registry;
+        let tls_acceptor = self.tls_acceptor.map(Arc::new);
 
         tokio::select! {
             result = async {
@@ -87,9 +119,10 @@ impl MockTdsServer {
                             drop(listener); // Release lock before spawning
 
                             let registry_clone = Arc::clone(&registry);
+                            let tls_acceptor_clone = tls_acceptor.clone();
 
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(socket, addr, registry_clone).await {
+                                if let Err(e) = handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone).await {
                                     error!("Error handling connection from {}: {}", addr, e);
                                 }
                             });
@@ -109,7 +142,282 @@ impl MockTdsServer {
     }
 }
 
-/// Handle a single client connection
+/// Handle a connection with optional TLS support
+async fn handle_connection_with_tls(
+    socket: TcpStream,
+    addr: SocketAddr,
+    query_registry: Arc<Mutex<QueryRegistry>>,
+    tls_acceptor: Option<Arc<TlsAcceptor>>,
+) -> Result<(), ProtocolError> {
+    // First, handle PreLogin without TLS to negotiate encryption
+    let (prelogin_socket, should_encrypt) =
+        handle_prelogin_negotiation(socket, addr, tls_acceptor.is_some()).await?;
+
+    if should_encrypt && tls_acceptor.is_some() {
+        // Perform TLS handshake
+        let tls_stream = tls_acceptor
+            .unwrap()
+            .accept(prelogin_socket)
+            .await
+            .map_err(|e| {
+                error!("TLS handshake failed: {}", e);
+                ProtocolError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("TLS handshake failed: {}", e),
+                ))
+            })?;
+
+        info!("TLS handshake successful for {}", addr);
+        handle_encrypted_connection(tls_stream, addr, query_registry).await
+    } else {
+        // Continue without encryption
+        handle_unencrypted_connection(prelogin_socket, addr, query_registry).await
+    }
+}
+
+/// Handle PreLogin packet to negotiate encryption
+async fn handle_prelogin_negotiation(
+    mut socket: TcpStream,
+    addr: SocketAddr,
+    supports_tls: bool,
+) -> Result<(TcpStream, bool), ProtocolError> {
+    let mut buffer = BytesMut::with_capacity(4096);
+
+    // Read PreLogin packet
+    let n = socket.read_buf(&mut buffer).await?;
+    if n == 0 {
+        return Err(ProtocolError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "Connection closed during PreLogin",
+        )));
+    }
+
+    debug!("Received {} bytes from {} (PreLogin)", n, addr);
+
+    if buffer.len() < PACKET_HEADER_SIZE {
+        return Err(ProtocolError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Incomplete PreLogin packet",
+        )));
+    }
+
+    let mut buf_clone = buffer.clone();
+    let header = PacketHeader::parse(&mut buf_clone)?;
+
+    if header.packet_type != PacketType::PreLogin {
+        return Err(ProtocolError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Expected PreLogin, got {:?}", header.packet_type),
+        )));
+    }
+
+    debug!("Handling PreLogin negotiation");
+
+    // Build PreLogin response based on TLS support
+    let response = build_prelogin_response_with_encryption(supports_tls);
+
+    debug!("Sending {} bytes PreLogin response", response.len());
+    socket.write_all(&response).await?;
+
+    // Return socket and whether client should encrypt
+    Ok((socket, supports_tls))
+}
+
+/// Handle encrypted connection (after TLS handshake)
+async fn handle_encrypted_connection(
+    mut socket: TlsStream<TcpStream>,
+    addr: SocketAddr,
+    query_registry: Arc<Mutex<QueryRegistry>>,
+) -> Result<(), ProtocolError> {
+    let mut buffer = BytesMut::with_capacity(4096);
+    let mut is_authenticated = false;
+
+    loop {
+        // Read data from TLS socket
+        let n = socket.read_buf(&mut buffer).await?;
+
+        if n == 0 {
+            debug!("TLS connection closed by client {}", addr);
+            break;
+        }
+
+        debug!("Received {} encrypted bytes from {}", n, addr);
+
+        // Process packets (same logic as unencrypted)
+        while let Some(response) =
+            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
+        {
+            debug!("Sending {} encrypted bytes response", response.len());
+            socket.write_all(&response).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle unencrypted connection (after PreLogin or no TLS)
+async fn handle_unencrypted_connection(
+    mut socket: TcpStream,
+    addr: SocketAddr,
+    query_registry: Arc<Mutex<QueryRegistry>>,
+) -> Result<(), ProtocolError> {
+    let mut buffer = BytesMut::with_capacity(4096);
+    let mut is_authenticated = false;
+
+    loop {
+        // Read data from plain socket
+        let n = socket.read_buf(&mut buffer).await?;
+
+        if n == 0 {
+            debug!("Connection closed by client {}", addr);
+            break;
+        }
+
+        debug!("Received {} bytes from {}", n, addr);
+
+        // Process packets
+        while let Some(response) =
+            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
+        {
+            debug!("Sending {} bytes response", response.len());
+            socket.write_all(&response).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Process a single packet from the buffer
+async fn process_packet(
+    buffer: &mut BytesMut,
+    query_registry: &Arc<Mutex<QueryRegistry>>,
+    is_authenticated: &mut bool,
+) -> Result<Option<BytesMut>, ProtocolError> {
+    if buffer.len() < PACKET_HEADER_SIZE {
+        return Ok(None);
+    }
+
+    // Parse packet header
+    let header = {
+        let mut buf_clone = buffer.clone();
+        match PacketHeader::parse(&mut buf_clone) {
+            Ok(h) => h,
+            Err(e) => {
+                warn!("Failed to parse packet header: {}", e);
+                return Ok(None);
+            }
+        }
+    };
+
+    // Check if we have the full packet
+    if buffer.len() < header.length as usize {
+        debug!(
+            "Incomplete packet: have {} bytes, need {}",
+            buffer.len(),
+            header.length
+        );
+        return Ok(None);
+    }
+
+    // Extract the complete packet
+    let packet_data = buffer.split_to(header.length as usize);
+
+    // Process the packet and build response
+    let response = match header.packet_type {
+        PacketType::Login7 => {
+            debug!("Handling Login7");
+            *is_authenticated = true;
+
+            // Build response with LoginAck + Done
+            let mut response = build_login_ack();
+            response.extend_from_slice(&build_done_token(0));
+
+            // Wrap in packet
+            let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
+            let mut packet = BytesMut::with_capacity(total_length as usize);
+            let resp_header = PacketHeader::new(PacketType::TabularResult, total_length, 1);
+            resp_header.write(&mut packet);
+            packet.extend_from_slice(&response);
+
+            Some(packet)
+        }
+
+        PacketType::SqlBatch => {
+            if !*is_authenticated {
+                warn!("Received SQL batch before authentication");
+                Some(build_error_response("Not authenticated"))
+            } else {
+                debug!("Handling SQL batch");
+
+                // Extract packet body (skip header)
+                let packet_body = &packet_data[PACKET_HEADER_SIZE..];
+
+                // Parse SQL
+                match parse_sql_batch(packet_body) {
+                    Ok(sql) => {
+                        info!("Executing SQL: {}", sql);
+
+                        // Look up query in registry
+                        let registry = query_registry.lock().await;
+                        if let Some(response_data) = registry.get(&sql) {
+                            info!("Found registered response for query");
+                            let response = build_query_result(response_data);
+
+                            let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
+                            let mut packet = BytesMut::with_capacity(total_length as usize);
+                            let resp_header =
+                                PacketHeader::new(PacketType::TabularResult, total_length, 1);
+                            resp_header.write(&mut packet);
+                            packet.extend_from_slice(&response);
+
+                            Some(packet)
+                        } else {
+                            info!("No registered response, returning empty result");
+                            // Return DONE token
+                            let response = build_done_token(0);
+
+                            let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
+                            let mut packet = BytesMut::with_capacity(total_length as usize);
+                            let resp_header =
+                                PacketHeader::new(PacketType::TabularResult, total_length, 1);
+                            resp_header.write(&mut packet);
+                            packet.extend_from_slice(&response);
+
+                            Some(packet)
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to parse SQL batch: {}", e);
+                        Some(build_error_response("Failed to parse SQL"))
+                    }
+                }
+            }
+        }
+
+        PacketType::RpcRequest => {
+            debug!("Handling RPC request (not fully implemented)");
+            // Just return DONE for now
+            let response = build_done_token(0);
+
+            let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
+            let mut packet = BytesMut::with_capacity(total_length as usize);
+            let resp_header = PacketHeader::new(PacketType::TabularResult, total_length, 1);
+            resp_header.write(&mut packet);
+            packet.extend_from_slice(&response);
+
+            Some(packet)
+        }
+
+        _ => {
+            warn!("Unhandled packet type: {:?}", header.packet_type);
+            None
+        }
+    };
+
+    Ok(response)
+}
+
+/// Handle a single client connection (legacy, non-TLS)
 async fn handle_connection(
     mut socket: TcpStream,
     addr: SocketAddr,

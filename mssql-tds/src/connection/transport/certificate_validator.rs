@@ -195,4 +195,149 @@ mod tests {
             _ => panic!("Expected CertificateNotFound error"),
         }
     }
+
+    #[test]
+    fn test_load_certificate_from_pem() {
+        // Path relative to the crate root
+        let cert_path = "tests/test_certificates/valid_cert.pem";
+        let result = load_certificate_from_file(cert_path);
+
+        match result {
+            Ok(der_bytes) => {
+                // Verify we got a DER-encoded certificate
+                assert!(!der_bytes.is_empty(), "DER bytes should not be empty");
+                // DER certificates typically start with 0x30 (SEQUENCE tag)
+                assert_eq!(
+                    der_bytes[0], 0x30,
+                    "DER certificate should start with SEQUENCE tag"
+                );
+            }
+            Err(e) => panic!("Failed to load PEM certificate: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_load_certificate_from_der() {
+        // Path relative to the crate root
+        let cert_path = "tests/test_certificates/valid_cert.der";
+        let result = load_certificate_from_file(cert_path);
+
+        match result {
+            Ok(der_bytes) => {
+                // Verify we got a DER-encoded certificate
+                assert!(!der_bytes.is_empty(), "DER bytes should not be empty");
+                // DER certificates typically start with 0x30 (SEQUENCE tag)
+                assert_eq!(
+                    der_bytes[0], 0x30,
+                    "DER certificate should start with SEQUENCE tag"
+                );
+            }
+            Err(e) => panic!("Failed to load DER certificate: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_load_certificate_invalid_format() {
+        // Path relative to the crate root
+        let cert_path = "tests/test_certificates/invalid_format.txt";
+        let result = load_certificate_from_file(cert_path);
+
+        assert!(result.is_err(), "Should fail to load invalid certificate");
+        match result {
+            Err(Error::InvalidCertificateFormat { path, .. }) => {
+                assert!(path.contains("invalid_format.txt"));
+            }
+            Err(e) => panic!("Expected InvalidCertificateFormat error, got: {:?}", e),
+            Ok(_) => panic!("Should not succeed loading invalid certificate"),
+        }
+    }
+
+    #[test]
+    fn test_pem_and_der_certificates_produce_same_der() {
+        // Both PEM and DER files contain the same certificate
+        let pem_path = "tests/test_certificates/valid_cert.pem";
+        let der_path = "tests/test_certificates/valid_cert.der";
+
+        let pem_result = load_certificate_from_file(pem_path);
+        let der_result = load_certificate_from_file(der_path);
+
+        assert!(
+            pem_result.is_ok(),
+            "PEM certificate should load successfully"
+        );
+        assert!(
+            der_result.is_ok(),
+            "DER certificate should load successfully"
+        );
+
+        let pem_der = pem_result.unwrap();
+        let der_der = der_result.unwrap();
+
+        // Both should produce the same DER encoding
+        assert_eq!(
+            pem_der, der_der,
+            "PEM and DER files should produce identical DER encodings"
+        );
+    }
+
+    #[test]
+    fn test_is_certificate_expired_valid() {
+        // Our test certificate is valid for 10 years (3650 days)
+        let cert_path = "tests/test_certificates/valid_cert.pem";
+        let der_bytes =
+            load_certificate_from_file(cert_path).expect("Failed to load test certificate");
+
+        let result = is_certificate_expired(&der_bytes);
+        assert!(result.is_ok(), "Certificate expiry check should succeed");
+        assert!(!result.unwrap(), "Test certificate should not be expired");
+    }
+
+    #[test]
+    fn test_constant_time_compare_all_zeros() {
+        let a = vec![0u8; 100];
+        let b = vec![0u8; 100];
+        assert!(
+            constant_time_compare(&a, &b),
+            "All zeros should compare equal"
+        );
+    }
+
+    #[test]
+    fn test_constant_time_compare_single_bit_difference() {
+        let mut a = vec![0u8; 32];
+        let mut b = vec![0u8; 32];
+        b[16] = 0x01; // Single bit difference in the middle
+
+        assert!(
+            !constant_time_compare(&a, &b),
+            "Single bit difference should be detected"
+        );
+
+        // Test at different positions
+        a = vec![0u8; 32];
+        b = vec![0u8; 32];
+        b[0] = 0x80; // First byte
+        assert!(
+            !constant_time_compare(&a, &b),
+            "Difference at start should be detected"
+        );
+
+        a = vec![0u8; 32];
+        b = vec![0u8; 32];
+        b[31] = 0x01; // Last byte
+        assert!(
+            !constant_time_compare(&a, &b),
+            "Difference at end should be detected"
+        );
+    }
+
+    #[test]
+    fn test_constant_time_compare_empty_slices() {
+        let a: Vec<u8> = vec![];
+        let b: Vec<u8> = vec![];
+        assert!(
+            constant_time_compare(&a, &b),
+            "Empty slices should compare equal"
+        );
+    }
 }
