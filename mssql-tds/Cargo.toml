@@ -26,6 +26,9 @@ socket2 = { version = "0.5", features = ["all"] }
 hostname = "0.4.2"
 # For LCID-based encoding conversion (TEXT/NTEXT reading)
 encoding_rs = "0.8"
+# For certificate parsing and validation (ServerCertificate feature)
+x509-parser = "0.16"
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["namedpipeapi", "winerror"] }
@@ -53,3 +56,4 @@ ctor = "0.4"
 mockall = "0.13.1"
 criterion = "0.5"
 mssql-mock-tds = { path = "../mssql-mock-tds" }
+tempfile = "3.13"
