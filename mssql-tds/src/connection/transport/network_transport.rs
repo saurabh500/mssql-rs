@@ -47,6 +47,8 @@ pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
 async fn create_base_stream(
     ipaddress_preference: IPAddressPreference,
     transport_context: &TransportContext,
+    keep_alive_in_ms: u32,
+    keep_alive_interval_in_ms: u32,
 ) -> TdsResult<Box<dyn Stream>> {
     match transport_context {
         TransportContext::Tcp { host, port } => {
@@ -92,8 +94,8 @@ async fn create_base_stream(
                 // The defaults for the SQL Server clients are at
                 // https://learn.microsoft.com/en-us/sql/tools/configuration-manager/client-protocols-tcp-ip-properties-protocol-tab?view=sql-server-ver16
                 let keep_alive_settings = socket2::TcpKeepalive::new()
-                    .with_time(Duration::from_millis(30_000))
-                    .with_interval(Duration::from_millis(1_000));
+                    .with_time(Duration::from_millis(keep_alive_in_ms as u64))
+                    .with_interval(Duration::from_millis(keep_alive_interval_in_ms as u64));
 
                 let socket2_socket = socket2::SockRef::from(&socket);
                 socket2_socket.set_tcp_keepalive(&keep_alive_settings)?;
@@ -248,11 +250,19 @@ pub(crate) async fn create_transport(
     tds_version: TdsVersion,
     transport_context: &TransportContext,
     encryption_options: EncryptionOptions,
+    keep_alive_in_ms: u32,
+    keep_alive_interval_in_ms: u32,
 ) -> TdsResult<Box<NetworkTransport>> {
     let encryption_mode = encryption_options.mode;
 
     // Step 1: Create the base stream (transport-specific)
-    let stream = create_base_stream(ipaddress_preference, transport_context).await?;
+    let stream = create_base_stream(
+        ipaddress_preference,
+        transport_context,
+        keep_alive_in_ms,
+        keep_alive_interval_in_ms,
+    )
+    .await?;
 
     // Step 2: Apply TDS version-specific wrapping (uniform for all transports)
     create_transport_for_version(

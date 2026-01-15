@@ -182,6 +182,8 @@ impl TdsConnectionProvider {
             context.tds_version(),
             transport_context,
             context.encryption_options.clone(),
+            context.keep_alive_in_ms,
+            context.keep_alive_interval_in_ms,
         )
         .await?;
 

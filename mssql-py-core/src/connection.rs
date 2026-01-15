@@ -202,6 +202,19 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| "us_english".to_string());
 
+        // TCP Keep-alive settings (milliseconds)
+        // Defaults: 30000ms (30s) for keep_alive, 1000ms (1s) for interval per SQL Server defaults
+        // Named to match ODBC Driver's "KeepAlive" and "KeepAliveInterval" parameters
+        let keep_alive_in_ms = dict
+            .get_item("keep_alive")?
+            .and_then(|v| v.extract::<u32>().ok())
+            .unwrap_or(30_000);
+
+        let keep_alive_interval_in_ms = dict
+            .get_item("keep_alive_interval")?
+            .and_then(|v| v.extract::<u32>().ok())
+            .unwrap_or(1_000);
+
         // Create ClientContext
         let mut context = ClientContext::new();
         context.transport_context = transport_context;
@@ -216,6 +229,8 @@ impl PyCoreConnection {
         context.application_intent = application_intent;
         context.workstation_id = workstation_id;
         context.language = language;
+        context.keep_alive_in_ms = keep_alive_in_ms;
+        context.keep_alive_interval_in_ms = keep_alive_interval_in_ms;
         context.tds_authentication_method = TdsAuthenticationMethod::Password;
 
         Ok(context)
