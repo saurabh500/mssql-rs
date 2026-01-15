@@ -161,10 +161,10 @@ async fn handle_connection_with_tls(
             .await
             .map_err(|e| {
                 error!("TLS handshake failed: {}", e);
-                ProtocolError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("TLS handshake failed: {}", e),
-                ))
+                ProtocolError::Io(std::io::Error::other(format!(
+                    "TLS handshake failed: {}",
+                    e
+                )))
             })?;
 
         info!("TLS handshake successful for {}", addr);
@@ -418,6 +418,7 @@ async fn process_packet(
 }
 
 /// Handle a single client connection (legacy, non-TLS)
+#[allow(dead_code)]
 async fn handle_connection(
     mut socket: TcpStream,
     addr: SocketAddr,
