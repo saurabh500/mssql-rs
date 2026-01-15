@@ -9,12 +9,14 @@
 
 use crate::core::TdsResult;
 use crate::error::Error;
+use native_tls::Certificate;
 use std::fs;
 use std::path::Path;
 use tracing::{debug, info};
 
-/// Load a certificate from a file path.
+/// Load a certificate from a file path and convert to DER format.
 /// Supports both DER and PEM encoded X.509 certificates.
+/// Uses native-tls Certificate API for automatic format detection and conversion.
 ///
 /// # Arguments
 /// * `path` - Path to the certificate file
@@ -38,74 +40,30 @@ pub fn load_certificate_from_file(path: &str) -> TdsResult<Vec<u8>> {
         error: e.to_string(),
     })?;
 
-    // Check if it's PEM format and convert to DER if needed
-    let der_data = if is_pem_format(&cert_data) {
-        debug!("Certificate is in PEM format, converting to DER");
-        convert_pem_to_der(&cert_data, path)?
-    } else {
-        debug!("Certificate is in DER format");
-        cert_data
-    };
-
-    // Validate that it's a valid certificate structure
-    validate_certificate_structure(&der_data, path)?;
-
-    info!("Successfully loaded certificate from: {}", path);
-    Ok(der_data)
-}
-
-/// Check if certificate data is in PEM format
-fn is_pem_format(data: &[u8]) -> bool {
-    // PEM format starts with "-----BEGIN CERTIFICATE-----"
-    let pem_header = b"-----BEGIN CERTIFICATE-----";
-    data.starts_with(pem_header)
-}
-
-/// Convert PEM-encoded certificate to DER format
-fn convert_pem_to_der(pem_data: &[u8], path: &str) -> TdsResult<Vec<u8>> {
-    // Convert bytes to string
-    let pem_str = std::str::from_utf8(pem_data).map_err(|_| Error::InvalidCertificateFormat {
-        path: path.to_string(),
-    })?;
-
-    // Remove PEM header and footer
-    let pem_body = pem_str
-        .lines()
-        .filter(|line| !line.starts_with("-----"))
-        .collect::<Vec<&str>>()
-        .join("");
-
-    // Decode base64
-    use base64::{Engine as _, engine::general_purpose};
-    general_purpose::STANDARD
-        .decode(pem_body.as_bytes())
+    // Try to parse as PEM first, fall back to DER
+    // native-tls handles the format detection and parsing
+    let certificate = Certificate::from_pem(&cert_data)
+        .or_else(|_| {
+            debug!("Not PEM format, trying DER");
+            Certificate::from_der(&cert_data)
+        })
         .map_err(|_| Error::InvalidCertificateFormat {
             path: path.to_string(),
-        })
-}
+        })?;
 
-/// Validate that the certificate data has a valid X.509 structure
-fn validate_certificate_structure(der_data: &[u8], path: &str) -> TdsResult<()> {
-    // Basic validation: DER-encoded certificates start with 0x30 (SEQUENCE tag)
-    // and should have reasonable size
-    if der_data.is_empty() {
-        return Err(Error::InvalidCertificateFormat {
+    // Convert to DER format for binary comparison
+    let der_data = certificate
+        .to_der()
+        .map_err(|_| Error::InvalidCertificateFormat {
             path: path.to_string(),
-        });
-    }
+        })?;
 
-    if der_data[0] != 0x30 {
-        return Err(Error::InvalidCertificateFormat {
-            path: path.to_string(),
-        });
-    }
-
-    // Reasonable size check: certificates are typically between 500 bytes and 10KB
-    if der_data.len() < 100 || der_data.len() > 50_000 {
-        debug!("Warning: Certificate size {} is unusual", der_data.len());
-    }
-
-    Ok(())
+    info!(
+        "Successfully loaded certificate from: {} ({} bytes)",
+        path,
+        der_data.len()
+    );
+    Ok(der_data)
 }
 
 /// Check if a certificate has expired.
@@ -204,17 +162,6 @@ pub fn validate_server_certificate(user_cert_path: &str, server_cert_der: &[u8])
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
-    #[test]
-    fn test_is_pem_format() {
-        let pem_data = b"-----BEGIN CERTIFICATE-----\nMIID...";
-        assert!(is_pem_format(pem_data));
-
-        let der_data = b"\x30\x82\x03\x45";
-        assert!(!is_pem_format(der_data));
-    }
 
     #[test]
     fn test_constant_time_compare_equal() {
@@ -247,60 +194,5 @@ mod tests {
             }
             _ => panic!("Expected CertificateNotFound error"),
         }
-    }
-
-    #[test]
-    fn test_validate_certificate_structure_empty() {
-        let result = validate_certificate_structure(&[], "test.cer");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_certificate_structure_invalid_tag() {
-        let invalid_data = vec![0x00, 0x01, 0x02];
-        let result = validate_certificate_structure(&invalid_data, "test.cer");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_certificate_structure_valid() {
-        // Create minimal valid DER structure (SEQUENCE tag)
-        let valid_data = vec![0x30, 0x82, 0x01, 0x00]; // SEQUENCE with length
-        let valid_data = [valid_data, vec![0; 256]].concat(); // Add some padding
-        let result = validate_certificate_structure(&valid_data, "test.cer");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_load_der_certificate() {
-        // Create a temporary DER certificate file
-        let mut temp_file = NamedTempFile::new().unwrap();
-        let der_data = vec![0x30, 0x82, 0x01, 0x00]; // Minimal DER structure
-        let der_data = [der_data, vec![0; 256]].concat();
-        temp_file.write_all(&der_data).unwrap();
-
-        let path = temp_file.path().to_str().unwrap();
-        let result = load_certificate_from_file(path);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_convert_pem_to_der() {
-        // Sample PEM certificate (base64 encoded minimal DER structure)
-        let der_data = vec![0x30, 0x82, 0x01, 0x00];
-        let der_data = [der_data, vec![0; 100]].concat();
-
-        use base64::{Engine as _, engine::general_purpose};
-        let base64_data = general_purpose::STANDARD.encode(&der_data);
-
-        let pem_data = format!(
-            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----",
-            base64_data
-        );
-
-        let result = convert_pem_to_der(pem_data.as_bytes(), "test.pem");
-        assert!(result.is_ok());
-        let converted = result.unwrap();
-        assert_eq!(converted, der_data);
     }
 }

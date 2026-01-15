@@ -100,13 +100,12 @@ impl SslHandler {
                     let peer_cert = stream
                         .get_ref()
                         .peer_certificate()
-                        .map_err(|e| crate::error::Error::TlsError(e))?
+                        .map_err(crate::error::Error::TlsError)?
                         .ok_or_else(|| crate::error::Error::NoServerCertificate)?;
 
                     // Get the DER-encoded certificate data
-                    let server_cert_der = peer_cert
-                        .to_der()
-                        .map_err(|e| crate::error::Error::TlsError(e))?;
+                    let server_cert_der =
+                        peer_cert.to_der().map_err(crate::error::Error::TlsError)?;
 
                     // Validate the certificate
                     certificate_validator::validate_server_certificate(

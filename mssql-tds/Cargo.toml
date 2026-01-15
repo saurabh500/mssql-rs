@@ -26,9 +26,9 @@ socket2 = { version = "0.5", features = ["all"] }
 hostname = "0.4.2"
 # For LCID-based encoding conversion (TEXT/NTEXT reading)
 encoding_rs = "0.8"
-# For certificate parsing and validation (ServerCertificate feature)
+# For certificate expiry validation (ServerCertificate feature)
+# Note: native-tls handles PEM/DER parsing, x509-parser only for expiry check
 x509-parser = "0.16"
-base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["namedpipeapi", "winerror"] }
