@@ -174,6 +174,7 @@ pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
             mode: EncryptionSetting::On,
             trust_server_certificate: true,
             host_name_in_cert: None,
+            server_certificate: None,
         },
         ..Default::default()
     };
