@@ -2,6 +2,19 @@
 name = "mssql-mock-tds"
 version = "0.1.0"
 edition = "2024"
+description = "Mock TDS server library and CLI for testing SQL Server clients"
+
+[lib]
+name = "mssql_mock_tds"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mssql-mock-tds"
+path = "src/main.rs"
+
+[features]
+default = []
+vendored-openssl = ["openssl/vendored"]
 
 [dependencies]
 tokio = { version = "1.48.0", features = ["full"] }
@@ -13,6 +26,14 @@ thiserror = "2.0.17"
 futures = "0.3.31"
 native-tls = "0.2.14"
 tokio-native-tls = "0.3.1"
+
+# CLI dependencies
+clap = { version = "4.5.53", features = ["derive"] }
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+ctrlc = "3.4"
+
+# OpenSSL is only needed on non-Windows platforms for PEM to PKCS#12 conversion
+[target.'cfg(not(windows))'.dependencies]
 openssl = "0.10"
 
 [dev-dependencies]

@@ -1,12 +1,12 @@
 # Test Certificates
 
-This directory contains test certificates for validating the ServerCertificate feature.
+This directory contains test certificates for validating the TLS features in mock TDS server tests.
 
 ## Test Certificate Files
 
-### valid_cert.pem
-A valid self-signed certificate in PEM format for testing successful certificate loading and validation.
-Generated with OpenSSL for testing purposes only.
+### valid_cert.pem / key.pem
+A valid self-signed certificate and private key in PEM format for testing TLS connections.
+These files are NOT tracked in git (they contain secrets). Generate them locally using the scripts below.
 
 ### valid_cert.der  
 The same certificate in DER (binary) format for testing DER file loading.
@@ -16,18 +16,25 @@ An invalid file that doesn't contain a valid certificate, used to test error han
 
 ## Generating Test Certificates
 
-To regenerate test certificates:
+Before running TLS tests, generate the test certificates locally.
+
+### From repository root (recommended for CI/CD):
+
+**Linux/macOS:**
+```bash
+./scripts/generate_mock_tds_server_certs.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+.\scripts\generate_mock_tds_server_certs.ps1
+```
+
+### From this directory:
 
 ```bash
-# Generate a self-signed certificate (PEM format)
-openssl req -x509 -newkey rsa:2048 -keyout key.pem -out valid_cert.pem -days 3650 -nodes \
-  -subj "/C=US/ST=Test/L=Test/O=Test/CN=localhost"
-
-# Convert PEM to DER format
-openssl x509 -in valid_cert.pem -outform DER -out valid_cert.der
-
-# Create an invalid format file
-echo "This is not a certificate" > invalid_format.txt
+./generate_certs.sh
 ```
 
 **Note:** These certificates are for testing only and should never be used in production.
+The key.pem and valid_cert.pem files are gitignored to prevent pushing secrets.

@@ -9,7 +9,7 @@ use crate::protocol::{
     build_prelogin_response_with_encryption, build_query_result, parse_sql_batch,
 };
 use crate::query_response::QueryRegistry;
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use native_tls::Identity;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -562,6 +562,27 @@ async fn process_packet(
             debug!("Handling RPC request (not fully implemented)");
             // Just return DONE for now
             let response = build_done_token(0);
+
+            let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
+            let mut packet = BytesMut::with_capacity(total_length as usize);
+            let resp_header = PacketHeader::new(PacketType::TabularResult, total_length, 1);
+            resp_header.write(&mut packet);
+            packet.extend_from_slice(&response);
+
+            Some(packet)
+        }
+
+        PacketType::Attention => {
+            debug!("Received attention/cancel request from client");
+            // Attention is a signal to cancel the current operation
+            // We respond with a DONE token with ATTENTION status
+            let mut response = BytesMut::new();
+
+            // DONE token with DONE_ATTN status (0x20)
+            response.put_u8(0xFD); // DONE token
+            response.put_u16(0x0020); // Status: DONE_ATTN
+            response.put_u16(0x0000); // CurCmd
+            response.put_u64_le(0); // RowCount
 
             let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
             let mut packet = BytesMut::with_capacity(total_length as usize);

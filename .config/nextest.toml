@@ -3,3 +3,17 @@ path = "junit.xml"
 
 [profile.ci]
 retries = 5
+
+# Test groups for tests that need to run sequentially
+# TLS tests have race conditions with macOS Security.framework when creating
+# PKCS12 identities in parallel, so they must run one at a time.
+[test-groups]
+tls-tests = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = "test(mock_server_tls_tests::)"
+test-group = "tls-tests"
+
+[[profile.ci.overrides]]
+filter = "test(mock_server_tls_tests::)"
+test-group = "tls-tests"

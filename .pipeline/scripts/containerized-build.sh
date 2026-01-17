@@ -8,6 +8,10 @@ update-ca-certificates
 # Verify certificate
 openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt /workspace/mssql.crt || true
 
+# Generate test certificates for mock TDS server TLS tests
+echo '==> Generating test certificates for mock TDS server...'
+/workspace/scripts/generate_mock_tds_server_certs.sh
+
 # Fetch dependencies
 echo '==> Fetching crates...'
 cargo fetch
