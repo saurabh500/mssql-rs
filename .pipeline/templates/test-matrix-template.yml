@@ -32,6 +32,7 @@ jobs:
           echo $container
 
           scripts/generate_cert.sh
+          scripts/generate_test_certs.sh
           
           sudo chown 10001:0 mssql.*
 

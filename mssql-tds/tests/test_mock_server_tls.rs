@@ -39,9 +39,17 @@ mod mock_server_tls_tests {
         let key_path = "tests/test_certificates/key.pem";
 
         if !Path::new(cert_path).exists() || !Path::new(key_path).exists() {
-            return Err("Test certificates not found. Generate them with:\n\
-                 cd mssql-tds/tests/test_certificates && ./generate_certs.sh"
-                .into());
+            return Err(
+                "Test certificates not found. Generate them using one of these methods:\n\
+                 \n\
+                 From repository root:\n\
+                   Linux/macOS: ./scripts/generate_test_certs.sh\n\
+                   Windows:     .\\scripts\\generate_test_certs.ps1\n\
+                 \n\
+                 Or from mssql-tds directory:\n\
+                   ./tests/test_certificates/generate_certs.sh"
+                    .into(),
+            );
         }
 
         let cert_pem = fs::read(cert_path)?;

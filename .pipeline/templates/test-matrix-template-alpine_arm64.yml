@@ -34,9 +34,7 @@ jobs:
           echo $container
 
           scripts/generate_cert.sh
-          sudo chown 10001:0 mssql.*
-
-          if command -v docker >/dev/null 2>&1
+      scripts/generate_test_certs.sh
           then
             cp $(Pipeline.Workspace)/tdslib-nextest-musl.tar.zst $(Build.SourcesDirectory)
             
