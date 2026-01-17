@@ -54,7 +54,10 @@ pub fn create_test_identity(
 ) -> Result<Identity, Box<dyn std::error::Error>> {
     // On Windows, we don't have OpenSSL, so we load from the pre-generated .pfx file
     // The PEM arguments are ignored - the caller should have generated identity.pfx
-    Err("create_test_identity with PEM is not supported on Windows. \
+    Err(
+        "create_test_identity with PEM is not supported on Windows. \
          Use load_identity_from_file with a .pfx file instead. \
-         Generate one using: .\\scripts\\generate_mock_tds_server_certs.ps1".into())
+         Generate one using: .\\scripts\\generate_mock_tds_server_certs.ps1"
+            .into(),
+    )
 }

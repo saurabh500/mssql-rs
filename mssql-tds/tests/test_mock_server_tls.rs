@@ -43,13 +43,11 @@ mod mock_server_tls_tests {
         {
             let pfx_path = "tests/test_certificates/identity.pfx";
             if !Path::new(pfx_path).exists() {
-                return Err(
-                    "Test certificates not found. Generate them using:\n\
+                return Err("Test certificates not found. Generate them using:\n\
                      \n\
                      From repository root:\n\
                        Windows: .\\scripts\\generate_mock_tds_server_certs.ps1"
-                        .into(),
-                );
+                    .into());
             }
             mssql_mock_tds::load_identity_from_file(pfx_path, "")
         }

@@ -90,12 +90,10 @@ steps:
 - ${{ if eq(parameters.osType, 'Windows') }}:
   - pwsh: ./scripts/generate_mock_tds_server_certs.ps1
     displayName: Generate Test Certificates for Mock TDS Server
-    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
 - ${{ if ne(parameters.osType, 'Windows') }}:
   - script: ./scripts/generate_mock_tds_server_certs.sh
     displayName: Generate Test Certificates for Mock TDS Server
-    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
 - script: cargo llvm-cov clean --workspace
   displayName: Clean up old coverage files
