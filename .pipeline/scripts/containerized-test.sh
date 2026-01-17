@@ -6,7 +6,7 @@ update-ca-certificates
 
 # Generate test certificates for mock TDS server TLS tests (if not already present)
 echo '==> Generating test certificates for mock TDS server...'
-/workspace/scripts/generate_test_certs.sh
+/workspace/scripts/generate_mock_tds_server_certs.sh
 
 echo '==> Running tests...'
 mkdir -p /workspace/target/nextest/ci

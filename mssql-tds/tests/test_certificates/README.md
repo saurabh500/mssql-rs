@@ -22,12 +22,12 @@ Before running TLS tests, generate the test certificates locally.
 
 **Linux/macOS:**
 ```bash
-./scripts/generate_test_certs.sh
+./scripts/generate_mock_tds_server_certs.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-.\scripts\generate_test_certs.ps1
+.\scripts\generate_mock_tds_server_certs.ps1
 ```
 
 ### From this directory:

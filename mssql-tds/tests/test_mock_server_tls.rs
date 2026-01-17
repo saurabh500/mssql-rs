@@ -43,8 +43,8 @@ mod mock_server_tls_tests {
                 "Test certificates not found. Generate them using one of these methods:\n\
                  \n\
                  From repository root:\n\
-                   Linux/macOS: ./scripts/generate_test_certs.sh\n\
-                   Windows:     .\\scripts\\generate_test_certs.ps1\n\
+                   Linux/macOS: ./scripts/generate_mock_tds_server_certs.sh\n\
+                   Windows:     .\\scripts\\generate_mock_tds_server_certs.ps1\n\
                  \n\
                  Or from mssql-tds directory:\n\
                    ./tests/test_certificates/generate_certs.sh"
