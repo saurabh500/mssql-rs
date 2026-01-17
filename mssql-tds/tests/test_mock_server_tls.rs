@@ -78,6 +78,21 @@ mod mock_server_tls_tests {
         }
     }
 
+    /// Generate a random password for test connections.
+    /// Uses a cryptographically secure random number generator.
+    fn generate_test_password() -> String {
+        use rand::Rng;
+        const CHARSET: &[u8] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+        let mut rng = rand::rng();
+        let password: String = (0..24)
+            .map(|_| {
+                let idx = rng.random_range(0..CHARSET.len());
+                CHARSET[idx] as char
+            })
+            .collect();
+        password
+    }
     /// Test that mock server can be created with TLS enabled
     #[tokio::test]
     async fn test_mock_server_tls_creation() -> Result<(), Box<dyn std::error::Error>> {
@@ -143,7 +158,7 @@ mod mock_server_tls_tests {
                 port: server_addr.port(),
             },
             user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
+            password: generate_test_password(),
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::Required,
@@ -197,7 +212,7 @@ mod mock_server_tls_tests {
                 port: server_addr.port(),
             },
             user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
+            password: generate_test_password(),
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::Required,
@@ -262,7 +277,7 @@ mod mock_server_tls_tests {
                 port: server_addr.port(),
             },
             user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
+            password: generate_test_password(),
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::Strict,
@@ -310,7 +325,7 @@ mod mock_server_tls_tests {
                 port: server_addr.port(),
             },
             user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
+            password: generate_test_password(),
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::Strict,
@@ -370,7 +385,7 @@ mod mock_server_tls_tests {
                 port: server_addr.port(),
             },
             user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
+            password: generate_test_password(),
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::Required,
@@ -432,7 +447,7 @@ mod mock_server_tls_tests {
                 port: server_addr.port(),
             },
             user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
+            password: generate_test_password(),
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::Required,
@@ -506,7 +521,7 @@ mod mock_server_tls_tests {
                 port: server_addr.port(),
             },
             user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
+            password: generate_test_password(),
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::Required,
