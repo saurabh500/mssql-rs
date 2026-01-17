@@ -635,12 +635,9 @@ mod mock_server_tests {
     }
 
     /// Test ServerCertificate with TLS-enabled mock server
-    /// TODO: This test is currently ignored because the mock server doesn't properly handle
-    /// TDS-wrapped TLS handshakes (TDS 7.4). The mock server needs to unwrap TDS packets
-    /// before passing them to the TLS accept or. The ServerCertificate feature itself works
-    /// correctly with real SQL Server instances.
+    /// Tests the ServerCertificate validation feature with the mock TDS server.
+    /// The mock server supports TDS 7.4-style TDS-wrapped TLS handshakes.
     #[tokio::test]
-    #[ignore = "Mock server doesn't support TDS-wrapped TLS handshakes yet"]
     async fn test_server_certificate_with_tls() -> Result<(), Box<dyn std::error::Error>> {
         use mssql_mock_tds::create_test_identity;
         use std::fs;
@@ -748,6 +745,137 @@ mod mock_server_tests {
             }
             assert_eq!(row_count, 1, "Expected 1 row from SELECT 1");
             println!("✓ Successfully executed query over TLS with ServerCertificate validation");
+
+            client.close_query().await?;
+            client.close_connection().await?;
+        }
+
+        // Cleanup
+        let _ = shutdown_tx.send(());
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_handle).await;
+
+        Ok(())
+    }
+
+    /// Test strict encryption (TDS 8.0) with ServerCertificate keyword
+    ///
+    /// In strict mode (TDS 8.0), TLS handshake happens immediately on the TCP socket
+    /// before any TDS packets are exchanged. This is different from TDS 7.4 where
+    /// TLS handshake data is wrapped inside TDS PreLogin packets.
+    #[tokio::test]
+    async fn test_strict_encryption_with_server_certificate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use mssql_mock_tds::create_test_identity;
+        use std::fs;
+
+        init_tracing();
+
+        // Read test certificate and key
+        let cert_pem = fs::read("tests/test_certificates/valid_cert.pem")?;
+        let key_pem = fs::read("tests/test_certificates/key.pem")?;
+
+        // Create TLS identity for server
+        let identity = create_test_identity(&cert_pem, &key_pem)?;
+
+        // Start mock server in STRICT TLS mode (TDS 8.0)
+        // In strict mode, TLS handshake happens directly on the socket
+        let server = MockTdsServer::new_with_strict_tls("127.0.0.1:0", identity).await?;
+        let server_addr = server.local_addr();
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server_handle =
+            tokio::spawn(async move { server.run_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Test 1: Connect with strict encryption and matching ServerCertificate
+        {
+            let context = ClientContext {
+                transport_context: TransportContext::Tcp {
+                    host: server_addr.ip().to_string(),
+                    port: server_addr.port(),
+                },
+                user_name: "sa".to_string(),
+                password: "TestPassword123!".to_string(),
+                database: "master".to_string(),
+                encryption_options: EncryptionOptions {
+                    mode: EncryptionSetting::Strict, // TDS 8.0 - direct TLS
+                    trust_server_certificate: false,
+                    host_name_in_cert: None,
+                    server_certificate: Some("tests/test_certificates/valid_cert.pem".to_string()),
+                },
+                ..Default::default()
+            };
+
+            let provider = TdsConnectionProvider {};
+            let client = provider.create_client(context, None).await?;
+            println!("✓ Successfully connected with Strict encryption and ServerCertificate");
+            drop(client);
+        }
+
+        // Test 2: Connect with strict encryption and TrustServerCertificate=true
+        {
+            let context = ClientContext {
+                transport_context: TransportContext::Tcp {
+                    host: server_addr.ip().to_string(),
+                    port: server_addr.port(),
+                },
+                user_name: "sa".to_string(),
+                password: "TestPassword123!".to_string(),
+                database: "master".to_string(),
+                encryption_options: EncryptionOptions {
+                    mode: EncryptionSetting::Strict,
+                    trust_server_certificate: true,
+                    host_name_in_cert: None,
+                    server_certificate: None,
+                },
+                ..Default::default()
+            };
+
+            let provider = TdsConnectionProvider {};
+            let client = provider.create_client(context, None).await?;
+            println!(
+                "✓ Successfully connected with Strict encryption and TrustServerCertificate=true"
+            );
+            drop(client);
+        }
+
+        // Test 3: Execute a query over strict TLS connection
+        {
+            let context = ClientContext {
+                transport_context: TransportContext::Tcp {
+                    host: server_addr.ip().to_string(),
+                    port: server_addr.port(),
+                },
+                user_name: "sa".to_string(),
+                password: "TestPassword123!".to_string(),
+                database: "master".to_string(),
+                encryption_options: EncryptionOptions {
+                    mode: EncryptionSetting::Strict,
+                    trust_server_certificate: false,
+                    host_name_in_cert: None,
+                    server_certificate: Some("tests/test_certificates/valid_cert.pem".to_string()),
+                },
+                ..Default::default()
+            };
+
+            let provider = TdsConnectionProvider {};
+            let mut client = provider.create_client(context, None).await?;
+
+            // Execute SELECT 1 over strict encrypted connection
+            client.execute("SELECT 1".to_string(), None, None).await?;
+
+            // Read result
+            let mut row_count = 0;
+            if let Some(resultset) = client.get_current_resultset() {
+                while let Some(_row) = resultset.next_row().await? {
+                    row_count += 1;
+                }
+            }
+            assert_eq!(row_count, 1, "Expected 1 row from SELECT 1");
+            println!(
+                "✓ Successfully executed query over Strict TLS with ServerCertificate validation"
+            );
 
             client.close_query().await?;
             client.close_connection().await?;

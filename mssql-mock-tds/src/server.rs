@@ -25,6 +25,8 @@ pub struct MockTdsServer {
     local_addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
     tls_acceptor: Option<TlsAcceptor>,
+    /// If true, use TDS 8.0 strict mode where TLS starts immediately
+    strict_mode: bool,
 }
 
 impl MockTdsServer {
@@ -33,10 +35,28 @@ impl MockTdsServer {
         Self::new_with_tls(addr, None).await
     }
 
-    /// Create a new mock TDS server with optional TLS support
+    /// Create a new mock TDS server with optional TLS support (TDS 7.4 style)
     pub async fn new_with_tls(
         addr: &str,
         identity: Option<Identity>,
+    ) -> Result<Self, std::io::Error> {
+        Self::new_internal(addr, identity, false).await
+    }
+
+    /// Create a new mock TDS server with strict/TDS 8.0 mode
+    /// In strict mode, TLS handshake happens immediately before any TDS packets
+    pub async fn new_with_strict_tls(
+        addr: &str,
+        identity: Identity,
+    ) -> Result<Self, std::io::Error> {
+        Self::new_internal(addr, Some(identity), true).await
+    }
+
+    /// Internal constructor
+    async fn new_internal(
+        addr: &str,
+        identity: Option<Identity>,
+        strict_mode: bool,
     ) -> Result<Self, std::io::Error> {
         let listener = TcpListener::bind(addr).await?;
         let local_addr = listener.local_addr()?;
@@ -48,7 +68,12 @@ impl MockTdsServer {
             TlsAcceptor::from(acceptor)
         });
 
-        if tls_acceptor.is_some() {
+        if strict_mode {
+            info!(
+                "Mock TDS Server listening on {} with TDS 8.0 strict TLS mode",
+                local_addr
+            );
+        } else if tls_acceptor.is_some() {
             info!(
                 "Mock TDS Server listening on {} with TLS enabled",
                 local_addr
@@ -62,6 +87,7 @@ impl MockTdsServer {
             local_addr,
             query_registry: Arc::new(Mutex::new(QueryRegistry::new())),
             tls_acceptor,
+            strict_mode,
         })
     }
 
@@ -80,6 +106,7 @@ impl MockTdsServer {
         let listener = Arc::new(self.listener);
         let registry = self.query_registry;
         let tls_acceptor = self.tls_acceptor.map(Arc::new);
+        let strict_mode = self.strict_mode;
 
         loop {
             let (socket, addr) = listener.accept().await?;
@@ -90,9 +117,14 @@ impl MockTdsServer {
 
             // Spawn a task to handle this connection
             tokio::spawn(async move {
-                if let Err(e) =
-                    handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone)
-                        .await
+                if let Err(e) = handle_connection_with_tls(
+                    socket,
+                    addr,
+                    registry_clone,
+                    tls_acceptor_clone,
+                    strict_mode,
+                )
+                .await
                 {
                     error!("Error handling connection from {}: {}", addr, e);
                 }
@@ -108,6 +140,7 @@ impl MockTdsServer {
         let listener = Arc::new(Mutex::new(self.listener));
         let registry = self.query_registry;
         let tls_acceptor = self.tls_acceptor.map(Arc::new);
+        let strict_mode = self.strict_mode;
 
         tokio::select! {
             result = async {
@@ -122,7 +155,7 @@ impl MockTdsServer {
                             let tls_acceptor_clone = tls_acceptor.clone();
 
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone).await {
+                                if let Err(e) = handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone, strict_mode).await {
                                     error!("Error handling connection from {}: {}", addr, e);
                                 }
                             });
@@ -148,30 +181,61 @@ async fn handle_connection_with_tls(
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
     tls_acceptor: Option<Arc<TlsAcceptor>>,
+    strict_mode: bool,
 ) -> Result<(), ProtocolError> {
-    // First, handle PreLogin without TLS to negotiate encryption
-    let (prelogin_socket, should_encrypt) =
-        handle_prelogin_negotiation(socket, addr, tls_acceptor.is_some()).await?;
+    if strict_mode {
+        // TDS 8.0 Strict mode: TLS handshake happens immediately on the socket
+        // No TDS wrapping - raw TLS handshake followed by TDS packets over TLS
+        let tls_acceptor = tls_acceptor.ok_or_else(|| {
+            ProtocolError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Strict mode requires TLS acceptor",
+            ))
+        })?;
 
-    if should_encrypt && tls_acceptor.is_some() {
-        // Perform TLS handshake
-        let tls_stream = tls_acceptor
-            .unwrap()
-            .accept(prelogin_socket)
-            .await
-            .map_err(|e| {
-                error!("TLS handshake failed: {}", e);
-                ProtocolError::Io(std::io::Error::other(format!(
-                    "TLS handshake failed: {}",
-                    e
-                )))
-            })?;
+        debug!("Starting TDS 8.0 strict mode TLS handshake for {}", addr);
 
-        info!("TLS handshake successful for {}", addr);
-        handle_encrypted_connection(tls_stream, addr, query_registry).await
+        let tls_stream = tls_acceptor.accept(socket).await.map_err(|e| {
+            error!("TLS handshake failed in strict mode: {}", e);
+            ProtocolError::Io(std::io::Error::other(format!(
+                "TLS handshake failed: {}",
+                e
+            )))
+        })?;
+
+        info!("TLS handshake successful for {} (strict mode)", addr);
+        handle_strict_encrypted_connection(tls_stream, addr, query_registry).await
     } else {
-        // Continue without encryption
-        handle_unencrypted_connection(prelogin_socket, addr, query_registry).await
+        // TDS 7.4 mode: First handle PreLogin, then optionally do TDS-wrapped TLS
+        let (prelogin_socket, should_encrypt) =
+            handle_prelogin_negotiation(socket, addr, tls_acceptor.is_some()).await?;
+
+        if should_encrypt && tls_acceptor.is_some() {
+            // For TDS 7.4, the client wraps TLS handshake data in TDS PreLogin packets.
+            // We need to use TdsTlsWrapper to unwrap TDS packets and extract TLS data.
+            use crate::tds_tls_wrapper::TdsTlsWrapper;
+
+            let tds_wrapper = TdsTlsWrapper::new(prelogin_socket);
+
+            // Perform TLS handshake over the TDS-wrapped stream
+            let tls_stream = tls_acceptor
+                .unwrap()
+                .accept(tds_wrapper)
+                .await
+                .map_err(|e| {
+                    error!("TLS handshake failed: {}", e);
+                    ProtocolError::Io(std::io::Error::other(format!(
+                        "TLS handshake failed: {}",
+                        e
+                    )))
+                })?;
+
+            info!("TLS handshake successful for {}", addr);
+            handle_encrypted_tds_wrapped_connection(tls_stream, addr, query_registry).await
+        } else {
+            // Continue without encryption
+            handle_unencrypted_connection(prelogin_socket, addr, query_registry).await
+        }
     }
 }
 
@@ -223,7 +287,77 @@ async fn handle_prelogin_negotiation(
     Ok((socket, supports_tls))
 }
 
+/// Handle strict mode encrypted connection (TDS 8.0)
+/// In strict mode, TLS is established first, then PreLogin and all other TDS packets
+/// are exchanged over the encrypted channel.
+async fn handle_strict_encrypted_connection(
+    mut socket: TlsStream<TcpStream>,
+    addr: SocketAddr,
+    query_registry: Arc<Mutex<QueryRegistry>>,
+) -> Result<(), ProtocolError> {
+    let mut buffer = BytesMut::with_capacity(4096);
+    let mut is_authenticated = false;
+    let mut prelogin_handled = false;
+
+    loop {
+        // Read data from TLS socket
+        let n = socket.read_buf(&mut buffer).await?;
+
+        if n == 0 {
+            debug!("TLS connection closed by client {} (strict mode)", addr);
+            break;
+        }
+
+        debug!("Received {} encrypted bytes from {} (strict mode)", n, addr);
+
+        // In strict mode, we need to handle PreLogin first, then other packets
+        if !prelogin_handled {
+            // Check if we have enough data for a packet header
+            if buffer.len() >= PACKET_HEADER_SIZE {
+                let mut buf_clone = buffer.clone();
+                if let Ok(header) = PacketHeader::parse(&mut buf_clone)
+                    && header.packet_type == PacketType::PreLogin
+                {
+                    // Wait for full PreLogin packet
+                    if buffer.len() >= header.length as usize {
+                        debug!("Handling PreLogin in strict mode");
+                        let _ = buffer.split_to(header.length as usize);
+
+                        // Send PreLogin response (encryption is already established)
+                        let response = build_prelogin_response();
+                        debug!(
+                            "Sending {} bytes PreLogin response (strict mode)",
+                            response.len()
+                        );
+                        socket.write_all(&response).await?;
+                        prelogin_handled = true;
+                        continue;
+                    }
+                }
+            }
+            // If we got here and haven't handled PreLogin yet, continue reading
+            if !prelogin_handled {
+                continue;
+            }
+        }
+
+        // Process other packets (Login7, SqlBatch, etc.)
+        while let Some(response) =
+            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
+        {
+            debug!(
+                "Sending {} encrypted bytes response (strict mode)",
+                response.len()
+            );
+            socket.write_all(&response).await?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Handle encrypted connection (after TLS handshake)
+#[allow(dead_code)]
 async fn handle_encrypted_connection(
     mut socket: TlsStream<TcpStream>,
     addr: SocketAddr,
@@ -242,6 +376,43 @@ async fn handle_encrypted_connection(
         }
 
         debug!("Received {} encrypted bytes from {}", n, addr);
+
+        // Process packets (same logic as unencrypted)
+        while let Some(response) =
+            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
+        {
+            debug!("Sending {} encrypted bytes response", response.len());
+            socket.write_all(&response).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle encrypted connection over TDS-wrapped TLS (TDS 7.4 style)
+/// After the TLS handshake completes, subsequent TDS packets (Login7, SqlBatch, etc.)
+/// are sent encrypted through TLS, but no longer wrapped in PreLogin packets.
+async fn handle_encrypted_tds_wrapped_connection(
+    mut socket: TlsStream<crate::tds_tls_wrapper::TdsTlsWrapper>,
+    addr: SocketAddr,
+    query_registry: Arc<Mutex<QueryRegistry>>,
+) -> Result<(), ProtocolError> {
+    let mut buffer = BytesMut::with_capacity(4096);
+    let mut is_authenticated = false;
+
+    loop {
+        // Read data from TLS socket (which wraps TdsTlsWrapper)
+        let n = socket.read_buf(&mut buffer).await?;
+
+        if n == 0 {
+            debug!("TLS connection closed by client {}", addr);
+            break;
+        }
+
+        debug!(
+            "Received {} encrypted bytes from {} (TDS-wrapped TLS)",
+            n, addr
+        );
 
         // Process packets (same logic as unencrypted)
         while let Some(response) =
@@ -361,15 +532,8 @@ async fn process_packet(
                         let registry = query_registry.lock().await;
                         if let Some(response_data) = registry.get(&sql) {
                             info!("Found registered response for query");
-                            let response = build_query_result(response_data);
-
-                            let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
-                            let mut packet = BytesMut::with_capacity(total_length as usize);
-                            let resp_header =
-                                PacketHeader::new(PacketType::TabularResult, total_length, 1);
-                            resp_header.write(&mut packet);
-                            packet.extend_from_slice(&response);
-
+                            // build_query_result already wraps in a packet, so return directly
+                            let packet = build_query_result(response_data);
                             Some(packet)
                         } else {
                             info!("No registered response, returning empty result");
