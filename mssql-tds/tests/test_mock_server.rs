@@ -469,7 +469,7 @@ mod mock_server_tests {
                 port: server_addr.port(),
             },
             user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
+            password: generate_test_password(),
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::PreferOff, // Use PreferOff since mock server doesn't support TLS
@@ -539,7 +539,7 @@ mod mock_server_tests {
                 port: server_addr.port(),
             },
             user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
+            password: generate_test_password(),
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::Required,
@@ -615,7 +615,7 @@ mod mock_server_tests {
                 port: server_addr.port(),
             },
             user_name: "sa".to_string(),
-            password: "TestPassword123!".to_string(),
+            password: generate_test_password(),
             database: "master".to_string(),
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::PreferOff, // Use PreferOff since mock server doesn't support TLS
@@ -685,7 +685,7 @@ mod mock_server_tests {
                     port: server_addr.port(),
                 },
                 user_name: "sa".to_string(),
-                password: "TestPassword123!".to_string(),
+                password: generate_test_password(),
                 database: "master".to_string(),
                 encryption_options: EncryptionOptions {
                     mode: EncryptionSetting::Required,
@@ -710,7 +710,7 @@ mod mock_server_tests {
                     port: server_addr.port(),
                 },
                 user_name: "sa".to_string(),
-                password: "TestPassword123!".to_string(),
+                password: generate_test_password(),
                 database: "master".to_string(),
                 encryption_options: EncryptionOptions {
                     mode: EncryptionSetting::Required,
@@ -735,7 +735,7 @@ mod mock_server_tests {
                     port: server_addr.port(),
                 },
                 user_name: "sa".to_string(),
-                password: "TestPassword123!".to_string(),
+                password: generate_test_password(),
                 database: "master".to_string(),
                 encryption_options: EncryptionOptions {
                     mode: EncryptionSetting::Required,
@@ -812,7 +812,7 @@ mod mock_server_tests {
                     port: server_addr.port(),
                 },
                 user_name: "sa".to_string(),
-                password: "TestPassword123!".to_string(),
+                password: generate_test_password(),
                 database: "master".to_string(),
                 encryption_options: EncryptionOptions {
                     mode: EncryptionSetting::Strict, // TDS 8.0 - direct TLS
@@ -837,7 +837,7 @@ mod mock_server_tests {
                     port: server_addr.port(),
                 },
                 user_name: "sa".to_string(),
-                password: "TestPassword123!".to_string(),
+                password: generate_test_password(),
                 database: "master".to_string(),
                 encryption_options: EncryptionOptions {
                     mode: EncryptionSetting::Strict,
@@ -864,7 +864,7 @@ mod mock_server_tests {
                     port: server_addr.port(),
                 },
                 user_name: "sa".to_string(),
-                password: "TestPassword123!".to_string(),
+                password: generate_test_password(),
                 database: "master".to_string(),
                 encryption_options: EncryptionOptions {
                     mode: EncryptionSetting::Strict,
