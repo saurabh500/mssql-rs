@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
 use crate::connection::client_context::{ClientContext, TransportContext};
+use crate::connection::connection_actions::ConnectionActionChain;
 use crate::connection::tds_client::TdsClient;
 use crate::connection::transport::network_transport;
 use crate::connection::transport::tds_transport::TdsTransport;
@@ -102,6 +103,162 @@ impl TdsConnectionProvider {
         // Parse the datasource and populate transport_context
         let _parsed = context.parse_datasource(datasource)?;
         self.create_client_internal(context, cancel_handle).await
+    }
+
+    /// Create a client using the action-based connection approach.
+    /// 
+    /// This method uses the new action chain pattern to determine the connection strategy,
+    /// replacing conditional logic with explicit action sequences.
+    /// 
+    /// # Arguments
+    /// * `context` - Client context with credentials and options (without transport_context set)
+    /// * `datasource` - The data source string (e.g., "tcp:server,1433", "server\\instance", "lpc:.")
+    /// * `cancel_handle` - Optional cancellation handle
+    /// 
+    /// # Example
+    /// ```ignore
+    /// let provider = TdsConnectionProvider::new();
+    /// let context = ClientContext::new();
+    /// let client = provider.create_client_with_actions(context, "tcp:myserver,1433", None).await?;
+    /// ```
+    pub async fn create_client_with_actions(
+        &self,
+        mut context: ClientContext,
+        datasource: &str,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<TdsClient> {
+        // Parse the datasource to get the action chain
+        let parsed = context.parse_datasource(datasource)?;
+        
+        // Get connection timeout
+        let timeout_ms = if context.connect_timeout > 0 {
+            (context.connect_timeout as u64) * 1000
+        } else {
+            15000 // Default 15 seconds
+        };
+        
+        // Generate the action chain
+        let action_chain = parsed.to_connection_actions(timeout_ms);
+        
+        debug!("Connection strategy:\n{}", action_chain.describe());
+        
+        // Execute the action chain to get transport contexts
+        self.execute_action_chain(&context, action_chain, cancel_handle).await
+    }
+    
+    /// Execute an action chain to create a client
+    /// 
+    /// This method resolves the action chain into transport contexts and attempts
+    /// connection using each one in order.
+    async fn execute_action_chain(
+        &self,
+        context: &ClientContext,
+        action_chain: ConnectionActionChain,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<TdsClient> {
+        CancelHandle::run_until_cancelled(cancel_handle, async move {
+            // Check if SSRP is required
+            if action_chain.requires_ssrp() {
+                debug!("Action chain requires SSRP query");
+                return Err(Error::ProtocolError(
+                    "Named instance connection requires SSRP (SQL Server Browser), which is not yet implemented. \
+                     Please use explicit protocol with port: tcp:server,1433".to_string()
+                ));
+            }
+            
+            // Resolve transport contexts from the action chain
+            let transport_contexts = action_chain.resolve_transport_contexts();
+            
+            if transport_contexts.is_empty() {
+                return Err(Error::ProtocolError(
+                    "No transport protocols available in action chain".to_string()
+                ));
+            }
+            
+            debug!("Resolved {} transport context(s) from action chain", transport_contexts.len());
+            
+            let timeout_duration = match context.connect_timeout {
+                1.. => Some(Duration::from_secs(context.connect_timeout.into())),
+                _ => None,
+            };
+            
+            let cancellation_token = cancel_handle.map(|handle| handle.cancel_token.child_token());
+            
+            // Try each transport context in order
+            let mut last_error = None;
+            let mut redirect_count = 0;
+            let max_redirects = 10;
+            
+            for (transport_ctx, _action_timeout_ms) in &transport_contexts {
+                debug!("Attempting connection with {:?}", transport_ctx);
+                
+                // Check for cancellation
+                if cancellation_token
+                    .as_ref()
+                    .map_or_else(|| false, |token| token.is_cancelled())
+                {
+                    return Err(OperationCancelledError(
+                        "Login has been cancelled.".to_string(),
+                    ));
+                }
+                
+                let connect_future = Self::connect_with_transport_context(context, transport_ctx);
+                
+                let mut connection_result = match timeout_duration.as_ref() {
+                    Some(duration) => {
+                        match timeout(*duration, connect_future).await {
+                            Ok(result) => result,
+                            Err(_) => Err(TimeoutError(TimeoutErrorType::String(
+                                "Timeout while connecting".to_string(),
+                            ))),
+                        }
+                    }
+                    None => connect_future.await,
+                };
+                
+                // Handle redirections
+                loop {
+                    match connection_result {
+                        Ok((transport, negotiated_settings, execution_context)) => {
+                            debug!("Connection successful via action chain");
+                            return Ok(TdsClient::new(
+                                transport,
+                                negotiated_settings,
+                                execution_context,
+                            ));
+                        }
+                        Err(Error::Redirection { host, port }) => {
+                            info!("Redirection to: {:?}, {:?}", host, port);
+                            redirect_count += 1;
+                            if redirect_count > max_redirects {
+                                return Err(Error::ProtocolError(
+                                    "Received more redirection tokens than expected.".to_string(),
+                                ));
+                            }
+                            
+                            let tcp_transport_context = TransportContext::Tcp { host, port };
+                            connection_result = Self::connect_with_transport_context(
+                                context,
+                                &tcp_transport_context,
+                            ).await;
+                        }
+                        Err(err) => {
+                            debug!("Connection attempt failed: {}", err);
+                            last_error = Some(err);
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // All transports failed
+            Err(last_error.unwrap_or_else(|| {
+                Error::ProtocolError(
+                    "All connection attempts from action chain failed.".to_string(),
+                )
+            }))
+        })
+        .await
     }
 
     /// Internal method for creating clients with transport context already resolved.
