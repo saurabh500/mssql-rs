@@ -24,6 +24,7 @@
 
 use clap::{Parser, ValueEnum};
 use mssql_mock_tds::MockTdsServer;
+#[cfg(not(windows))]
 use std::fs;
 use std::sync::Arc;
 use tokio::sync::oneshot;
