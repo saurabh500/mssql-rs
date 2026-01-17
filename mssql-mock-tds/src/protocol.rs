@@ -35,6 +35,7 @@ pub enum PacketType {
     SqlBatch = 0x01,
     PreLogin = 0x12,
     TabularResult = 0x04,
+    Attention = 0x06,
     Login7 = 0x10,
     RpcRequest = 0x03,
 }
@@ -47,6 +48,7 @@ impl TryFrom<u8> for PacketType {
             0x01 => Ok(PacketType::SqlBatch),
             0x12 => Ok(PacketType::PreLogin),
             0x04 => Ok(PacketType::TabularResult),
+            0x06 => Ok(PacketType::Attention),
             0x10 => Ok(PacketType::Login7),
             0x03 => Ok(PacketType::RpcRequest),
             _ => Err(ProtocolError::InvalidPacketType(value)),
@@ -155,19 +157,38 @@ pub enum TokenType {
 
 /// Build a PreLogin response packet
 pub fn build_prelogin_response() -> BytesMut {
+    build_prelogin_response_with_encryption(false)
+}
+
+/// Build a PreLogin response packet with optional encryption support
+pub fn build_prelogin_response_with_encryption(supports_encryption: bool) -> BytesMut {
     let mut response = BytesMut::new();
 
-    // PreLogin response with ENCRYPTION set to NOT_SUPPORTED
+    // PreLogin response with ENCRYPTION based on server capability
     // Option tokens (PL_OPTION_TOKEN)
+    //
+    // Option directory format for each option:
+    // - 1 byte: Option token
+    // - 2 bytes: Offset (big-endian) from start of PreLogin data to option value
+    // - 2 bytes: Length (big-endian) of option value
+    //
+    // Option directory:
+    // - VERSION: 5 bytes (token + offset + length)
+    // - ENCRYPTION: 5 bytes
+    // - TERMINATOR: 1 byte
+    // Total directory: 11 bytes
+    //
+    // So VERSION data starts at offset 11 (0x000B)
+    // ENCRYPTION data starts at offset 11 + 6 = 17 (0x0011)
 
     // VERSION token (0x00)
     response.put_u8(0x00); // VERSION
-    response.put_u16(0x000F); // Offset to VERSION data (15 bytes after option tokens)
+    response.put_u16(0x000B); // Offset to VERSION data (11 bytes = after option directory)
     response.put_u16(0x0006); // Length of VERSION data (6 bytes)
 
     // ENCRYPTION token (0x01)
     response.put_u8(0x01); // ENCRYPTION
-    response.put_u16(0x0015); // Offset to ENCRYPTION data (21 bytes after option tokens)
+    response.put_u16(0x0011); // Offset to ENCRYPTION data (17 = 11 + 6)
     response.put_u16(0x0001); // Length of ENCRYPTION data (1 byte)
 
     // TERMINATOR (0xFF)
@@ -179,10 +200,16 @@ pub fn build_prelogin_response() -> BytesMut {
     response.put_u16(0x0000); // Build number
     response.put_u16(0x0000); // Sub-build number
 
-    // ENCRYPTION data: NOT_SUPPORTED (1 byte)
-    // 0x00 = ENCRYPT_OFF
-    // 0x02 = ENCRYPT_NOT_SUP (not supported)
-    response.put_u8(0x02); // ENCRYPT_NOT_SUP
+    // ENCRYPTION data (1 byte)
+    // 0x00 = ENCRYPT_OFF (encryption available but off)
+    // 0x01 = ENCRYPT_ON (encryption available and on)
+    // 0x02 = ENCRYPT_NOT_SUP (encryption not supported)
+    // 0x03 = ENCRYPT_REQ (encryption required)
+    if supports_encryption {
+        response.put_u8(0x01); // ENCRYPT_ON (encryption supported)
+    } else {
+        response.put_u8(0x02); // ENCRYPT_NOT_SUP (encryption not supported)
+    }
 
     wrap_in_packet(PacketType::TabularResult, response)
 }
@@ -194,14 +221,14 @@ pub fn build_login_ack() -> BytesMut {
     // LoginAck token (0xAD)
     token_data.put_u8(TokenType::LoginAck as u8);
 
-    // Calculate token length (we'll update this)
+    // Calculate token length (we'll update this) - USHORT in little-endian
     let length_pos = token_data.len();
-    token_data.put_u16(0); // Placeholder for length
+    token_data.put_u16_le(0); // Placeholder for length
 
     // Interface (SQL Server)
     token_data.put_u8(0x01);
 
-    // TDS version (7.4)
+    // TDS version (7.4) - sent as big-endian (network byte order)
     token_data.put_u32(0x74000004);
 
     // Program name: "MockTdsServer"
@@ -214,19 +241,19 @@ pub fn build_login_ack() -> BytesMut {
     // Server version (16.0.0.0)
     token_data.put_u8(16); // Major
     token_data.put_u8(0); // Minor
-    token_data.put_u16(0); // Build
+    token_data.put_u16_le(0); // Build (little-endian)
 
-    // Update the length field
+    // Update the length field (little-endian)
     let token_length = (token_data.len() - length_pos - 2) as u16;
-    let mut length_bytes = &mut token_data[length_pos..length_pos + 2];
-    length_bytes.put_u16(token_length);
+    token_data[length_pos] = (token_length & 0xFF) as u8;
+    token_data[length_pos + 1] = ((token_length >> 8) & 0xFF) as u8;
 
     // Add EnvChange token for collation (0xE3)
     token_data.put_u8(TokenType::EnvChange as u8);
 
-    // EnvChange token length
+    // EnvChange token length (little-endian)
     let env_length_pos = token_data.len();
-    token_data.put_u16(0); // Placeholder
+    token_data.put_u16_le(0); // Placeholder
 
     // Type: SQL_COLLATION (7)
     token_data.put_u8(7);
@@ -241,17 +268,17 @@ pub fn build_login_ack() -> BytesMut {
     // Old value length: 0 (no old value)
     token_data.put_u8(0);
 
-    // Update EnvChange length
+    // Update EnvChange length (little-endian)
     let env_token_length = (token_data.len() - env_length_pos - 2) as u16;
-    let mut env_length_bytes = &mut token_data[env_length_pos..env_length_pos + 2];
-    env_length_bytes.put_u16(env_token_length);
+    token_data[env_length_pos] = (env_token_length & 0xFF) as u8;
+    token_data[env_length_pos + 1] = ((env_token_length >> 8) & 0xFF) as u8;
 
     // Add EnvChange token for database name (0xE3)
     token_data.put_u8(TokenType::EnvChange as u8);
 
-    // EnvChange token length
+    // EnvChange token length (little-endian)
     let db_env_length_pos = token_data.len();
-    token_data.put_u16(0); // Placeholder
+    token_data.put_u16_le(0); // Placeholder
 
     // Type: DATABASE (1)
     token_data.put_u8(1);
@@ -266,17 +293,17 @@ pub fn build_login_ack() -> BytesMut {
     // Old value length: 0 (no old value)
     token_data.put_u8(0);
 
-    // Update EnvChange length
+    // Update EnvChange length (little-endian)
     let db_env_token_length = (token_data.len() - db_env_length_pos - 2) as u16;
-    let mut db_env_length_bytes = &mut token_data[db_env_length_pos..db_env_length_pos + 2];
-    db_env_length_bytes.put_u16(db_env_token_length);
+    token_data[db_env_length_pos] = (db_env_token_length & 0xFF) as u8;
+    token_data[db_env_length_pos + 1] = ((db_env_token_length >> 8) & 0xFF) as u8;
 
     // Add EnvChange token for packet size (0xE3)
     token_data.put_u8(TokenType::EnvChange as u8);
 
-    // EnvChange token length
+    // EnvChange token length (little-endian)
     let ps_env_length_pos = token_data.len();
-    token_data.put_u16(0); // Placeholder
+    token_data.put_u16_le(0); // Placeholder
 
     // Type: PACKETSIZE (4)
     token_data.put_u8(4);
@@ -295,10 +322,10 @@ pub fn build_login_ack() -> BytesMut {
         token_data.put_u16_le(ch);
     }
 
-    // Update EnvChange length
+    // Update EnvChange length (little-endian)
     let ps_env_token_length = (token_data.len() - ps_env_length_pos - 2) as u16;
-    let mut ps_env_length_bytes = &mut token_data[ps_env_length_pos..ps_env_length_pos + 2];
-    ps_env_length_bytes.put_u16(ps_env_token_length);
+    token_data[ps_env_length_pos] = (ps_env_token_length & 0xFF) as u8;
+    token_data[ps_env_length_pos + 1] = ((ps_env_token_length >> 8) & 0xFF) as u8;
 
     token_data
 }
@@ -310,11 +337,11 @@ pub fn build_done_token(row_count: u64) -> BytesMut {
     // DONE token (0xFD)
     token_data.put_u8(TokenType::Done as u8);
 
-    // Status: DONE_FINAL (0x00)
-    token_data.put_u16(0x0000);
+    // Status: DONE_FINAL (0x00) - little-endian
+    token_data.put_u16_le(0x0000);
 
-    // CurCmd: SELECT (0xC1)
-    token_data.put_u16(0x00C1);
+    // CurCmd: SELECT (0xC1) - little-endian
+    token_data.put_u16_le(0x00C1);
 
     // RowCount (8 bytes)
     token_data.put_u64_le(row_count);
