@@ -26,6 +26,7 @@ pub fn create_test_identity(
     // For simplicity, we'll use the openssl crate to create PKCS#12
     // In a real scenario, you'd use proper certificate management
 
+    use openssl::nid::Nid;
     use openssl::pkcs12::Pkcs12;
     use openssl::pkey::PKey;
     use openssl::x509::X509;
@@ -33,14 +34,24 @@ pub fn create_test_identity(
     let cert = X509::from_pem(cert_pem)?;
     let key = PKey::private_key_from_pem(key_pem)?;
 
-    // Build PKCS12 with empty password using builder pattern
-    let mut builder = Pkcs12::builder();
-    builder.pkey(&key);
-    builder.cert(&cert);
-    let pkcs12 = builder.build2("")?;
+    // Use a non-empty password for macOS compatibility.
+    // macOS Security.framework has issues importing PKCS12 with empty passwords.
+    const PKCS12_PASSWORD: &str = "test";
+
+    // Build PKCS12 using algorithms compatible with both OpenSSL 3.x and macOS.
+    // - Use 3DES for both key and certificate encryption.
+    // - RC2-40-CBC is not supported by OpenSSL 3.x (legacy algorithm).
+    // - PBE_WITHSHA1AND3_KEY_TRIPLEDES_CBC is widely supported.
+    let pkcs12 = Pkcs12::builder()
+        .name("test")
+        .pkey(&key)
+        .cert(&cert)
+        .key_algorithm(Nid::PBE_WITHSHA1AND3_KEY_TRIPLEDES_CBC)
+        .cert_algorithm(Nid::PBE_WITHSHA1AND3_KEY_TRIPLEDES_CBC)
+        .build2(PKCS12_PASSWORD)?;
 
     let der = pkcs12.to_der()?;
-    let identity = Identity::from_pkcs12(&der, "")?;
+    let identity = Identity::from_pkcs12(&der, PKCS12_PASSWORD)?;
 
     Ok(identity)
 }
