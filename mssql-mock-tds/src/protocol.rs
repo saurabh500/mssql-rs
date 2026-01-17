@@ -155,9 +155,14 @@ pub enum TokenType {
 
 /// Build a PreLogin response packet
 pub fn build_prelogin_response() -> BytesMut {
+    build_prelogin_response_with_encryption(false)
+}
+
+/// Build a PreLogin response packet with optional encryption support
+pub fn build_prelogin_response_with_encryption(supports_encryption: bool) -> BytesMut {
     let mut response = BytesMut::new();
 
-    // PreLogin response with ENCRYPTION set to NOT_SUPPORTED
+    // PreLogin response with ENCRYPTION based on server capability
     // Option tokens (PL_OPTION_TOKEN)
 
     // VERSION token (0x00)
@@ -179,10 +184,16 @@ pub fn build_prelogin_response() -> BytesMut {
     response.put_u16(0x0000); // Build number
     response.put_u16(0x0000); // Sub-build number
 
-    // ENCRYPTION data: NOT_SUPPORTED (1 byte)
-    // 0x00 = ENCRYPT_OFF
-    // 0x02 = ENCRYPT_NOT_SUP (not supported)
-    response.put_u8(0x02); // ENCRYPT_NOT_SUP
+    // ENCRYPTION data (1 byte)
+    // 0x00 = ENCRYPT_OFF (encryption available but off)
+    // 0x01 = ENCRYPT_ON (encryption available and on)
+    // 0x02 = ENCRYPT_NOT_SUP (encryption not supported)
+    // 0x03 = ENCRYPT_REQ (encryption required)
+    if supports_encryption {
+        response.put_u8(0x01); // ENCRYPT_ON (encryption supported)
+    } else {
+        response.put_u8(0x02); // ENCRYPT_NOT_SUP (encryption not supported)
+    }
 
     wrap_in_packet(PacketType::TabularResult, response)
 }

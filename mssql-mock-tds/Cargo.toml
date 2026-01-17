@@ -11,6 +11,9 @@ byteorder = "1.5.0"
 tracing = { version = "0.1.43", features = ["log"] }
 thiserror = "2.0.17"
 futures = "0.3.31"
+native-tls = "0.2.14"
+tokio-native-tls = "0.3.1"
+openssl = "0.10"
 
 [dev-dependencies]
 tracing-subscriber = "0.3.22"
