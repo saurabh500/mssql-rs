@@ -19,6 +19,7 @@ Write-Host "Generating test certificates for mock TDS server tests..."
 $KeyPath = Join-Path $CertDir "key.pem"
 $CertPemPath = Join-Path $CertDir "valid_cert.pem"
 $CertDerPath = Join-Path $CertDir "valid_cert.der"
+$PfxPath = Join-Path $CertDir "identity.pfx"
 
 # Generate self-signed certificate using .NET APIs (no OpenSSL required)
 try {
@@ -55,8 +56,10 @@ try {
     
     # Add Enhanced Key Usage (Server Authentication)
     $serverAuthOid = [System.Security.Cryptography.Oid]::new("1.3.6.1.5.5.7.3.1", "Server Authentication")
+    $oidCollection = [System.Security.Cryptography.OidCollection]::new()
+    $oidCollection.Add($serverAuthOid) | Out-Null
     $enhancedKeyUsage = [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]::new(
-        [System.Security.Cryptography.OidCollection]@($serverAuthOid),
+        $oidCollection,
         $true
     )
     $certRequest.CertificateExtensions.Add($enhancedKeyUsage)
@@ -83,6 +86,11 @@ try {
     $keyPem += "`n-----END RSA PRIVATE KEY-----`n"
     [System.IO.File]::WriteAllText($KeyPath, $keyPem)
     
+    # Export PKCS#12 (.pfx) file with empty password
+    # This allows native-tls to load the identity without needing OpenSSL
+    $pfxBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, "")
+    [System.IO.File]::WriteAllBytes($PfxPath, $pfxBytes)
+    
     # Clean up
     $rsa.Dispose()
     $cert.Dispose()
@@ -96,5 +104,6 @@ Write-Host "Test certificates generated in $CertDir`:"
 Write-Host "  - key.pem (private key)"
 Write-Host "  - valid_cert.pem (certificate in PEM format)"
 Write-Host "  - valid_cert.der (certificate in DER format)"
+Write-Host "  - identity.pfx (PKCS#12 identity, empty password)"
 Write-Host ""
 Write-Host "Note: These are for testing only. Do not commit key.pem or valid_cert.pem to git."

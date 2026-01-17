@@ -14,11 +14,14 @@
 
 #[cfg(test)]
 mod mock_server_tls_tests {
-    use mssql_mock_tds::{MockTdsServer, create_test_identity};
+    use mssql_mock_tds::MockTdsServer;
+    #[cfg(not(windows))]
+    use mssql_mock_tds::create_test_identity;
     use mssql_tds::connection::client_context::{ClientContext, TransportContext};
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
     use mssql_tds::core::{EncryptionOptions, EncryptionSetting};
+    #[cfg(not(windows))]
     use std::fs;
     use std::path::Path;
     use tokio::sync::oneshot;
@@ -35,26 +38,46 @@ mod mock_server_tls_tests {
     /// Helper function to load test certificates.
     /// Returns an error with instructions if certificates don't exist.
     fn load_test_identity() -> Result<native_tls::Identity, Box<dyn std::error::Error>> {
-        let cert_path = "tests/test_certificates/valid_cert.pem";
-        let key_path = "tests/test_certificates/key.pem";
-
-        if !Path::new(cert_path).exists() || !Path::new(key_path).exists() {
-            return Err(
-                "Test certificates not found. Generate them using one of these methods:\n\
-                 \n\
-                 From repository root:\n\
-                   Linux/macOS: ./scripts/generate_mock_tds_server_certs.sh\n\
-                   Windows:     .\\scripts\\generate_mock_tds_server_certs.ps1\n\
-                 \n\
-                 Or from mssql-tds directory:\n\
-                   ./tests/test_certificates/generate_certs.sh"
-                    .into(),
-            );
+        // On Windows, use the pre-generated .pfx file
+        #[cfg(windows)]
+        {
+            let pfx_path = "tests/test_certificates/identity.pfx";
+            if !Path::new(pfx_path).exists() {
+                return Err(
+                    "Test certificates not found. Generate them using:\n\
+                     \n\
+                     From repository root:\n\
+                       Windows: .\\scripts\\generate_mock_tds_server_certs.ps1"
+                        .into(),
+                );
+            }
+            mssql_mock_tds::load_identity_from_file(pfx_path, "")
         }
 
-        let cert_pem = fs::read(cert_path)?;
-        let key_pem = fs::read(key_path)?;
-        create_test_identity(&cert_pem, &key_pem)
+        // On non-Windows, use PEM files with OpenSSL conversion
+        #[cfg(not(windows))]
+        {
+            let cert_path = "tests/test_certificates/valid_cert.pem";
+            let key_path = "tests/test_certificates/key.pem";
+
+            if !Path::new(cert_path).exists() || !Path::new(key_path).exists() {
+                return Err(
+                    "Test certificates not found. Generate them using one of these methods:\n\
+                     \n\
+                     From repository root:\n\
+                       Linux/macOS: ./scripts/generate_mock_tds_server_certs.sh\n\
+                       Windows:     .\\scripts\\generate_mock_tds_server_certs.ps1\n\
+                     \n\
+                     Or from mssql-tds directory:\n\
+                       ./tests/test_certificates/generate_certs.sh"
+                        .into(),
+                );
+            }
+
+            let cert_pem = fs::read(cert_path)?;
+            let key_pem = fs::read(key_path)?;
+            create_test_identity(&cert_pem, &key_pem)
+        }
     }
 
     /// Test that mock server can be created with TLS enabled

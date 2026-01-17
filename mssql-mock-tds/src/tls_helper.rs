@@ -15,6 +15,10 @@ pub fn load_identity_from_file(
 
 /// Create a test PKCS#12 identity from PEM certificate and key
 /// This is useful for testing purposes
+///
+/// On Windows, this function is not available because OpenSSL is not bundled.
+/// Use `load_identity_from_file` with a pre-generated .pfx file instead.
+#[cfg(not(windows))]
 pub fn create_test_identity(
     cert_pem: &[u8],
     key_pem: &[u8],
@@ -39,4 +43,18 @@ pub fn create_test_identity(
     let identity = Identity::from_pkcs12(&der, "")?;
 
     Ok(identity)
+}
+
+/// On Windows, create_test_identity requires a pre-generated .pfx file
+/// since OpenSSL is not bundled. This function loads from the standard test location.
+#[cfg(windows)]
+pub fn create_test_identity(
+    _cert_pem: &[u8],
+    _key_pem: &[u8],
+) -> Result<Identity, Box<dyn std::error::Error>> {
+    // On Windows, we don't have OpenSSL, so we load from the pre-generated .pfx file
+    // The PEM arguments are ignored - the caller should have generated identity.pfx
+    Err("create_test_identity with PEM is not supported on Windows. \
+         Use load_identity_from_file with a .pfx file instead. \
+         Generate one using: .\\scripts\\generate_mock_tds_server_certs.ps1".into())
 }
