@@ -37,6 +37,54 @@ mod mock_server_tests {
         password
     }
 
+    /// Helper function to load test certificates.
+    /// Returns an error with instructions if certificates don't exist.
+    fn load_test_identity() -> Result<native_tls::Identity, Box<dyn std::error::Error>> {
+        use std::path::Path;
+
+        // On Windows, use the pre-generated .pfx file
+        #[cfg(windows)]
+        {
+            let pfx_path = "tests/test_certificates/identity.pfx";
+            if !Path::new(pfx_path).exists() {
+                return Err("Test certificates not found. Generate them using:\n\
+                     \n\
+                     From repository root:\n\
+                       Windows: .\\scripts\\generate_mock_tds_server_certs.ps1"
+                    .into());
+            }
+            mssql_mock_tds::load_identity_from_file(pfx_path, "")
+        }
+
+        // On non-Windows, use PEM files with OpenSSL conversion
+        #[cfg(not(windows))]
+        {
+            use mssql_mock_tds::create_test_identity;
+            use std::fs;
+
+            let cert_path = "tests/test_certificates/valid_cert.pem";
+            let key_path = "tests/test_certificates/key.pem";
+
+            if !Path::new(cert_path).exists() || !Path::new(key_path).exists() {
+                return Err(
+                    "Test certificates not found. Generate them using one of these methods:\n\
+                     \n\
+                     From repository root:\n\
+                       Linux/macOS: ./scripts/generate_mock_tds_server_certs.sh\n\
+                       Windows:     .\\scripts\\generate_mock_tds_server_certs.ps1\n\
+                     \n\
+                     Or from mssql-tds directory:\n\
+                       ./tests/test_certificates/generate_certs.sh"
+                        .into(),
+                );
+            }
+
+            let cert_pem = fs::read(cert_path)?;
+            let key_pem = fs::read(key_path)?;
+            create_test_identity(&cert_pem, &key_pem)
+        }
+    }
+
     /// Test basic connectivity to mock server
     #[tokio::test]
     async fn test_connect_to_mock_server() -> Result<(), Box<dyn std::error::Error>> {
@@ -655,17 +703,10 @@ mod mock_server_tests {
     /// The mock server supports TDS 7.4-style TDS-wrapped TLS handshakes.
     #[tokio::test]
     async fn test_server_certificate_with_tls() -> Result<(), Box<dyn std::error::Error>> {
-        use mssql_mock_tds::create_test_identity;
-        use std::fs;
-
         init_tracing();
 
-        // Read test certificate and key
-        let cert_pem = fs::read("tests/test_certificates/valid_cert.pem")?;
-        let key_pem = fs::read("tests/test_certificates/key.pem")?;
-
-        // Create TLS identity for server
-        let identity = create_test_identity(&cert_pem, &key_pem)?;
+        // Load TLS identity for server (handles Windows vs non-Windows)
+        let identity = load_test_identity()?;
 
         // Start TLS-enabled mock server
         let server = MockTdsServer::new_with_tls("127.0.0.1:0", Some(identity)).await?;
@@ -781,17 +822,10 @@ mod mock_server_tests {
     #[tokio::test]
     async fn test_strict_encryption_with_server_certificate()
     -> Result<(), Box<dyn std::error::Error>> {
-        use mssql_mock_tds::create_test_identity;
-        use std::fs;
-
         init_tracing();
 
-        // Read test certificate and key
-        let cert_pem = fs::read("tests/test_certificates/valid_cert.pem")?;
-        let key_pem = fs::read("tests/test_certificates/key.pem")?;
-
-        // Create TLS identity for server
-        let identity = create_test_identity(&cert_pem, &key_pem)?;
+        // Load TLS identity for server (handles Windows vs non-Windows)
+        let identity = load_test_identity()?;
 
         // Start mock server in STRICT TLS mode (TDS 8.0)
         // In strict mode, TLS handshake happens directly on the socket
