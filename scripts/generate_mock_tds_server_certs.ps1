@@ -1,6 +1,8 @@
 # Generate test certificates for mock TDS server TLS tests
 # This script generates self-signed certificates for testing purposes only.
 # Do NOT use these certificates in production.
+#
+# This script uses native .NET/PowerShell APIs and does NOT require OpenSSL.
 
 $ErrorActionPreference = "Stop"
 
@@ -18,26 +20,75 @@ $KeyPath = Join-Path $CertDir "key.pem"
 $CertPemPath = Join-Path $CertDir "valid_cert.pem"
 $CertDerPath = Join-Path $CertDir "valid_cert.der"
 
-# Generate self-signed certificate and private key using openssl
-$opensslArgs = @(
-    "req", "-x509", "-newkey", "rsa:2048",
-    "-keyout", $KeyPath,
-    "-out", $CertPemPath,
-    "-days", "3650",
-    "-nodes",
-    "-subj", "/C=US/ST=Test/L=Test/O=Test/CN=localhost"
-)
-
-& openssl @opensslArgs 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Failed to generate certificate. Make sure openssl is installed and in PATH."
-    exit 1
+# Generate self-signed certificate using .NET APIs (no OpenSSL required)
+try {
+    # Create RSA key pair
+    $rsa = [System.Security.Cryptography.RSA]::Create(2048)
+    
+    # Create certificate request
+    $certRequest = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+        "CN=localhost, O=Test, L=Test, ST=Test, C=US",
+        $rsa,
+        [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+        [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
+    )
+    
+    # Add Subject Alternative Name extension for localhost
+    $sanBuilder = [System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder]::new()
+    $sanBuilder.AddDnsName("localhost")
+    $sanBuilder.AddIpAddress([System.Net.IPAddress]::Parse("127.0.0.1"))
+    $certRequest.CertificateExtensions.Add($sanBuilder.Build())
+    
+    # Add Basic Constraints (not a CA)
+    $certRequest.CertificateExtensions.Add(
+        [System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension]::new($false, $false, 0, $true)
+    )
+    
+    # Add Key Usage
+    $certRequest.CertificateExtensions.Add(
+        [System.Security.Cryptography.X509Certificates.X509KeyUsageExtension]::new(
+            [System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::DigitalSignature -bor
+            [System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::KeyEncipherment,
+            $true
+        )
+    )
+    
+    # Add Enhanced Key Usage (Server Authentication)
+    $serverAuthOid = [System.Security.Cryptography.Oid]::new("1.3.6.1.5.5.7.3.1", "Server Authentication")
+    $enhancedKeyUsage = [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]::new(
+        [System.Security.Cryptography.OidCollection]@($serverAuthOid),
+        $true
+    )
+    $certRequest.CertificateExtensions.Add($enhancedKeyUsage)
+    
+    # Create self-signed certificate (valid for 10 years)
+    $notBefore = [System.DateTimeOffset]::UtcNow
+    $notAfter = $notBefore.AddYears(10)
+    $cert = $certRequest.CreateSelfSigned($notBefore, $notAfter)
+    
+    # Export certificate in DER format
+    $derBytes = $cert.RawData
+    [System.IO.File]::WriteAllBytes($CertDerPath, $derBytes)
+    
+    # Export certificate in PEM format
+    $certPem = "-----BEGIN CERTIFICATE-----`n"
+    $certPem += [System.Convert]::ToBase64String($derBytes, [System.Base64FormattingOptions]::InsertLineBreaks)
+    $certPem += "`n-----END CERTIFICATE-----`n"
+    [System.IO.File]::WriteAllText($CertPemPath, $certPem)
+    
+    # Export private key in PEM format
+    $keyBytes = $rsa.ExportRSAPrivateKey()
+    $keyPem = "-----BEGIN RSA PRIVATE KEY-----`n"
+    $keyPem += [System.Convert]::ToBase64String($keyBytes, [System.Base64FormattingOptions]::InsertLineBreaks)
+    $keyPem += "`n-----END RSA PRIVATE KEY-----`n"
+    [System.IO.File]::WriteAllText($KeyPath, $keyPem)
+    
+    # Clean up
+    $rsa.Dispose()
+    $cert.Dispose()
 }
-
-# Convert to DER format
-& openssl x509 -in $CertPemPath -outform DER -out $CertDerPath 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Failed to convert certificate to DER format."
+catch {
+    Write-Error "Failed to generate certificate: $_"
     exit 1
 }
 
