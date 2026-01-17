@@ -101,7 +101,7 @@ impl SslHandler {
                         .get_ref()
                         .peer_certificate()
                         .map_err(crate::error::Error::TlsError)?
-                        .ok_or_else(|| crate::error::Error::NoServerCertificate)?;
+                        .ok_or(crate::error::Error::NoServerCertificate)?;
 
                     // Get the DER-encoded certificate data
                     let server_cert_der =
