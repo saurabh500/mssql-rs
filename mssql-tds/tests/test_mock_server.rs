@@ -21,6 +21,22 @@ mod mock_server_tests {
         let _ = subscriber; // Ignore if already initialized
     }
 
+    /// Generate a random password for test connections.
+    /// Uses a cryptographically secure random number generator.
+    fn generate_test_password() -> String {
+        use rand::Rng;
+        const CHARSET: &[u8] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+        let mut rng = rand::rng();
+        let password: String = (0..24)
+            .map(|_| {
+                let idx = rng.random_range(0..CHARSET.len());
+                CHARSET[idx] as char
+            })
+            .collect();
+        password
+    }
+
     /// Test basic connectivity to mock server
     #[tokio::test]
     async fn test_connect_to_mock_server() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,7 +58,7 @@ mod mock_server_tests {
         let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
         let mut context = ClientContext::default();
         context.user_name = "sa".to_string();
-        context.password = "TestPassword123!".to_string();
+        context.password = generate_test_password().to_string();
         context.database = "master".to_string();
         context.encryption_options = EncryptionOptions {
             mode: EncryptionSetting::PreferOff,
@@ -83,7 +99,7 @@ mod mock_server_tests {
         let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
         let mut context = ClientContext::default();
         context.user_name = "sa".to_string();
-        context.password = "TestPassword123!".to_string();
+        context.password = generate_test_password().to_string();
         context.database = "master".to_string();
         context.encryption_options = EncryptionOptions {
             mode: EncryptionSetting::PreferOff,
@@ -143,7 +159,7 @@ mod mock_server_tests {
         let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
         let mut context = ClientContext::default();
         context.user_name = "sa".to_string();
-        context.password = "TestPassword123!".to_string();
+        context.password = generate_test_password().to_string();
         context.database = "master".to_string();
         context.encryption_options = EncryptionOptions {
             mode: EncryptionSetting::PreferOff,
@@ -199,7 +215,7 @@ mod mock_server_tests {
         let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
         let mut context = ClientContext::default();
         context.user_name = "sa".to_string();
-        context.password = "TestPassword123!".to_string();
+        context.password = generate_test_password().to_string();
         context.database = "master".to_string();
         context.encryption_options = EncryptionOptions {
             mode: EncryptionSetting::PreferOff,
@@ -270,7 +286,7 @@ mod mock_server_tests {
         let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
         let mut context = ClientContext::default();
         context.user_name = "sa".to_string();
-        context.password = "TestPassword123!".to_string();
+        context.password = generate_test_password().to_string();
         context.database = "master".to_string();
         context.encryption_options = EncryptionOptions {
             mode: EncryptionSetting::PreferOff,
@@ -357,7 +373,7 @@ mod mock_server_tests {
         let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
         let mut context = ClientContext::default();
         context.user_name = "sa".to_string();
-        context.password = "TestPassword123!".to_string();
+        context.password = generate_test_password().to_string();
         context.database = "master".to_string();
         context.encryption_options = EncryptionOptions {
             mode: EncryptionSetting::PreferOff,

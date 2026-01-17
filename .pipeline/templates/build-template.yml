@@ -86,6 +86,15 @@ steps:
   displayName: Install llvm-cov and nextest 
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
+# Generate test certificates for mock TDS server TLS tests
+- ${{ if eq(parameters.osType, 'Windows') }}:
+  - pwsh: ./scripts/generate_mock_tds_server_certs.ps1
+    displayName: Generate Test Certificates for Mock TDS Server
+
+- ${{ if ne(parameters.osType, 'Windows') }}:
+  - script: ./scripts/generate_mock_tds_server_certs.sh
+    displayName: Generate Test Certificates for Mock TDS Server
+
 - script: cargo llvm-cov clean --workspace
   displayName: Clean up old coverage files
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))

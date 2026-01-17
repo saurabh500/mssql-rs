@@ -73,6 +73,13 @@ pub struct ClientContext {
     pub connect_retry_count: u32,
     pub connect_timeout: u32,
     pub database: String,
+    /// TCP keep-alive idle time in milliseconds before first probe is sent.
+    /// Default: 30000 (30 seconds) per SQL Server client defaults.
+    /// Named to match ODBC Driver's "KeepAlive" connection string parameter.
+    pub keep_alive_in_ms: u32,
+    /// TCP keep-alive interval in milliseconds between subsequent probes.
+    /// Default: 1000 (1 second) per SQL Server client defaults.
+    pub keep_alive_interval_in_ms: u32,
     pub database_instance: String,
     pub enlist: bool,
     pub encryption_options: EncryptionOptions,
@@ -109,6 +116,8 @@ impl ClientContext {
             connect_retry_count: 0,
             connect_timeout: 15,
             database: "".to_string(),
+            keep_alive_in_ms: 30_000, // 30 seconds (SQL Server default)
+            keep_alive_interval_in_ms: 1_000, // 1 second (SQL Server default)
             database_instance: "MSSQLServer".to_string(),
             enlist: false,
             encryption_options: EncryptionOptions::new(),
@@ -261,6 +270,8 @@ impl Clone for ClientContext {
             connect_retry_count: self.connect_retry_count,
             connect_timeout: self.connect_timeout,
             database: self.database.clone(),
+            keep_alive_in_ms: self.keep_alive_in_ms,
+            keep_alive_interval_in_ms: self.keep_alive_interval_in_ms,
             database_instance: self.database_instance.clone(),
             enlist: self.enlist,
             encryption_options: self.encryption_options.clone(),
@@ -850,5 +861,57 @@ mod tests {
         // IPv6 loopback
         let ctx3 = TransportContext::parse_server_name("::1", 1433);
         assert!(ctx3.is_local());
+    }
+
+    #[test]
+    fn test_client_context_keep_alive_defaults() {
+        let ctx = ClientContext::new();
+        // Default keep_alive_in_ms should be 30 seconds (30000 ms) per SQL Server defaults
+        assert_eq!(ctx.keep_alive_in_ms, 30_000);
+        // Default keep_alive_interval_in_ms should be 1 second (1000 ms) per SQL Server defaults
+        assert_eq!(ctx.keep_alive_interval_in_ms, 1_000);
+    }
+
+    #[test]
+    fn test_client_context_keep_alive_custom_values() {
+        let mut ctx = ClientContext::new();
+        ctx.keep_alive_in_ms = 60_000; // 60 seconds
+        ctx.keep_alive_interval_in_ms = 5_000; // 5 seconds
+
+        assert_eq!(ctx.keep_alive_in_ms, 60_000);
+        assert_eq!(ctx.keep_alive_interval_in_ms, 5_000);
+    }
+
+    #[test]
+    fn test_client_context_keep_alive_clone() {
+        let mut ctx = ClientContext::new();
+        ctx.keep_alive_in_ms = 45_000;
+        ctx.keep_alive_interval_in_ms = 2_000;
+
+        let cloned = ctx.clone();
+        assert_eq!(cloned.keep_alive_in_ms, 45_000);
+        assert_eq!(cloned.keep_alive_interval_in_ms, 2_000);
+    }
+
+    #[test]
+    fn test_client_context_keep_alive_zero_values() {
+        // Test that zero values are allowed (disables keep-alive on some systems)
+        let mut ctx = ClientContext::new();
+        ctx.keep_alive_in_ms = 0;
+        ctx.keep_alive_interval_in_ms = 0;
+
+        assert_eq!(ctx.keep_alive_in_ms, 0);
+        assert_eq!(ctx.keep_alive_interval_in_ms, 0);
+    }
+
+    #[test]
+    fn test_client_context_keep_alive_max_values() {
+        // Test maximum u32 values
+        let mut ctx = ClientContext::new();
+        ctx.keep_alive_in_ms = u32::MAX;
+        ctx.keep_alive_interval_in_ms = u32::MAX;
+
+        assert_eq!(ctx.keep_alive_in_ms, u32::MAX);
+        assert_eq!(ctx.keep_alive_interval_in_ms, u32::MAX);
     }
 }

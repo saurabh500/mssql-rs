@@ -33,6 +33,7 @@ jobs:
           echo $container
 
           scripts/generate_cert.sh
+          scripts/generate_mock_tds_server_certs.sh
           
           cp $(Pipeline.Workspace)/tdslib-nextest.tar.zst $(Build.SourcesDirectory)
           docker network create testnet

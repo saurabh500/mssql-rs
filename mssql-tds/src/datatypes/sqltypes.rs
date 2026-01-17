@@ -859,7 +859,7 @@ impl SqlType {
     /// - Bytes 2-3: Dimension count (u16, little-endian)
     /// - Byte 4: Base type (0x00 for Float32)
     /// - Bytes 5-7: Reserved (0x00)
-    async fn encode_vector_header(
+    pub(crate) async fn encode_vector_header(
         packet_writer: &mut PacketWriter<'_>,
         dimension_count: u16,
         base_type: VectorBaseType,

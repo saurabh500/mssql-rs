@@ -128,8 +128,8 @@ mod query_result_reads {
     async fn test_ntext_nchar_values_validation() {
         // Test that validates the actual values read from NTEXT and NCHAR columns
         // This ensures proper UTF-16LE decoding and empty string handling
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let datasource = build_tcp_datasource();
+        let mut connection = begin_connection(&datasource).await;
 
         connection
             .execute(

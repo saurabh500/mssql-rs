@@ -22,8 +22,12 @@
 pub mod protocol;
 pub mod query_response;
 pub mod server;
+pub mod tds_tls_wrapper;
+pub mod tls_helper;
 
 pub use query_response::{
     ColumnDefinition, ColumnValue, QueryRegistry, QueryResponse, Row, SqlDataType,
 };
 pub use server::MockTdsServer;
+pub use tds_tls_wrapper::TdsTlsWrapper;
+pub use tls_helper::{create_test_identity, load_identity_from_file};

@@ -1,6 +1,6 @@
 # Mock TDS Server
 
-A mock TDS (Tabular Data Stream) server implementation for testing TDS clients without requiring an actual SQL Server instance.
+A mock TDS (Tabular Data Stream) server implementation for testing TDS clients without requiring an actual SQL Server instance. This crate provides both a library and a CLI.
 
 ## Overview
 
@@ -9,6 +9,8 @@ This crate provides a lightweight mock server that implements enough of the TDS 
 ## Features
 
 - ✅ **PreLogin negotiation** - Handles PreLogin packets and signals encryption support
+- ✅ **TLS encryption (TDS 7.4)** - Supports optional TLS with wrapped TDS packets
+- ✅ **Strict TLS (TDS 8.0)** - Supports strict TLS mode where TLS starts immediately
 - ✅ **Login7 authentication** - Accepts login requests and sends LoginAck responses
 - ✅ **Packet size negotiation** - Properly negotiates packet size via EnvChange tokens
 - ✅ **Database collation** - Returns collation information via EnvChange tokens
@@ -19,10 +21,46 @@ This crate provides a lightweight mock server that implements enough of the TDS 
 - ✅ **Result set parsing** - Correctly formats ColMetadata and Row tokens
 - ✅ **Multiple queries** - Can handle multiple sequential queries on same connection
 - ✅ **Connection reuse** - Supports multiple connections sequentially
-- ❌ **SSL/TLS encryption** - Not currently supported (signals NOT_SUPPORTED)
 - ❌ **String data types** - VARCHAR, NVARCHAR not yet supported
 
-## Usage
+## CLI Usage
+
+The crate includes a CLI for running the mock server standalone:
+
+```bash
+# Start without TLS
+cargo run -p mssql-mock-tds -- --port 1433
+
+# Start with optional TLS (TDS 7.4 mode)
+cargo run -p mssql-mock-tds -- --port 1433 --tls-mode optional \
+    --cert path/to/cert.pem --key path/to/key.pem
+
+# Start with strict TLS (TDS 8.0 mode)
+cargo run -p mssql-mock-tds -- --port 1433 --tls-mode strict \
+    --cert path/to/cert.pem --key path/to/key.pem
+
+# Use PKCS#12 file instead of PEM
+cargo run -p mssql-mock-tds -- --port 1433 --tls-mode optional \
+    --pfx path/to/identity.pfx --pfx-password mypassword
+
+# Enable verbose logging
+cargo run -p mssql-mock-tds -- --port 1433 -vv
+```
+
+### CLI Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-H, --host` | Host address to bind to | `127.0.0.1` |
+| `-p, --port` | Port to listen on | `1433` |
+| `-m, --tls-mode` | TLS mode: `none`, `optional`, `strict` | `none` |
+| `-c, --cert` | Path to PEM certificate file | - |
+| `-k, --key` | Path to PEM private key file | - |
+| `--pfx` | Path to PKCS#12 (.pfx) identity file | - |
+| `--pfx-password` | Password for PKCS#12 file | `""` |
+| `-v, --verbose` | Enable verbose logging (repeat for more) | - |
+
+## Library Usage
 
 ### Starting the Mock Server
 

@@ -471,6 +471,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
     }
 
     /// Internal method to write type info.
+    /// TODO: This encoding is same as what we during parameter type_info encoding. Consider refactoring to share code.
     async fn write_type_info_internal(
         &mut self,
         col_meta: &BulkCopyColumnMetadata,
@@ -647,6 +648,18 @@ impl<'a> StreamingBulkLoadWriter<'a> {
             // UNIQUEIDENTIFIER (GUIDTYPE) - requires length byte (always 16)
             x if x == TdsDataType::Guid as u8 => {
                 self.packet_writer.write_byte_async(16).await?;
+            }
+
+            // VECTOR type - USHORT length (total length) + SCALE (base type)
+            x if x == TdsDataType::Vector as u8 => {
+                // Length is the payload size in bytes (header + elements)
+                self.packet_writer
+                    .write_u16_async(col_meta.length as u16)
+                    .await?;
+                // SCALE stores base type (e.g., 0x00 for Float32)
+                self.packet_writer
+                    .write_byte_async(col_meta.scale)
+                    .await?;
             }
 
             _ => {
