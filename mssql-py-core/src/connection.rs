@@ -215,6 +215,45 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<u32>().ok())
             .unwrap_or(1_000);
 
+        // Extract access token (if provided, use AccessToken authentication)
+        let access_token = dict
+            .get_item("access_token")?
+            .and_then(|v| v.extract::<String>().ok());
+
+        // Parse authentication method
+        // If access_token is provided, override to AccessToken method
+        // Otherwise, parse from "authentication" parameter
+        let authentication_method = if access_token.is_some() {
+            TdsAuthenticationMethod::AccessToken
+        } else {
+            let auth_str = dict
+                .get_item("authentication")?
+                .and_then(|v| v.extract::<String>().ok())
+                .unwrap_or_else(|| "SqlPassword".to_string());
+
+            match auth_str.to_lowercase().as_str() {
+                "accesstoken" => TdsAuthenticationMethod::AccessToken,
+                "activedirectorypassword" => TdsAuthenticationMethod::ActiveDirectoryPassword,
+                "activedirectoryinteractive" => TdsAuthenticationMethod::ActiveDirectoryInteractive,
+                "activedirectorydevicecodeflow" | "activedirectorydevicecode" => {
+                    TdsAuthenticationMethod::ActiveDirectoryDeviceCodeFlow
+                }
+                "activedirectoryserviceprincipal" => {
+                    TdsAuthenticationMethod::ActiveDirectoryServicePrincipal
+                }
+                "activedirectorymanagedidentity" | "activedirectorymsi" => {
+                    TdsAuthenticationMethod::ActiveDirectoryManagedIdentity
+                }
+                "activedirectorydefault" => TdsAuthenticationMethod::ActiveDirectoryDefault,
+                "activedirectoryworkloadidentity" => {
+                    TdsAuthenticationMethod::ActiveDirectoryWorkloadIdentity
+                }
+                "activedirectoryintegrated" => TdsAuthenticationMethod::ActiveDirectoryIntegrated,
+                "sspi" | "integrated" => TdsAuthenticationMethod::SSPI,
+                _ => TdsAuthenticationMethod::Password,
+            }
+        };
+
         // Create ClientContext
         let mut context = ClientContext::new();
         context.transport_context = transport_context;
@@ -231,7 +270,8 @@ impl PyCoreConnection {
         context.language = language;
         context.keep_alive_in_ms = keep_alive_in_ms;
         context.keep_alive_interval_in_ms = keep_alive_interval_in_ms;
-        context.tds_authentication_method = TdsAuthenticationMethod::Password;
+        context.tds_authentication_method = authentication_method;
+        context.access_token = access_token;
 
         Ok(context)
     }
