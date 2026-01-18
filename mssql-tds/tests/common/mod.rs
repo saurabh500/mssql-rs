@@ -75,6 +75,7 @@ pub fn create_context() -> ClientContext {
             mode: EncryptionSetting::On,
             trust_server_certificate: trust_server_certificate(),
             host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            server_certificate: None,
         },
         ..Default::default()
     }
@@ -250,6 +251,7 @@ pub fn create_named_pipe_context() -> ClientContext {
             mode: EncryptionSetting::On,
             trust_server_certificate: trust_server_certificate(),
             host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            server_certificate: None,
         },
         ..Default::default()
     }
@@ -285,6 +287,7 @@ pub fn create_shared_memory_context() -> ClientContext {
             mode: EncryptionSetting::On,
             trust_server_certificate: trust_server_certificate(),
             host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            server_certificate: None,
         },
         ..Default::default()
     }
