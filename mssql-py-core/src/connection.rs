@@ -220,37 +220,48 @@ impl PyCoreConnection {
             .get_item("access_token")?
             .and_then(|v| v.extract::<String>().ok());
 
-        // Parse authentication method
-        // If access_token is provided, override to AccessToken method
-        // Otherwise, parse from "authentication" parameter
-        let authentication_method = if access_token.is_some() {
-            TdsAuthenticationMethod::AccessToken
-        } else {
-            let auth_str = dict
-                .get_item("authentication")?
-                .and_then(|v| v.extract::<String>().ok())
-                .unwrap_or_else(|| "SqlPassword".to_string());
+        // Determine authentication method based on provided credentials:
+        // - access_token provided → AccessToken authentication
+        // - user_name AND password provided → SQL Password authentication
+        // - both access_token and credentials → Error
+        // - partial credentials (only user_name or only password) → Error
+        // - neither provided → Error
+        let has_access_token = access_token.is_some();
+        let has_user_name = !user_name.is_empty();
+        let has_password = !password.is_empty();
 
-            match auth_str.to_lowercase().as_str() {
-                "accesstoken" => TdsAuthenticationMethod::AccessToken,
-                "activedirectorypassword" => TdsAuthenticationMethod::ActiveDirectoryPassword,
-                "activedirectoryinteractive" => TdsAuthenticationMethod::ActiveDirectoryInteractive,
-                "activedirectorydevicecodeflow" | "activedirectorydevicecode" => {
-                    TdsAuthenticationMethod::ActiveDirectoryDeviceCodeFlow
-                }
-                "activedirectoryserviceprincipal" => {
-                    TdsAuthenticationMethod::ActiveDirectoryServicePrincipal
-                }
-                "activedirectorymanagedidentity" | "activedirectorymsi" => {
-                    TdsAuthenticationMethod::ActiveDirectoryManagedIdentity
-                }
-                "activedirectorydefault" => TdsAuthenticationMethod::ActiveDirectoryDefault,
-                "activedirectoryworkloadidentity" => {
-                    TdsAuthenticationMethod::ActiveDirectoryWorkloadIdentity
-                }
-                "activedirectoryintegrated" => TdsAuthenticationMethod::ActiveDirectoryIntegrated,
-                "sspi" | "integrated" => TdsAuthenticationMethod::SSPI,
-                _ => TdsAuthenticationMethod::Password,
+        let authentication_method = match (has_access_token, has_user_name, has_password) {
+            // Access token with any credentials → Error
+            (true, true, _) | (true, _, true) => {
+                return Err(PyRuntimeError::new_err(
+                    "Cannot use both 'access_token' and 'user_name'/'password'. \
+                     Please provide either an access token OR username/password credentials, not both.",
+                ));
+            }
+            // Access token only → AccessToken auth
+            (true, false, false) => TdsAuthenticationMethod::AccessToken,
+            // Both username and password → SQL Password auth
+            (false, true, true) => TdsAuthenticationMethod::Password,
+            // Only username, no password → Error
+            (false, true, false) => {
+                return Err(PyRuntimeError::new_err(
+                    "Incomplete credentials: 'user_name' provided without 'password'. \
+                     Please provide both 'user_name' and 'password' for SQL authentication.",
+                ));
+            }
+            // Only password, no username → Error
+            (false, false, true) => {
+                return Err(PyRuntimeError::new_err(
+                    "Incomplete credentials: 'password' provided without 'user_name'. \
+                     Please provide both 'user_name' and 'password' for SQL authentication.",
+                ));
+            }
+            // Nothing provided → Error
+            (false, false, false) => {
+                return Err(PyRuntimeError::new_err(
+                    "No authentication credentials provided. \
+                     Please provide either 'access_token' or both 'user_name' and 'password'.",
+                ));
             }
         };
 
