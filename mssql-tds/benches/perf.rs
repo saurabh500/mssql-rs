@@ -77,6 +77,7 @@ pub fn create_context() -> ClientContext {
                 .map(|v| v.parse().unwrap_or(false))
                 .unwrap_or(false),
             host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            server_certificate: None,
         },
         ..Default::default()
     }

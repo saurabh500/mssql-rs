@@ -174,6 +174,7 @@ impl PyCoreConnection {
             mode: encryption_mode,
             trust_server_certificate,
             host_name_in_cert: None,
+            server_certificate: None,
         };
 
         // Parse application intent

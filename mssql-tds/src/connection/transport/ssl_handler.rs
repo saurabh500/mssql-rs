@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::connection::transport::certificate_validator;
 use crate::connection::transport::network_transport::Stream;
 use crate::io::packet_writer::PacketWriter;
 use crate::message::messages::PacketType;
@@ -11,7 +12,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_native_tls::TlsStream;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::network_transport::PRE_NEGOTIATED_PACKET_SIZE;
 use crate::core::{EncryptionOptions, TdsResult};
@@ -31,12 +32,39 @@ impl SslHandler {
     ) -> TdsResult<Box<dyn Stream>> {
         base_stream.tls_handshake_starting();
 
+        // Check if ServerCertificate and TrustServerCertificate are both specified
+        if self.encryption_options.server_certificate.is_some()
+            && self.encryption_options.trust_server_certificate
+        {
+            warn!(
+                "Both ServerCertificate and TrustServerCertificate are specified. ServerCertificate takes precedence."
+            );
+        }
+
+        // Check if ServerCertificate and HostnameInCertificate are both specified
+        if self.encryption_options.server_certificate.is_some()
+            && self.encryption_options.host_name_in_cert.is_some()
+        {
+            return Err(crate::error::Error::UsageError(
+                "ServerCertificate and HostnameInCertificate are mutually exclusive. Use only one."
+                    .to_string(),
+            ));
+        }
+
         // Build the native TlsConnector directly because tokio-native-tls's version
         // is missing some functionality.
         let mut builder = NativeTlsConnector::builder();
-        if self.encryption_options.trust_server_certificate {
+
+        // When ServerCertificate is specified, we bypass CA validation
+        // and perform custom certificate pinning instead
+        if self.encryption_options.server_certificate.is_some() {
+            info!("ServerCertificate specified, enabling certificate pinning mode");
+            builder.danger_accept_invalid_certs(true);
+            builder.danger_accept_invalid_hostnames(true);
+        } else if self.encryption_options.trust_server_certificate {
             builder.danger_accept_invalid_certs(true);
         }
+
         let host_name = self
             .encryption_options
             .host_name_in_cert
@@ -64,6 +92,30 @@ impl SslHandler {
 
         match encrypted_stream {
             Ok(mut stream) => {
+                // If ServerCertificate is specified, perform certificate validation
+                if let Some(cert_path) = &self.encryption_options.server_certificate {
+                    info!("Validating server certificate using: {}", cert_path);
+
+                    // Get the server's certificate from the TLS stream
+                    let peer_cert = stream
+                        .get_ref()
+                        .peer_certificate()
+                        .map_err(crate::error::Error::TlsError)?
+                        .ok_or(crate::error::Error::NoServerCertificate)?;
+
+                    // Get the DER-encoded certificate data
+                    let server_cert_der =
+                        peer_cert.to_der().map_err(crate::error::Error::TlsError)?;
+
+                    // Validate the certificate
+                    certificate_validator::validate_server_certificate(
+                        cert_path,
+                        &server_cert_der,
+                    )?;
+
+                    info!("Server certificate validation successful");
+                }
+
                 // Call tls_handshake_completed on the underlying stream through the TlsStream wrapper
                 stream
                     .get_mut()

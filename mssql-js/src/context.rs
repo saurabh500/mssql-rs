@@ -24,6 +24,7 @@ impl From<JsClientContext> for ClientContext {
             mode: EncryptionSetting::Required,
             trust_server_certificate: js_ctx.trust_server_certificate,
             host_name_in_cert: None,
+            server_certificate: None,
         };
 
         info!(
