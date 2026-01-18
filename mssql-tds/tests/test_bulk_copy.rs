@@ -581,4 +581,140 @@ mod bulk_copy_integration_tests {
             error_msg
         );
     }
+
+    /// Test bulk copy with very large varchar(max) strings.
+    /// This test verifies the fix for issue #41685 where 50MB+ strings
+    /// caused a segfault due to deep recursion in write_async.
+    ///
+    /// The test uses a smaller size (1MB) to keep test runtime reasonable
+    /// while still validating the iterative write_async approach works correctly.
+    #[derive(Debug, Clone)]
+    struct LargeStringRow {
+        id: i32,
+        large_value: String,
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for LargeStringRow {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            use mssql_tds::datatypes::sql_string::SqlString;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
+            *column_index += 1;
+            // Use SqlString for varchar(max) column
+            let sql_string = SqlString::from_utf8_string(self.large_value.clone());
+            writer
+                .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                .await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for &LargeStringRow {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            use mssql_tds::datatypes::sql_string::SqlString;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
+            *column_index += 1;
+            // Use SqlString for varchar(max) column
+            let sql_string = SqlString::from_utf8_string(self.large_value.clone());
+            writer
+                .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                .await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_large_varchar_max_no_stack_overflow() {
+        let context = create_context();
+        let mut client = begin_connection(context).await;
+
+        // Create temp table with varchar(max)
+        client
+            .execute(
+                "CREATE TABLE #BulkCopyLargeString (
+                    id INT NOT NULL,
+                    large_value VARCHAR(MAX)
+                )"
+                .to_string(),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create test table");
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Create a 1MB string (use 'A' repeated)
+        // This is enough to test the iterative write_async approach
+        // A 50MB string would take too long for unit tests
+        let str_size_mb = 1;
+        let large_string = "A".repeat(str_size_mb * 1024 * 1024);
+
+        let test_data = vec![LargeStringRow {
+            id: 1,
+            large_value: large_string.clone(),
+        }];
+
+        // Perform bulk copy - this should NOT cause a stack overflow
+        let result = {
+            let mut bulk_copy = BulkCopy::new(&mut client, "#BulkCopyLargeString");
+            bulk_copy.write_to_server_zerocopy(&test_data).await
+        };
+
+        assert!(
+            result.is_ok(),
+            "Bulk copy failed: {:?}",
+            result.unwrap_err()
+        );
+
+        let bulk_result = result.unwrap();
+        assert_eq!(bulk_result.rows_affected, 1, "Expected 1 row copied");
+
+        // Verify data was inserted correctly
+        client
+            .execute(
+                "SELECT id, LEN(large_value) as len FROM #BulkCopyLargeString".to_string(),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to select from table");
+
+        let mut rows_returned = 0;
+        if let Some(resultset) = client.get_current_resultset() {
+            while let Some(row) = resultset.next_row().await.expect("Failed to read row") {
+                let id = match &row[0] {
+                    ColumnValues::Int(v) => *v,
+                    _ => panic!("Expected Int for id"),
+                };
+                let len = match &row[1] {
+                    ColumnValues::Int(v) => *v,
+                    _ => panic!("Expected Int for len"),
+                };
+
+                assert_eq!(id, 1);
+                assert_eq!(len, (str_size_mb * 1024 * 1024) as i32);
+                rows_returned += 1;
+            }
+        }
+
+        assert_eq!(rows_returned, 1, "Expected 1 row returned from SELECT");
+
+        client.close_query().await.expect("Failed to close query");
+    }
 }
