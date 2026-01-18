@@ -5,8 +5,9 @@
 
 use crate::protocol::{
     PACKET_HEADER_SIZE, PacketHeader, PacketType, ProtocolError, build_done_token,
-    build_error_response, build_login_ack, build_prelogin_response,
-    build_prelogin_response_with_encryption, build_query_result, parse_sql_batch,
+    build_error_response, build_feature_ext_ack_fedauth, build_login_ack, build_prelogin_response,
+    build_prelogin_response_with_encryption, build_prelogin_response_with_fedauth,
+    build_query_result, parse_login7_auth, parse_sql_batch,
 };
 use crate::query_response::QueryRegistry;
 use bytes::{BufMut, BytesMut};
@@ -19,6 +20,62 @@ use tokio::sync::Mutex;
 use tokio_native_tls::{TlsAcceptor, TlsStream};
 use tracing::{debug, error, info, warn};
 
+/// Store for captured access tokens received during FedAuth authentication.
+/// This allows tests to verify that the server received the exact token sent by the client.
+#[derive(Debug, Default, Clone)]
+pub struct ReceivedTokenStore {
+    /// Access tokens received from clients (stored as raw bytes)
+    tokens: Vec<Vec<u8>>,
+}
+
+impl ReceivedTokenStore {
+    pub fn new() -> Self {
+        Self { tokens: Vec::new() }
+    }
+
+    /// Store a received access token
+    pub fn add_token(&mut self, token: Vec<u8>) {
+        self.tokens.push(token);
+    }
+
+    /// Get all received tokens
+    pub fn get_tokens(&self) -> &[Vec<u8>] {
+        &self.tokens
+    }
+
+    /// Get the last received token
+    pub fn last_token(&self) -> Option<&[u8]> {
+        self.tokens.last().map(|v| v.as_slice())
+    }
+
+    /// Get the last received token as a UTF-16LE decoded string (access tokens are UTF-16LE in TDS)
+    pub fn last_token_as_string(&self) -> Option<String> {
+        self.last_token().and_then(|bytes| {
+            // Access tokens in TDS are UTF-16LE encoded
+            if bytes.len() % 2 == 0 {
+                let u16_chars: Vec<u16> = bytes
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .collect();
+                String::from_utf16(&u16_chars).ok()
+            } else {
+                // Fallback to UTF-8 if not even length
+                String::from_utf8(bytes.to_vec()).ok()
+            }
+        })
+    }
+
+    /// Clear all stored tokens
+    pub fn clear(&mut self) {
+        self.tokens.clear();
+    }
+
+    /// Get the count of received tokens
+    pub fn count(&self) -> usize {
+        self.tokens.len()
+    }
+}
+
 /// Mock TDS Server
 pub struct MockTdsServer {
     listener: TcpListener,
@@ -27,6 +84,10 @@ pub struct MockTdsServer {
     tls_acceptor: Option<TlsAcceptor>,
     /// If true, use TDS 8.0 strict mode where TLS starts immediately
     strict_mode: bool,
+    /// If true, advertise and accept FedAuth (access token) authentication
+    fedauth_mode: bool,
+    /// Store for captured access tokens (for test verification)
+    received_tokens: Arc<Mutex<ReceivedTokenStore>>,
 }
 
 impl MockTdsServer {
@@ -40,7 +101,7 @@ impl MockTdsServer {
         addr: &str,
         identity: Option<Identity>,
     ) -> Result<Self, std::io::Error> {
-        Self::new_internal(addr, identity, false).await
+        Self::new_internal(addr, identity, false, false).await
     }
 
     /// Create a new mock TDS server with strict/TDS 8.0 mode
@@ -49,7 +110,13 @@ impl MockTdsServer {
         addr: &str,
         identity: Identity,
     ) -> Result<Self, std::io::Error> {
-        Self::new_internal(addr, Some(identity), true).await
+        Self::new_internal(addr, Some(identity), true, false).await
+    }
+
+    /// Create a new mock TDS server with FedAuth (access token) support
+    /// This mode advertises FedAuth in PreLogin and accepts access tokens in Login7
+    pub async fn new_with_fedauth(addr: &str) -> Result<Self, std::io::Error> {
+        Self::new_internal(addr, None, false, true).await
     }
 
     /// Internal constructor
@@ -57,6 +124,7 @@ impl MockTdsServer {
         addr: &str,
         identity: Option<Identity>,
         strict_mode: bool,
+        fedauth_mode: bool,
     ) -> Result<Self, std::io::Error> {
         let listener = TcpListener::bind(addr).await?;
         let local_addr = listener.local_addr()?;
@@ -71,6 +139,11 @@ impl MockTdsServer {
         if strict_mode {
             info!(
                 "Mock TDS Server listening on {} with TDS 8.0 strict TLS mode",
+                local_addr
+            );
+        } else if fedauth_mode {
+            info!(
+                "Mock TDS Server listening on {} with FedAuth support",
                 local_addr
             );
         } else if tls_acceptor.is_some() {
@@ -88,12 +161,20 @@ impl MockTdsServer {
             query_registry: Arc::new(Mutex::new(QueryRegistry::new())),
             tls_acceptor,
             strict_mode,
+            fedauth_mode,
+            received_tokens: Arc::new(Mutex::new(ReceivedTokenStore::new())),
         })
     }
 
     /// Get a reference to the query registry for registering custom responses
     pub fn query_registry(&self) -> Arc<Mutex<QueryRegistry>> {
         Arc::clone(&self.query_registry)
+    }
+
+    /// Get a reference to the received tokens store for test verification.
+    /// This allows tests to check the exact access tokens received by the server.
+    pub fn received_tokens(&self) -> Arc<Mutex<ReceivedTokenStore>> {
+        Arc::clone(&self.received_tokens)
     }
 
     /// Get the local address the server is bound to
@@ -107,6 +188,8 @@ impl MockTdsServer {
         let registry = self.query_registry;
         let tls_acceptor = self.tls_acceptor.map(Arc::new);
         let strict_mode = self.strict_mode;
+        let fedauth_mode = self.fedauth_mode;
+        let received_tokens = self.received_tokens;
 
         loop {
             let (socket, addr) = listener.accept().await?;
@@ -114,6 +197,7 @@ impl MockTdsServer {
 
             let registry_clone = Arc::clone(&registry);
             let tls_acceptor_clone = tls_acceptor.clone();
+            let tokens_clone = Arc::clone(&received_tokens);
 
             // Spawn a task to handle this connection
             tokio::spawn(async move {
@@ -123,6 +207,8 @@ impl MockTdsServer {
                     registry_clone,
                     tls_acceptor_clone,
                     strict_mode,
+                    fedauth_mode,
+                    tokens_clone,
                 )
                 .await
                 {
@@ -141,6 +227,8 @@ impl MockTdsServer {
         let registry = self.query_registry;
         let tls_acceptor = self.tls_acceptor.map(Arc::new);
         let strict_mode = self.strict_mode;
+        let fedauth_mode = self.fedauth_mode;
+        let received_tokens = self.received_tokens;
 
         tokio::select! {
             result = async {
@@ -153,9 +241,10 @@ impl MockTdsServer {
 
                             let registry_clone = Arc::clone(&registry);
                             let tls_acceptor_clone = tls_acceptor.clone();
+                            let tokens_clone = Arc::clone(&received_tokens);
 
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone, strict_mode).await {
+                                if let Err(e) = handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone, strict_mode, fedauth_mode, tokens_clone).await {
                                     error!("Error handling connection from {}: {}", addr, e);
                                 }
                             });
@@ -182,6 +271,8 @@ async fn handle_connection_with_tls(
     query_registry: Arc<Mutex<QueryRegistry>>,
     tls_acceptor: Option<Arc<TlsAcceptor>>,
     strict_mode: bool,
+    fedauth_mode: bool,
+    received_tokens: Arc<Mutex<ReceivedTokenStore>>,
 ) -> Result<(), ProtocolError> {
     if strict_mode {
         // TDS 8.0 Strict mode: TLS handshake happens immediately on the socket
@@ -204,11 +295,18 @@ async fn handle_connection_with_tls(
         })?;
 
         info!("TLS handshake successful for {} (strict mode)", addr);
-        handle_strict_encrypted_connection(tls_stream, addr, query_registry).await
+        handle_strict_encrypted_connection(
+            tls_stream,
+            addr,
+            query_registry,
+            fedauth_mode,
+            received_tokens,
+        )
+        .await
     } else {
         // TDS 7.4 mode: First handle PreLogin, then optionally do TDS-wrapped TLS
         let (prelogin_socket, should_encrypt) =
-            handle_prelogin_negotiation(socket, addr, tls_acceptor.is_some()).await?;
+            handle_prelogin_negotiation(socket, addr, tls_acceptor.is_some(), fedauth_mode).await?;
 
         if should_encrypt && tls_acceptor.is_some() {
             // For TDS 7.4, the client wraps TLS handshake data in TDS PreLogin packets.
@@ -231,10 +329,24 @@ async fn handle_connection_with_tls(
                 })?;
 
             info!("TLS handshake successful for {}", addr);
-            handle_encrypted_tds_wrapped_connection(tls_stream, addr, query_registry).await
+            handle_encrypted_tds_wrapped_connection(
+                tls_stream,
+                addr,
+                query_registry,
+                fedauth_mode,
+                received_tokens,
+            )
+            .await
         } else {
             // Continue without encryption
-            handle_unencrypted_connection(prelogin_socket, addr, query_registry).await
+            handle_unencrypted_connection(
+                prelogin_socket,
+                addr,
+                query_registry,
+                fedauth_mode,
+                received_tokens,
+            )
+            .await
         }
     }
 }
@@ -244,6 +356,7 @@ async fn handle_prelogin_negotiation(
     mut socket: TcpStream,
     addr: SocketAddr,
     supports_tls: bool,
+    fedauth_mode: bool,
 ) -> Result<(TcpStream, bool), ProtocolError> {
     let mut buffer = BytesMut::with_capacity(4096);
 
@@ -277,8 +390,13 @@ async fn handle_prelogin_negotiation(
 
     debug!("Handling PreLogin negotiation");
 
-    // Build PreLogin response based on TLS support
-    let response = build_prelogin_response_with_encryption(supports_tls);
+    // Build PreLogin response based on TLS and FedAuth support
+    let response = if fedauth_mode {
+        // In FedAuth mode, advertise FedAuth support (no encryption needed for mock tests)
+        build_prelogin_response_with_fedauth(false, true)
+    } else {
+        build_prelogin_response_with_encryption(supports_tls)
+    };
 
     debug!("Sending {} bytes PreLogin response", response.len());
     socket.write_all(&response).await?;
@@ -294,6 +412,8 @@ async fn handle_strict_encrypted_connection(
     mut socket: TlsStream<TcpStream>,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
+    fedauth_mode: bool,
+    received_tokens: Arc<Mutex<ReceivedTokenStore>>,
 ) -> Result<(), ProtocolError> {
     let mut buffer = BytesMut::with_capacity(4096);
     let mut is_authenticated = false;
@@ -324,7 +444,12 @@ async fn handle_strict_encrypted_connection(
                         let _ = buffer.split_to(header.length as usize);
 
                         // Send PreLogin response (encryption is already established)
-                        let response = build_prelogin_response();
+                        let response = if fedauth_mode {
+                            // Strict mode already has encryption, just add FedAuth
+                            build_prelogin_response_with_fedauth(true, true)
+                        } else {
+                            build_prelogin_response()
+                        };
                         debug!(
                             "Sending {} bytes PreLogin response (strict mode)",
                             response.len()
@@ -342,8 +467,14 @@ async fn handle_strict_encrypted_connection(
         }
 
         // Process other packets (Login7, SqlBatch, etc.)
-        while let Some(response) =
-            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
+        while let Some(response) = process_packet(
+            &mut buffer,
+            &query_registry,
+            &mut is_authenticated,
+            fedauth_mode,
+            &received_tokens,
+        )
+        .await?
         {
             debug!(
                 "Sending {} encrypted bytes response (strict mode)",
@@ -362,6 +493,8 @@ async fn handle_encrypted_connection(
     mut socket: TlsStream<TcpStream>,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
+    fedauth_mode: bool,
+    received_tokens: Arc<Mutex<ReceivedTokenStore>>,
 ) -> Result<(), ProtocolError> {
     let mut buffer = BytesMut::with_capacity(4096);
     let mut is_authenticated = false;
@@ -378,8 +511,14 @@ async fn handle_encrypted_connection(
         debug!("Received {} encrypted bytes from {}", n, addr);
 
         // Process packets (same logic as unencrypted)
-        while let Some(response) =
-            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
+        while let Some(response) = process_packet(
+            &mut buffer,
+            &query_registry,
+            &mut is_authenticated,
+            fedauth_mode,
+            &received_tokens,
+        )
+        .await?
         {
             debug!("Sending {} encrypted bytes response", response.len());
             socket.write_all(&response).await?;
@@ -396,6 +535,8 @@ async fn handle_encrypted_tds_wrapped_connection(
     mut socket: TlsStream<crate::tds_tls_wrapper::TdsTlsWrapper>,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
+    fedauth_mode: bool,
+    received_tokens: Arc<Mutex<ReceivedTokenStore>>,
 ) -> Result<(), ProtocolError> {
     let mut buffer = BytesMut::with_capacity(4096);
     let mut is_authenticated = false;
@@ -415,8 +556,14 @@ async fn handle_encrypted_tds_wrapped_connection(
         );
 
         // Process packets (same logic as unencrypted)
-        while let Some(response) =
-            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
+        while let Some(response) = process_packet(
+            &mut buffer,
+            &query_registry,
+            &mut is_authenticated,
+            fedauth_mode,
+            &received_tokens,
+        )
+        .await?
         {
             debug!("Sending {} encrypted bytes response", response.len());
             socket.write_all(&response).await?;
@@ -431,6 +578,8 @@ async fn handle_unencrypted_connection(
     mut socket: TcpStream,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
+    fedauth_mode: bool,
+    received_tokens: Arc<Mutex<ReceivedTokenStore>>,
 ) -> Result<(), ProtocolError> {
     let mut buffer = BytesMut::with_capacity(4096);
     let mut is_authenticated = false;
@@ -447,8 +596,14 @@ async fn handle_unencrypted_connection(
         debug!("Received {} bytes from {}", n, addr);
 
         // Process packets
-        while let Some(response) =
-            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
+        while let Some(response) = process_packet(
+            &mut buffer,
+            &query_registry,
+            &mut is_authenticated,
+            fedauth_mode,
+            &received_tokens,
+        )
+        .await?
         {
             debug!("Sending {} bytes response", response.len());
             socket.write_all(&response).await?;
@@ -463,6 +618,8 @@ async fn process_packet(
     buffer: &mut BytesMut,
     query_registry: &Arc<Mutex<QueryRegistry>>,
     is_authenticated: &mut bool,
+    fedauth_mode: bool,
+    received_tokens: &Arc<Mutex<ReceivedTokenStore>>,
 ) -> Result<Option<BytesMut>, ProtocolError> {
     if buffer.len() < PACKET_HEADER_SIZE {
         return Ok(None);
@@ -497,10 +654,50 @@ async fn process_packet(
     let response = match header.packet_type {
         PacketType::Login7 => {
             debug!("Handling Login7");
-            *is_authenticated = true;
 
-            // Build response with LoginAck + Done
+            // Parse Login7 packet body (skip header) for authentication info
+            let packet_body = &packet_data[PACKET_HEADER_SIZE..];
+            let auth_info = parse_login7_auth(packet_body);
+
+            if fedauth_mode {
+                // In FedAuth mode, we expect an access token
+                if auth_info.has_fedauth {
+                    let token_len = auth_info
+                        .access_token_bytes
+                        .as_ref()
+                        .map(|v| v.len())
+                        .unwrap_or(0);
+                    debug!("FedAuth detected with {} byte token", token_len);
+
+                    // Store the received token for test verification
+                    if let Some(ref token_bytes) = auth_info.access_token_bytes {
+                        let mut store = received_tokens.lock().await;
+                        store.add_token(token_bytes.clone());
+                        debug!(
+                            "Stored access token ({} bytes) for verification",
+                            token_bytes.len()
+                        );
+                    }
+
+                    *is_authenticated = true;
+                } else {
+                    debug!("FedAuth mode enabled but client did not provide FedAuth");
+                    // Still allow authentication for backwards compatibility
+                    *is_authenticated = true;
+                }
+            } else {
+                *is_authenticated = true;
+            }
+
+            // Build response with LoginAck + optional FeatureExtAck + Done
             let mut response = build_login_ack();
+
+            // If client sent FedAuth, respond with FeatureExtAck
+            if auth_info.has_fedauth {
+                debug!("Including FeatureExtAck for FedAuth");
+                response.extend_from_slice(&build_feature_ext_ack_fedauth());
+            }
+
             response.extend_from_slice(&build_done_token(0));
 
             // Wrap in packet
