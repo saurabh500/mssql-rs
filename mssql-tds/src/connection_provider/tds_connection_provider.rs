@@ -148,33 +148,33 @@ impl TdsConnectionProvider {
                      Please use explicit protocol with port: tcp:server,1433".to_string()
                 ));
             }
-            
+
             // Resolve transport contexts from the action chain
             let transport_contexts = action_chain.resolve_transport_contexts();
-            
+
             if transport_contexts.is_empty() {
                 return Err(Error::ProtocolError(
                     "No transport protocols available in action chain".to_string()
                 ));
             }
-            
+
             debug!("Resolved {} transport context(s) from action chain", transport_contexts.len());
-            
+
             let timeout_duration = match context.connect_timeout {
                 1.. => Some(Duration::from_secs(context.connect_timeout.into())),
                 _ => None,
             };
-            
+
             let cancellation_token = cancel_handle.map(|handle| handle.cancel_token.child_token());
-            
+
             // Try each transport context in order
             let mut last_error = None;
             let mut redirect_count = 0;
             let max_redirects = 10;
-            
+
             for (transport_ctx, _action_timeout_ms) in &transport_contexts {
                 debug!("Attempting connection with {:?}", transport_ctx);
-                
+
                 // Check for cancellation
                 if cancellation_token
                     .as_ref()
@@ -184,9 +184,9 @@ impl TdsConnectionProvider {
                         "Login has been cancelled.".to_string(),
                     ));
                 }
-                
+
                 let connect_future = Self::connect_with_transport_context(context, transport_ctx);
-                
+
                 let mut connection_result = match timeout_duration.as_ref() {
                     Some(duration) => {
                         match timeout(*duration, connect_future).await {
@@ -198,7 +198,7 @@ impl TdsConnectionProvider {
                     }
                     None => connect_future.await,
                 };
-                
+
                 // Handle redirections
                 loop {
                     match connection_result {
@@ -218,7 +218,7 @@ impl TdsConnectionProvider {
                                     "Received more redirection tokens than expected.".to_string(),
                                 ));
                             }
-                            
+
                             let tcp_transport_context = TransportContext::Tcp { host, port };
                             connection_result = Self::connect_with_transport_context(
                                 context,
@@ -233,7 +233,7 @@ impl TdsConnectionProvider {
                     }
                 }
             }
-            
+
             // All transports failed
             Err(last_error.unwrap_or_else(|| {
                 Error::ProtocolError(

@@ -9,9 +9,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
 use mssql_tds::{
-    connection::client_context::{
-        ClientContext, IPAddressPreference, TdsAuthenticationMethod,
-    },
+    connection::client_context::{ClientContext, IPAddressPreference, TdsAuthenticationMethod},
     connection::tds_client::TdsClient,
     connection_provider::tds_connection_provider::TdsConnectionProvider,
     core::{EncryptionOptions, EncryptionSetting},
@@ -39,8 +37,11 @@ impl PyCoreConnection {
 
         // Connect using TdsConnectionProvider
         let provider = TdsConnectionProvider {};
-        let tds_client =
-            runtime.block_on(async { provider.create_client(client_context, &datasource, None).await });
+        let tds_client = runtime.block_on(async {
+            provider
+                .create_client(client_context, &datasource, None)
+                .await
+        });
 
         match tds_client {
             Ok(client) => Ok(PyCoreConnection {
