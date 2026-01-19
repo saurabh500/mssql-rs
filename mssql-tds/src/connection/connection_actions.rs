@@ -359,13 +359,12 @@ impl ConnectionActionChain {
         context: &ExecutionContext
     ) -> Vec<(super::client_context::TransportContext, u64)> {
         let mut transports = Vec::new();
-        self.collect_transport_contexts(&self.actions, context, &mut transports);
+        Self::collect_transport_contexts(&self.actions, context, &mut transports);
         transports
     }
     
     /// Recursively collect transport contexts from actions
     fn collect_transport_contexts(
-        &self,
         actions: &[ConnectionAction],
         context: &ExecutionContext,
         result: &mut Vec<(super::client_context::TransportContext, u64)>,
@@ -374,11 +373,11 @@ impl ConnectionActionChain {
             match action {
                 ConnectionAction::TrySequence { actions: inner, .. } => {
                     // Recursively collect from sequence
-                    self.collect_transport_contexts(inner, context, result);
+                    Self::collect_transport_contexts(inner, context, result);
                 }
                 ConnectionAction::TryParallel { actions: inner, .. } => {
                     // For parallel, we still need all transports (they'll be tried in parallel)
-                    self.collect_transport_contexts(inner, context, result);
+                    Self::collect_transport_contexts(inner, context, result);
                 }
                 ConnectionAction::ConnectTcp { timeout_ms, .. }
                 | ConnectionAction::ConnectTcpFromSlot { timeout_ms, .. }

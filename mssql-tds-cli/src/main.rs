@@ -173,7 +173,7 @@ pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
     };
     let provider = TdsConnectionProvider {};
     let datasource = "tcp:localhost,1433";
-    let connection_result = provider.create_client(context, &datasource, None).await;
+    let connection_result = provider.create_client(context, datasource, None).await;
     let mut session = match connection_result {
         Ok(_connection) => {
             println!("Successfully connected");
