@@ -6,8 +6,8 @@ mod common;
 #[cfg(test)]
 mod transactions {
     use crate::common::{
-        ExpectedQueryResultType, begin_connection, build_tcp_datasource, run_query_and_check_results,
-        validate_results,
+        ExpectedQueryResultType, begin_connection, build_tcp_datasource,
+        run_query_and_check_results, validate_results,
     };
     use mssql_tds::message::transaction_management::{CreateTxnParams, TransactionIsolationLevel};
 

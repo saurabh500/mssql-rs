@@ -19,7 +19,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, &build_tcp_datasource(), None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         client
             .begin_transaction(TransactionIsolationLevel::ReadCommitted, None)
             .await?;

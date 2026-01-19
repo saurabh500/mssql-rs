@@ -691,10 +691,7 @@ impl ParsedDataSource {
         if !self.protocol_name.is_empty() {
             match self.get_protocol_type() {
                 ProtocolType::Tcp => {
-                    let port = self
-                        .protocol_parameter
-                        .parse::<u16>()
-                        .unwrap_or(1433);
+                    let port = self.protocol_parameter.parse::<u16>().unwrap_or(1433);
                     builder.add_connect_tcp(&self.server_name, port);
                 }
                 ProtocolType::NamedPipe => {
@@ -736,10 +733,7 @@ impl ParsedDataSource {
         // Step 5: Parallel connect (MultiSubnetFailover)
         if self.parallel_connect {
             // Try TCP to all resolved addresses in parallel
-            let port = self
-                .protocol_parameter
-                .parse::<u16>()
-                .unwrap_or(1433);
+            let port = self.protocol_parameter.parse::<u16>().unwrap_or(1433);
             builder.add_parallel_tcp_connect(&self.server_name, port);
             return builder.build();
         }
@@ -1030,7 +1024,10 @@ mod tests {
         assert!(matches!(actions[0], ConnectionAction::CheckCache { .. }));
         assert!(matches!(actions[1], ConnectionAction::QuerySsrp { .. }));
         assert!(matches!(actions[2], ConnectionAction::UpdateCache { .. }));
-        assert!(matches!(actions[3], ConnectionAction::ConnectTcpFromSlot { .. }));
+        assert!(matches!(
+            actions[3],
+            ConnectionAction::ConnectTcpFromSlot { .. }
+        ));
 
         // Verify metadata
         let metadata = chain.metadata();
@@ -1084,13 +1081,18 @@ mod tests {
 
         use crate::connection::connection_actions::ConnectionAction;
         assert!(matches!(actions[0], ConnectionAction::CheckCache { .. }));
-        
-        if let ConnectionAction::TrySequence { actions: waterfall, .. } = &actions[1] {
+
+        if let ConnectionAction::TrySequence {
+            actions: waterfall, ..
+        } = &actions[1]
+        {
             // Should have TCP at minimum, possibly more on Windows
             assert!(!waterfall.is_empty());
 
             // At least one should be TCP
-            let has_tcp = waterfall.iter().any(|a| matches!(a, ConnectionAction::ConnectTcp { .. }));
+            let has_tcp = waterfall
+                .iter()
+                .any(|a| matches!(a, ConnectionAction::ConnectTcp { .. }));
             assert!(has_tcp, "Waterfall should include TCP");
         } else {
             panic!("Expected TrySequence action for protocol waterfall");
@@ -1123,8 +1125,14 @@ mod tests {
         let actions = chain.actions();
 
         use crate::connection::connection_actions::ConnectionAction;
-        assert!(matches!(actions[0], ConnectionAction::ResolveLocalDb { .. }));
-        assert!(matches!(actions[1], ConnectionAction::ConnectNamedPipeFromSlot { .. }));
+        assert!(matches!(
+            actions[0],
+            ConnectionAction::ResolveLocalDb { .. }
+        ));
+        assert!(matches!(
+            actions[1],
+            ConnectionAction::ConnectNamedPipeFromSlot { .. }
+        ));
 
         let metadata = chain.metadata();
         assert_eq!(metadata.instance_name, "MSSQLLocalDB");
@@ -1139,7 +1147,7 @@ mod tests {
         // Admin protocol with no instance enables caching, so: CheckCache -> ConnectDac
         assert_eq!(chain.len(), 2);
         let actions = chain.actions();
-        
+
         use crate::connection::connection_actions::ConnectionAction;
         assert!(matches!(actions[0], ConnectionAction::CheckCache { .. }));
         assert!(matches!(actions[1], ConnectionAction::ConnectDac { .. }));
@@ -1155,10 +1163,13 @@ mod tests {
         // LPC with no instance enables caching, so: CheckCache -> ConnectSharedMemory
         assert_eq!(chain.len(), 2);
         let actions = chain.actions();
-        
+
         use crate::connection::connection_actions::ConnectionAction;
         assert!(matches!(actions[0], ConnectionAction::CheckCache { .. }));
-        assert!(matches!(actions[1], ConnectionAction::ConnectSharedMemory { .. }));
+        assert!(matches!(
+            actions[1],
+            ConnectionAction::ConnectSharedMemory { .. }
+        ));
     }
 
     #[test]
@@ -1171,7 +1182,11 @@ mod tests {
 
         // Verify action contains the timeout
         let actions = chain.actions();
-        if let crate::connection::connection_actions::ConnectionAction::ConnectTcp { timeout_ms, .. } = &actions[0] {
+        if let crate::connection::connection_actions::ConnectionAction::ConnectTcp {
+            timeout_ms,
+            ..
+        } = &actions[0]
+        {
             assert_eq!(*timeout_ms, 30000);
         } else {
             panic!("Expected ConnectTcp action");

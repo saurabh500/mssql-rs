@@ -635,8 +635,8 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_bulk_copy_large_varchar_max_no_stack_overflow() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let datasource = build_tcp_datasource();
+        let mut client = begin_connection(&datasource).await;
 
         // Create temp table with varchar(max)
         client

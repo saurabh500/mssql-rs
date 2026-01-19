@@ -6,9 +6,7 @@
 #[cfg(test)]
 mod mock_server_fedauth_tests {
     use mssql_mock_tds::MockTdsServer;
-    use mssql_tds::connection::client_context::{
-        ClientContext, TdsAuthenticationMethod, TransportContext,
-    };
+    use mssql_tds::connection::client_context::{ClientContext, TdsAuthenticationMethod};
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
     use mssql_tds::core::{EncryptionOptions, EncryptionSetting};
     use tokio::sync::oneshot;
@@ -56,26 +54,21 @@ mod mock_server_fedauth_tests {
         let access_token = generate_mock_access_token();
 
         // Create client context with access token authentication
-        let context = ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: server_addr.ip().to_string(),
-                port: server_addr.port(),
-            },
-            access_token: Some(access_token.clone()),
-            tds_authentication_method: TdsAuthenticationMethod::AccessToken,
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: true,
-                host_name_in_cert: None,
-                server_certificate: None,
-            },
-            ..Default::default()
+        let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
+        let mut context = ClientContext::default();
+        context.access_token = Some(access_token.clone());
+        context.tds_authentication_method = TdsAuthenticationMethod::AccessToken;
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
+            server_certificate: None,
         };
 
         // Connect to mock server
         let provider = TdsConnectionProvider {};
-        let client = provider.create_client(context, None).await?;
+        let client = provider.create_client(context, &datasource, None).await?;
 
         println!(
             "Successfully connected to mock server at {} using access token",
@@ -145,26 +138,21 @@ mod mock_server_fedauth_tests {
         let access_token = generate_mock_access_token();
 
         // Create client with access token
-        let context = ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: server_addr.ip().to_string(),
-                port: server_addr.port(),
-            },
-            access_token: Some(access_token.clone()),
-            tds_authentication_method: TdsAuthenticationMethod::AccessToken,
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: true,
-                host_name_in_cert: None,
-                server_certificate: None,
-            },
-            ..Default::default()
+        let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
+        let mut context = ClientContext::default();
+        context.access_token = Some(access_token.clone());
+        context.tds_authentication_method = TdsAuthenticationMethod::AccessToken;
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
+            server_certificate: None,
         };
 
         // Connect and execute query
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider.create_client(context, &datasource, None).await?;
 
         // Execute a simple SELECT 1 query
         client.execute("SELECT 1".to_string(), None, None).await?;
@@ -233,26 +221,21 @@ mod mock_server_fedauth_tests {
         let access_token = generate_mock_access_token();
 
         // Create client with access token - the PreLogin should successfully negotiate FedAuth
-        let context = ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: server_addr.ip().to_string(),
-                port: server_addr.port(),
-            },
-            access_token: Some(access_token.clone()),
-            tds_authentication_method: TdsAuthenticationMethod::AccessToken,
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: true,
-                host_name_in_cert: None,
-                server_certificate: None,
-            },
-            ..Default::default()
+        let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
+        let mut context = ClientContext::default();
+        context.access_token = Some(access_token.clone());
+        context.tds_authentication_method = TdsAuthenticationMethod::AccessToken;
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
+            server_certificate: None,
         };
 
         // This should succeed if FedAuth negotiation works
         let provider = TdsConnectionProvider {};
-        let client = provider.create_client(context, None).await?;
+        let client = provider.create_client(context, &datasource, None).await?;
 
         println!(
             "Successfully negotiated FedAuth in PreLogin and connected to {}",
@@ -322,25 +305,20 @@ mod mock_server_fedauth_tests {
                 .as_nanos()
         );
 
-        let context = ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: server_addr.ip().to_string(),
-                port: server_addr.port(),
-            },
-            access_token: Some(unique_token.clone()),
-            tds_authentication_method: TdsAuthenticationMethod::AccessToken,
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: true,
-                host_name_in_cert: None,
-                server_certificate: None,
-            },
-            ..Default::default()
+        let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
+        let mut context = ClientContext::default();
+        context.access_token = Some(unique_token.clone());
+        context.tds_authentication_method = TdsAuthenticationMethod::AccessToken;
+        context.database = "master".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
+            server_certificate: None,
         };
 
         let provider = TdsConnectionProvider {};
-        let client = provider.create_client(context, None).await?;
+        let client = provider.create_client(context, &datasource, None).await?;
 
         // Close the client to trigger connection completion and storage
         drop(client);

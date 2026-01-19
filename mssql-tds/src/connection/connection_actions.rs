@@ -19,10 +19,8 @@ use super::datasource_parser::ProtocolType;
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectionAction {
     /// Check connection cache for previously resolved connection info
-    CheckCache {
-        cache_key: String,
-    },
-    
+    CheckCache { cache_key: String },
+
     /// Query SQL Server Browser (SSRP) to resolve instance port/details
     QuerySsrp {
         server: String,
@@ -30,60 +28,54 @@ pub enum ConnectionAction {
         /// Where to store the result (for next action)
         result_slot: ResultSlot,
     },
-    
+
     /// Update connection cache with resolved information
     UpdateCache {
         cache_key: String,
         /// Port that was resolved
         port: u16,
     },
-    
+
     /// Attempt TCP connection
     ConnectTcp {
         host: String,
         port: u16,
         timeout_ms: u64,
     },
-    
+
     /// Attempt TCP connection using port from a result slot
     ConnectTcpFromSlot {
         host: String,
         port_slot: ResultSlot,
         timeout_ms: u64,
     },
-    
+
     /// Attempt Named Pipe connection
-    ConnectNamedPipe {
-        pipe_path: String,
-        timeout_ms: u64,
-    },
-    
+    ConnectNamedPipe { pipe_path: String, timeout_ms: u64 },
+
     /// Attempt Named Pipe connection using path from a result slot
     ConnectNamedPipeFromSlot {
         path_slot: ResultSlot,
         timeout_ms: u64,
     },
-    
+
     /// Attempt Shared Memory connection (Windows only)
     #[cfg(windows)]
     ConnectSharedMemory {
         instance_name: String,
         timeout_ms: u64,
     },
-    
+
     /// Attempt Dedicated Admin Connection (DAC)
-    ConnectDac {
-        host: String,
-        timeout_ms: u64,
-    },
-    
+    ConnectDac { host: String, timeout_ms: u64 },
+
     /// Resolve LocalDB instance to Named Pipe path (Windows only)
     #[cfg(windows)]
     ResolveLocalDb {
         instance_name: String,
         result_slot: ResultSlot,
     },
-    
+
     /// Try multiple connection actions in sequence (failover)
     /// Stops on first success unless fail_fast is false
     TrySequence {
@@ -91,7 +83,7 @@ pub enum ConnectionAction {
         /// Stop on first success or continue through all
         fail_fast: bool,
     },
-    
+
     /// Try multiple connection actions in parallel (MultiSubnetFailover)
     TryParallel {
         actions: Vec<ConnectionAction>,
@@ -107,7 +99,9 @@ impl ConnectionAction {
             ConnectionAction::CheckCache { cache_key } => {
                 format!("Check connection cache for '{}'", cache_key)
             }
-            ConnectionAction::QuerySsrp { server, instance, .. } => {
+            ConnectionAction::QuerySsrp {
+                server, instance, ..
+            } => {
                 format!("Query SQL Browser for '{}\\{}'", server, instance)
             }
             ConnectionAction::UpdateCache { cache_key, port } => {
@@ -116,7 +110,9 @@ impl ConnectionAction {
             ConnectionAction::ConnectTcp { host, port, .. } => {
                 format!("Connect via TCP to {}:{}", host, port)
             }
-            ConnectionAction::ConnectTcpFromSlot { host, port_slot, .. } => {
+            ConnectionAction::ConnectTcpFromSlot {
+                host, port_slot, ..
+            } => {
                 format!("Connect via TCP to {} (port from {:?})", host, port_slot)
             }
             ConnectionAction::ConnectNamedPipe { pipe_path, .. } => {
@@ -143,7 +139,10 @@ impl ConnectionAction {
                     fail_fast
                 )
             }
-            ConnectionAction::TryParallel { actions, min_successes } => {
+            ConnectionAction::TryParallel {
+                actions,
+                min_successes,
+            } => {
                 format!(
                     "Try {} actions in parallel (need {} successes)",
                     actions.len(),
@@ -180,21 +179,14 @@ pub enum ActionResult {
 #[derive(Debug, Clone)]
 pub enum ActionOutcome {
     /// Cache hit with connection details
-    CacheHit {
-        protocol: ProtocolType,
-        port: u16,
-    },
+    CacheHit { protocol: ProtocolType, port: u16 },
     /// Cache miss
     CacheMiss,
     /// SSRP resolved port
-    SsrpResolved {
-        port: u16,
-    },
+    SsrpResolved { port: u16 },
     /// LocalDB resolved to pipe path
     #[cfg(windows)]
-    LocalDbResolved {
-        pipe_path: String,
-    },
+    LocalDbResolved { pipe_path: String },
     /// Connection established (marker for successful connection)
     Connected,
     /// Cache updated successfully
@@ -215,7 +207,7 @@ impl ExecutionContext {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Store an action outcome in the appropriate slot
     pub fn store_outcome(&mut self, outcome: ActionOutcome) {
         match &outcome {
@@ -232,12 +224,12 @@ impl ExecutionContext {
             _ => {}
         }
     }
-    
+
     /// Get an outcome from a result slot
     pub fn get_outcome(&self, slot: ResultSlot) -> Option<&ActionOutcome> {
         self.slots.get(&slot)
     }
-    
+
     /// Get port from a slot (if available)
     pub fn get_port(&self, slot: ResultSlot) -> Option<u16> {
         match self.get_outcome(slot)? {
@@ -246,7 +238,7 @@ impl ExecutionContext {
             _ => None,
         }
     }
-    
+
     /// Get pipe path from a slot (if available)
     #[cfg(windows)]
     pub fn get_pipe_path(&self, slot: ResultSlot) -> Option<String> {
@@ -255,12 +247,12 @@ impl ExecutionContext {
             _ => None,
         }
     }
-    
+
     /// Record an action attempt
     pub fn record_attempt(&mut self, action_desc: String, result: Result<String, String>) {
         self.attempts.push((action_desc, result));
     }
-    
+
     /// Get all recorded attempts
     pub fn attempts(&self) -> &[(String, Result<String, String>)] {
         &self.attempts
@@ -294,17 +286,17 @@ impl ConnectionActionChain {
     pub fn new(actions: Vec<ConnectionAction>, metadata: ConnectionMetadata) -> Self {
         Self { actions, metadata }
     }
-    
+
     /// Get the actions in this chain
     pub fn actions(&self) -> &[ConnectionAction] {
         &self.actions
     }
-    
+
     /// Get the metadata for this connection
     pub fn metadata(&self) -> &ConnectionMetadata {
         &self.metadata
     }
-    
+
     /// Get a human-readable description of the connection strategy
     pub fn describe(&self) -> String {
         let mut desc = String::new();
@@ -326,43 +318,45 @@ impl ConnectionActionChain {
         }
         desc
     }
-    
+
     /// Get the number of actions in this chain
     pub fn len(&self) -> usize {
         self.actions.len()
     }
-    
+
     /// Check if the chain is empty
     pub fn is_empty(&self) -> bool {
         self.actions.is_empty()
     }
-    
+
     /// Resolve the action chain to a list of TransportContexts to try
-    /// 
+    ///
     /// This method walks the action chain and extracts the transport contexts
     /// that should be attempted for connection, in order. This is useful for
     /// the simple case where we don't need SSRP or cache resolution.
-    /// 
+    ///
     /// # Returns
     /// A vector of (TransportContext, timeout_ms) tuples to try in order
-    pub fn resolve_transport_contexts(&self) -> Vec<(super::client_context::TransportContext, u64)> {
+    pub fn resolve_transport_contexts(
+        &self,
+    ) -> Vec<(super::client_context::TransportContext, u64)> {
         let context = ExecutionContext::new();
         self.resolve_transport_contexts_with_context(&context)
     }
-    
+
     /// Resolve transport contexts with a pre-populated execution context
-    /// 
+    ///
     /// This is used when SSRP or cache lookups have already been performed
     /// and the resolved values are in the context.
     pub fn resolve_transport_contexts_with_context(
-        &self, 
-        context: &ExecutionContext
+        &self,
+        context: &ExecutionContext,
     ) -> Vec<(super::client_context::TransportContext, u64)> {
         let mut transports = Vec::new();
         Self::collect_transport_contexts(&self.actions, context, &mut transports);
         transports
     }
-    
+
     /// Recursively collect transport contexts from actions
     fn collect_transport_contexts(
         actions: &[ConnectionAction],
@@ -403,19 +397,23 @@ impl ConnectionActionChain {
             }
         }
     }
-    
+
     /// Check if the action chain requires SSRP resolution
-    /// 
+    ///
     /// Returns true if the chain contains a QuerySsrp action
     pub fn requires_ssrp(&self) -> bool {
-        self.actions.iter().any(|a| matches!(a, ConnectionAction::QuerySsrp { .. }))
+        self.actions
+            .iter()
+            .any(|a| matches!(a, ConnectionAction::QuerySsrp { .. }))
     }
-    
+
     /// Check if the action chain uses caching
-    /// 
+    ///
     /// Returns true if the chain contains a CheckCache action
     pub fn uses_cache(&self) -> bool {
-        self.actions.iter().any(|a| matches!(a, ConnectionAction::CheckCache { .. }))
+        self.actions
+            .iter()
+            .any(|a| matches!(a, ConnectionAction::CheckCache { .. }))
     }
 }
 
@@ -436,20 +434,23 @@ pub struct ResolvedConnection {
 
 impl ConnectionAction {
     /// Convert a connection action to a TransportContext if it's a connection action
-    /// 
+    ///
     /// Returns Some(TransportContext) for connection actions like ConnectTcp, ConnectNamedPipe, etc.
     /// Returns None for non-connection actions like CheckCache, QuerySsrp, etc.
-    pub fn to_transport_context(&self, context: &ExecutionContext) -> Option<super::client_context::TransportContext> {
+    pub fn to_transport_context(
+        &self,
+        context: &ExecutionContext,
+    ) -> Option<super::client_context::TransportContext> {
         use super::client_context::TransportContext;
-        
+
         match self {
-            ConnectionAction::ConnectTcp { host, port, .. } => {
-                Some(TransportContext::Tcp {
-                    host: host.clone(),
-                    port: *port,
-                })
-            }
-            ConnectionAction::ConnectTcpFromSlot { host, port_slot, .. } => {
+            ConnectionAction::ConnectTcp { host, port, .. } => Some(TransportContext::Tcp {
+                host: host.clone(),
+                port: *port,
+            }),
+            ConnectionAction::ConnectTcpFromSlot {
+                host, port_slot, ..
+            } => {
                 let port = context.get_port(*port_slot)?;
                 Some(TransportContext::Tcp {
                     host: host.clone(),
@@ -511,7 +512,7 @@ impl ConnectionActionChainBuilder {
             metadata,
         }
     }
-    
+
     /// Add a cache check action
     pub fn add_check_cache(&mut self, cache_key: &str) -> &mut Self {
         self.actions.push(ConnectionAction::CheckCache {
@@ -519,7 +520,7 @@ impl ConnectionActionChainBuilder {
         });
         self
     }
-    
+
     /// Add an SSRP query action
     pub fn add_ssrp_query(&mut self, server: &str, instance: &str) -> &mut Self {
         self.actions.push(ConnectionAction::QuerySsrp {
@@ -529,7 +530,7 @@ impl ConnectionActionChainBuilder {
         });
         self
     }
-    
+
     /// Add a cache update action
     pub fn add_update_cache(&mut self, cache_key: &str, port: u16) -> &mut Self {
         self.actions.push(ConnectionAction::UpdateCache {
@@ -538,7 +539,7 @@ impl ConnectionActionChainBuilder {
         });
         self
     }
-    
+
     /// Add a TCP connection action
     pub fn add_connect_tcp(&mut self, host: &str, port: u16) -> &mut Self {
         self.actions.push(ConnectionAction::ConnectTcp {
@@ -548,7 +549,7 @@ impl ConnectionActionChainBuilder {
         });
         self
     }
-    
+
     /// Add a TCP connection action using port from a slot
     pub fn add_connect_tcp_from_slot(&mut self, host: &str, port_slot: ResultSlot) -> &mut Self {
         self.actions.push(ConnectionAction::ConnectTcpFromSlot {
@@ -558,7 +559,7 @@ impl ConnectionActionChainBuilder {
         });
         self
     }
-    
+
     /// Add a Named Pipe connection action
     pub fn add_connect_named_pipe(&mut self, pipe_path: &str) -> &mut Self {
         self.actions.push(ConnectionAction::ConnectNamedPipe {
@@ -567,16 +568,17 @@ impl ConnectionActionChainBuilder {
         });
         self
     }
-    
+
     /// Add a Named Pipe connection action using path from a slot
     pub fn add_connect_named_pipe_from_slot(&mut self, path_slot: ResultSlot) -> &mut Self {
-        self.actions.push(ConnectionAction::ConnectNamedPipeFromSlot {
-            path_slot,
-            timeout_ms: self.metadata.timeout_ms,
-        });
+        self.actions
+            .push(ConnectionAction::ConnectNamedPipeFromSlot {
+                path_slot,
+                timeout_ms: self.metadata.timeout_ms,
+            });
         self
     }
-    
+
     /// Add a Shared Memory connection action (Windows only)
     #[cfg(windows)]
     pub fn add_connect_shared_memory(&mut self, instance_name: &str) -> &mut Self {
@@ -586,7 +588,7 @@ impl ConnectionActionChainBuilder {
         });
         self
     }
-    
+
     /// Add a DAC connection action
     pub fn add_connect_dac(&mut self, host: &str) -> &mut Self {
         self.actions.push(ConnectionAction::ConnectDac {
@@ -595,7 +597,7 @@ impl ConnectionActionChainBuilder {
         });
         self
     }
-    
+
     /// Add a LocalDB resolution action (Windows only)
     #[cfg(windows)]
     pub fn add_resolve_localdb(&mut self, instance_name: &str) -> &mut Self {
@@ -605,11 +607,11 @@ impl ConnectionActionChainBuilder {
         });
         self
     }
-    
+
     /// Add a protocol waterfall (try multiple protocols in sequence)
     pub fn add_protocol_waterfall(&mut self, server: &str, is_local: bool) -> &mut Self {
         let mut waterfall_actions = Vec::new();
-        
+
         // 1. Shared Memory (Windows only, local connections)
         #[cfg(windows)]
         if is_local {
@@ -618,14 +620,14 @@ impl ConnectionActionChainBuilder {
                 timeout_ms: self.metadata.timeout_ms,
             });
         }
-        
+
         // 2. TCP (always available)
         waterfall_actions.push(ConnectionAction::ConnectTcp {
             host: server.to_string(),
             port: 1433,
             timeout_ms: self.metadata.timeout_ms,
         });
-        
+
         // 3. Named Pipes (Windows only)
         #[cfg(windows)]
         {
@@ -639,14 +641,14 @@ impl ConnectionActionChainBuilder {
                 timeout_ms: self.metadata.timeout_ms,
             });
         }
-        
+
         self.actions.push(ConnectionAction::TrySequence {
             actions: waterfall_actions,
             fail_fast: false,
         });
         self
     }
-    
+
     /// Add a parallel connection attempt (for MultiSubnetFailover)
     pub fn add_parallel_tcp_connect(&mut self, host: &str, port: u16) -> &mut Self {
         // For now, just add a single TCP connection
@@ -659,13 +661,13 @@ impl ConnectionActionChainBuilder {
         });
         self
     }
-    
+
     /// Add a custom action
     pub fn add_action(&mut self, action: ConnectionAction) -> &mut Self {
         self.actions.push(action);
         self
     }
-    
+
     /// Build the final action chain
     pub fn build(self) -> ConnectionActionChain {
         ConnectionActionChain::new(self.actions, self.metadata)
@@ -766,9 +768,7 @@ pub trait ConnectionExecutor {
             ConnectionAction::UpdateCache { cache_key, port } => {
                 // Get port from context if it's 0 (placeholder)
                 let actual_port = if *port == 0 {
-                    context
-                        .get_port(ResultSlot::ResolvedPort)
-                        .unwrap_or(*port)
+                    context.get_port(ResultSlot::ResolvedPort).unwrap_or(*port)
                 } else {
                     *port
                 };
@@ -779,7 +779,10 @@ pub trait ConnectionExecutor {
                 };
                 match self.update_cache(cache_key, info).await {
                     Ok(_) => Ok(ActionResult::Success(ActionOutcome::CacheUpdated)),
-                    Err(e) => Ok(ActionResult::Continue(format!("Cache update failed: {}", e))),
+                    Err(e) => Ok(ActionResult::Continue(format!(
+                        "Cache update failed: {}",
+                        e
+                    ))),
                 }
             }
 
@@ -957,13 +960,13 @@ mod tests {
     #[test]
     fn test_execution_context_store_retrieve() {
         let mut ctx = ExecutionContext::new();
-        
+
         // Store SSRP result
         ctx.store_outcome(ActionOutcome::SsrpResolved { port: 54321 });
-        
+
         // Retrieve port
         assert_eq!(ctx.get_port(ResultSlot::ResolvedPort), Some(54321));
-        
+
         // Cache hit
         ctx.store_outcome(ActionOutcome::CacheHit {
             protocol: ProtocolType::Tcp,
@@ -971,7 +974,7 @@ mod tests {
         });
         assert_eq!(ctx.get_port(ResultSlot::CachedConnectionInfo), Some(1433));
     }
-    
+
     #[test]
     fn test_action_chain_builder() {
         let metadata = ConnectionMetadata {
@@ -981,7 +984,7 @@ mod tests {
             explicit_protocol: false,
             timeout_ms: 15000,
         };
-        
+
         let mut builder = ConnectionActionChainBuilder::new(metadata);
         builder
             .add_check_cache("myserver\\SQLEXPRESS")
@@ -989,14 +992,26 @@ mod tests {
             .add_update_cache("myserver\\SQLEXPRESS", 54321)
             .add_connect_tcp_from_slot("myserver", ResultSlot::ResolvedPort);
         let chain = builder.build();
-        
+
         assert_eq!(chain.len(), 4);
-        assert!(matches!(chain.actions()[0], ConnectionAction::CheckCache { .. }));
-        assert!(matches!(chain.actions()[1], ConnectionAction::QuerySsrp { .. }));
-        assert!(matches!(chain.actions()[2], ConnectionAction::UpdateCache { .. }));
-        assert!(matches!(chain.actions()[3], ConnectionAction::ConnectTcpFromSlot { .. }));
+        assert!(matches!(
+            chain.actions()[0],
+            ConnectionAction::CheckCache { .. }
+        ));
+        assert!(matches!(
+            chain.actions()[1],
+            ConnectionAction::QuerySsrp { .. }
+        ));
+        assert!(matches!(
+            chain.actions()[2],
+            ConnectionAction::UpdateCache { .. }
+        ));
+        assert!(matches!(
+            chain.actions()[3],
+            ConnectionAction::ConnectTcpFromSlot { .. }
+        ));
     }
-    
+
     #[test]
     fn test_action_describe() {
         let action = ConnectionAction::ConnectTcp {
@@ -1005,19 +1020,22 @@ mod tests {
             timeout_ms: 15000,
         };
         assert_eq!(action.describe(), "Connect via TCP to myserver:1433");
-        
+
         let action = ConnectionAction::QuerySsrp {
             server: "myserver".to_string(),
             instance: "SQLEXPRESS".to_string(),
             result_slot: ResultSlot::ResolvedPort,
         };
-        assert_eq!(action.describe(), "Query SQL Browser for 'myserver\\SQLEXPRESS'");
+        assert_eq!(
+            action.describe(),
+            "Query SQL Browser for 'myserver\\SQLEXPRESS'"
+        );
     }
-    
+
     #[test]
     fn test_resolve_transport_contexts_simple_tcp() {
         use crate::connection::client_context::TransportContext;
-        
+
         let metadata = ConnectionMetadata {
             source_string: "tcp:myserver,1433".to_string(),
             server_name: "myserver".to_string(),
@@ -1025,13 +1043,13 @@ mod tests {
             explicit_protocol: true,
             timeout_ms: 15000,
         };
-        
+
         let mut builder = ConnectionActionChainBuilder::new(metadata);
         builder.add_connect_tcp("myserver", 1433);
         let chain = builder.build();
-        
+
         let transports = chain.resolve_transport_contexts();
-        
+
         assert_eq!(transports.len(), 1);
         assert!(matches!(
             &transports[0].0,
@@ -1039,11 +1057,11 @@ mod tests {
         ));
         assert_eq!(transports[0].1, 15000);
     }
-    
+
     #[test]
     fn test_resolve_transport_contexts_waterfall() {
         use crate::connection::client_context::TransportContext;
-        
+
         let metadata = ConnectionMetadata {
             source_string: "myserver".to_string(),
             server_name: "myserver".to_string(),
@@ -1051,23 +1069,23 @@ mod tests {
             explicit_protocol: false,
             timeout_ms: 15000,
         };
-        
+
         let mut builder = ConnectionActionChainBuilder::new(metadata);
         builder.add_protocol_waterfall("myserver", false);
         let chain = builder.build();
-        
+
         let transports = chain.resolve_transport_contexts();
-        
+
         // Should have at least TCP in the waterfall
         assert!(!transports.is_empty());
-        
+
         // First transport should be TCP (on non-local, no shared memory)
         let has_tcp = transports.iter().any(|(t, _)| {
             matches!(t, TransportContext::Tcp { host, port } if host == "myserver" && *port == 1433)
         });
         assert!(has_tcp, "Waterfall should include TCP transport");
     }
-    
+
     #[test]
     fn test_requires_ssrp() {
         let metadata = ConnectionMetadata {
@@ -1077,7 +1095,7 @@ mod tests {
             explicit_protocol: false,
             timeout_ms: 15000,
         };
-        
+
         // Chain with SSRP
         let mut builder = ConnectionActionChainBuilder::new(metadata.clone());
         builder
@@ -1085,25 +1103,25 @@ mod tests {
             .add_ssrp_query("myserver", "SQLEXPRESS")
             .add_connect_tcp_from_slot("myserver", ResultSlot::ResolvedPort);
         let chain = builder.build();
-        
+
         assert!(chain.requires_ssrp());
         assert!(chain.uses_cache());
-        
+
         // Chain without SSRP (explicit port)
         let mut builder = ConnectionActionChainBuilder::new(metadata);
         builder.add_connect_tcp("myserver", 1433);
         let chain = builder.build();
-        
+
         assert!(!chain.requires_ssrp());
         assert!(!chain.uses_cache());
     }
-    
+
     #[test]
     fn test_to_transport_context() {
         use crate::connection::client_context::TransportContext;
-        
+
         let ctx = ExecutionContext::new();
-        
+
         // TCP action
         let action = ConnectionAction::ConnectTcp {
             host: "myserver".to_string(),
@@ -1115,7 +1133,7 @@ mod tests {
             transport,
             Some(TransportContext::Tcp { host, port }) if host == "myserver" && port == 1433
         ));
-        
+
         // Named pipe action
         let action = ConnectionAction::ConnectNamedPipe {
             pipe_path: r"\\myserver\pipe\sql\query".to_string(),
@@ -1126,7 +1144,7 @@ mod tests {
             transport,
             Some(TransportContext::NamedPipe { pipe_name }) if pipe_name == r"\\myserver\pipe\sql\query"
         ));
-        
+
         // Non-connection action should return None
         let action = ConnectionAction::CheckCache {
             cache_key: "test".to_string(),

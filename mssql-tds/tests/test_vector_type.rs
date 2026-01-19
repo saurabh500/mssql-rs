@@ -291,7 +291,6 @@ mod vector_integration_tests {
     /// Test vector in a table with multiple rows
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vector_multiple_rows() {
-
         let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create temp table with vector column
@@ -394,7 +393,6 @@ mod vector_integration_tests {
     /// Test vector with large float values
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_vector_large_values() {
-
         let mut client = begin_connection(&build_tcp_datasource()).await;
 
         let query = "SELECT CAST('[123456.79, -987654.3, 0.0]' AS VECTOR(3)) AS LargeVector";

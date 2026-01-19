@@ -88,15 +88,15 @@ impl TdsConnectionProvider {
 
     /// Create a client from a datasource string.
     /// This is the primary API for creating connections.
-    /// 
+    ///
     /// This method uses the action chain pattern to determine the connection strategy,
     /// providing explicit and testable connection sequences.
-    /// 
+    ///
     /// # Arguments
     /// * `context` - Client context with credentials and options (without transport_context set)
     /// * `datasource` - The data source string (e.g., "tcp:server,1433", "server\\instance", "lpc:.")
     /// * `cancel_handle` - Optional cancellation handle
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// let provider = TdsConnectionProvider::new();
@@ -111,25 +111,26 @@ impl TdsConnectionProvider {
     ) -> TdsResult<TdsClient> {
         // Parse the datasource to get the action chain
         let parsed = context.parse_datasource(datasource)?;
-        
+
         // Get connection timeout
         let timeout_ms = if context.connect_timeout > 0 {
             (context.connect_timeout as u64) * 1000
         } else {
             15000 // Default 15 seconds
         };
-        
+
         // Generate the action chain
         let action_chain = parsed.to_connection_actions(timeout_ms);
-        
+
         debug!("Connection strategy:\n{}", action_chain.describe());
-        
+
         // Execute the action chain to get transport contexts
-        self.execute_action_chain(&context, action_chain, cancel_handle).await
+        self.execute_action_chain(&context, action_chain, cancel_handle)
+            .await
     }
-    
+
     /// Execute an action chain to create a client
-    /// 
+    ///
     /// This method resolves the action chain into transport contexts and attempts
     /// connection using each one in order.
     async fn execute_action_chain(

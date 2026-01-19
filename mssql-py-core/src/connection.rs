@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 
 use mssql_tds::{
     connection::client_context::{
-        ClientContext, IPAddressPreference, TdsAuthenticationMethod, TransportContext,
+        ClientContext, IPAddressPreference, TdsAuthenticationMethod,
     },
     connection::tds_client::TdsClient,
     connection_provider::tds_connection_provider::TdsConnectionProvider,

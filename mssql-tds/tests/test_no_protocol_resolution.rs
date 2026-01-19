@@ -69,10 +69,13 @@ mod no_protocol_resolution {
             mode: encryption_mode,
             trust_server_certificate: trust_server_certificate(),
             host_name_in_cert: get_cert_hostname(),
+            server_certificate: None,
         };
 
         let provider = TdsConnectionProvider {};
-        provider.create_client(client_context, datasource, None).await
+        provider
+            .create_client(client_context, datasource, None)
+            .await
     }
 
     /// Create a client using parse_datasource with default encryption

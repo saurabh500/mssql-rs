@@ -28,7 +28,9 @@ pub async fn connect(context: JsClientContext) -> napi::Result<Connection> {
     let client_context: ClientContext = context.clone().into();
     let provider = TdsConnectionProvider {};
     let datasource = format!("{}:{}", context.server_name, context.port);
-    let tds_client = provider.create_client(client_context.clone(), &datasource, None).await;
+    let tds_client = provider
+        .create_client(client_context.clone(), &datasource, None)
+        .await;
 
     if tds_client.is_err() {
         return Err(napi::Error::from_reason(format!(

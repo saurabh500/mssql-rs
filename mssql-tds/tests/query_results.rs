@@ -6,8 +6,8 @@ mod common;
 
 mod query_result_reads {
     use crate::common::{
-        ExpectedQueryResultType, begin_connection, build_tcp_datasource, connect_query_and_validate,
-        run_query_and_check_results,
+        ExpectedQueryResultType, begin_connection, build_tcp_datasource,
+        connect_query_and_validate, run_query_and_check_results,
     };
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::datatypes::column_values::ColumnValues;

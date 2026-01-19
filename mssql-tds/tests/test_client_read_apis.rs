@@ -23,7 +23,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, &build_tcp_datasource(), None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let query = "SELECT TOP(2) * FROM sys.databases; SELECT 1";
 
         client.execute(query.to_string(), None, None).await?;
@@ -50,7 +52,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, &build_tcp_datasource(), None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let query = "SELECT TOP 1 
             name, 
             database_id, 
@@ -82,7 +86,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, &build_tcp_datasource(), None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let query = "SELECT TOP(2) * FROM sys.databases; SELECT 1";
 
         client.execute(query.to_string(), None, None).await?;
@@ -123,7 +129,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, &build_tcp_datasource(), None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let query = "bad bad query";
 
         let err = client.execute(query.to_string(), None, None).await;
@@ -153,7 +161,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, &build_tcp_datasource(), None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let create_database_query = "IF DB_ID('TestDB') IS NULL CREATE DATABASE TestDB";
 
         client
@@ -172,7 +182,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let client = provider.create_client(context, &build_tcp_datasource(), None).await?;
+        let client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let client = Arc::new(Mutex::new(client));
 
         // Create a stored procedure with an output parameter
@@ -243,7 +255,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, &build_tcp_datasource(), None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
 
         // Query that returns various date/time types with explicit scales
         let query = r#"

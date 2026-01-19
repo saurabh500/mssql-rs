@@ -47,11 +47,8 @@ mod transport_protocols {
     }
 
     /// Create a client with the specified datasource string
-    async fn create_client_with_datasource(
-        datasource: &str,
-    ) -> TdsResult<TdsClient> {
-        create_client_with_datasource_and_encryption(datasource, EncryptionSetting::Strict)
-            .await
+    async fn create_client_with_datasource(datasource: &str) -> TdsResult<TdsClient> {
+        create_client_with_datasource_and_encryption(datasource, EncryptionSetting::Strict).await
     }
 
     /// Create a client with the specified datasource string and encryption mode
@@ -73,7 +70,9 @@ mod transport_protocols {
         };
 
         let provider = TdsConnectionProvider {};
-        provider.create_client(client_context, datasource, None).await
+        provider
+            .create_client(client_context, datasource, None)
+            .await
     }
 
     /// Execute a simple query and verify we get results
@@ -171,8 +170,7 @@ mod transport_protocols {
         let datasource = r"np:\\.\pipe\sql\query";
 
         let mut client =
-            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::On)
-                .await?;
+            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::On).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -245,8 +243,7 @@ mod transport_protocols {
         let datasource = "lpc:MSSQLSERVER";
 
         let mut client =
-            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::On)
-                .await?;
+            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::On).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -414,11 +411,9 @@ mod transport_protocols {
 
         // Connect to LocalDB - test will fail if connection fails
         let datasource = "(localdb)\\MSSQLLocalDB";
-        let mut client = create_client_with_datasource_and_encryption(
-            datasource,
-            EncryptionSetting::PreferOff,
-        )
-        .await?;
+        let mut client =
+            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::PreferOff)
+                .await?;
 
         println!("Connected to LocalDB successfully!");
 
@@ -439,11 +434,9 @@ mod transport_protocols {
 
         // Connect to LocalDB - test will fail if connection fails
         let datasource = "(localdb)\\MSSQLLocalDB";
-        let mut client = create_client_with_datasource_and_encryption(
-            datasource,
-            EncryptionSetting::PreferOff,
-        )
-        .await?;
+        let mut client =
+            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::PreferOff)
+                .await?;
 
         // Execute multiple queries to test stability
         let queries = vec![

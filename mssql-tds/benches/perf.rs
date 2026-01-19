@@ -6,7 +6,7 @@ use std::env;
 use criterion::{Criterion, criterion_group, criterion_main};
 use mssql_tds::{
     connection::{
-        client_context::{ClientContext, TransportContext},
+        client_context::ClientContext,
         tds_client::{ResultSet, ResultSetClient},
     },
     connection_provider::tds_connection_provider::TdsConnectionProvider,
@@ -35,7 +35,10 @@ fn connect_fetch_multiple_packets(c: &mut Criterion) {
                     .parse::<u16>()
                     .expect("DB_PORT must be a valid u16");
                 let datasource = format!("tcp:{},{}", host, port);
-                let mut client = provider.create_client(context, &datasource, None).await.unwrap();
+                let mut client = provider
+                    .create_client(context, &datasource, None)
+                    .await
+                    .unwrap();
 
                 let mut _row_count = 0;
                 client
@@ -59,34 +62,24 @@ fn connect_fetch_multiple_packets(c: &mut Criterion) {
 
 pub fn create_context() -> ClientContext {
     dotenv::dotenv().ok();
-    ClientContext {
-        transport_context: TransportContext::Tcp {
-            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
-            port: env::var("DB_PORT")
-                .expect("DB_PORT environment variable not set")
-                .parse::<u16>()
-                .expect("DB_PORT must be a valid u16"),
-        },
-        user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
-        password: env::var("SQL_PASSWORD")
-            .or_else(|_| {
-                std::fs::read_to_string("/tmp/password")
-                    .map(|s| s.trim().to_string())
-                    .map_err(|_| std::env::VarError::NotPresent)
-            })
-            .expect(
-                "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
-            ),
-        encryption_options: EncryptionOptions {
-            mode: EncryptionSetting::On,
-            trust_server_certificate: env::var("TRUST_SERVER_CERTIFICATE")
-                .map(|v| v.parse().unwrap_or(false))
-                .unwrap_or(false),
-            host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
-            server_certificate: None,
-        },
-        ..Default::default()
-    }
+    let mut context = ClientContext::default();
+    context.user_name = env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set");
+    context.password = env::var("SQL_PASSWORD")
+        .or_else(|_| {
+            std::fs::read_to_string("/tmp/password")
+                .map(|s| s.trim().to_string())
+                .map_err(|_| std::env::VarError::NotPresent)
+        })
+        .expect("SQL_PASSWORD environment variable not set and /tmp/password could not be read");
+    context.encryption_options = EncryptionOptions {
+        mode: EncryptionSetting::On,
+        trust_server_certificate: env::var("TRUST_SERVER_CERTIFICATE")
+            .map(|v| v.parse().unwrap_or(false))
+            .unwrap_or(false),
+        host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+        server_certificate: None,
+    };
+    context
 }
 
 criterion_group!(benches, connect_fetch_multiple_packets);

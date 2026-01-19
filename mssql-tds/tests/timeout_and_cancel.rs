@@ -6,8 +6,8 @@ mod common;
 
 mod timeout_and_cancel_tests {
     use crate::common::{
-        ExpectedQueryResultType, begin_connection, build_tcp_datasource, run_query_and_check_results,
-        trust_server_certificate,
+        ExpectedQueryResultType, begin_connection, build_tcp_datasource,
+        run_query_and_check_results, trust_server_certificate,
     };
     use mssql_tds::connection::client_context::ClientContext;
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
@@ -58,6 +58,7 @@ mod timeout_and_cancel_tests {
             mode: EncryptionSetting::PreferOff,
             trust_server_certificate: trust_server_certificate(),
             host_name_in_cert: None,
+            server_certificate: None,
         };
 
         let provider = TdsConnectionProvider {};
@@ -154,6 +155,7 @@ mod timeout_and_cancel_tests {
             mode: EncryptionSetting::PreferOff,
             trust_server_certificate: false,
             host_name_in_cert: None,
+            server_certificate: None,
         };
         client_context.connect_timeout = 2;
         client_context.connect_retry_count = retry_count as u32;
@@ -163,7 +165,9 @@ mod timeout_and_cancel_tests {
 
         // Start a timer.
         let start_time = Instant::now();
-        let connection_result = provider.create_client(client_context, &datasource, None).await;
+        let connection_result = provider
+            .create_client(client_context, &datasource, None)
+            .await;
         verify_duration(
             connection_result,
             start_time,
