@@ -609,12 +609,13 @@ impl ConnectionActionChainBuilder {
     }
 
     /// Add a protocol waterfall (try multiple protocols in sequence)
-    pub fn add_protocol_waterfall(&mut self, server: &str, is_local: bool) -> &mut Self {
+    #[allow(clippy::vec_init_then_push)]
+    pub fn add_protocol_waterfall(&mut self, server: &str, _is_local: bool) -> &mut Self {
         let mut waterfall_actions = Vec::new();
 
         // 1. Shared Memory (Windows only, local connections)
         #[cfg(windows)]
-        if is_local {
+        if _is_local {
             waterfall_actions.push(ConnectionAction::ConnectSharedMemory {
                 instance_name: String::new(), // default instance
                 timeout_ms: self.metadata.timeout_ms,
@@ -631,7 +632,7 @@ impl ConnectionActionChainBuilder {
         // 3. Named Pipes (Windows only)
         #[cfg(windows)]
         {
-            let pipe_path = if is_local {
+            let pipe_path = if _is_local {
                 r"\\.\pipe\sql\query".to_string()
             } else {
                 format!(r"\\{}\pipe\sql\query", server)
@@ -834,15 +835,15 @@ pub trait ConnectionExecutor {
             }
 
             ConnectionAction::ConnectNamedPipeFromSlot {
-                path_slot,
-                timeout_ms,
+                path_slot: _path_slot,
+                timeout_ms: _timeout_ms,
             } => {
                 #[cfg(windows)]
                 {
-                    let pipe_path = context.get_pipe_path(*path_slot).ok_or_else(|| {
-                        Error::ProtocolError(format!("No pipe path found in slot {:?}", path_slot))
+                    let pipe_path = context.get_pipe_path(*_path_slot).ok_or_else(|| {
+                        Error::ProtocolError(format!("No pipe path found in slot {:?}", _path_slot))
                     })?;
-                    let timeout = Duration::from_millis(*timeout_ms);
+                    let timeout = Duration::from_millis(*_timeout_ms);
                     match self.connect_named_pipe(&pipe_path, timeout).await {
                         Ok(_) => Ok(ActionResult::Success(ActionOutcome::Connected)),
                         Err(e) => Ok(ActionResult::Continue(format!(
