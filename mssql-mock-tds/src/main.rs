@@ -150,6 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind_addr = format!("{}:{}", args.host, args.port);
 
     // Create the server based on TLS mode
+    // FedAuth and username/password authentication are always supported
     let server = match args.tls_mode {
         TlsMode::None => {
             info!("Starting Mock TDS Server without TLS on {}", bind_addr);

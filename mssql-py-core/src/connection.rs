@@ -243,6 +243,56 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<u32>().ok())
             .unwrap_or(1_000);
 
+        // Extract access token (if provided, use AccessToken authentication)
+        let access_token = dict
+            .get_item("access_token")?
+            .and_then(|v| v.extract::<String>().ok());
+
+        // Determine authentication method based on provided credentials:
+        // - access_token provided → AccessToken authentication
+        // - user_name AND password provided → SQL Password authentication
+        // - both access_token and credentials → Error
+        // - partial credentials (only user_name or only password) → Error
+        // - neither provided → Error
+        let has_access_token = access_token.is_some();
+        let has_user_name = !user_name.is_empty();
+        let has_password = !password.is_empty();
+
+        let authentication_method = match (has_access_token, has_user_name, has_password) {
+            // Access token with any credentials → Error
+            (true, true, _) | (true, _, true) => {
+                return Err(PyRuntimeError::new_err(
+                    "Cannot use both 'access_token' and 'user_name'/'password'. \
+                     Please provide either an access token OR username/password credentials, not both.",
+                ));
+            }
+            // Access token only → AccessToken auth
+            (true, false, false) => TdsAuthenticationMethod::AccessToken,
+            // Both username and password → SQL Password auth
+            (false, true, true) => TdsAuthenticationMethod::Password,
+            // Only username, no password → Error
+            (false, true, false) => {
+                return Err(PyRuntimeError::new_err(
+                    "Incomplete credentials: 'user_name' provided without 'password'. \
+                     Please provide both 'user_name' and 'password' for SQL authentication.",
+                ));
+            }
+            // Only password, no username → Error
+            (false, false, true) => {
+                return Err(PyRuntimeError::new_err(
+                    "Incomplete credentials: 'password' provided without 'user_name'. \
+                     Please provide both 'user_name' and 'password' for SQL authentication.",
+                ));
+            }
+            // Nothing provided → Error
+            (false, false, false) => {
+                return Err(PyRuntimeError::new_err(
+                    "No authentication credentials provided. \
+                     Please provide either 'access_token' or both 'user_name' and 'password'.",
+                ));
+            }
+        };
+
         // Create ClientContext
         let mut context = ClientContext::new();
         context.transport_context = transport_context;
@@ -260,7 +310,8 @@ impl PyCoreConnection {
         context.ipaddress_preference = ipaddress_preference;
         context.keep_alive_in_ms = keep_alive_in_ms;
         context.keep_alive_interval_in_ms = keep_alive_interval_in_ms;
-        context.tds_authentication_method = TdsAuthenticationMethod::Password;
+        context.tds_authentication_method = authentication_method;
+        context.access_token = access_token;
 
         Ok(context)
     }

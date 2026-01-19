@@ -6,8 +6,7 @@
 use crate::protocol::{
     PACKET_HEADER_SIZE, PacketHeader, PacketType, ProtocolError, build_done_token,
     build_error_response, build_feature_ext_ack_fedauth, build_login_ack, build_prelogin_response,
-    build_prelogin_response_with_encryption, build_prelogin_response_with_fedauth,
-    build_query_result, parse_login7_auth, parse_sql_batch,
+    build_prelogin_response_with_fedauth, build_query_result, parse_login7_auth, parse_sql_batch,
 };
 use crate::query_response::QueryRegistry;
 use bytes::BytesMut;
@@ -23,13 +22,12 @@ use tracing::{debug, error, info, warn};
 
 /// Per-connection processor that tracks all connection-specific state.
 /// Each connection gets its own processor instance.
+/// FedAuth and username/password authentication are always supported.
 pub struct ConnectionProcessor {
     /// Client socket address
     addr: SocketAddr,
     /// Whether the client has authenticated
     is_authenticated: bool,
-    /// Whether FedAuth mode is enabled for this connection
-    fedauth_mode: bool,
     /// Access token received during FedAuth authentication (if any)
     received_token: Option<Vec<u8>>,
     /// Reference to the shared query registry
@@ -40,15 +38,10 @@ pub struct ConnectionProcessor {
 
 impl ConnectionProcessor {
     /// Create a new connection processor
-    pub fn new(
-        addr: SocketAddr,
-        fedauth_mode: bool,
-        query_registry: Arc<Mutex<QueryRegistry>>,
-    ) -> Self {
+    pub fn new(addr: SocketAddr, query_registry: Arc<Mutex<QueryRegistry>>) -> Self {
         Self {
             addr,
             is_authenticated: false,
-            fedauth_mode,
             received_token: None,
             query_registry,
             buffer: BytesMut::with_capacity(4096),
@@ -132,41 +125,31 @@ impl ConnectionProcessor {
                 let packet_body = &packet_data[PACKET_HEADER_SIZE..];
                 let auth_info = parse_login7_auth(packet_body);
 
-                if self.fedauth_mode {
-                    // In FedAuth mode, we expect an access token
-                    if auth_info.has_fedauth {
-                        let token_len = auth_info
-                            .access_token_bytes
-                            .as_ref()
-                            .map(|v| v.len())
-                            .unwrap_or(0);
-                        debug!(
-                            "FedAuth detected with {} byte token from {}",
-                            token_len, self.addr
-                        );
+                // FedAuth is always supported - check if client used it
+                if auth_info.has_fedauth {
+                    let token_len = auth_info
+                        .access_token_bytes
+                        .as_ref()
+                        .map(|v| v.len())
+                        .unwrap_or(0);
+                    debug!(
+                        "FedAuth detected with {} byte token from {}",
+                        token_len, self.addr
+                    );
 
-                        // Store the received token
-                        if let Some(token_bytes) = auth_info.access_token_bytes {
-                            debug!(
-                                "Stored access token ({} bytes) from {} for verification",
-                                token_bytes.len(),
-                                self.addr
-                            );
-                            self.received_token = Some(token_bytes);
-                        }
-
-                        self.is_authenticated = true;
-                    } else {
+                    // Store the received token for verification
+                    if let Some(token_bytes) = auth_info.access_token_bytes {
                         debug!(
-                            "FedAuth mode enabled but client {} did not provide FedAuth",
+                            "Stored access token ({} bytes) from {} for verification",
+                            token_bytes.len(),
                             self.addr
                         );
-                        // Still allow authentication for backwards compatibility
-                        self.is_authenticated = true;
+                        self.received_token = Some(token_bytes);
                     }
-                } else {
-                    self.is_authenticated = true;
                 }
+
+                // Always authenticate (both FedAuth and username/password are supported)
+                self.is_authenticated = true;
 
                 // Build response with LoginAck + optional FeatureExtAck + Done
                 let mut response = build_login_ack();
@@ -339,6 +322,9 @@ impl ConnectionStore {
 }
 
 /// Mock TDS Server
+///
+/// The server always supports both FedAuth (access token) and username/password authentication.
+/// TLS encryption is optional and controlled by providing a TLS identity.
 pub struct MockTdsServer {
     listener: TcpListener,
     local_addr: SocketAddr,
@@ -346,39 +332,42 @@ pub struct MockTdsServer {
     tls_acceptor: Option<TlsAcceptor>,
     /// If true, use TDS 8.0 strict mode where TLS starts immediately
     strict_mode: bool,
-    /// If true, advertise and accept FedAuth (access token) authentication
-    fedauth_mode: bool,
     /// Store for captured connection info (for test verification)
     connection_store: Arc<Mutex<ConnectionStore>>,
 }
 
 impl MockTdsServer {
-    /// Create a new mock TDS server without TLS
+    /// Create a new mock TDS server without TLS encryption.
+    /// FedAuth and username/password authentication are always supported.
     pub async fn new(addr: &str) -> Result<Self, std::io::Error> {
-        Self::new_with_tls(addr, None).await
+        Self::new_internal(addr, None, false).await
     }
 
-    /// Create a new mock TDS server with optional TLS support (TDS 7.4 style)
+    /// Create a new mock TDS server with optional TLS support (TDS 7.4 style).
+    /// FedAuth and username/password authentication are always supported.
+    ///
+    /// # Arguments
+    /// * `addr` - Address to bind to (e.g., "127.0.0.1:1433")
+    /// * `identity` - Optional TLS identity for encryption. If None, TLS is disabled.
     pub async fn new_with_tls(
         addr: &str,
         identity: Option<Identity>,
     ) -> Result<Self, std::io::Error> {
-        Self::new_internal(addr, identity, false, false).await
+        Self::new_internal(addr, identity, false).await
     }
 
-    /// Create a new mock TDS server with strict/TDS 8.0 mode
-    /// In strict mode, TLS handshake happens immediately before any TDS packets
+    /// Create a new mock TDS server with strict/TDS 8.0 mode.
+    /// In strict mode, TLS handshake happens immediately before any TDS packets.
+    /// FedAuth and username/password authentication are always supported.
+    ///
+    /// # Arguments
+    /// * `addr` - Address to bind to (e.g., "127.0.0.1:1433")
+    /// * `identity` - TLS identity for encryption (required for strict mode)
     pub async fn new_with_strict_tls(
         addr: &str,
         identity: Identity,
     ) -> Result<Self, std::io::Error> {
-        Self::new_internal(addr, Some(identity), true, false).await
-    }
-
-    /// Create a new mock TDS server with FedAuth (access token) support
-    /// This mode advertises FedAuth in PreLogin and accepts access tokens in Login7
-    pub async fn new_with_fedauth(addr: &str) -> Result<Self, std::io::Error> {
-        Self::new_internal(addr, None, false, true).await
+        Self::new_internal(addr, Some(identity), true).await
     }
 
     /// Internal constructor
@@ -386,7 +375,6 @@ impl MockTdsServer {
         addr: &str,
         identity: Option<Identity>,
         strict_mode: bool,
-        fedauth_mode: bool,
     ) -> Result<Self, std::io::Error> {
         let listener = TcpListener::bind(addr).await?;
         let local_addr = listener.local_addr()?;
@@ -398,23 +386,22 @@ impl MockTdsServer {
             TlsAcceptor::from(acceptor)
         });
 
+        let has_tls = tls_acceptor.is_some();
         if strict_mode {
             info!(
-                "Mock TDS Server listening on {} with TDS 8.0 strict TLS mode",
+                "Mock TDS Server listening on {} with TDS 8.0 strict TLS mode (FedAuth + user/pass supported)",
                 local_addr
             );
-        } else if fedauth_mode {
+        } else if has_tls {
             info!(
-                "Mock TDS Server listening on {} with FedAuth support",
-                local_addr
-            );
-        } else if tls_acceptor.is_some() {
-            info!(
-                "Mock TDS Server listening on {} with TLS enabled",
+                "Mock TDS Server listening on {} with TLS enabled (FedAuth + user/pass supported)",
                 local_addr
             );
         } else {
-            info!("Mock TDS Server listening on {} (no TLS)", local_addr);
+            info!(
+                "Mock TDS Server listening on {} (no TLS, FedAuth + user/pass supported)",
+                local_addr
+            );
         }
 
         Ok(Self {
@@ -423,7 +410,6 @@ impl MockTdsServer {
             query_registry: Arc::new(Mutex::new(QueryRegistry::new())),
             tls_acceptor,
             strict_mode,
-            fedauth_mode,
             connection_store: Arc::new(Mutex::new(ConnectionStore::new())),
         })
     }
@@ -450,7 +436,6 @@ impl MockTdsServer {
         let registry = self.query_registry;
         let tls_acceptor = self.tls_acceptor.map(Arc::new);
         let strict_mode = self.strict_mode;
-        let fedauth_mode = self.fedauth_mode;
         let connection_store = self.connection_store;
 
         loop {
@@ -469,7 +454,6 @@ impl MockTdsServer {
                     registry_clone,
                     tls_acceptor_clone,
                     strict_mode,
-                    fedauth_mode,
                     store_clone,
                 )
                 .await
@@ -489,7 +473,6 @@ impl MockTdsServer {
         let registry = self.query_registry;
         let tls_acceptor = self.tls_acceptor.map(Arc::new);
         let strict_mode = self.strict_mode;
-        let fedauth_mode = self.fedauth_mode;
         let connection_store = self.connection_store;
 
         tokio::select! {
@@ -506,7 +489,7 @@ impl MockTdsServer {
                             let store_clone = Arc::clone(&connection_store);
 
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone, strict_mode, fedauth_mode, store_clone).await {
+                                if let Err(e) = handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone, strict_mode, store_clone).await {
                                     error!("Error handling connection from {}: {}", addr, e);
                                 }
                             });
@@ -526,14 +509,14 @@ impl MockTdsServer {
     }
 }
 
-/// Handle a connection with optional TLS support
+/// Handle a connection with optional TLS support.
+/// FedAuth and username/password authentication are always supported.
 async fn handle_connection_with_tls(
     socket: TcpStream,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
     tls_acceptor: Option<Arc<TlsAcceptor>>,
     strict_mode: bool,
-    fedauth_mode: bool,
     connection_store: Arc<Mutex<ConnectionStore>>,
 ) -> Result<(), ProtocolError> {
     if strict_mode {
@@ -557,18 +540,12 @@ async fn handle_connection_with_tls(
         })?;
 
         info!("TLS handshake successful for {} (strict mode)", addr);
-        handle_strict_encrypted_connection(
-            tls_stream,
-            addr,
-            query_registry,
-            fedauth_mode,
-            connection_store,
-        )
-        .await
+        handle_strict_encrypted_connection(tls_stream, addr, query_registry, connection_store).await
     } else {
         // TDS 7.4 mode: First handle PreLogin, then optionally do TDS-wrapped TLS
+        let supports_tls = tls_acceptor.is_some();
         let (prelogin_socket, should_encrypt) =
-            handle_prelogin_negotiation(socket, addr, tls_acceptor.is_some(), fedauth_mode).await?;
+            handle_prelogin_negotiation(socket, addr, supports_tls).await?;
 
         if should_encrypt && tls_acceptor.is_some() {
             // For TDS 7.4, the client wraps TLS handshake data in TDS PreLogin packets.
@@ -595,30 +572,23 @@ async fn handle_connection_with_tls(
                 tls_stream,
                 addr,
                 query_registry,
-                fedauth_mode,
                 connection_store,
             )
             .await
         } else {
             // Continue without encryption
-            handle_unencrypted_connection(
-                prelogin_socket,
-                addr,
-                query_registry,
-                fedauth_mode,
-                connection_store,
-            )
-            .await
+            handle_unencrypted_connection(prelogin_socket, addr, query_registry, connection_store)
+                .await
         }
     }
 }
 
-/// Handle PreLogin packet to negotiate encryption
+/// Handle PreLogin packet to negotiate encryption.
+/// Always advertises FedAuth support.
 async fn handle_prelogin_negotiation(
     mut socket: TcpStream,
     addr: SocketAddr,
     supports_tls: bool,
-    fedauth_mode: bool,
 ) -> Result<(TcpStream, bool), ProtocolError> {
     let mut buffer = BytesMut::with_capacity(4096);
 
@@ -652,13 +622,8 @@ async fn handle_prelogin_negotiation(
 
     debug!("Handling PreLogin negotiation");
 
-    // Build PreLogin response based on TLS and FedAuth support
-    let response = if fedauth_mode {
-        // In FedAuth mode, advertise FedAuth support (no encryption needed for mock tests)
-        build_prelogin_response_with_fedauth(false, true)
-    } else {
-        build_prelogin_response_with_encryption(supports_tls)
-    };
+    // Build PreLogin response - always advertise FedAuth support
+    let response = build_prelogin_response_with_fedauth(supports_tls, true);
 
     debug!("Sending {} bytes PreLogin response", response.len());
     socket.write_all(&response).await?;
@@ -670,14 +635,14 @@ async fn handle_prelogin_negotiation(
 /// Handle strict mode encrypted connection (TDS 8.0)
 /// In strict mode, TLS is established first, then PreLogin and all other TDS packets
 /// are exchanged over the encrypted channel.
+/// Always supports FedAuth and username/password authentication.
 async fn handle_strict_encrypted_connection(
     mut socket: TlsStream<TcpStream>,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
-    fedauth_mode: bool,
     connection_store: Arc<Mutex<ConnectionStore>>,
 ) -> Result<(), ProtocolError> {
-    let mut processor = ConnectionProcessor::new(addr, fedauth_mode, query_registry);
+    let mut processor = ConnectionProcessor::new(addr, query_registry);
     let mut prelogin_handled = false;
 
     loop {
@@ -704,13 +669,8 @@ async fn handle_strict_encrypted_connection(
                         debug!("Handling PreLogin in strict mode");
                         let _ = processor.buffer_mut().split_to(header.length as usize);
 
-                        // Send PreLogin response (encryption is already established)
-                        let response = if fedauth_mode {
-                            // Strict mode already has encryption, just add FedAuth
-                            build_prelogin_response_with_fedauth(true, true)
-                        } else {
-                            build_prelogin_response()
-                        };
+                        // Send PreLogin response - strict mode already has encryption, always include FedAuth
+                        let response = build_prelogin_response_with_fedauth(true, true);
                         debug!(
                             "Sending {} bytes PreLogin response (strict mode)",
                             response.len()
@@ -745,15 +705,15 @@ async fn handle_strict_encrypted_connection(
 }
 
 /// Handle encrypted connection (after TLS handshake)
+/// Always supports FedAuth and username/password authentication.
 #[allow(dead_code)]
 async fn handle_encrypted_connection(
     mut socket: TlsStream<TcpStream>,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
-    fedauth_mode: bool,
     connection_store: Arc<Mutex<ConnectionStore>>,
 ) -> Result<(), ProtocolError> {
-    let mut processor = ConnectionProcessor::new(addr, fedauth_mode, query_registry);
+    let mut processor = ConnectionProcessor::new(addr, query_registry);
 
     loop {
         // Read data from TLS socket
@@ -783,14 +743,14 @@ async fn handle_encrypted_connection(
 /// Handle encrypted connection over TDS-wrapped TLS (TDS 7.4 style)
 /// After the TLS handshake completes, subsequent TDS packets (Login7, SqlBatch, etc.)
 /// are sent encrypted through TLS, but no longer wrapped in PreLogin packets.
+/// Always supports FedAuth and username/password authentication.
 async fn handle_encrypted_tds_wrapped_connection(
     mut socket: TlsStream<crate::tds_tls_wrapper::TdsTlsWrapper>,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
-    fedauth_mode: bool,
     connection_store: Arc<Mutex<ConnectionStore>>,
 ) -> Result<(), ProtocolError> {
-    let mut processor = ConnectionProcessor::new(addr, fedauth_mode, query_registry);
+    let mut processor = ConnectionProcessor::new(addr, query_registry);
 
     loop {
         // Read data from TLS socket (which wraps TdsTlsWrapper)
@@ -821,14 +781,14 @@ async fn handle_encrypted_tds_wrapped_connection(
 }
 
 /// Handle unencrypted connection (after PreLogin or no TLS)
+/// Always supports FedAuth and username/password authentication.
 async fn handle_unencrypted_connection(
     mut socket: TcpStream,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
-    fedauth_mode: bool,
     connection_store: Arc<Mutex<ConnectionStore>>,
 ) -> Result<(), ProtocolError> {
-    let mut processor = ConnectionProcessor::new(addr, fedauth_mode, query_registry);
+    let mut processor = ConnectionProcessor::new(addr, query_registry);
 
     loop {
         // Read data from plain socket
