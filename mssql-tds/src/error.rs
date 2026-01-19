@@ -27,6 +27,15 @@ pub enum Error {
     #[error("TLS Error: {0}")]
     TlsError(#[from] native_tls::Error),
 
+    #[error(
+        "TLS handshake failed while connecting to '{expected_host}': {source}. Certificate SANs: {cert_sans}"
+    )]
+    TlsHandshakeError {
+        source: native_tls::Error,
+        expected_host: String,
+        cert_sans: String,
+    },
+
     #[error("Timeout Error: {0}")]
     TimeoutError(TimeoutErrorType),
 

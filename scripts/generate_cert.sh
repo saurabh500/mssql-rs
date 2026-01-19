@@ -14,6 +14,10 @@ CONFIG_FILE="openssl.cnf"
 SERVER_CN="sql1"
 SAN_DNS="sql1"
 
+# Get the local hostname for SAN
+LOCAL_HOSTNAME=$(hostname 2>/dev/null || echo "")
+echo "ℹ️  Adding local hostname to SAN: $LOCAL_HOSTNAME"
+
 # 1. Generate self-signed CA
 openssl req -x509 -nodes -newkey rsa:4096 -sha256 \
     -keyout "$CA_KEY" \
@@ -39,6 +43,9 @@ subjectAltName = @alt_names
 [ alt_names ]
 DNS.1 = $SAN_DNS
 DNS.2 = localhost
+DNS.3 = $LOCAL_HOSTNAME
+IP.1 = 127.0.0.1
+IP.2 = ::1
 
 [ v3_ext ]
 authorityKeyIdentifier=keyid,issuer

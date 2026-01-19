@@ -49,7 +49,8 @@ mod timeout_and_cancel_tests {
         // Spawn a local TCP server with a random port
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let datasource = format!("tcp:localhost,{}", port);
+        // Use 127.0.0.1 directly to match the listener binding - localhost resolves to hostname
+        let datasource = format!("tcp:127.0.0.1,{}", port);
 
         // Create a client context with a two-second timeout that points to localhost:1433.
         let mut client_context = ClientContext::default();
@@ -146,7 +147,8 @@ mod timeout_and_cancel_tests {
         // Spawn a local TCP server with a random port
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let datasource = format!("tcp:localhost,{}", port);
+        // Use 127.0.0.1 directly to match the listener binding - localhost resolves to hostname
+        let datasource = format!("tcp:127.0.0.1,{}", port);
 
         // Create a client context with a two-second timeout that points to localhost:1433.
         let mut client_context = ClientContext::default();
