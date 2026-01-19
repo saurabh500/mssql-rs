@@ -1031,7 +1031,7 @@ pub(crate) mod tests {
         // 10MB = 10485760 bytes, with 4088 byte payload = ~2565 packets/recursive calls
         // With the OLD recursive approach, this causes stack overflow
         // With the NEW iterative approach, this works fine
-        let data_size = 10 * 1024 * 1024; // 10MB - definitely causes stack overflow with recursion
+        let data_size = 50 * 1024 * 1024; // 10MB - definitely causes stack overflow with recursion
         let large_data: Vec<u8> = (0..data_size).map(|i| (i % 256) as u8).collect();
 
         block_on(writer.write_async(&large_data)).unwrap();
