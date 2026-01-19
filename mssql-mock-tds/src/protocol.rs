@@ -153,65 +153,248 @@ pub enum TokenType {
     LoginAck = 0xAD,
     Error = 0xAA,
     Info = 0xAB,
+    FeatureExtAck = 0xAE,
+}
+
+/// FedAuth feature extension ID
+pub const FEATURE_EXT_FEDAUTH: u8 = 0x02;
+/// FedAuth terminator
+pub const FEATURE_EXT_TERMINATOR: u8 = 0xFF;
+
+/// Parsed Login7 authentication info
+#[derive(Debug, Clone, Default)]
+pub struct Login7AuthInfo {
+    /// Whether FedAuth feature was present
+    pub has_fedauth: bool,
+    /// Access token bytes (UTF-16LE encoded) if present
+    pub access_token_bytes: Option<Vec<u8>>,
+    /// FedAuth library type (0x01 = SecurityToken, 0x02 = MSAL)
+    pub fedauth_library: u8,
+}
+
+/// Parse Login7 packet to extract FedAuth feature extension with access token
+pub fn parse_login7_auth(packet_data: &[u8]) -> Login7AuthInfo {
+    let mut auth_info = Login7AuthInfo::default();
+
+    // Login7 packet structure (offsets from start of Login7 body after TDS header):
+    // - 4 bytes: Length (offset 0)
+    // - 4 bytes: TDSVersion (offset 4)
+    // - 4 bytes: PacketSize (offset 8)
+    // - 4 bytes: ClientProgVer (offset 12)
+    // - 4 bytes: ClientPID (offset 16)
+    // - 4 bytes: ConnectionID (offset 20)
+    // - 1 byte: OptionFlags1 (offset 24)
+    // - 1 byte: OptionFlags2 (offset 25)
+    // - 1 byte: TypeFlags (offset 26)
+    // - 1 byte: OptionFlags3 (offset 27) <-- Contains FeatureExt flag
+    // - 4 bytes: ClientTimezone (offset 28)
+    // - 4 bytes: ClientLCID (offset 32)
+    // - Variable length offset/length pairs start at offset 36
+
+    // The packet_body should already have TDS header stripped (done in server.rs)
+    let data = packet_data;
+
+    if data.len() < 36 {
+        debug!("Login7 packet too short for feature extension parsing");
+        return auth_info;
+    }
+
+    // Read OptionFlags3 at offset 27
+    let option_flags3 = data[27];
+    let has_feature_ext = (option_flags3 & 0x10) != 0; // Bit 4 indicates FeatureExt presence
+
+    debug!(
+        "Login7 OptionFlags3: 0x{:02X}, has_feature_ext: {}",
+        option_flags3, has_feature_ext
+    );
+
+    if !has_feature_ext {
+        debug!("Login7 does not have feature extension");
+        return auth_info;
+    }
+
+    // The feature extension data is typically at the end of the Login7 packet.
+    // We need to find it by scanning for FEDAUTH feature ID (0x02)
+    // Feature extension format:
+    // - 1 byte: FeatureId (0x02 for FEDAUTH, 0xFF for terminator)
+    // - 4 bytes: FeatureDataLen (little-endian)
+    // - N bytes: FeatureData
+
+    // Scan from the end of fixed Login7 header structure (offset 36 is where offset/length pairs start)
+    // The actual variable data and feature extension come after the offset table
+    let scan_start = 36;
+
+    for i in scan_start..data.len() {
+        if data[i] == FEATURE_EXT_FEDAUTH && i + 5 < data.len() {
+            // Found FEDAUTH feature
+            auth_info.has_fedauth = true;
+
+            // Read feature data length (4 bytes, little-endian)
+            let feat_len =
+                u32::from_le_bytes([data[i + 1], data[i + 2], data[i + 3], data[i + 4]]) as usize;
+
+            if i + 5 + feat_len <= data.len() {
+                let feat_data = &data[i + 5..i + 5 + feat_len];
+
+                // FedAuth feature data format for AccessToken (SecurityToken library):
+                // - 1 byte: Options (library type in bits 1-2)
+                // - For SecurityToken (0x01): 4 bytes token length + token bytes
+
+                if !feat_data.is_empty() {
+                    let options = feat_data[0];
+                    auth_info.fedauth_library = (options >> 1) & 0x03;
+
+                    // SecurityToken library (0x01) has access token in the feature data
+                    if auth_info.fedauth_library == 0x01 && feat_data.len() > 5 {
+                        // Read token length (4 bytes, little-endian) at offset 1
+                        let token_len = u32::from_le_bytes([
+                            feat_data[1],
+                            feat_data[2],
+                            feat_data[3],
+                            feat_data[4],
+                        ]) as usize;
+
+                        if feat_data.len() >= 5 + token_len {
+                            auth_info.access_token_bytes =
+                                Some(feat_data[5..5 + token_len].to_vec());
+                            debug!("Parsed access token from Login7: {} bytes", token_len);
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    auth_info
 }
 
 /// Build a PreLogin response packet
 pub fn build_prelogin_response() -> BytesMut {
-    build_prelogin_response_with_encryption(false)
+    build_prelogin_response_with_options(false, false)
 }
 
 /// Build a PreLogin response packet with optional encryption support
 pub fn build_prelogin_response_with_encryption(supports_encryption: bool) -> BytesMut {
+    build_prelogin_response_with_options(supports_encryption, false)
+}
+
+/// Build a PreLogin response packet with encryption and FedAuth support
+pub fn build_prelogin_response_with_fedauth(
+    supports_encryption: bool,
+    supports_fedauth: bool,
+) -> BytesMut {
+    build_prelogin_response_with_options(supports_encryption, supports_fedauth)
+}
+
+/// Build a PreLogin response packet with configurable options
+fn build_prelogin_response_with_options(
+    supports_encryption: bool,
+    supports_fedauth: bool,
+) -> BytesMut {
     let mut response = BytesMut::new();
 
-    // PreLogin response with ENCRYPTION based on server capability
+    // PreLogin response with ENCRYPTION and optionally FEDAUTH
     // Option tokens (PL_OPTION_TOKEN)
     //
     // Option directory format for each option:
     // - 1 byte: Option token
     // - 2 bytes: Offset (big-endian) from start of PreLogin data to option value
     // - 2 bytes: Length (big-endian) of option value
-    //
-    // Option directory:
-    // - VERSION: 5 bytes (token + offset + length)
-    // - ENCRYPTION: 5 bytes
-    // - TERMINATOR: 1 byte
-    // Total directory: 11 bytes
-    //
-    // So VERSION data starts at offset 11 (0x000B)
-    // ENCRYPTION data starts at offset 11 + 6 = 17 (0x0011)
 
-    // VERSION token (0x00)
-    response.put_u8(0x00); // VERSION
-    response.put_u16(0x000B); // Offset to VERSION data (11 bytes = after option directory)
-    response.put_u16(0x0006); // Length of VERSION data (6 bytes)
+    if supports_fedauth {
+        // With FEDAUTH: VERSION + ENCRYPTION + FEDAUTH + TERMINATOR
+        // Directory: 5 + 5 + 5 + 1 = 16 bytes
+        // VERSION data at offset 16, length 6
+        // ENCRYPTION data at offset 22, length 1
+        // FEDAUTH data at offset 23, length 1
 
-    // ENCRYPTION token (0x01)
-    response.put_u8(0x01); // ENCRYPTION
-    response.put_u16(0x0011); // Offset to ENCRYPTION data (17 = 11 + 6)
-    response.put_u16(0x0001); // Length of ENCRYPTION data (1 byte)
+        // VERSION token (0x00)
+        response.put_u8(0x00); // VERSION
+        response.put_u16(0x0010); // Offset 16
+        response.put_u16(0x0006); // Length 6
 
-    // TERMINATOR (0xFF)
-    response.put_u8(0xFF);
+        // ENCRYPTION token (0x01)
+        response.put_u8(0x01); // ENCRYPTION
+        response.put_u16(0x0016); // Offset 22
+        response.put_u16(0x0001); // Length 1
 
-    // Version data: 16.0.0.0 (6 bytes)
-    response.put_u8(0x10); // Major version (16)
-    response.put_u8(0x00); // Minor version (0)
-    response.put_u16(0x0000); // Build number
-    response.put_u16(0x0000); // Sub-build number
+        // FEDAUTH token (0x06)
+        response.put_u8(0x06); // FEDAUTH
+        response.put_u16(0x0017); // Offset 23
+        response.put_u16(0x0001); // Length 1
 
-    // ENCRYPTION data (1 byte)
-    // 0x00 = ENCRYPT_OFF (encryption available but off)
-    // 0x01 = ENCRYPT_ON (encryption available and on)
-    // 0x02 = ENCRYPT_NOT_SUP (encryption not supported)
-    // 0x03 = ENCRYPT_REQ (encryption required)
-    if supports_encryption {
-        response.put_u8(0x01); // ENCRYPT_ON (encryption supported)
+        // TERMINATOR (0xFF)
+        response.put_u8(0xFF);
+
+        // Version data: 16.0.0.0 (6 bytes)
+        response.put_u8(0x10); // Major version (16)
+        response.put_u8(0x00); // Minor version (0)
+        response.put_u16(0x0000); // Build number
+        response.put_u16(0x0000); // Sub-build number
+
+        // ENCRYPTION data (1 byte)
+        if supports_encryption {
+            response.put_u8(0x01); // ENCRYPT_ON
+        } else {
+            response.put_u8(0x02); // ENCRYPT_NOT_SUP
+        }
+
+        // FEDAUTH data (1 byte)
+        // 0x00 = FEDAUTH_OFF
+        // 0x01 = FEDAUTH_ON (FedAuth supported)
+        response.put_u8(0x01); // FEDAUTH_ON
     } else {
-        response.put_u8(0x02); // ENCRYPT_NOT_SUP (encryption not supported)
+        // Without FEDAUTH: VERSION + ENCRYPTION + TERMINATOR
+        // Directory: 5 + 5 + 1 = 11 bytes
+        // VERSION data at offset 11, length 6
+        // ENCRYPTION data at offset 17, length 1
+
+        // VERSION token (0x00)
+        response.put_u8(0x00); // VERSION
+        response.put_u16(0x000B); // Offset 11
+        response.put_u16(0x0006); // Length 6
+
+        // ENCRYPTION token (0x01)
+        response.put_u8(0x01); // ENCRYPTION
+        response.put_u16(0x0011); // Offset 17
+        response.put_u16(0x0001); // Length 1
+
+        // TERMINATOR (0xFF)
+        response.put_u8(0xFF);
+
+        // Version data: 16.0.0.0 (6 bytes)
+        response.put_u8(0x10); // Major version (16)
+        response.put_u8(0x00); // Minor version (0)
+        response.put_u16(0x0000); // Build number
+        response.put_u16(0x0000); // Sub-build number
+
+        // ENCRYPTION data (1 byte)
+        if supports_encryption {
+            response.put_u8(0x01); // ENCRYPT_ON
+        } else {
+            response.put_u8(0x02); // ENCRYPT_NOT_SUP
+        }
     }
 
     wrap_in_packet(PacketType::TabularResult, response)
+}
+
+/// Build a FeatureExtAck token for FedAuth acknowledgment
+pub fn build_feature_ext_ack_fedauth() -> BytesMut {
+    let mut token_data = BytesMut::new();
+
+    // FeatureExtAck token (0xAE)
+    token_data.put_u8(TokenType::FeatureExtAck as u8);
+
+    // FedAuth feature (0x02) with empty data (just acknowledge)
+    token_data.put_u8(FEATURE_EXT_FEDAUTH); // Feature ID
+    token_data.put_u32_le(0); // Feature data length = 0
+
+    // Terminator
+    token_data.put_u8(FEATURE_EXT_TERMINATOR);
+
+    token_data
 }
 
 /// Build a LoginAck token response with EnvChange for collation

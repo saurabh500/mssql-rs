@@ -5,12 +5,14 @@
 
 use crate::protocol::{
     PACKET_HEADER_SIZE, PacketHeader, PacketType, ProtocolError, build_done_token,
-    build_error_response, build_login_ack, build_prelogin_response,
-    build_prelogin_response_with_encryption, build_query_result, parse_sql_batch,
+    build_error_response, build_feature_ext_ack_fedauth, build_login_ack, build_prelogin_response,
+    build_prelogin_response_with_encryption, build_prelogin_response_with_fedauth,
+    build_query_result, parse_login7_auth, parse_sql_batch,
 };
 use crate::query_response::QueryRegistry;
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use native_tls::Identity;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -18,6 +20,323 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio_native_tls::{TlsAcceptor, TlsStream};
 use tracing::{debug, error, info, warn};
+
+/// Per-connection processor that tracks all connection-specific state.
+/// Each connection gets its own processor instance.
+pub struct ConnectionProcessor {
+    /// Client socket address
+    addr: SocketAddr,
+    /// Whether the client has authenticated
+    is_authenticated: bool,
+    /// Whether FedAuth mode is enabled for this connection
+    fedauth_mode: bool,
+    /// Access token received during FedAuth authentication (if any)
+    received_token: Option<Vec<u8>>,
+    /// Reference to the shared query registry
+    query_registry: Arc<Mutex<QueryRegistry>>,
+    /// Packet buffer for this connection
+    buffer: BytesMut,
+}
+
+impl ConnectionProcessor {
+    /// Create a new connection processor
+    pub fn new(
+        addr: SocketAddr,
+        fedauth_mode: bool,
+        query_registry: Arc<Mutex<QueryRegistry>>,
+    ) -> Self {
+        Self {
+            addr,
+            is_authenticated: false,
+            fedauth_mode,
+            received_token: None,
+            query_registry,
+            buffer: BytesMut::with_capacity(4096),
+        }
+    }
+
+    /// Get the client address
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Check if the client is authenticated
+    pub fn is_authenticated(&self) -> bool {
+        self.is_authenticated
+    }
+
+    /// Get the received access token (raw bytes)
+    pub fn received_token(&self) -> Option<&[u8]> {
+        self.received_token.as_deref()
+    }
+
+    /// Get the received access token as a UTF-16LE decoded string
+    pub fn received_token_as_string(&self) -> Option<String> {
+        self.received_token.as_ref().and_then(|bytes| {
+            // Access tokens in TDS are UTF-16LE encoded
+            if bytes.len() % 2 == 0 {
+                let u16_chars: Vec<u16> = bytes
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .collect();
+                String::from_utf16(&u16_chars).ok()
+            } else {
+                // Fallback to UTF-8 if not even length
+                String::from_utf8(bytes.to_vec()).ok()
+            }
+        })
+    }
+
+    /// Get mutable access to the buffer for reading data
+    pub fn buffer_mut(&mut self) -> &mut BytesMut {
+        &mut self.buffer
+    }
+
+    /// Process a single packet from the buffer and return the response
+    pub async fn process_packet(&mut self) -> Result<Option<BytesMut>, ProtocolError> {
+        if self.buffer.len() < PACKET_HEADER_SIZE {
+            return Ok(None);
+        }
+
+        // Parse packet header
+        let header = {
+            let mut buf_clone = self.buffer.clone();
+            match PacketHeader::parse(&mut buf_clone) {
+                Ok(h) => h,
+                Err(e) => {
+                    warn!("Failed to parse packet header: {}", e);
+                    return Ok(None);
+                }
+            }
+        };
+
+        // Check if we have the full packet
+        if self.buffer.len() < header.length as usize {
+            debug!(
+                "Incomplete packet: have {} bytes, need {}",
+                self.buffer.len(),
+                header.length
+            );
+            return Ok(None);
+        }
+
+        // Extract the complete packet
+        let packet_data = self.buffer.split_to(header.length as usize);
+
+        // Process the packet and build response
+        let response = match header.packet_type {
+            PacketType::Login7 => {
+                debug!("Handling Login7 from {}", self.addr);
+
+                // Parse Login7 packet body (skip header) for authentication info
+                let packet_body = &packet_data[PACKET_HEADER_SIZE..];
+                let auth_info = parse_login7_auth(packet_body);
+
+                if self.fedauth_mode {
+                    // In FedAuth mode, we expect an access token
+                    if auth_info.has_fedauth {
+                        let token_len = auth_info
+                            .access_token_bytes
+                            .as_ref()
+                            .map(|v| v.len())
+                            .unwrap_or(0);
+                        debug!(
+                            "FedAuth detected with {} byte token from {}",
+                            token_len, self.addr
+                        );
+
+                        // Store the received token
+                        if let Some(token_bytes) = auth_info.access_token_bytes {
+                            debug!(
+                                "Stored access token ({} bytes) from {} for verification",
+                                token_bytes.len(),
+                                self.addr
+                            );
+                            self.received_token = Some(token_bytes);
+                        }
+
+                        self.is_authenticated = true;
+                    } else {
+                        debug!(
+                            "FedAuth mode enabled but client {} did not provide FedAuth",
+                            self.addr
+                        );
+                        // Still allow authentication for backwards compatibility
+                        self.is_authenticated = true;
+                    }
+                } else {
+                    self.is_authenticated = true;
+                }
+
+                // Build response with LoginAck + optional FeatureExtAck + Done
+                let mut response = build_login_ack();
+
+                // If client sent FedAuth, respond with FeatureExtAck
+                if auth_info.has_fedauth {
+                    debug!("Including FeatureExtAck for FedAuth");
+                    response.extend_from_slice(&build_feature_ext_ack_fedauth());
+                }
+
+                response.extend_from_slice(&build_done_token(0));
+
+                // Wrap in packet
+                let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
+                let mut packet = BytesMut::with_capacity(total_length as usize);
+                let resp_header = PacketHeader::new(PacketType::TabularResult, total_length, 1);
+                resp_header.write(&mut packet);
+                packet.extend_from_slice(&response);
+
+                Some(packet)
+            }
+
+            PacketType::SqlBatch => {
+                if !self.is_authenticated {
+                    warn!(
+                        "Received SQL batch from {} before authentication",
+                        self.addr
+                    );
+                    Some(build_error_response("Not authenticated"))
+                } else {
+                    debug!("Handling SQL batch from {}", self.addr);
+
+                    // Extract packet body (skip header)
+                    let packet_body = &packet_data[PACKET_HEADER_SIZE..];
+
+                    // Parse SQL
+                    match parse_sql_batch(packet_body) {
+                        Ok(sql) => {
+                            info!("Executing SQL from {}: {}", self.addr, sql);
+
+                            // Look up query in registry
+                            let registry = self.query_registry.lock().await;
+                            if let Some(response_data) = registry.get(&sql) {
+                                info!("Found registered response for query");
+                                // build_query_result already wraps in a packet, so return directly
+                                let packet = build_query_result(response_data);
+                                Some(packet)
+                            } else {
+                                info!("No registered response, returning empty result");
+                                // Return DONE token
+                                let response = build_done_token(0);
+
+                                let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
+                                let mut packet = BytesMut::with_capacity(total_length as usize);
+                                let resp_header =
+                                    PacketHeader::new(PacketType::TabularResult, total_length, 1);
+                                resp_header.write(&mut packet);
+                                packet.extend_from_slice(&response);
+
+                                Some(packet)
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse SQL batch from {}: {}", self.addr, e);
+                            Some(build_error_response(&format!("Parse error: {}", e)))
+                        }
+                    }
+                }
+            }
+
+            PacketType::Attention => {
+                debug!("Handling Attention from {}", self.addr);
+                // Send DONE with attention flag
+                let response = build_done_token(0x0020); // DONE_ATTN
+
+                let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
+                let mut packet = BytesMut::with_capacity(total_length as usize);
+                let resp_header = PacketHeader::new(PacketType::TabularResult, total_length, 1);
+                resp_header.write(&mut packet);
+                packet.extend_from_slice(&response);
+
+                Some(packet)
+            }
+
+            _ => {
+                debug!(
+                    "Ignoring packet type {:?} from {}",
+                    header.packet_type, self.addr
+                );
+                None
+            }
+        };
+
+        Ok(response)
+    }
+}
+
+/// Store for captured connection processors.
+/// This allows tests to access per-connection state after connections complete.
+#[derive(Debug, Default)]
+pub struct ConnectionStore {
+    /// Completed connection processors keyed by client socket address
+    connections: HashMap<SocketAddr, ConnectionInfo>,
+}
+
+/// Captured information from a completed connection
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    /// Client socket address
+    pub addr: SocketAddr,
+    /// Access token received (if any)
+    pub received_token: Option<Vec<u8>>,
+    /// Whether the client authenticated successfully
+    pub authenticated: bool,
+}
+
+impl ConnectionInfo {
+    /// Get the received access token as a UTF-16LE decoded string
+    pub fn received_token_as_string(&self) -> Option<String> {
+        self.received_token.as_ref().and_then(|bytes| {
+            if bytes.len() % 2 == 0 {
+                let u16_chars: Vec<u16> = bytes
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .collect();
+                String::from_utf16(&u16_chars).ok()
+            } else {
+                String::from_utf8(bytes.to_vec()).ok()
+            }
+        })
+    }
+}
+
+impl ConnectionStore {
+    pub fn new() -> Self {
+        Self {
+            connections: HashMap::new(),
+        }
+    }
+
+    /// Store connection info when a connection completes
+    pub fn store(&mut self, processor: &ConnectionProcessor) {
+        let info = ConnectionInfo {
+            addr: processor.addr(),
+            received_token: processor.received_token().map(|t| t.to_vec()),
+            authenticated: processor.is_authenticated(),
+        };
+        self.connections.insert(processor.addr(), info);
+    }
+
+    /// Get connection info by address
+    pub fn get(&self, addr: &SocketAddr) -> Option<&ConnectionInfo> {
+        self.connections.get(addr)
+    }
+
+    /// Get all connection infos
+    pub fn all(&self) -> &HashMap<SocketAddr, ConnectionInfo> {
+        &self.connections
+    }
+
+    /// Get the count of stored connections
+    pub fn count(&self) -> usize {
+        self.connections.len()
+    }
+
+    /// Clear all stored connections
+    pub fn clear(&mut self) {
+        self.connections.clear();
+    }
+}
 
 /// Mock TDS Server
 pub struct MockTdsServer {
@@ -27,6 +346,10 @@ pub struct MockTdsServer {
     tls_acceptor: Option<TlsAcceptor>,
     /// If true, use TDS 8.0 strict mode where TLS starts immediately
     strict_mode: bool,
+    /// If true, advertise and accept FedAuth (access token) authentication
+    fedauth_mode: bool,
+    /// Store for captured connection info (for test verification)
+    connection_store: Arc<Mutex<ConnectionStore>>,
 }
 
 impl MockTdsServer {
@@ -40,7 +363,7 @@ impl MockTdsServer {
         addr: &str,
         identity: Option<Identity>,
     ) -> Result<Self, std::io::Error> {
-        Self::new_internal(addr, identity, false).await
+        Self::new_internal(addr, identity, false, false).await
     }
 
     /// Create a new mock TDS server with strict/TDS 8.0 mode
@@ -49,7 +372,13 @@ impl MockTdsServer {
         addr: &str,
         identity: Identity,
     ) -> Result<Self, std::io::Error> {
-        Self::new_internal(addr, Some(identity), true).await
+        Self::new_internal(addr, Some(identity), true, false).await
+    }
+
+    /// Create a new mock TDS server with FedAuth (access token) support
+    /// This mode advertises FedAuth in PreLogin and accepts access tokens in Login7
+    pub async fn new_with_fedauth(addr: &str) -> Result<Self, std::io::Error> {
+        Self::new_internal(addr, None, false, true).await
     }
 
     /// Internal constructor
@@ -57,6 +386,7 @@ impl MockTdsServer {
         addr: &str,
         identity: Option<Identity>,
         strict_mode: bool,
+        fedauth_mode: bool,
     ) -> Result<Self, std::io::Error> {
         let listener = TcpListener::bind(addr).await?;
         let local_addr = listener.local_addr()?;
@@ -71,6 +401,11 @@ impl MockTdsServer {
         if strict_mode {
             info!(
                 "Mock TDS Server listening on {} with TDS 8.0 strict TLS mode",
+                local_addr
+            );
+        } else if fedauth_mode {
+            info!(
+                "Mock TDS Server listening on {} with FedAuth support",
                 local_addr
             );
         } else if tls_acceptor.is_some() {
@@ -88,12 +423,20 @@ impl MockTdsServer {
             query_registry: Arc::new(Mutex::new(QueryRegistry::new())),
             tls_acceptor,
             strict_mode,
+            fedauth_mode,
+            connection_store: Arc::new(Mutex::new(ConnectionStore::new())),
         })
     }
 
     /// Get a reference to the query registry for registering custom responses
     pub fn query_registry(&self) -> Arc<Mutex<QueryRegistry>> {
         Arc::clone(&self.query_registry)
+    }
+
+    /// Get a reference to the connection store for test verification.
+    /// This allows tests to check connection state including received access tokens.
+    pub fn connection_store(&self) -> Arc<Mutex<ConnectionStore>> {
+        Arc::clone(&self.connection_store)
     }
 
     /// Get the local address the server is bound to
@@ -107,6 +450,8 @@ impl MockTdsServer {
         let registry = self.query_registry;
         let tls_acceptor = self.tls_acceptor.map(Arc::new);
         let strict_mode = self.strict_mode;
+        let fedauth_mode = self.fedauth_mode;
+        let connection_store = self.connection_store;
 
         loop {
             let (socket, addr) = listener.accept().await?;
@@ -114,6 +459,7 @@ impl MockTdsServer {
 
             let registry_clone = Arc::clone(&registry);
             let tls_acceptor_clone = tls_acceptor.clone();
+            let store_clone = Arc::clone(&connection_store);
 
             // Spawn a task to handle this connection
             tokio::spawn(async move {
@@ -123,6 +469,8 @@ impl MockTdsServer {
                     registry_clone,
                     tls_acceptor_clone,
                     strict_mode,
+                    fedauth_mode,
+                    store_clone,
                 )
                 .await
                 {
@@ -141,6 +489,8 @@ impl MockTdsServer {
         let registry = self.query_registry;
         let tls_acceptor = self.tls_acceptor.map(Arc::new);
         let strict_mode = self.strict_mode;
+        let fedauth_mode = self.fedauth_mode;
+        let connection_store = self.connection_store;
 
         tokio::select! {
             result = async {
@@ -153,9 +503,10 @@ impl MockTdsServer {
 
                             let registry_clone = Arc::clone(&registry);
                             let tls_acceptor_clone = tls_acceptor.clone();
+                            let store_clone = Arc::clone(&connection_store);
 
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone, strict_mode).await {
+                                if let Err(e) = handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone, strict_mode, fedauth_mode, store_clone).await {
                                     error!("Error handling connection from {}: {}", addr, e);
                                 }
                             });
@@ -182,6 +533,8 @@ async fn handle_connection_with_tls(
     query_registry: Arc<Mutex<QueryRegistry>>,
     tls_acceptor: Option<Arc<TlsAcceptor>>,
     strict_mode: bool,
+    fedauth_mode: bool,
+    connection_store: Arc<Mutex<ConnectionStore>>,
 ) -> Result<(), ProtocolError> {
     if strict_mode {
         // TDS 8.0 Strict mode: TLS handshake happens immediately on the socket
@@ -204,11 +557,18 @@ async fn handle_connection_with_tls(
         })?;
 
         info!("TLS handshake successful for {} (strict mode)", addr);
-        handle_strict_encrypted_connection(tls_stream, addr, query_registry).await
+        handle_strict_encrypted_connection(
+            tls_stream,
+            addr,
+            query_registry,
+            fedauth_mode,
+            connection_store,
+        )
+        .await
     } else {
         // TDS 7.4 mode: First handle PreLogin, then optionally do TDS-wrapped TLS
         let (prelogin_socket, should_encrypt) =
-            handle_prelogin_negotiation(socket, addr, tls_acceptor.is_some()).await?;
+            handle_prelogin_negotiation(socket, addr, tls_acceptor.is_some(), fedauth_mode).await?;
 
         if should_encrypt && tls_acceptor.is_some() {
             // For TDS 7.4, the client wraps TLS handshake data in TDS PreLogin packets.
@@ -231,10 +591,24 @@ async fn handle_connection_with_tls(
                 })?;
 
             info!("TLS handshake successful for {}", addr);
-            handle_encrypted_tds_wrapped_connection(tls_stream, addr, query_registry).await
+            handle_encrypted_tds_wrapped_connection(
+                tls_stream,
+                addr,
+                query_registry,
+                fedauth_mode,
+                connection_store,
+            )
+            .await
         } else {
             // Continue without encryption
-            handle_unencrypted_connection(prelogin_socket, addr, query_registry).await
+            handle_unencrypted_connection(
+                prelogin_socket,
+                addr,
+                query_registry,
+                fedauth_mode,
+                connection_store,
+            )
+            .await
         }
     }
 }
@@ -244,6 +618,7 @@ async fn handle_prelogin_negotiation(
     mut socket: TcpStream,
     addr: SocketAddr,
     supports_tls: bool,
+    fedauth_mode: bool,
 ) -> Result<(TcpStream, bool), ProtocolError> {
     let mut buffer = BytesMut::with_capacity(4096);
 
@@ -277,8 +652,13 @@ async fn handle_prelogin_negotiation(
 
     debug!("Handling PreLogin negotiation");
 
-    // Build PreLogin response based on TLS support
-    let response = build_prelogin_response_with_encryption(supports_tls);
+    // Build PreLogin response based on TLS and FedAuth support
+    let response = if fedauth_mode {
+        // In FedAuth mode, advertise FedAuth support (no encryption needed for mock tests)
+        build_prelogin_response_with_fedauth(false, true)
+    } else {
+        build_prelogin_response_with_encryption(supports_tls)
+    };
 
     debug!("Sending {} bytes PreLogin response", response.len());
     socket.write_all(&response).await?;
@@ -294,14 +674,15 @@ async fn handle_strict_encrypted_connection(
     mut socket: TlsStream<TcpStream>,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
+    fedauth_mode: bool,
+    connection_store: Arc<Mutex<ConnectionStore>>,
 ) -> Result<(), ProtocolError> {
-    let mut buffer = BytesMut::with_capacity(4096);
-    let mut is_authenticated = false;
+    let mut processor = ConnectionProcessor::new(addr, fedauth_mode, query_registry);
     let mut prelogin_handled = false;
 
     loop {
         // Read data from TLS socket
-        let n = socket.read_buf(&mut buffer).await?;
+        let n = socket.read_buf(processor.buffer_mut()).await?;
 
         if n == 0 {
             debug!("TLS connection closed by client {} (strict mode)", addr);
@@ -313,18 +694,23 @@ async fn handle_strict_encrypted_connection(
         // In strict mode, we need to handle PreLogin first, then other packets
         if !prelogin_handled {
             // Check if we have enough data for a packet header
-            if buffer.len() >= PACKET_HEADER_SIZE {
-                let mut buf_clone = buffer.clone();
+            if processor.buffer_mut().len() >= PACKET_HEADER_SIZE {
+                let mut buf_clone = processor.buffer_mut().clone();
                 if let Ok(header) = PacketHeader::parse(&mut buf_clone)
                     && header.packet_type == PacketType::PreLogin
                 {
                     // Wait for full PreLogin packet
-                    if buffer.len() >= header.length as usize {
+                    if processor.buffer_mut().len() >= header.length as usize {
                         debug!("Handling PreLogin in strict mode");
-                        let _ = buffer.split_to(header.length as usize);
+                        let _ = processor.buffer_mut().split_to(header.length as usize);
 
                         // Send PreLogin response (encryption is already established)
-                        let response = build_prelogin_response();
+                        let response = if fedauth_mode {
+                            // Strict mode already has encryption, just add FedAuth
+                            build_prelogin_response_with_fedauth(true, true)
+                        } else {
+                            build_prelogin_response()
+                        };
                         debug!(
                             "Sending {} bytes PreLogin response (strict mode)",
                             response.len()
@@ -342,9 +728,7 @@ async fn handle_strict_encrypted_connection(
         }
 
         // Process other packets (Login7, SqlBatch, etc.)
-        while let Some(response) =
-            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
-        {
+        while let Some(response) = processor.process_packet().await? {
             debug!(
                 "Sending {} encrypted bytes response (strict mode)",
                 response.len()
@@ -352,6 +736,10 @@ async fn handle_strict_encrypted_connection(
             socket.write_all(&response).await?;
         }
     }
+
+    // Store connection info for test verification
+    let mut store = connection_store.lock().await;
+    store.store(&processor);
 
     Ok(())
 }
@@ -362,13 +750,14 @@ async fn handle_encrypted_connection(
     mut socket: TlsStream<TcpStream>,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
+    fedauth_mode: bool,
+    connection_store: Arc<Mutex<ConnectionStore>>,
 ) -> Result<(), ProtocolError> {
-    let mut buffer = BytesMut::with_capacity(4096);
-    let mut is_authenticated = false;
+    let mut processor = ConnectionProcessor::new(addr, fedauth_mode, query_registry);
 
     loop {
         // Read data from TLS socket
-        let n = socket.read_buf(&mut buffer).await?;
+        let n = socket.read_buf(processor.buffer_mut()).await?;
 
         if n == 0 {
             debug!("TLS connection closed by client {}", addr);
@@ -377,14 +766,16 @@ async fn handle_encrypted_connection(
 
         debug!("Received {} encrypted bytes from {}", n, addr);
 
-        // Process packets (same logic as unencrypted)
-        while let Some(response) =
-            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
-        {
+        // Process packets
+        while let Some(response) = processor.process_packet().await? {
             debug!("Sending {} encrypted bytes response", response.len());
             socket.write_all(&response).await?;
         }
     }
+
+    // Store connection info for test verification
+    let mut store = connection_store.lock().await;
+    store.store(&processor);
 
     Ok(())
 }
@@ -396,13 +787,14 @@ async fn handle_encrypted_tds_wrapped_connection(
     mut socket: TlsStream<crate::tds_tls_wrapper::TdsTlsWrapper>,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
+    fedauth_mode: bool,
+    connection_store: Arc<Mutex<ConnectionStore>>,
 ) -> Result<(), ProtocolError> {
-    let mut buffer = BytesMut::with_capacity(4096);
-    let mut is_authenticated = false;
+    let mut processor = ConnectionProcessor::new(addr, fedauth_mode, query_registry);
 
     loop {
         // Read data from TLS socket (which wraps TdsTlsWrapper)
-        let n = socket.read_buf(&mut buffer).await?;
+        let n = socket.read_buf(processor.buffer_mut()).await?;
 
         if n == 0 {
             debug!("TLS connection closed by client {}", addr);
@@ -414,14 +806,16 @@ async fn handle_encrypted_tds_wrapped_connection(
             n, addr
         );
 
-        // Process packets (same logic as unencrypted)
-        while let Some(response) =
-            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
-        {
+        // Process packets
+        while let Some(response) = processor.process_packet().await? {
             debug!("Sending {} encrypted bytes response", response.len());
             socket.write_all(&response).await?;
         }
     }
+
+    // Store connection info for test verification
+    let mut store = connection_store.lock().await;
+    store.store(&processor);
 
     Ok(())
 }
@@ -431,13 +825,14 @@ async fn handle_unencrypted_connection(
     mut socket: TcpStream,
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
+    fedauth_mode: bool,
+    connection_store: Arc<Mutex<ConnectionStore>>,
 ) -> Result<(), ProtocolError> {
-    let mut buffer = BytesMut::with_capacity(4096);
-    let mut is_authenticated = false;
+    let mut processor = ConnectionProcessor::new(addr, fedauth_mode, query_registry);
 
     loop {
         // Read data from plain socket
-        let n = socket.read_buf(&mut buffer).await?;
+        let n = socket.read_buf(processor.buffer_mut()).await?;
 
         if n == 0 {
             debug!("Connection closed by client {}", addr);
@@ -447,159 +842,17 @@ async fn handle_unencrypted_connection(
         debug!("Received {} bytes from {}", n, addr);
 
         // Process packets
-        while let Some(response) =
-            process_packet(&mut buffer, &query_registry, &mut is_authenticated).await?
-        {
+        while let Some(response) = processor.process_packet().await? {
             debug!("Sending {} bytes response", response.len());
             socket.write_all(&response).await?;
         }
     }
 
+    // Store connection info for test verification
+    let mut store = connection_store.lock().await;
+    store.store(&processor);
+
     Ok(())
-}
-
-/// Process a single packet from the buffer
-async fn process_packet(
-    buffer: &mut BytesMut,
-    query_registry: &Arc<Mutex<QueryRegistry>>,
-    is_authenticated: &mut bool,
-) -> Result<Option<BytesMut>, ProtocolError> {
-    if buffer.len() < PACKET_HEADER_SIZE {
-        return Ok(None);
-    }
-
-    // Parse packet header
-    let header = {
-        let mut buf_clone = buffer.clone();
-        match PacketHeader::parse(&mut buf_clone) {
-            Ok(h) => h,
-            Err(e) => {
-                warn!("Failed to parse packet header: {}", e);
-                return Ok(None);
-            }
-        }
-    };
-
-    // Check if we have the full packet
-    if buffer.len() < header.length as usize {
-        debug!(
-            "Incomplete packet: have {} bytes, need {}",
-            buffer.len(),
-            header.length
-        );
-        return Ok(None);
-    }
-
-    // Extract the complete packet
-    let packet_data = buffer.split_to(header.length as usize);
-
-    // Process the packet and build response
-    let response = match header.packet_type {
-        PacketType::Login7 => {
-            debug!("Handling Login7");
-            *is_authenticated = true;
-
-            // Build response with LoginAck + Done
-            let mut response = build_login_ack();
-            response.extend_from_slice(&build_done_token(0));
-
-            // Wrap in packet
-            let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
-            let mut packet = BytesMut::with_capacity(total_length as usize);
-            let resp_header = PacketHeader::new(PacketType::TabularResult, total_length, 1);
-            resp_header.write(&mut packet);
-            packet.extend_from_slice(&response);
-
-            Some(packet)
-        }
-
-        PacketType::SqlBatch => {
-            if !*is_authenticated {
-                warn!("Received SQL batch before authentication");
-                Some(build_error_response("Not authenticated"))
-            } else {
-                debug!("Handling SQL batch");
-
-                // Extract packet body (skip header)
-                let packet_body = &packet_data[PACKET_HEADER_SIZE..];
-
-                // Parse SQL
-                match parse_sql_batch(packet_body) {
-                    Ok(sql) => {
-                        info!("Executing SQL: {}", sql);
-
-                        // Look up query in registry
-                        let registry = query_registry.lock().await;
-                        if let Some(response_data) = registry.get(&sql) {
-                            info!("Found registered response for query");
-                            // build_query_result already wraps in a packet, so return directly
-                            let packet = build_query_result(response_data);
-                            Some(packet)
-                        } else {
-                            info!("No registered response, returning empty result");
-                            // Return DONE token
-                            let response = build_done_token(0);
-
-                            let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
-                            let mut packet = BytesMut::with_capacity(total_length as usize);
-                            let resp_header =
-                                PacketHeader::new(PacketType::TabularResult, total_length, 1);
-                            resp_header.write(&mut packet);
-                            packet.extend_from_slice(&response);
-
-                            Some(packet)
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to parse SQL batch: {}", e);
-                        Some(build_error_response("Failed to parse SQL"))
-                    }
-                }
-            }
-        }
-
-        PacketType::RpcRequest => {
-            debug!("Handling RPC request (not fully implemented)");
-            // Just return DONE for now
-            let response = build_done_token(0);
-
-            let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
-            let mut packet = BytesMut::with_capacity(total_length as usize);
-            let resp_header = PacketHeader::new(PacketType::TabularResult, total_length, 1);
-            resp_header.write(&mut packet);
-            packet.extend_from_slice(&response);
-
-            Some(packet)
-        }
-
-        PacketType::Attention => {
-            debug!("Received attention/cancel request from client");
-            // Attention is a signal to cancel the current operation
-            // We respond with a DONE token with ATTENTION status
-            let mut response = BytesMut::new();
-
-            // DONE token with DONE_ATTN status (0x20)
-            response.put_u8(0xFD); // DONE token
-            response.put_u16(0x0020); // Status: DONE_ATTN
-            response.put_u16(0x0000); // CurCmd
-            response.put_u64_le(0); // RowCount
-
-            let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
-            let mut packet = BytesMut::with_capacity(total_length as usize);
-            let resp_header = PacketHeader::new(PacketType::TabularResult, total_length, 1);
-            resp_header.write(&mut packet);
-            packet.extend_from_slice(&response);
-
-            Some(packet)
-        }
-
-        _ => {
-            warn!("Unhandled packet type: {:?}", header.packet_type);
-            None
-        }
-    };
-
-    Ok(response)
 }
 
 /// Handle a single client connection (legacy, non-TLS)
