@@ -73,6 +73,10 @@ pub struct ClientContext {
     pub connect_retry_count: u32,
     pub connect_timeout: u32,
     pub database: String,
+    /// The original data source string used to create this connection.
+    /// This is a mandatory field - a connection cannot be established without it.
+    /// Examples: "tcp:myserver,1433", "myserver\instance", "lpc:."
+    pub data_source: String,
     /// TCP keep-alive idle time in milliseconds before first probe is sent.
     /// Default: 30000 (30 seconds) per SQL Server client defaults.
     /// Named to match ODBC Driver's "KeepAlive" connection string parameter.
@@ -101,13 +105,20 @@ pub struct ClientContext {
     pub access_token: Option<String>,
     pub(crate) transport_context: TransportContext,
     pub vector_version: VectorVersion,
-    /// Whether a protocol was explicitly specified in the datasource (e.g., "tcp:", "np:", "lpc:")
-    /// When true, only that protocol should be tried. When false, try default protocol list.
-    pub(crate) explicit_protocol: bool,
 }
 
 impl ClientContext {
-    pub fn new() -> ClientContext {
+    /// Creates a new ClientContext with the specified data source.
+    /// The data source is mandatory for establishing a connection.
+    ///
+    /// # Arguments
+    /// * `data_source` - The data source string (e.g., "tcp:myserver,1433", "myserver\\instance")
+    ///
+    /// # Example
+    /// ```
+    /// let context = ClientContext::with_data_source("tcp:myserver,1433");
+    /// ```
+    pub fn with_data_source(data_source: &str) -> ClientContext {
         ClientContext {
             application_intent: ApplicationIntent::ReadWrite,
             application_name: "TDSX Rust Client".to_string(),
@@ -116,6 +127,7 @@ impl ClientContext {
             connect_retry_count: 0,
             connect_timeout: 15,
             database: "".to_string(),
+            data_source: data_source.to_string(),
             keep_alive_in_ms: 30_000, // 30 seconds (SQL Server default)
             keep_alive_interval_in_ms: 1_000, // 1 second (SQL Server default)
             database_instance: "MSSQLServer".to_string(),
@@ -142,7 +154,51 @@ impl ClientContext {
                 port: 1433,
             },
             vector_version: VectorVersion::V1,
-            explicit_protocol: false,
+        }
+    }
+
+    /// Creates a new ClientContext with default values.
+    /// Note: The data_source field will be empty and must be set before connecting,
+    /// either directly or by calling parse_datasource().
+    /// 
+    /// Consider using `with_data_source()` instead for clearer intent.
+    #[deprecated(since = "0.2.0", note = "Use with_data_source() instead for clearer intent")]
+    pub fn new() -> ClientContext {
+        ClientContext {
+            application_intent: ApplicationIntent::ReadWrite,
+            application_name: "TDSX Rust Client".to_string(),
+            attach_db_file: "".to_string(),
+            change_password: "".to_string(),
+            connect_retry_count: 0,
+            connect_timeout: 15,
+            database: "".to_string(),
+            data_source: "".to_string(),
+            keep_alive_in_ms: 30_000, // 30 seconds (SQL Server default)
+            keep_alive_interval_in_ms: 1_000, // 1 second (SQL Server default)
+            database_instance: "MSSQLServer".to_string(),
+            enlist: false,
+            encryption_options: EncryptionOptions::new(),
+            failover_partner: "".to_string(),
+            ipaddress_preference: IPAddressPreference::UsePlatformDefault,
+            language: "us_english".to_string(),
+            library_name: "TdsX".to_string(),
+            auth_method_map: HashMap::new(),
+            mars_enabled: false,
+            new_password: "".to_string(),
+            packet_size: 8000,
+            password: "".to_string(),
+            pooling: false,
+            replication: false,
+            tds_authentication_method: TdsAuthenticationMethod::Password,
+            user_instance: false,
+            user_name: "".to_string(),
+            workstation_id: ClientContext::default_workstation_id(hostname::get),
+            access_token: None,
+            transport_context: TransportContext::Tcp {
+                host: "localhost".to_string(),
+                port: 1433,
+            },
+            vector_version: VectorVersion::V1,
         }
     }
 
@@ -172,6 +228,7 @@ impl ClientContext {
 }
 
 impl Default for ClientContext {
+    #[allow(deprecated)]
     fn default() -> Self {
         Self::new()
     }
@@ -201,6 +258,7 @@ impl ClientContext {
     ///
     /// This method parses the data source string (e.g., "tcp:server,1433", "server\instance")
     /// and updates the transport_context field of the ClientContext.
+    /// It also stores the original data source string for logging and diagnostics.
     ///
     /// # Arguments
     /// * `datasource` - The data source string to parse
@@ -216,6 +274,9 @@ impl ClientContext {
     pub fn parse_datasource(&mut self, datasource: &str) -> TdsResult<ParsedDataSource> {
         let parsed = ParsedDataSource::parse(datasource, false)?;
 
+        // Store the original data source string
+        self.data_source = datasource.to_string();
+
         // Update transport context based on parsed data source
         self.transport_context = TransportContext::from_parsed_datasource(&parsed)?;
 
@@ -223,9 +284,6 @@ impl ClientContext {
         if !parsed.instance_name.is_empty() {
             self.database_instance = parsed.instance_name.clone();
         }
-
-        // Track if protocol was explicitly specified (tcp:, np:, lpc:, admin:)
-        self.explicit_protocol = !parsed.protocol_name.is_empty();
 
         Ok(parsed)
     }
@@ -245,6 +303,9 @@ impl ClientContext {
     ) -> TdsResult<ParsedDataSource> {
         let parsed = ParsedDataSource::parse(datasource, multi_subnet_failover)?;
 
+        // Store the original data source string
+        self.data_source = datasource.to_string();
+
         // Update transport context based on parsed data source
         self.transport_context = TransportContext::from_parsed_datasource(&parsed)?;
 
@@ -252,9 +313,6 @@ impl ClientContext {
         if !parsed.instance_name.is_empty() {
             self.database_instance = parsed.instance_name.clone();
         }
-
-        // Track if protocol was explicitly specified (tcp:, np:, lpc:, admin:)
-        self.explicit_protocol = !parsed.protocol_name.is_empty();
 
         Ok(parsed)
     }
@@ -270,6 +328,7 @@ impl Clone for ClientContext {
             connect_retry_count: self.connect_retry_count,
             connect_timeout: self.connect_timeout,
             database: self.database.clone(),
+            data_source: self.data_source.clone(),
             keep_alive_in_ms: self.keep_alive_in_ms,
             keep_alive_interval_in_ms: self.keep_alive_interval_in_ms,
             database_instance: self.database_instance.clone(),
@@ -293,7 +352,6 @@ impl Clone for ClientContext {
             access_token: self.access_token.clone(),
             transport_context: self.transport_context.clone(),
             vector_version: self.vector_version,
-            explicit_protocol: self.explicit_protocol,
         }
     }
 }
@@ -514,8 +572,35 @@ impl TransportContext {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_with_data_source_constructor() {
+        let ctx = ClientContext::with_data_source("tcp:myserver,1433");
+        assert_eq!(ctx.data_source, "tcp:myserver,1433");
+        // Other defaults should still be set
+        assert_eq!(ctx.connect_timeout, 15);
+        assert_eq!(ctx.packet_size, 8000);
+        assert_eq!(ctx.application_name, "TDSX Rust Client");
+    }
+
+    #[test]
+    fn test_parse_datasource_sets_data_source() {
+        let mut ctx = ClientContext::new();
+        assert_eq!(ctx.data_source, ""); // Initially empty
+        
+        let _ = ctx.parse_datasource("tcp:myserver,1433");
+        assert_eq!(ctx.data_source, "tcp:myserver,1433");
+    }
+
+    #[test]
+    fn test_data_source_cloned() {
+        let ctx = ClientContext::with_data_source("tcp:myserver,1433");
+        let cloned = ctx.clone();
+        assert_eq!(cloned.data_source, "tcp:myserver,1433");
+    }
 
     #[test]
     fn test_default_workstation_id_truncation() {

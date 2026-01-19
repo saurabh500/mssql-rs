@@ -166,7 +166,7 @@ Once the executor is implemented, update connection code:
 ### Before
 ```rust
 async fn connect(datasource: &str) -> TdsResult<Connection> {
-    let mut context = ClientContext::new();
+    let mut context = ClientContext::with_data_source(datasource);
     let parsed = context.parse_datasource(datasource)?;
     
     // Complex conditional logic

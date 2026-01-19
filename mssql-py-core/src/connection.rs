@@ -245,8 +245,8 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<u32>().ok())
             .unwrap_or(1_000);
 
-        // Create ClientContext (transport_context will be set by parse_datasource)
-        let mut context = ClientContext::new();
+        // Create ClientContext with the data source (transport_context will be set by parse_datasource)
+        let mut context = ClientContext::with_data_source(&datasource);
         context.user_name = user_name;
         context.password = password;
         context.database = database;
