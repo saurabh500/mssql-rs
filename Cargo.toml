@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["mssql-tds", "mssql-js", "mssql-tds-cli", "mssql-mock-tds"]
-exclude = ["mssql-py-core"]
+exclude = ["mssql-py-core", "mssql-mock-tds-py"]
 
 [profile.release]
 lto = true

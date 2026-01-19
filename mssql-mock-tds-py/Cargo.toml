@@ -1,0 +1,15 @@
+[package]
+name = "mssql-mock-tds-py"
+version = "0.1.0"
+edition = "2024"
+description = "Python bindings for the mock TDS server for testing SQL Server clients"
+
+[lib]
+name = "mssql_mock_tds_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24", features = ["extension-module", "abi3-py39"] }
+mssql-mock-tds = { path = "../mssql-mock-tds" }
+tokio = { version = "1.48.0", features = ["full"] }
+native-tls = "0.2"
