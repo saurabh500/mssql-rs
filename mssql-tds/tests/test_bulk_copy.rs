@@ -702,13 +702,14 @@ mod bulk_copy_integration_tests {
                     ColumnValues::Int(v) => *v,
                     _ => panic!("Expected Int for id"),
                 };
+                // LEN() on VARCHAR(MAX) returns BIGINT, not INT
                 let len = match &row[1] {
-                    ColumnValues::Int(v) => *v,
-                    _ => panic!("Expected Int for len"),
+                    ColumnValues::BigInt(v) => *v,
+                    _ => panic!("Expected BigInt for len"),
                 };
 
                 assert_eq!(id, 1);
-                assert_eq!(len, (str_size_mb * 1024 * 1024) as i32);
+                assert_eq!(len, (str_size_mb * 1024 * 1024) as i64);
                 rows_returned += 1;
             }
         }
