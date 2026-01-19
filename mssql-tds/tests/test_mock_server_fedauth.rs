@@ -40,9 +40,9 @@ mod mock_server_fedauth_tests {
         let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
         let server_addr = server.local_addr();
 
-        // Get a reference to the received tokens store BEFORE running the server
+        // Get a reference to the connection store BEFORE running the server
         // This allows us to verify the token after connection
-        let received_tokens = server.received_tokens();
+        let connection_store = server.connection_store();
 
         // Run server in background
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -82,17 +82,30 @@ mod mock_server_fedauth_tests {
             server_addr
         );
 
+        // Close the client to trigger connection completion and storage
+        drop(client);
+
+        // Give the server time to store connection info
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         // IMPORTANT: Verify the token received by the server matches what we sent
         {
-            let store = received_tokens.lock().await;
+            let store = connection_store.lock().await;
             assert_eq!(
                 store.count(),
                 1,
-                "Server should have received exactly one token"
+                "Server should have stored exactly one connection"
             );
 
-            let received_token = store
-                .last_token_as_string()
+            // Get the first (and only) connection info
+            let conn_info = store
+                .all()
+                .values()
+                .next()
+                .expect("Should have at least one connection");
+
+            let received_token = conn_info
+                .received_token_as_string()
                 .expect("Should have received a token as string");
 
             assert_eq!(
@@ -103,7 +116,6 @@ mod mock_server_fedauth_tests {
         }
 
         // Cleanup
-        drop(client);
         let _ = shutdown_tx.send(());
         let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_handle).await;
 
@@ -120,8 +132,8 @@ mod mock_server_fedauth_tests {
         let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
         let server_addr = server.local_addr();
 
-        // Get reference to received tokens for verification
-        let received_tokens = server.received_tokens();
+        // Get reference to connection store for verification
+        let connection_store = server.connection_store();
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server_handle =
@@ -159,17 +171,29 @@ mod mock_server_fedauth_tests {
 
         println!("Successfully executed query with access token authentication");
 
+        // Close the client to trigger connection completion and storage
+        drop(client);
+
+        // Give the server time to store connection info
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         // Verify the token
         {
-            let store = received_tokens.lock().await;
+            let store = connection_store.lock().await;
             assert_eq!(
                 store.count(),
                 1,
-                "Server should have received exactly one token"
+                "Server should have stored exactly one connection"
             );
 
-            let received_token = store
-                .last_token_as_string()
+            let conn_info = store
+                .all()
+                .values()
+                .next()
+                .expect("Should have at least one connection");
+
+            let received_token = conn_info
+                .received_token_as_string()
                 .expect("Should have received a token as string");
 
             assert_eq!(
@@ -180,7 +204,6 @@ mod mock_server_fedauth_tests {
         }
 
         // Cleanup
-        drop(client);
         let _ = shutdown_tx.send(());
         let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_handle).await;
 
@@ -197,8 +220,8 @@ mod mock_server_fedauth_tests {
         let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
         let server_addr = server.local_addr();
 
-        // Get reference to received tokens for verification
-        let received_tokens = server.received_tokens();
+        // Get reference to connection store for verification
+        let connection_store = server.connection_store();
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server_handle =
@@ -236,16 +259,28 @@ mod mock_server_fedauth_tests {
             server_addr
         );
 
+        // Close the client to trigger connection completion and storage
+        drop(client);
+
+        // Give the server time to store connection info
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         // Verify complete round-trip: sent token == received token
         {
-            let store = received_tokens.lock().await;
+            let store = connection_store.lock().await;
             assert!(
                 store.count() > 0,
-                "Server should have received at least one token"
+                "Server should have stored at least one connection"
             );
 
-            let received_token = store
-                .last_token_as_string()
+            let conn_info = store
+                .all()
+                .values()
+                .next()
+                .expect("Should have at least one connection");
+
+            let received_token = conn_info
+                .received_token_as_string()
                 .expect("Should have received a token as string");
 
             assert_eq!(
@@ -256,7 +291,6 @@ mod mock_server_fedauth_tests {
         }
 
         // Cleanup
-        drop(client);
         let _ = shutdown_tx.send(());
         let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_handle).await;
 
@@ -270,7 +304,7 @@ mod mock_server_fedauth_tests {
 
         let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
         let server_addr = server.local_addr();
-        let received_tokens = server.received_tokens();
+        let connection_store = server.connection_store();
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server_handle =
@@ -308,11 +342,23 @@ mod mock_server_fedauth_tests {
         let provider = TdsConnectionProvider {};
         let client = provider.create_client(context, None).await?;
 
+        // Close the client to trigger connection completion and storage
+        drop(client);
+
+        // Give the server time to store connection info
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         // Verify the unique token was received correctly
         {
-            let store = received_tokens.lock().await;
-            let received = store
-                .last_token_as_string()
+            let store = connection_store.lock().await;
+            let conn_info = store
+                .all()
+                .values()
+                .next()
+                .expect("Should have at least one connection");
+
+            let received = conn_info
+                .received_token_as_string()
                 .expect("Should have received the unique token");
 
             assert_eq!(
@@ -326,7 +372,6 @@ mod mock_server_fedauth_tests {
             );
         }
 
-        drop(client);
         let _ = shutdown_tx.send(());
         let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_handle).await;
 
