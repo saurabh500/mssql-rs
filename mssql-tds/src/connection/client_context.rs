@@ -160,9 +160,12 @@ impl ClientContext {
     /// Creates a new ClientContext with default values.
     /// Note: The data_source field will be empty and must be set before connecting,
     /// either directly or by calling parse_datasource().
-    /// 
+    ///
     /// Consider using `with_data_source()` instead for clearer intent.
-    #[deprecated(since = "0.2.0", note = "Use with_data_source() instead for clearer intent")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use with_data_source() instead for clearer intent"
+    )]
     pub fn new() -> ClientContext {
         ClientContext {
             application_intent: ApplicationIntent::ReadWrite,
@@ -590,7 +593,7 @@ mod tests {
     fn test_parse_datasource_sets_data_source() {
         let mut ctx = ClientContext::new();
         assert_eq!(ctx.data_source, ""); // Initially empty
-        
+
         let _ = ctx.parse_datasource("tcp:myserver,1433");
         assert_eq!(ctx.data_source, "tcp:myserver,1433");
     }
