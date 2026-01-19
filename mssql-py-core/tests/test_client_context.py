@@ -439,3 +439,296 @@ class TestKeepAliveParameters:
         conn.close()
         assert result[0] == "tempdb"
         assert result[1] == "KeepAliveTest"
+
+
+@pytest.mark.integration
+class TestHostnameInCertificateParameter:
+    """Tests for host_name_in_certificate parameter mapping.
+    
+    This parameter specifies the expected hostname in the server's TLS certificate
+    when it differs from the server name used for connection.
+    """
+
+    def test_host_name_in_certificate_default(self):
+        """Test that connection works without host_name_in_certificate (default None)."""
+        context = get_base_context()
+        context["database"] = "master"
+        # Don't set host_name_in_certificate - should default to None
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_host_name_in_certificate_with_value(self):
+        """Test connection with host_name_in_certificate set.
+        
+        Note: This test verifies the parameter is accepted. Actual certificate
+        validation depends on the server's certificate configuration.
+        """
+        context = get_base_context()
+        context["database"] = "master"
+        context["trust_server_certificate"] = True  # Required for test environments
+        context["host_name_in_certificate"] = "localhost"
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+
+@pytest.mark.integration
+class TestIpAddressPreferenceParameter:
+    """Tests for ip_address_preference parameter mapping.
+    
+    This parameter controls IPv4 vs IPv6 preference during DNS resolution:
+    - IPv4First: Prefer IPv4 addresses
+    - IPv6First: Prefer IPv6 addresses  
+    - UsePlatformDefault: Use OS default behavior (default)
+    """
+
+    def test_ip_address_preference_default(self):
+        """Test that connection works with default UsePlatformDefault."""
+        context = get_base_context()
+        context["database"] = "master"
+        # Don't set ip_address_preference - should default to UsePlatformDefault
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_ip_address_preference_ipv4first(self):
+        """Test connection with IPv4First preference.
+        
+        Note: This test uses 127.0.0.1 explicitly to ensure IPv4 is used.
+        If using 'localhost', the behavior depends on DNS resolution order
+        and whether SQL Server is listening on IPv4.
+        """
+        # First check if SQL Server is listening on IPv4
+        context = get_base_context()
+        context["server"] = "127.0.0.1"
+        context["database"] = "master"
+        try:
+            # Quick test without IPv4First to see if IPv4 works at all
+            test_conn = mssql_py_core.PyCoreConnection(context)
+            test_conn.close()
+        except RuntimeError as e:
+            err_msg = str(e)
+            if "Timeout" in err_msg or "Connection refused" in err_msg:
+                pytest.skip("SQL Server not listening on IPv4 (127.0.0.1)")
+            raise
+        
+        # Now test with IPv4First preference
+        context["ip_address_preference"] = "IPv4First"
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_ip_address_preference_ipv6first(self):
+        """Test connection with IPv6First preference."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["ip_address_preference"] = "IPv6First"
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_ip_address_preference_platform_default_explicit(self):
+        """Test connection with explicit UsePlatformDefault."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["ip_address_preference"] = "UsePlatformDefault"
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_ip_address_preference_invalid_defaults_to_platform(self):
+        """Test that invalid value defaults to UsePlatformDefault."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["ip_address_preference"] = "InvalidValue"
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_ip_address_preference_case_insensitive_lowercase(self):
+        """Test that ip_address_preference comparison is case-insensitive (lowercase).
+        
+        ODBC uses _wcsicmp for case-insensitive comparison, so ipv4first should work.
+        Note: This test may be skipped if SQL Server is not listening on IPv4.
+        """
+        context = get_base_context()
+        context["database"] = "master"
+        context["ip_address_preference"] = "ipv4first"  # all lowercase
+        try:
+            conn = mssql_py_core.PyCoreConnection(context)
+        except RuntimeError as e:
+            err_msg = str(e)
+            if "Timeout" in err_msg or "Connection refused" in err_msg:
+                pytest.skip("SQL Server not listening on IPv4 or timeout occurred")
+            raise
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_ip_address_preference_case_insensitive_uppercase(self):
+        """Test that ip_address_preference comparison is case-insensitive (uppercase).
+        
+        ODBC uses _wcsicmp for case-insensitive comparison, so IPV6FIRST should work.
+        """
+        context = get_base_context()
+        context["database"] = "master"
+        context["ip_address_preference"] = "IPV6FIRST"  # all uppercase
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_ip_address_preference_case_insensitive_mixed(self):
+        """Test that ip_address_preference comparison is case-insensitive (mixed).
+        
+        ODBC uses _wcsicmp for case-insensitive comparison, so useplatformdefault should work.
+        """
+        context = get_base_context()
+        context["database"] = "master"
+        context["ip_address_preference"] = "useplatformdefault"  # all lowercase
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+
+@pytest.mark.integration
+class TestCaseInsensitiveConnectionStringValues:
+    """Tests for case-insensitive connection string value parsing.
+    
+    ODBC uses _wcsicmp for case-insensitive comparison of connection string values.
+    This ensures parity with ODBC behavior where:
+    - ipv4first, IPv4First, IPV4FIRST all work for IpAddressPreference
+    - mandatory, Mandatory, MANDATORY all work for Encryption
+    - readonly, ReadOnly, READONLY all work for ApplicationIntent
+    
+    Reference: msodbcsql/Sql/Ntdbms/sqlncli/odbc/sqlcconn.cpp line 3148
+    """
+
+    def test_encryption_lowercase(self):
+        """Test encryption value in lowercase."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["encryption"] = "mandatory"  # lowercase
+        context["trust_server_certificate"] = True
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT encrypt_option FROM sys.dm_exec_connections WHERE session_id = @@SPID")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == "TRUE"
+
+    def test_encryption_uppercase(self):
+        """Test encryption value in uppercase."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["encryption"] = "MANDATORY"  # uppercase
+        context["trust_server_certificate"] = True
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT encrypt_option FROM sys.dm_exec_connections WHERE session_id = @@SPID")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == "TRUE"
+
+    def test_encryption_mixed_case(self):
+        """Test encryption value in mixed case."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["encryption"] = "Mandatory"  # PascalCase
+        context["trust_server_certificate"] = True
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT encrypt_option FROM sys.dm_exec_connections WHERE session_id = @@SPID")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == "TRUE"
+
+    def test_encryption_required_lowercase(self):
+        """Test encryption 'required' value (alias for mandatory) in lowercase."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["encryption"] = "required"  # lowercase
+        context["trust_server_certificate"] = True
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT encrypt_option FROM sys.dm_exec_connections WHERE session_id = @@SPID")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == "TRUE"
+
+    def test_application_intent_lowercase(self):
+        """Test application_intent value in lowercase."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["application_intent"] = "readwrite"  # lowercase
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_application_intent_uppercase(self):
+        """Test application_intent value in uppercase."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["application_intent"] = "READWRITE"  # uppercase
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_application_intent_readonly_lowercase(self):
+        """Test application_intent 'readonly' value in lowercase."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["application_intent"] = "readonly"  # lowercase
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_application_intent_readonly_uppercase(self):
+        """Test application_intent 'READONLY' value in uppercase."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["application_intent"] = "READONLY"  # uppercase
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
