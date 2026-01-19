@@ -8,6 +8,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PY_CORE_DIR="$PROJECT_ROOT/mssql-py-core"
+MOCK_TDS_PY_DIR="$PROJECT_ROOT/mssql-mock-tds-py"
 VENV_DIR="$PROJECT_ROOT/.venv-pycore"
 
 # Parse command line arguments
@@ -51,6 +52,14 @@ cd "$PY_CORE_DIR"
 # Build and install the module in development mode
 echo "Building mssql-py-core with maturin develop..."
 maturin develop
+
+# Build and install mssql-mock-tds-py (mock TDS server Python bindings)
+echo "Building mssql-mock-tds-py with maturin develop..."
+cd "$MOCK_TDS_PY_DIR"
+PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop
+
+# Return to py-core directory for tests
+cd "$PY_CORE_DIR"
 
 # Run tests
 echo ""

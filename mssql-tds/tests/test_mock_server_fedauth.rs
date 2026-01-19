@@ -37,7 +37,7 @@ mod mock_server_fedauth_tests {
         init_tracing();
 
         // Start mock server with FedAuth support on a random port
-        let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
+        let server = MockTdsServer::new("127.0.0.1:0").await?;
         let server_addr = server.local_addr();
 
         // Get a reference to the connection store BEFORE running the server
@@ -129,7 +129,7 @@ mod mock_server_fedauth_tests {
         init_tracing();
 
         // Start mock server with FedAuth support
-        let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
+        let server = MockTdsServer::new("127.0.0.1:0").await?;
         let server_addr = server.local_addr();
 
         // Get reference to connection store for verification
@@ -217,7 +217,7 @@ mod mock_server_fedauth_tests {
         init_tracing();
 
         // Start mock server with FedAuth support
-        let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
+        let server = MockTdsServer::new("127.0.0.1:0").await?;
         let server_addr = server.local_addr();
 
         // Get reference to connection store for verification
@@ -302,7 +302,7 @@ mod mock_server_fedauth_tests {
     async fn test_unique_token_verification() -> Result<(), Box<dyn std::error::Error>> {
         init_tracing();
 
-        let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
+        let server = MockTdsServer::new("127.0.0.1:0").await?;
         let server_addr = server.local_addr();
         let connection_store = server.connection_store();
 
