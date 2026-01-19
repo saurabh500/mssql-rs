@@ -456,8 +456,7 @@ impl TdsPacketWriter for PacketWriter<'_> {
 
     async fn write_async(&mut self, content: &[u8]) -> TdsResult<()> {
         // Write in chunks of packet size using an iterative approach
-        // to avoid stack overflow with large data (previously used recursion
-        // which could overflow the stack with ~943+ recursive calls for 50MB+ data).
+        // to avoid stack overflow with large data.
         let mut remaining = content;
 
         while !remaining.is_empty() {
