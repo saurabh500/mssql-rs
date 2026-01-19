@@ -220,9 +220,10 @@ mod transport_protocols {
             return Ok(());
         }
 
-        // Test connecting using explicit MSSQLSERVER instance name
-        // (which is the default instance)
-        let datasource = "lpc:MSSQLSERVER";
+        // Test connecting using explicit local server syntax
+        // lpc:. connects to the default instance via shared memory
+        // (MSSQLSERVER is reserved and maps to default instance automatically)
+        let datasource = "lpc:.";
 
         let mut client = create_client_with_datasource(datasource).await?;
         test_simple_query(&mut client).await?;
@@ -240,7 +241,8 @@ mod transport_protocols {
         // This now works! The same atomic write fix that enabled Named Pipes encryption
         // also works for Shared Memory, since both transports have message-boundary semantics
         // that require complete messages to be written atomically.
-        let datasource = "lpc:MSSQLSERVER";
+        // lpc:. connects to default instance via shared memory
+        let datasource = "lpc:.";
 
         let mut client =
             create_client_with_datasource_and_encryption(datasource, EncryptionSetting::On).await?;
@@ -378,7 +380,8 @@ mod transport_protocols {
 
         for i in 0..10 {
             let handle = tokio::spawn(async move {
-                let datasource = "lpc:MSSQLSERVER";
+                // lpc:. connects to default instance via shared memory
+                let datasource = "lpc:.";
 
                 let mut client = create_client_with_datasource(datasource)
                     .await

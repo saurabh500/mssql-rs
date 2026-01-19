@@ -149,7 +149,22 @@ impl TdsConnectionProvider {
                 ));
             }
 
-            // Resolve transport contexts from the action chain
+            // Check if LocalDB resolution is required (Windows only)
+            #[cfg(windows)]
+            let transport_contexts = {
+                if let Some(instance_name) = action_chain.requires_localdb_resolution() {
+                    debug!("Action chain requires LocalDB resolution for instance: {}", instance_name);
+                    // Resolve LocalDB instance to get the named pipe path
+                    use crate::connection::transport::localdb::resolve_localdb_instance;
+                    let pipe_path = resolve_localdb_instance(&instance_name).await?;
+                    debug!("LocalDB resolved to pipe: {}", pipe_path);
+                    vec![(TransportContext::NamedPipe { pipe_name: pipe_path }, context.connect_timeout as u64 * 1000)]
+                } else {
+                    action_chain.resolve_transport_contexts()
+                }
+            };
+
+            #[cfg(not(windows))]
             let transport_contexts = action_chain.resolve_transport_contexts();
 
             if transport_contexts.is_empty() {

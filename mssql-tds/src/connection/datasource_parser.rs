@@ -603,11 +603,20 @@ impl ParsedDataSource {
     /// SSRP is used when:
     /// - Named instance is specified
     /// - No explicit port is provided
-    /// - No explicit protocol details are given
+    ///
+    /// Per ODBC/SNI behavior:
+    /// - `tcp:server\instance` (no port) → SSRP is required
+    /// - `tcp:server,port\instance` → SSRP is NOT required (instance is ignored per MDAC behavior)
+    /// - `server\instance` (no protocol) → SSRP is required
     pub fn needs_ssrp(&self) -> bool {
-        !self.instance_name.is_empty()
-            && self.protocol_parameter.is_empty()
-            && self.protocol_name.is_empty()
+        // SSRP is needed if:
+        // 1. Instance name is specified, AND
+        // 2. No explicit port is provided (protocol_parameter is empty or not a valid port)
+        //
+        // Note: Even with tcp: prefix, if no port is given, SSRP is required.
+        // This matches ODBC/SNI behavior where instance name is only ignored
+        // when a port (comma) is explicitly specified.
+        !self.instance_name.is_empty() && self.protocol_parameter.is_empty()
     }
 
     /// Generate the connection action chain for this data source

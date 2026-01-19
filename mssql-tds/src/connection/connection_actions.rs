@@ -407,6 +407,19 @@ impl ConnectionActionChain {
             .any(|a| matches!(a, ConnectionAction::QuerySsrp { .. }))
     }
 
+    /// Check if the action chain requires LocalDB resolution (Windows only)
+    ///
+    /// Returns Some(instance_name) if the chain contains a ResolveLocalDb action
+    #[cfg(windows)]
+    pub fn requires_localdb_resolution(&self) -> Option<String> {
+        for action in &self.actions {
+            if let ConnectionAction::ResolveLocalDb { instance_name, .. } = action {
+                return Some(instance_name.clone());
+            }
+        }
+        None
+    }
+
     /// Check if the action chain uses caching
     ///
     /// Returns true if the chain contains a CheckCache action
