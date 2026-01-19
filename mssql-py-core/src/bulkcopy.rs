@@ -480,6 +480,12 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
+            // String → Vector: Parse JSON float array string to VECTOR
+            (SourcePythonType::String, SqlDbType::Vector) => {
+                let result = PythonRowAdapter::coerce_string_to_vector(py_obj, target_meta)?;
+                Ok(Some(result))
+            }
+
             // No coercion needed - use default conversion
             _ => Ok(None),
         }
@@ -1581,6 +1587,74 @@ impl PythonRowAdapter {
                 }
 
                 let vector = SqlVector::try_from_f32(values)?;
+                Ok(ColumnValues::Vector(vector))
+            }
+        }
+    }
+
+    /// Coerce a Python string to a SQL Server VECTOR type by parsing JSON float array.
+    /// Returns error if the string is not valid JSON or not a float array.
+    fn coerce_string_to_vector(
+        py_obj: &Bound<'_, PyAny>,
+        target_meta: &BulkCopyColumnMetadata,
+    ) -> TdsResult<ColumnValues> {
+        // Validate base type support
+        let base_type = VectorBaseType::try_from(target_meta.scale).map_err(|e| {
+            Error::UsageError(format!(
+                "Invalid VECTOR base type for column '{}': {}",
+                target_meta.column_name, e
+            ))
+        })?;
+
+        // Expected dimensions from metadata
+        let expected_dims = target_meta.vector_dimensions()?;
+
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string for VECTOR column '{}': {}", target_meta.column_name, e)))?;
+        let s = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string for VECTOR column '{}': {}", target_meta.column_name, e)))?;
+
+        // Parse JSON using serde_json and validate it's an array
+        let json_value: serde_json::Value = serde_json::from_str(s)
+            .map_err(|e| Error::UsageError(format!("Invalid JSON string for VECTOR column '{}': {}", target_meta.column_name, e)))?;
+
+        let array = json_value.as_array()
+            .ok_or_else(|| Error::UsageError(format!("JSON is not an array for VECTOR column '{}'", target_meta.column_name)))?;
+
+        // Validate array length matches expected dimensions
+        if array.len() != expected_dims {
+            return Err(Error::UsageError(format!(
+                "JSON array length {} does not match VECTOR({}) dimension for column '{}'",
+                array.len(), expected_dims, target_meta.column_name
+            )));
+        }
+
+        match base_type {
+            VectorBaseType::Float32 => {
+                // Extract f32 values from the array
+                let mut floats = Vec::with_capacity(array.len());
+                for (idx, item) in array.iter().enumerate() {
+                    // serde_json only supports f64, so convert to f32
+                    let f = item.as_f64()
+                        .ok_or_else(|| Error::UsageError(format!(
+                            "JSON array element at index {} could not be converted to float64 for VECTOR column '{}'", idx, target_meta.column_name
+                        )))? as f32;
+
+                    // Validate that the value is not NaN or Infinity
+                    if !f.is_finite() {
+                        return Err(Error::UsageError(format!(
+                            "JSON array element at index {} is NaN or Infinity when converting to Float32 for VECTOR column '{}'",
+                            idx, target_meta.column_name
+                        )));
+                    }
+
+                    floats.push(f);
+                }
+
+                // Use SqlVector::try_from_f32, which returns Result<SqlVector, Error>
+                let vector = SqlVector::try_from_f32(floats)?;
                 Ok(ColumnValues::Vector(vector))
             }
         }

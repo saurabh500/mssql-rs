@@ -273,3 +273,169 @@ def test_cursor_bulkcopy_vector_wrong_python_type_decimal(client_context):
     except Exception:
         pass
     conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_vector_from_json_string(client_context):
+    """Bulk copy a JSON float array string into a VECTOR column and verify roundtrip."""
+    import json
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    table_name = "BulkCopyVectorFromJson"
+    cursor.execute(f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}")
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, embedding VECTOR(4) NULL)")
+
+    # JSON string representing a float array
+    float_list = [1.1, 2.2, 3.3, 4.4]
+    json_str = json.dumps(float_list)
+    data = [
+        (1, json_str),
+        (2, None),  # NULL vector
+    ]
+
+    # The Rust/Python core should accept a JSON string and convert to VECTOR
+    result = cursor.bulkcopy(
+        table_name,
+        iter(data),
+        kwargs={
+            "batch_size": 1000,
+            "timeout": 30,
+            "column_mappings": [(0, "id"), (1, "embedding")],
+        },
+    )
+
+    assert result is not None
+    assert result["rows_copied"] == 2
+
+    cursor.execute(f"SELECT id, embedding FROM {table_name} ORDER BY id")
+    rows = cursor.fetchall()
+    assert len(rows) == 2
+    assert rows[0][0] == 1 and [round(x, 2) for x in list(rows[0][1])] == [1.1, 2.2, 3.3, 4.4]
+    assert rows[1][0] == 2 and rows[1][1] is None
+
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_vector_from_bad_json_string_1(client_context):
+    """Bulk copy with an ill-formatted JSON string (missing closing bracket) into VECTOR column should fail."""
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    table_name = "BulkCopyVectorFromBadJson1"
+    cursor.execute(f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}")
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, embedding VECTOR(4) NULL)")
+
+    # Ill-formatted JSON string (missing closing bracket)
+    bad_json_str = "[1.1, 2.2, 3.3, 4.4"
+    data = [
+        (1, bad_json_str),
+    ]
+
+    error_raised = False
+    try:
+        result = cursor.bulkcopy(
+            table_name,
+            iter(data),
+            kwargs={
+                "batch_size": 1000,
+                "timeout": 30,
+                "column_mappings": [(0, "id"), (1, "embedding")],
+            },
+        )
+        print(f"No error raised. Result: {result}")
+    except (ValueError, RuntimeError) as e:
+        error_raised = True
+        print(f"Expected error caught: {e}")
+    assert error_raised
+
+    # Cleanup can surface a deferred server error; ignore for DROP
+    try:
+        cursor.execute(f"DROP TABLE {table_name}")
+    except Exception:
+        pass
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_vector_from_bad_json_string_2(client_context):
+    """Bulk copy with an ill-formatted JSON string (non-numeric element) into VECTOR column should fail."""
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    table_name = "BulkCopyVectorFromBadJson2"
+    cursor.execute(f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}")
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, embedding VECTOR(4) NULL)")
+
+    # Ill-formatted JSON string (contains non-numeric string element)
+    bad_json_str = "[9.9, 0, testStr, -1]"
+    data = [
+        (1, bad_json_str),
+    ]
+
+    error_raised = False
+    try:
+        result = cursor.bulkcopy(
+            table_name,
+            iter(data),
+            kwargs={
+                "batch_size": 1000,
+                "timeout": 30,
+                "column_mappings": [(0, "id"), (1, "embedding")],
+            },
+        )
+        print(f"No error raised. Result: {result}")
+    except (ValueError, RuntimeError) as e:
+        error_raised = True
+        print(f"Expected error caught: {e}")
+    assert error_raised
+
+    # Cleanup can surface a deferred server error; ignore for DROP
+    try:
+        cursor.execute(f"DROP TABLE {table_name}")
+    except Exception:
+        pass
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_vector_from_bad_json_string_3(client_context):
+    """Bulk copy with JSON string having wrong dimensions into VECTOR column should fail."""
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    table_name = "BulkCopyVectorFromBadJson3"
+    cursor.execute(f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}")
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, embedding VECTOR(4) NULL)")
+
+    # JSON string with wrong dimension (3 elements but table expects VECTOR(4))
+    bad_json_str = "[1.1, 2.2, 3.3]"
+    data = [
+        (1, bad_json_str),
+    ]
+
+    error_raised = False
+    try:
+        result = cursor.bulkcopy(
+            table_name,
+            iter(data),
+            kwargs={
+                "batch_size": 1000,
+                "timeout": 30,
+                "column_mappings": [(0, "id"), (1, "embedding")],
+            },
+        )
+        print(f"No error raised. Result: {result}")
+    except (ValueError, RuntimeError) as e:
+        error_raised = True
+        print(f"Expected error caught: {e}")
+    assert error_raised
+
+    # Cleanup can surface a deferred server error; ignore for DROP
+    try:
+        cursor.execute(f"DROP TABLE {table_name}")
+    except Exception:
+        pass
+    conn.close()
