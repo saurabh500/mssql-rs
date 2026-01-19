@@ -232,57 +232,41 @@ impl PyCoreCursor {
         // Clone the TdsClient Arc for async execution
         let tds_client = self.tds_client.clone();
 
-        // Collect Python iterator into a Rust iterator adapter
-        // We need to convert the Python iterator to owned Py<PyAny> objects
-        info!("bulkcopy: Collecting rows from Python iterator");
-        let mut rows = Vec::new();
-        for item in data_source {
-            let tuple = item?;
-            rows.push(tuple.unbind());
-        }
-        info!("bulkcopy: Collected {} rows", rows.len());
-
         // Track whether we need to auto-generate mappings
-        let auto_generate_mappings = options.column_mappings.is_empty() && !rows.is_empty();
+        let auto_generate_mappings = options.column_mappings.is_empty();
         if auto_generate_mappings {
-            info!("bulkcopy: No column mappings provided, will auto-generate after retrieving metadata");
+            info!("bulkcopy: No column mappings provided, will auto-generate from first row during streaming");
         }
 
-        // Release GIL and execute async bulk copy
-        info!("bulkcopy: Releasing GIL and starting async execution");
+        // Execute async bulk copy while keeping the GIL
+        // This blocks the Python interpreter but allows true streaming from Python iterator
+        info!("bulkcopy: Starting async execution with GIL held");
         let runtime_handle = self.runtime_handle.clone();
-        let result = py.detach(|| {
-            info!("bulkcopy: Inside detached thread");
-            // Use the connection's runtime handle instead of creating a new runtime
-            info!("bulkcopy: Using existing runtime handle");
+        let result = runtime_handle.block_on(async {
+            info!("bulkcopy: Inside async block, attempting to lock TDS client");
+            // Lock the TDS client
+            let mut client = tds_client.lock().await;
+            info!("bulkcopy: Successfully locked TDS client");
 
-            runtime_handle.block_on(async {
-                info!("bulkcopy: Inside async block, attempting to lock TDS client");
-                // Lock the TDS client
-                let mut client = tds_client.lock().await;
-                info!("bulkcopy: Successfully locked TDS client");
+            // Create BulkCopy instance
+            info!("bulkcopy: Creating BulkCopy instance");
+            let mut bulk_copy = BulkCopy::new(&mut client, table_name)
+                .batch_size(options.batch_size)
+                .timeout(options.timeout)
+                .check_constraints(options.check_constraints)
+                .fire_triggers(options.fire_triggers)
+                .keep_identity(options.keep_identity)
+                .keep_nulls(options.keep_nulls)
+                .table_lock(options.table_lock)
+                .use_internal_transaction(options.use_internal_transaction);
+            info!("bulkcopy: BulkCopy instance created");
 
-                // Create BulkCopy instance
-                info!("bulkcopy: Creating BulkCopy instance");
-                let mut bulk_copy = BulkCopy::new(&mut client, table_name)
-                    .batch_size(options.batch_size)
-                    .timeout(options.timeout)
-                    .check_constraints(options.check_constraints)
-                    .fire_triggers(options.fire_triggers)
-                    .keep_identity(options.keep_identity)
-                    .keep_nulls(options.keep_nulls)
-                    .table_lock(options.table_lock)
-                    .use_internal_transaction(options.use_internal_transaction);
-                info!("bulkcopy: BulkCopy instance created");
-
-                // Auto-generate column mappings if needed
-                let mut column_mappings = options.column_mappings;
-
-                // Always retrieve destination metadata for type coercion
-                // This is needed even when explicit mappings are provided, because we need
-                // to know the target column types for proper value conversion
-                info!("bulkcopy: Retrieving destination metadata for type coercion");
-                let destination_metadata = bulk_copy
+            // Always retrieve destination metadata for type coercion
+            // This is needed even when explicit mappings are provided, because we need
+            // to know the target column types for proper value conversion
+            info!("bulkcopy: Retrieving destination metadata for type coercion");
+            let destination_metadata =
+                bulk_copy
                     .retrieve_destination_metadata()
                     .await
                     .map_err(|e| {
@@ -293,106 +277,129 @@ impl PyCoreCursor {
                         ))
                     })?;
 
-                if auto_generate_mappings {
+            // Peek at first row from Python iterator to determine source column count for auto-mapping
+            // This enables true streaming without collecting all rows upfront
+            let mut py_iter = data_source.into_iter();
+            let first_row_result = py_iter.next();
+
+            let column_mappings = if auto_generate_mappings {
+                if let Some(Ok(first_tuple)) = &first_row_result {
+                    let src_col_count = first_tuple.cast::<PyTuple>().map(|t| t.len()).unwrap_or(0);
+
                     info!(
-                        "bulkcopy: Retrieved {} columns from destination table",
+                        "bulkcopy: First row has {} columns, destination has {} columns",
+                        src_col_count,
                         destination_metadata.len()
                     );
 
-                    // Get the number of columns in the first row
-                    let num_columns = Python::attach(|py| {
-                        let first_row = rows[0].bind(py);
-                        if let Ok(tuple) = first_row.cast::<PyTuple>() {
-                            tuple.len()
-                        } else {
-                            0
-                        }
-                    });
-
-                    info!("bulkcopy: First row has {} columns", num_columns);
-
-                    // Auto-generate ordinal mappings for available columns
-                    let mapping_count = std::cmp::min(num_columns, destination_metadata.len());
-                    column_mappings.reserve(mapping_count);
+                    // Auto-generate ordinal mappings for min(source_columns, destination_columns)
+                    let mapping_count = std::cmp::min(src_col_count, destination_metadata.len());
+                    let mut mappings = Vec::with_capacity(mapping_count);
                     for (i, col_meta) in destination_metadata.iter().enumerate().take(mapping_count)
                     {
-                        column_mappings.push(ColumnMapping::ByOrdinal {
+                        mappings.push(ColumnMapping::ByOrdinal {
                             source: i,
                             destination: col_meta.column_name.clone(),
                         });
                     }
                     info!("bulkcopy: Auto-generated {} column mappings", mapping_count);
+                    mappings
+                } else if first_row_result.is_none() {
+                    info!("bulkcopy: Empty data source, no rows to copy");
+                    Vec::new()
+                } else {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                        "Failed to read first row for auto-mapping",
+                    ));
                 }
+            } else {
+                options.column_mappings
+            };
 
-                // Add column mappings
-                info!("bulkcopy: Adding {} column mappings", column_mappings.len());
-                for mapping in column_mappings {
-                    let tds_mapping = match mapping {
-                        ColumnMapping::ByName {
-                            source,
-                            destination,
-                        } => TdsColumnMapping {
-                            source: ColumnMappingSource::Name(source),
-                            destination,
-                        },
-                        ColumnMapping::ByOrdinal {
-                            source,
-                            destination,
-                        } => TdsColumnMapping {
-                            source: ColumnMappingSource::Ordinal(source),
-                            destination,
-                        },
-                    };
-                    bulk_copy = bulk_copy.add_column_mapping(tds_mapping);
-                }
-                info!("bulkcopy: Column mappings added");
+            // Add column mappings
+            info!("bulkcopy: Adding {} column mappings", column_mappings.len());
+            for mapping in column_mappings {
+                let tds_mapping = match mapping {
+                    ColumnMapping::ByName {
+                        source,
+                        destination,
+                    } => TdsColumnMapping {
+                        source: ColumnMappingSource::Name(source),
+                        destination,
+                    },
+                    ColumnMapping::ByOrdinal {
+                        source,
+                        destination,
+                    } => TdsColumnMapping {
+                        source: ColumnMappingSource::Ordinal(source),
+                        destination,
+                    },
+                };
+                bulk_copy = bulk_copy.add_column_mapping(tds_mapping);
+            }
+            info!("bulkcopy: Column mappings added");
 
-                // Get resolved column mappings for the row adapter
-                info!("bulkcopy: Resolving column mappings");
-                let resolved_mappings = bulk_copy.get_resolved_mappings().await.map_err(|e| {
-                    error!("bulkcopy: Failed to resolve column mappings: {}", e);
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "Failed to resolve column mappings: {}",
-                        e
-                    ))
+            // Get resolved column mappings for the row adapter
+            info!("bulkcopy: Resolving column mappings");
+            let resolved_mappings = bulk_copy.get_resolved_mappings().await.map_err(|e| {
+                error!("bulkcopy: Failed to resolve column mappings: {}", e);
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "Failed to resolve column mappings: {}",
+                    e
+                ))
+            })?;
+            info!(
+                "bulkcopy: Resolved {} column mappings",
+                resolved_mappings.len()
+            );
+            let resolved_mappings_arc = Arc::new(resolved_mappings);
+
+            // Create true streaming iterator from Python data source
+            // Chain first row (if exists) back with remaining rows for zero-copy streaming
+            info!("bulkcopy: Creating streaming PythonRowAdapter iterator");
+            let metadata_arc = Arc::new(destination_metadata);
+
+            // Build iterator: first row (if exists) + remaining rows from Python iterator
+            let all_rows_iter = first_row_result
+                .into_iter()
+                .chain(py_iter)
+                .map(|result| match result {
+                    Ok(bound) => Ok(bound.unbind()),
+                    Err(e) => Err(e),
+                })
+                .filter_map(|result: PyResult<Py<PyAny>>| match result {
+                    Ok(tuple) => Some(tuple),
+                    Err(e) => {
+                        // TODO: This only logs the error, should we propagate it instead?
+                        error!("bulkcopy: Error reading row from Python iterator: {:?}", e);
+                        None
+                    }
+                });
+
+            // Convert to PythonRowAdapter for each row
+            let row_adapters = all_rows_iter.map(|row| {
+                PythonRowAdapter::with_metadata(
+                    row,
+                    Arc::clone(&metadata_arc),
+                    Some(Arc::clone(&resolved_mappings_arc)),
+                )
+            });
+
+            // Execute bulk copy with zero-copy streaming
+            info!("bulkcopy: Calling write_to_server_zerocopy");
+            let bulk_result = bulk_copy
+                .write_to_server_zerocopy(row_adapters)
+                .await
+                .map_err(|e| {
+                    error!("bulkcopy: write_to_server_zerocopy failed: {}", e);
+                    convert_tds_error(e)
                 })?;
-                info!(
-                    "bulkcopy: Resolved {} column mappings",
-                    resolved_mappings.len()
-                );
-                let resolved_mappings_arc = Arc::new(resolved_mappings);
+            info!(
+                "bulkcopy: write_to_server_zerocopy completed successfully, rows_affected={}",
+                bulk_result.rows_affected
+            );
 
-                // Create iterator of PythonRowAdapter with metadata and mappings for type coercion
-                info!("bulkcopy: Creating PythonRowAdapter iterators with metadata and mappings");
-                let metadata_arc = Arc::new(destination_metadata);
-                let row_adapters: Vec<PythonRowAdapter> = rows
-                    .into_iter()
-                    .map(|row| {
-                        PythonRowAdapter::with_metadata(
-                            row,
-                            Arc::clone(&metadata_arc),
-                            Some(Arc::clone(&resolved_mappings_arc)),
-                        )
-                    })
-                    .collect();
-                info!("bulkcopy: Created {} row adapters", row_adapters.len());
-
-                // Execute bulk copy with zero-copy streaming
-                info!("bulkcopy: Calling write_to_server_zerocopy");
-                let bulk_result = bulk_copy
-                    .write_to_server_zerocopy(row_adapters.into_iter())
-                    .await
-                    .map_err(|e| {
-                        error!("bulkcopy: write_to_server_zerocopy failed: {}", e);
-                        convert_tds_error(e)
-                    })?;
-                info!(
-                    "bulkcopy: write_to_server_zerocopy completed successfully, rows_affected={}",
-                    bulk_result.rows_affected
-                );
-
-                Ok::<_, PyErr>(bulk_result)
-            })
+            Ok::<_, PyErr>(bulk_result)
         })?;
 
         // Convert result to Python dict

@@ -1,0 +1,380 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+//! Integration tests for FedAuth (Access Token) authentication using the mock TDS server
+
+#[cfg(test)]
+mod mock_server_fedauth_tests {
+    use mssql_mock_tds::MockTdsServer;
+    use mssql_tds::connection::client_context::{
+        ClientContext, TdsAuthenticationMethod, TransportContext,
+    };
+    use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
+    use mssql_tds::core::{EncryptionOptions, EncryptionSetting};
+    use tokio::sync::oneshot;
+    use tracing_subscriber::FmtSubscriber;
+
+    fn init_tracing() {
+        let subscriber = FmtSubscriber::builder()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_test_writer()
+            .try_init();
+        let _ = subscriber; // Ignore if already initialized
+    }
+
+    /// Generate a mock access token for testing.
+    /// In a real scenario, this would be an actual Azure AD / Entra ID token.
+    fn generate_mock_access_token() -> String {
+        // The access token should be a valid JWT-like structure, but for mock testing
+        // we just need a non-empty string that the mock server will accept
+        "mock_access_token_for_testing_12345".to_string()
+    }
+
+    /// Test basic connectivity to mock server using access token authentication
+    /// and verify the exact token received by the server matches what was sent.
+    #[tokio::test]
+    async fn test_connect_with_access_token() -> Result<(), Box<dyn std::error::Error>> {
+        init_tracing();
+
+        // Start mock server with FedAuth support on a random port
+        let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
+        let server_addr = server.local_addr();
+
+        // Get a reference to the connection store BEFORE running the server
+        // This allows us to verify the token after connection
+        let connection_store = server.connection_store();
+
+        // Run server in background
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server_handle =
+            tokio::spawn(async move { server.run_with_shutdown(shutdown_rx).await });
+
+        // Give server time to start
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // The token we're sending
+        let access_token = generate_mock_access_token();
+
+        // Create client context with access token authentication
+        let context = ClientContext {
+            transport_context: TransportContext::Tcp {
+                host: server_addr.ip().to_string(),
+                port: server_addr.port(),
+            },
+            access_token: Some(access_token.clone()),
+            tds_authentication_method: TdsAuthenticationMethod::AccessToken,
+            database: "master".to_string(),
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::PreferOff,
+                trust_server_certificate: true,
+                host_name_in_cert: None,
+                server_certificate: None,
+            },
+            ..Default::default()
+        };
+
+        // Connect to mock server
+        let provider = TdsConnectionProvider {};
+        let client = provider.create_client(context, None).await?;
+
+        println!(
+            "Successfully connected to mock server at {} using access token",
+            server_addr
+        );
+
+        // Close the client to trigger connection completion and storage
+        drop(client);
+
+        // Give the server time to store connection info
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // IMPORTANT: Verify the token received by the server matches what we sent
+        {
+            let store = connection_store.lock().await;
+            assert_eq!(
+                store.count(),
+                1,
+                "Server should have stored exactly one connection"
+            );
+
+            // Get the first (and only) connection info
+            let conn_info = store
+                .all()
+                .values()
+                .next()
+                .expect("Should have at least one connection");
+
+            let received_token = conn_info
+                .received_token_as_string()
+                .expect("Should have received a token as string");
+
+            assert_eq!(
+                received_token, access_token,
+                "The token received by the server should match the token sent by the client"
+            );
+            println!("✓ Token verification passed: server received the correct access token");
+        }
+
+        // Cleanup
+        let _ = shutdown_tx.send(());
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_handle).await;
+
+        Ok(())
+    }
+
+    /// Test executing a query after authenticating with access token
+    /// and verify the token was correctly received.
+    #[tokio::test]
+    async fn test_execute_query_with_access_token() -> Result<(), Box<dyn std::error::Error>> {
+        init_tracing();
+
+        // Start mock server with FedAuth support
+        let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
+        let server_addr = server.local_addr();
+
+        // Get reference to connection store for verification
+        let connection_store = server.connection_store();
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server_handle =
+            tokio::spawn(async move { server.run_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // The token we're sending
+        let access_token = generate_mock_access_token();
+
+        // Create client with access token
+        let context = ClientContext {
+            transport_context: TransportContext::Tcp {
+                host: server_addr.ip().to_string(),
+                port: server_addr.port(),
+            },
+            access_token: Some(access_token.clone()),
+            tds_authentication_method: TdsAuthenticationMethod::AccessToken,
+            database: "master".to_string(),
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::PreferOff,
+                trust_server_certificate: true,
+                host_name_in_cert: None,
+                server_certificate: None,
+            },
+            ..Default::default()
+        };
+
+        // Connect and execute query
+        let provider = TdsConnectionProvider {};
+        let mut client = provider.create_client(context, None).await?;
+
+        // Execute a simple SELECT 1 query
+        client.execute("SELECT 1".to_string(), None, None).await?;
+
+        println!("Successfully executed query with access token authentication");
+
+        // Close the client to trigger connection completion and storage
+        drop(client);
+
+        // Give the server time to store connection info
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Verify the token
+        {
+            let store = connection_store.lock().await;
+            assert_eq!(
+                store.count(),
+                1,
+                "Server should have stored exactly one connection"
+            );
+
+            let conn_info = store
+                .all()
+                .values()
+                .next()
+                .expect("Should have at least one connection");
+
+            let received_token = conn_info
+                .received_token_as_string()
+                .expect("Should have received a token as string");
+
+            assert_eq!(
+                received_token, access_token,
+                "The token received by the server should match the token sent by the client"
+            );
+            println!("✓ Token verification passed after query execution");
+        }
+
+        // Cleanup
+        let _ = shutdown_tx.send(());
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_handle).await;
+
+        Ok(())
+    }
+
+    /// Test that FedAuth mode properly advertises support in PreLogin
+    /// and verify the complete token round-trip.
+    #[tokio::test]
+    async fn test_fedauth_prelogin_negotiation() -> Result<(), Box<dyn std::error::Error>> {
+        init_tracing();
+
+        // Start mock server with FedAuth support
+        let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
+        let server_addr = server.local_addr();
+
+        // Get reference to connection store for verification
+        let connection_store = server.connection_store();
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server_handle =
+            tokio::spawn(async move { server.run_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // The token we're sending
+        let access_token = generate_mock_access_token();
+
+        // Create client with access token - the PreLogin should successfully negotiate FedAuth
+        let context = ClientContext {
+            transport_context: TransportContext::Tcp {
+                host: server_addr.ip().to_string(),
+                port: server_addr.port(),
+            },
+            access_token: Some(access_token.clone()),
+            tds_authentication_method: TdsAuthenticationMethod::AccessToken,
+            database: "master".to_string(),
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::PreferOff,
+                trust_server_certificate: true,
+                host_name_in_cert: None,
+                server_certificate: None,
+            },
+            ..Default::default()
+        };
+
+        // This should succeed if FedAuth negotiation works
+        let provider = TdsConnectionProvider {};
+        let client = provider.create_client(context, None).await?;
+
+        println!(
+            "Successfully negotiated FedAuth in PreLogin and connected to {}",
+            server_addr
+        );
+
+        // Close the client to trigger connection completion and storage
+        drop(client);
+
+        // Give the server time to store connection info
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Verify complete round-trip: sent token == received token
+        {
+            let store = connection_store.lock().await;
+            assert!(
+                store.count() > 0,
+                "Server should have stored at least one connection"
+            );
+
+            let conn_info = store
+                .all()
+                .values()
+                .next()
+                .expect("Should have at least one connection");
+
+            let received_token = conn_info
+                .received_token_as_string()
+                .expect("Should have received a token as string");
+
+            assert_eq!(
+                received_token, access_token,
+                "FedAuth token round-trip verification: sent != received"
+            );
+            println!("✓ FedAuth token round-trip verification passed");
+        }
+
+        // Cleanup
+        let _ = shutdown_tx.send(());
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_handle).await;
+
+        Ok(())
+    }
+
+    /// Test with a unique token to ensure we're not just accepting any token
+    #[tokio::test]
+    async fn test_unique_token_verification() -> Result<(), Box<dyn std::error::Error>> {
+        init_tracing();
+
+        let server = MockTdsServer::new_with_fedauth("127.0.0.1:0").await?;
+        let server_addr = server.local_addr();
+        let connection_store = server.connection_store();
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server_handle =
+            tokio::spawn(async move { server.run_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Use a unique token with timestamp to ensure uniqueness
+        let unique_token = format!(
+            "unique_test_token_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+
+        let context = ClientContext {
+            transport_context: TransportContext::Tcp {
+                host: server_addr.ip().to_string(),
+                port: server_addr.port(),
+            },
+            access_token: Some(unique_token.clone()),
+            tds_authentication_method: TdsAuthenticationMethod::AccessToken,
+            database: "master".to_string(),
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::PreferOff,
+                trust_server_certificate: true,
+                host_name_in_cert: None,
+                server_certificate: None,
+            },
+            ..Default::default()
+        };
+
+        let provider = TdsConnectionProvider {};
+        let client = provider.create_client(context, None).await?;
+
+        // Close the client to trigger connection completion and storage
+        drop(client);
+
+        // Give the server time to store connection info
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Verify the unique token was received correctly
+        {
+            let store = connection_store.lock().await;
+            let conn_info = store
+                .all()
+                .values()
+                .next()
+                .expect("Should have at least one connection");
+
+            let received = conn_info
+                .received_token_as_string()
+                .expect("Should have received the unique token");
+
+            assert_eq!(
+                received, unique_token,
+                "Unique token verification failed: expected '{}' but got '{}'",
+                unique_token, received
+            );
+            println!(
+                "✓ Unique token '{}' verified successfully",
+                &unique_token[..50.min(unique_token.len())]
+            );
+        }
+
+        let _ = shutdown_tx.send(());
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_handle).await;
+
+        Ok(())
+    }
+}

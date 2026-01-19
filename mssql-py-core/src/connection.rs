@@ -9,7 +9,9 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
 use mssql_tds::{
-    connection::client_context::{ClientContext, TdsAuthenticationMethod},
+    connection::client_context::{
+        ClientContext, IPAddressPreference, TdsAuthenticationMethod, TransportContext,
+    },
     connection::tds_client::TdsClient,
     connection_provider::tds_connection_provider::TdsConnectionProvider,
     core::{EncryptionOptions, EncryptionSetting},
@@ -158,33 +160,45 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<bool>().ok())
             .unwrap_or(false);
 
-        // Parse encryption setting
+        // HostnameInCertificate - used to specify the expected hostname in the server certificate
+        // when it differs from the server name in the connection string
+        let host_name_in_cert = dict
+            .get_item("host_name_in_certificate")?
+            .and_then(|v| v.extract::<String>().ok());
+
+        // Parse encryption setting (case-insensitive)
         let encryption_str = dict
             .get_item("encryption")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| "Optional".to_string());
 
-        let encryption_mode = match encryption_str.as_str() {
-            "Mandatory" | "Required" => EncryptionSetting::Required,
-            "Disabled" => EncryptionSetting::PreferOff,
-            "Strict" => EncryptionSetting::Strict,
+        let encryption_mode = match encryption_str.to_ascii_lowercase().as_str() {
+            "mandatory" | "required" => EncryptionSetting::Required,
+            "disabled" => EncryptionSetting::PreferOff,
+            "strict" => EncryptionSetting::Strict,
             _ => EncryptionSetting::On, // Default to On (encryption after prelogin)
         };
+
+        // ServerCertificate - path to the server certificate file for validation
+        let server_certificate = dict
+            .get_item("server_certificate")?
+            .and_then(|v| v.extract::<String>().ok());
 
         let encryption_options = EncryptionOptions {
             mode: encryption_mode,
             trust_server_certificate,
-            host_name_in_cert: None,
+            host_name_in_cert,
+            server_certificate,
         };
 
-        // Parse application intent
+        // Parse application intent (case-insensitive)
         let application_intent_str = dict
             .get_item("application_intent")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| "ReadWrite".to_string());
 
-        let application_intent = match application_intent_str.as_str() {
-            "ReadOnly" => ApplicationIntent::ReadOnly,
+        let application_intent = match application_intent_str.to_ascii_lowercase().as_str() {
+            "readonly" => ApplicationIntent::ReadOnly,
             _ => ApplicationIntent::ReadWrite,
         };
 
@@ -202,6 +216,20 @@ impl PyCoreConnection {
             .get_item("language")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| "us_english".to_string());
+
+        // IpAddressPreference - controls IPv4 vs IPv6 preference for DNS resolution
+        // Values: "IPv4First", "IPv6First", "UsePlatformDefault" (default)
+        // Case-insensitive comparison
+        let ipaddress_preference_str = dict
+            .get_item("ip_address_preference")?
+            .and_then(|v| v.extract::<String>().ok())
+            .unwrap_or_else(|| "UsePlatformDefault".to_string());
+
+        let ipaddress_preference = match ipaddress_preference_str.to_ascii_lowercase().as_str() {
+            "ipv4first" => IPAddressPreference::IPv4First,
+            "ipv6first" => IPAddressPreference::IPv6First,
+            _ => IPAddressPreference::UsePlatformDefault,
+        };
 
         // TCP Keep-alive settings (milliseconds)
         // Defaults: 30000ms (30s) for keep_alive, 1000ms (1s) for interval per SQL Server defaults
@@ -229,6 +257,7 @@ impl PyCoreConnection {
         context.application_intent = application_intent;
         context.workstation_id = workstation_id;
         context.language = language;
+        context.ipaddress_preference = ipaddress_preference;
         context.keep_alive_in_ms = keep_alive_in_ms;
         context.keep_alive_interval_in_ms = keep_alive_interval_in_ms;
         context.tds_authentication_method = TdsAuthenticationMethod::Password;

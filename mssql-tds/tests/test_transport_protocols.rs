@@ -69,6 +69,7 @@ mod transport_protocols {
             mode: encryption_mode,
             trust_server_certificate: trust_server_certificate(),
             host_name_in_cert: get_cert_hostname(),
+            server_certificate: None,
         };
 
         let provider = TdsConnectionProvider {};

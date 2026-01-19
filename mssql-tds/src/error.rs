@@ -61,6 +61,34 @@ pub enum Error {
         "Unsupported Encoding: LCID {lcid} (0x{lcid:04X}). Consider using NVARCHAR instead of VARCHAR/TEXT for better compatibility."
     )]
     UnsupportedEncoding { lcid: u32 },
+
+    #[error(
+        "Certificate file not found: {path}. Verify the ServerCertificate path is correct and the file exists."
+    )]
+    CertificateNotFound { path: String },
+
+    #[error(
+        "Invalid certificate format in file: {path}. Ensure the file contains a valid DER or PEM encoded X.509 certificate."
+    )]
+    InvalidCertificateFormat { path: String },
+
+    #[error(
+        "Server certificate has expired. The server's certificate is no longer valid. Contact your administrator."
+    )]
+    CertificateExpired,
+
+    #[error(
+        "Server certificate validation failed: Certificate mismatch. The server presented a different certificate than expected. Verify you are connecting to the correct server."
+    )]
+    CertificateMismatch,
+
+    #[error(
+        "Failed to read certificate file: {path}. Error: {error}. Check file permissions and ensure the file is not locked by another process."
+    )]
+    CertificateFileIoError { path: String, error: String },
+
+    #[error("No server certificate available during TLS handshake.")]
+    NoServerCertificate,
 }
 
 #[cfg(test)]

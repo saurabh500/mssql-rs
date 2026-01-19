@@ -12,7 +12,7 @@ use mssql_tds::core::{EncryptionOptions, TdsResult};
 use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::query::metadata::ColumnMetadata;
 use mssql_tds::{
-    connection::client_context::ClientContext,
+    connection::client_context::{ClientContext, TransportContext},
     connection_provider::tds_connection_provider::TdsConnectionProvider, core::EncryptionSetting,
 };
 use tracing::Level;
@@ -51,24 +51,33 @@ pub(crate) enum ExpectedQueryResultType {
 
 pub fn create_context() -> ClientContext {
     dotenv().ok();
-    let mut context = ClientContext::default();
-    context.user_name = env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set");
-    context.password = env::var("SQL_PASSWORD")
-        .or_else(|_| {
-            std::fs::read_to_string("/tmp/password")
-                .map(|s| s.trim().to_string())
-                .map_err(|_| std::env::VarError::NotPresent)
-        })
-        .expect(
-            "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
-        );
-    context.database = "master".to_string();
-    context.encryption_options = EncryptionOptions {
-        mode: EncryptionSetting::On,
-        trust_server_certificate: trust_server_certificate(),
-        host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
-    };
-    context
+    ClientContext {
+        transport_context: TransportContext::Tcp {
+            host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
+            port: env::var("DB_PORT")
+                .ok()
+                .map(|v| v.parse::<u16>().expect("DB_PORT must be a valid u16"))
+                .unwrap_or(1433),
+        },
+        user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
+        password: env::var("SQL_PASSWORD")
+            .or_else(|_| {
+                std::fs::read_to_string("/tmp/password")
+                    .map(|s| s.trim().to_string())
+                    .map_err(|_| std::env::VarError::NotPresent)
+            })
+            .expect(
+                "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+            ),
+        database: "master".to_string(),
+        encryption_options: EncryptionOptions {
+            mode: EncryptionSetting::On,
+            trust_server_certificate: trust_server_certificate(),
+            host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            server_certificate: None,
+        },
+        ..Default::default()
+    }
 }
 
 /// Build datasource string for TCP connection from environment
@@ -274,17 +283,77 @@ pub fn trust_server_certificate() -> bool {
 /// Create context and datasource for Named Pipe connection
 #[allow(dead_code)]
 #[cfg(windows)]
-pub fn create_named_pipe_context_and_datasource() -> (ClientContext, String) {
-    let context = create_context();
-    let datasource = build_named_pipe_datasource();
-    (context, datasource)
+pub fn create_named_pipe_context() -> ClientContext {
+    dotenv().ok();
+    let host = env::var("DB_HOST").expect("DB_HOST environment variable not set");
+    let instance = env::var("DB_INSTANCE").ok();
+
+    let pipe_name = if let Some(inst) = instance {
+        if inst.is_empty() || inst.eq_ignore_ascii_case("MSSQLSERVER") {
+            format!(r"\\{host}\pipe\sql\query")
+        } else {
+            format!(r"\\{host}\pipe\MSSQL${inst}\sql\query")
+        }
+    } else {
+        format!(r"\\{host}\pipe\sql\query")
+    };
+
+    ClientContext {
+        transport_context: TransportContext::NamedPipe { pipe_name },
+        user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
+        password: env::var("SQL_PASSWORD")
+            .or_else(|_| {
+                std::fs::read_to_string("/tmp/password")
+                    .map(|s| s.trim().to_string())
+                    .map_err(|_| std::env::VarError::NotPresent)
+            })
+            .expect(
+                "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+            ),
+        database: "master".to_string(),
+        encryption_options: EncryptionOptions {
+            mode: EncryptionSetting::On,
+            trust_server_certificate: trust_server_certificate(),
+            host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            server_certificate: None,
+        },
+        ..Default::default()
+    }
 }
 
 /// Create context and datasource for Shared Memory connection
 #[allow(dead_code)]
 #[cfg(windows)]
-pub fn create_shared_memory_context_and_datasource() -> (ClientContext, String) {
-    let context = create_context();
-    let datasource = build_shared_memory_datasource();
-    (context, datasource)
+pub fn create_shared_memory_context() -> ClientContext {
+    dotenv().ok();
+    let instance = env::var("DB_INSTANCE").unwrap_or_else(|_| String::new());
+
+    // Normalize MSSQLSERVER to empty string (default instance)
+    let instance_name = if instance.eq_ignore_ascii_case("MSSQLSERVER") {
+        String::new()
+    } else {
+        instance
+    };
+
+    ClientContext {
+        transport_context: TransportContext::SharedMemory { instance_name },
+        user_name: env::var("DB_USERNAME").expect("DB_USERNAME environment variable not set"),
+        password: env::var("SQL_PASSWORD")
+            .or_else(|_| {
+                std::fs::read_to_string("/tmp/password")
+                    .map(|s| s.trim().to_string())
+                    .map_err(|_| std::env::VarError::NotPresent)
+            })
+            .expect(
+                "SQL_PASSWORD environment variable not set and /tmp/password could not be read",
+            ),
+        database: "master".to_string(),
+        encryption_options: EncryptionOptions {
+            mode: EncryptionSetting::On,
+            trust_server_certificate: trust_server_certificate(),
+            host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+            server_certificate: None,
+        },
+        ..Default::default()
+    }
 }

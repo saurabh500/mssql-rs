@@ -94,16 +94,22 @@ mod connectivity {
         );
         init_tracing();
 
-        let mut context = ClientContext::default();
-        context.database = "master".to_string();
-        context.encryption_options = EncryptionOptions {
-            mode: EncryptionSetting::On,
-            trust_server_certificate: false,
-            host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
-        };
-        context.tds_authentication_method = TdsAuthenticationMethod::AccessToken;
-        context.access_token = Some(access_token);
-        context
+        ClientContext {
+            transport_context: mssql_tds::connection::client_context::TransportContext::Tcp {
+                host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
+                port: 1433,
+            },
+            database: "master".to_string(),
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: false,
+                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+                server_certificate: None,
+            },
+            tds_authentication_method: TdsAuthenticationMethod::AccessToken,
+            access_token: Some(access_token),
+            ..Default::default()
+        }
     }
 
     pub fn create_context_with_auth_method(auth_method: TdsAuthenticationMethod) -> ClientContext {
@@ -124,17 +130,23 @@ mod connectivity {
             factory.clone_box(),
         );
 
-        let mut context = ClientContext::default();
-        context.database = "master".to_string();
-        context.encryption_options = EncryptionOptions {
-            mode: EncryptionSetting::On,
-            trust_server_certificate: false,
-            host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
-        };
-        context.tds_authentication_method = auth_method;
-        context.auth_method_map = auth_method_map;
-        context.connect_timeout = 3600;
-        context
+        ClientContext {
+            transport_context: mssql_tds::connection::client_context::TransportContext::Tcp {
+                host: env::var("DB_HOST").expect("DB_HOST environment variable not set"),
+                port: 1433,
+            },
+            database: "master".to_string(),
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: false,
+                host_name_in_cert: env::var("CERT_HOST_NAME").ok(),
+                server_certificate: None,
+            },
+            tds_authentication_method: auth_method,
+            auth_method_map,
+            connect_timeout: 3600,
+            ..Default::default()
+        }
     }
 
     #[tokio::test]
