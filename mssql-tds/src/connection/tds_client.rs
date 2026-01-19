@@ -258,7 +258,7 @@ impl TdsClient {
         options: BulkCopyOptions,
         timeout_sec: Option<u32>,
         cancel_handle: Option<&CancelHandle>,
-        rows: Vec<R>,
+        rows: impl Iterator<Item = R>,
         resolved_mappings: &[ResolvedColumnMapping],
     ) -> TdsResult<u64>
     where

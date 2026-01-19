@@ -102,6 +102,44 @@ def test_cursor_bulkcopy_vector_max_dimensions(client_context):
     cursor.execute(f"DROP TABLE {table_name}")
     conn.close()
 
+@pytest.mark.integration
+def test_cursor_bulkcopy_vector_via_generator(client_context):
+    """Bulk copy VECTOR(1013) via Python generator and verify values at max supported dimension."""
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    table_name = "BulkCopyVectorGenerator"
+    cursor.execute(f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}")
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, embedding VECTOR(1013) NULL)")
+
+    vals = [float(i) for i in range(1013)]
+
+    # Generator that yields (1, vals) n times
+    def gen_rows(n: int, vals):
+        for i in range(n):
+            yield (i, vals)
+
+    total_rows = 10
+    result = cursor.bulkcopy(table_name, gen_rows(total_rows, vals), kwargs={"timeout": 10000})
+
+    assert result is not None
+    assert result["rows_copied"] == total_rows
+
+    # Validate count without fetching all rows into memory
+    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+    count_row = cursor.fetchone()
+    assert count_row is not None
+    assert count_row[0] == total_rows
+
+    # Validate a sample row's embedding matches vals1
+    cursor.execute(f"SELECT TOP 1 id, embedding FROM {table_name}")
+    sample = cursor.fetchone()
+    assert sample is not None
+    emb = list(sample[1])
+    assert len(emb) == 1013 and emb[0] == 0.0 and emb[50] == 50.0 and emb[1012] == 1012.0
+
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
 
 @pytest.mark.integration
 def test_cursor_bulkcopy_vector_exceeds_max_dimensions(client_context):

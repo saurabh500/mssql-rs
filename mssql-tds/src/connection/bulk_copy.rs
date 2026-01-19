@@ -841,19 +841,9 @@ impl<'a> BulkCopy<'a> {
                 break;
             }
 
-            // Collect rows for this batch
-            let mut batch_rows = Vec::new();
-            for _ in 0..batch_size {
-                if let Some(row) = rows.next() {
-                    batch_rows.push(row);
-                } else {
-                    break;
-                }
-            }
-
-            if batch_rows.is_empty() {
-                break;
-            }
+            // Create a batch iterator that yields up to batch_size rows
+            // The take() adaptor just sets an upper bound, but the actual iteration ends when the input is finished.
+            let batch_iter = (&mut rows).take(batch_size);
 
             // Execute streaming bulk load with zero-copy path
             let batch_count = self
@@ -864,7 +854,7 @@ impl<'a> BulkCopy<'a> {
                     self.options.clone(),
                     timeout_sec,
                     None,
-                    batch_rows,
+                    batch_iter,
                     resolved_mappings,
                 )
                 .await?;
