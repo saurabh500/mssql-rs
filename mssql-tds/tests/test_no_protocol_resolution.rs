@@ -78,6 +78,32 @@ mod no_protocol_resolution {
             .await
     }
 
+    /// Create a client with explicit trust_server_certificate setting
+    /// Useful for tests that need to bypass certificate validation
+    async fn create_client_with_trust_cert(
+        datasource: &str,
+        encryption_mode: EncryptionSetting,
+        trust_cert: bool,
+    ) -> TdsResult<TdsClient> {
+        let (username, password) = get_db_credentials();
+
+        let mut client_context = ClientContext::default();
+        client_context.user_name = username;
+        client_context.password = password;
+        client_context.database = "master".to_string();
+        client_context.encryption_options = EncryptionOptions {
+            mode: encryption_mode,
+            trust_server_certificate: trust_cert,
+            host_name_in_cert: get_cert_hostname(),
+            server_certificate: None,
+        };
+
+        let provider = TdsConnectionProvider {};
+        provider
+            .create_client(client_context, datasource, None)
+            .await
+    }
+
     /// Create a client using parse_datasource with default encryption
     /// Uses Encryption=On when TRUST_SERVER_CERTIFICATE=true, otherwise Strict
     async fn create_client_from_datasource(datasource: &str) -> TdsResult<TdsClient> {
@@ -393,11 +419,10 @@ mod no_protocol_resolution {
 
         for format in local_formats {
             let datasource = format!("{},1433", format);
-            // Use Encryption=On with trust_server_certificate to bypass TLS hostname validation
-            // since IP addresses won't match certificate CN/SAN
+            // Use Encryption=On with trust_server_certificate=true to bypass TLS hostname validation
+            // since IP addresses like 127.0.0.1 won't match certificate CN/SAN
             let result =
-                create_client_from_datasource_with_encryption(&datasource, EncryptionSetting::On)
-                    .await;
+                create_client_with_trust_cert(&datasource, EncryptionSetting::On, true).await;
 
             match result {
                 Ok(mut client) => {
