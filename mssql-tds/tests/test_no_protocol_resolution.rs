@@ -379,6 +379,9 @@ mod no_protocol_resolution {
         dotenv().ok();
 
         // Test various formats that should be detected as localhost
+        // Note: Using Encryption=On (not Strict) because IP addresses like 127.0.0.1
+        // will fail TLS certificate validation since certs use hostnames, not IPs.
+        // This test validates connection routing, not TLS certificate matching.
         let local_formats = vec![
             "localhost",
             ".",
@@ -390,7 +393,11 @@ mod no_protocol_resolution {
 
         for format in local_formats {
             let datasource = format!("{},1433", format);
-            let result = create_client_from_datasource(&datasource).await;
+            // Use Encryption=On with trust_server_certificate to bypass TLS hostname validation
+            // since IP addresses won't match certificate CN/SAN
+            let result =
+                create_client_from_datasource_with_encryption(&datasource, EncryptionSetting::On)
+                    .await;
 
             match result {
                 Ok(mut client) => {
