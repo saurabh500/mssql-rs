@@ -156,6 +156,11 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<bool>().ok())
             .unwrap_or(false);
 
+        let multi_subnet_failover = dict
+            .get_item("multi_subnet_failover")?
+            .and_then(|v| v.extract::<bool>().ok())
+            .unwrap_or(false);
+
         let trust_server_certificate = dict
             .get_item("trust_server_certificate")?
             .and_then(|v| v.extract::<bool>().ok())
@@ -304,6 +309,7 @@ impl PyCoreConnection {
         context.connect_timeout = connect_timeout;
         context.packet_size = packet_size;
         context.mars_enabled = mars_enabled;
+        context.multi_subnet_failover = multi_subnet_failover;
         context.encryption_options = encryption_options;
         context.application_intent = application_intent;
         context.workstation_id = workstation_id;

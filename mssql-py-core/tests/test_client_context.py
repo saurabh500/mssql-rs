@@ -442,6 +442,122 @@ class TestKeepAliveParameters:
 
 
 @pytest.mark.integration
+class TestPacketSizeParameter:
+    """Tests for packet_size parameter mapping.
+    
+    Note: The actual packet size used may differ slightly from the requested size
+    due to TDS header overhead. SQL Server negotiates the final size.
+    We query sys.dm_exec_connections to verify the negotiated packet size.
+    """
+
+    def test_packet_size_default(self):
+        """Test that default packet_size is around 4096."""
+        context = get_base_context()
+        context["database"] = "master"
+        # Don't set packet_size - should default to 4096
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT net_packet_size FROM sys.dm_exec_connections WHERE session_id = @@SPID")
+        result = cursor.fetchone()
+        conn.close()
+        # SQL Server may negotiate a slightly different size (e.g., 4266 instead of 4096)
+        assert 4000 <= result[0] <= 4500
+
+    def test_packet_size_8000(self):
+        """Test setting packet_size to 8000."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["packet_size"] = 8000
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT net_packet_size FROM sys.dm_exec_connections WHERE session_id = @@SPID")
+        result = cursor.fetchone()
+        conn.close()
+        # Allow some variance for TDS negotiation
+        assert 7500 <= result[0] <= 8500
+
+    def test_packet_size_16384(self):
+        """Test setting packet_size to 16384 (16KB)."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["packet_size"] = 16384
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT net_packet_size FROM sys.dm_exec_connections WHERE session_id = @@SPID")
+        result = cursor.fetchone()
+        conn.close()
+        assert 15000 <= result[0] <= 17000
+
+    def test_packet_size_32767(self):
+        """Test setting packet_size to max value 32767.
+        
+        Note: SQL Server may cap the packet size based on server configuration.
+        The important thing is the packet size is larger than the 16384 test.
+        """
+        context = get_base_context()
+        context["database"] = "master"
+        context["packet_size"] = 32767
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT net_packet_size FROM sys.dm_exec_connections WHERE session_id = @@SPID")
+        result = cursor.fetchone()
+        conn.close()
+        # SQL Server may cap packet size based on config, but should be at least 16000
+        assert result[0] >= 16000
+
+
+@pytest.mark.integration
+class TestMultiSubnetFailoverParameter:
+    """Tests for multi_subnet_failover parameter mapping.
+    
+    Note: MultiSubnetFailover is primarily used with AlwaysOn Availability Groups
+    and affects connection behavior (parallel connection attempts to all IPs).
+    Since we can't easily test AG behavior in a single-node setup, these tests
+    verify the parameter is accepted and connections still succeed.
+    """
+
+    def test_multi_subnet_failover_default_false(self):
+        """Test that default multi_subnet_failover is False."""
+        context = get_base_context()
+        context["database"] = "master"
+        # Don't set multi_subnet_failover - should default to False
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_multi_subnet_failover_explicit_false(self):
+        """Test explicitly setting multi_subnet_failover to False."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["multi_subnet_failover"] = False
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_multi_subnet_failover_true(self):
+        """Test setting multi_subnet_failover to True.
+        
+        With MultiSubnetFailover=True, the driver attempts parallel connections
+        to all resolved IP addresses. This should still work on a single-node server.
+        """
+        context = get_base_context()
+        context["database"] = "master"
+        context["multi_subnet_failover"] = True
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+
+@pytest.mark.integration
 class TestHostnameInCertificateParameter:
     """Tests for host_name_in_certificate parameter mapping.
     
@@ -500,6 +616,7 @@ class TestIpAddressPreferenceParameter:
         result = cursor.fetchone()
         conn.close()
         assert result[0] == 1
+
 
     def test_ip_address_preference_ipv4first(self):
         """Test connection with IPv4First preference.
