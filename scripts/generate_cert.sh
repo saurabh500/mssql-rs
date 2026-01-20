@@ -16,7 +16,7 @@ SAN_DNS="sql1"
 
 # Get the local hostname for SAN
 LOCAL_HOSTNAME=$(hostname 2>/dev/null || echo "")
-echo "ℹ️  Adding local hostname to SAN: $LOCAL_HOSTNAME"
+echo "Adding local hostname to SAN: $LOCAL_HOSTNAME"
 
 # 1. Generate self-signed CA
 openssl req -x509 -nodes -newkey rsa:4096 -sha256 \
