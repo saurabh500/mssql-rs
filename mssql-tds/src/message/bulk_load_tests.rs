@@ -69,6 +69,7 @@ mod tests {
         assert_eq!(SqlDbType::Json.to_tds_type(), 0xF4);
         assert_eq!(SqlDbType::Variant.to_tds_type(), 0x62);
         assert_eq!(SqlDbType::Udt.to_tds_type(), 0xF0);
+        assert_eq!(SqlDbType::Vector.to_tds_type(), 0xF5);
     }
 
     #[test]
@@ -112,6 +113,10 @@ mod tests {
             SqlDbType::DateTime.to_bulk_copy_tds_type(),
             SqlDbType::DateTime.to_tds_type()
         );
+        assert_eq!(
+            SqlDbType::Vector.to_bulk_copy_tds_type(),
+            SqlDbType::Vector.to_tds_type()
+        );
 
         // Test that JSON is properly identified as 0xF4
         assert_eq!(
@@ -139,6 +144,34 @@ mod tests {
             SqlDbType::Json.to_bulk_copy_tds_type(),
             SqlDbType::NVarChar.to_tds_type(),
             "JSON should use NVARCHAR encoding (0xE7) for bulk copy"
+        );
+
+        // Test that XML is properly identified as 0xF1
+        assert_eq!(
+            SqlDbType::Xml.to_tds_type(),
+            0xF1,
+            "XML should return 0xF1 (TdsDataType::Xml) from to_tds_type()"
+        );
+
+        // Test that XML returns NVARCHAR for bulk copy
+        assert_eq!(
+            SqlDbType::Xml.to_bulk_copy_tds_type(),
+            0xE7,
+            "XML should return 0xE7 (TdsDataType::NVarChar) from to_bulk_copy_tds_type() for bulk copy operations"
+        );
+
+        // Verify XML is treated differently than NVARCHAR
+        assert_ne!(
+            SqlDbType::Xml.to_tds_type(),
+            SqlDbType::NVarChar.to_tds_type(),
+            "XML type identifier (0xF1) should differ from NVARCHAR (0xE7)"
+        );
+
+        // Verify XML uses NVARCHAR for bulk copy
+        assert_eq!(
+            SqlDbType::Xml.to_bulk_copy_tds_type(),
+            SqlDbType::NVarChar.to_tds_type(),
+            "XML should use NVARCHAR encoding (0xE7) for bulk copy"
         );
     }
 

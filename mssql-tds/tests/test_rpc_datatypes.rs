@@ -16,6 +16,8 @@ mod rpc_datatypes {
     };
     use mssql_tds::datatypes::decoder::DecimalParts;
     use mssql_tds::datatypes::sql_string::SqlString;
+    use mssql_tds::datatypes::sql_vector::SqlVector;
+    use mssql_tds::datatypes::sqldatatypes::VectorBaseType;
     use mssql_tds::{
         datatypes::{column_values::ColumnValues, sqltypes::SqlType},
         message::parameters::rpc_parameters::{RpcParameter, StatusFlags},
@@ -270,7 +272,14 @@ mod rpc_datatypes {
     #[tokio::test]
     async fn test_sp_execute_new_data_types() {
         let json_value = "[\"abc\",\"ghi\",\"def\"]".to_string();
-        let columns = vec![("json", SqlType::Json(Some(json_value.clone().into())))];
+        let vector_value = SqlVector::try_from_f32(vec![1.0, 2.5, 3.2, -0.5]).unwrap();
+        let columns = vec![
+            ("json", SqlType::Json(Some(json_value.clone().into()))),
+            (
+                "vector",
+                SqlType::Vector(Some(vector_value.clone()), 4, VectorBaseType::Float32),
+            ),
+        ];
 
         let col_count = columns.len();
         let query = generate_select_statement(&columns);
@@ -296,6 +305,9 @@ mod rpc_datatypes {
             match &column {
                 ColumnValues::Json(value) => {
                     assert_eq!(*value, json_value.clone().into());
+                }
+                ColumnValues::Vector(value) => {
+                    assert_eq!(value, &vector_value);
                 }
                 _ => {}
             }

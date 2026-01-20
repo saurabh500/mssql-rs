@@ -128,7 +128,12 @@ impl<'a> StreamingBulkLoadWriter<'a> {
                 0xE7 | 0xEF => {
                     // NVARCHAR(n) or NCHAR(n): Convert byte length to character count
                     // Each UTF-16 character is 2 bytes
-                    (col_meta.length / 2) as usize
+                    // For PLP types (NVARCHAR(MAX)), use length as-is (0xFFFF sentinel)
+                    if col_meta.length_type.is_plp() {
+                        col_meta.length as usize
+                    } else {
+                        (col_meta.length / 2) as usize
+                    }
                 }
                 _ => {
                     // All other types: Use length as-is
@@ -623,7 +628,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
                 }
             }
 
-            // XML - schema info
+            // XML - schema info (no schema support yet)
             x if x == TdsDataType::Xml as u8 => {
                 self.packet_writer.write_byte_async(0).await?;
             }

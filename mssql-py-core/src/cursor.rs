@@ -430,7 +430,7 @@ impl PyCoreCursor {
 impl PyCoreCursor {
     /// Convert a TDS ColumnValue to a Python object
     fn column_value_to_python<'py>(py: Python<'py>, col_val: &ColumnValues) -> Bound<'py, PyAny> {
-        use pyo3::types::{PyBytes, PyList, PyModule, PyString};
+        use pyo3::types::{PyBytes, PyList, PyModule};
 
         match col_val {
             ColumnValues::Null => py.None().into_bound(py),
@@ -832,7 +832,14 @@ impl PyCoreCursor {
                     .to_owned()
                     .into_any()
             }
-            _ => PyString::new(py, &format!("{:?}", col_val)).into_any(),
+            ColumnValues::Xml(xml) => {
+                // Return XML as a plain string (convert from UTF-16LE bytes to UTF-8 string)
+                xml.as_string()
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
+                    .into_any()
+            }
         }
     }
 

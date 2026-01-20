@@ -152,14 +152,20 @@ impl SqlDbType {
     /// data via bulk copy. For most types, this is the same as `to_tds_type()`,
     /// but some types require special handling:
     ///
+    /// - XML: Returns 0xE7 (NVarChar) because the TDS spec requires XML data to be
+    ///   sent as NVARCHAR(MAX) in bulk copy operations. XML data must be sent as
+    ///   NVARCHAR(MAX) with UTF-16LE encoding. Sending as XMLTYPE (0xF1) causes
+    ///   "Invalid column type from bcp client" errors.
     /// - JSON: Returns 0xE7 (NVarChar) because SQL Server doesn't support sending
     ///   JSON type directly in bulk copy operations. JSON data must be sent as
     ///   NVARCHAR(MAX) with UTF-16LE encoding.
     ///
-    /// This makes the intention explicit in code: JSON is a JSON type, but for
-    /// bulk copy purposes we transmit it as NVARCHAR.
+    /// This makes the intention explicit in code: XML/JSON are their respective types,
+    /// but for bulk copy purposes we transmit them as NVARCHAR.
     pub fn to_bulk_copy_tds_type(&self) -> u8 {
         match self {
+            // XML must be sent as NVARCHAR(MAX) in bulk copy
+            SqlDbType::Xml => 0xE7, // TdsDataType::NVarChar - TDS spec requirement
             // JSON must be sent as NVARCHAR(MAX) in bulk copy
             SqlDbType::Json => 0xE7, // TdsDataType::NVarChar - bulk copy workaround
             // All other types use their standard TDS type
@@ -632,6 +638,8 @@ impl BulkCopyColumnMetadata {
             SqlDbType::Text => "text".to_string(),
             SqlDbType::NText => "ntext".to_string(),
             SqlDbType::Image => "image".to_string(),
+            // XML must be sent as NVARCHAR(MAX) in bulk copy, but we report it as XML type
+            // in INSERT BULK statement. This is similar to ODBC bulk copy behavior.
             SqlDbType::Xml => "xml".to_string(),
             SqlDbType::Udt => format!("varbinary({})", self.length),
             SqlDbType::Variant => "sql_variant".to_string(),
@@ -845,7 +853,8 @@ impl From<&ColumnMetadata> for BulkCopyColumnMetadata {
         };
 
         // Get the correct TDS type for bulk copy (may differ from server's type)
-        // For example, JSON (0xF4) must be sent as NVarChar(MAX) (0xE7) for bulk copy
+        // For example, JSON (0xF4) & XML (0xF1) must be sent as NVarChar(MAX) (0xE7)
+        // for bulk copy
         let tds_type = sql_type.to_bulk_copy_tds_type();
 
         let mut metadata = BulkCopyColumnMetadata::new(&col.column_name, sql_type, tds_type)

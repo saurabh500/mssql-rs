@@ -127,6 +127,7 @@ impl TdsValueSerializer {
             ColumnValues::Json(v) => Self::serialize_json(writer, v, ctx).await,
             ColumnValues::String(v) => Self::serialize_string(writer, v, ctx).await,
             ColumnValues::Vector(v) => Self::serialize_vector(writer, v, ctx).await,
+            ColumnValues::Xml(v) => Self::serialize_xml(writer, v, ctx).await,
             _ => Err(Error::UnimplementedFeature {
                 feature: format!("Value serialization not implemented for type: {:?}", value),
                 context: "serialization".to_string(),
@@ -1177,6 +1178,54 @@ impl TdsValueSerializer {
         }
 
         // Write terminator (4 bytes of 0x00)
+        writer.write_u32_async(PLP_TERMINATOR).await?;
+
+        Ok(())
+    }
+
+    /// Serialize an XML value for bulk copy using PLP encoding.
+    ///
+    /// XML bulk copy format (matching parameter serialization):
+    /// - 8 bytes: PLP_UNKNOWN_LEN (0xFFFFFFFFFFFFFFFE)
+    /// - 4 bytes: chunk length
+    /// - 2 bytes: BOM (0xFFFE) if not present in data
+    /// - n bytes: XML data
+    /// - 4 bytes: PLP_TERMINATOR (0x00000000)
+    ///
+    /// Note: No chunking support right now - single chunk only
+    async fn serialize_xml<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &crate::datatypes::column_values::SqlXml,
+        _ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        let data = &value.bytes;
+
+        // Write PLP_UNKNOWN_LEN (8 bytes) - modern format
+        writer.write_u64_async(PLP_UNKNOWN_LEN).await?;
+
+        // Calculate data length: add BOM if not present
+        let data_len = if value.has_bom() {
+            data.len()
+        } else {
+            data.len() + 2
+        };
+
+        // Write chunk length (4 bytes)
+        writer.write_u32_async(data_len as u32).await?;
+
+        // Write BOM if not present (UTF-16LE: 0xFF 0xFE)
+        if !value.has_bom() {
+            writer.write_byte_async(0xFF).await?;
+            writer.write_byte_async(0xFE).await?;
+        }
+
+        // Write XML data
+        writer.write_async(data).await?;
+
+        // Write PLP terminator (4 bytes)
         writer.write_u32_async(PLP_TERMINATOR).await?;
 
         Ok(())

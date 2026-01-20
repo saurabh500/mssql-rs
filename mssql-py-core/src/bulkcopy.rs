@@ -418,6 +418,12 @@ impl PythonRowAdapter {
                 Ok(Some(result))
             }
 
+            // String → XML: Convert string to XML
+            (SourcePythonType::String, SqlDbType::Xml) => {
+                let result = Self::coerce_string_to_xml(py_obj)?;
+                Ok(Some(result))
+            }
+
             // Int → NVarChar/VarChar/NChar/Char/NText/Text: Convert integer to string
             (
                 SourcePythonType::Int,
@@ -1523,6 +1529,26 @@ impl PythonRowAdapter {
         // Convert to UTF-8 bytes for SqlJson
         let bytes = json_str.as_bytes().to_vec();
         Ok(ColumnValues::Json(SqlJson { bytes }))
+    }
+
+    /// Coerce a Python string to SQL Server XML.
+    ///
+    /// Converts the Python string to SqlXml. The string should contain valid XML,
+    /// but validation is deferred to SQL Server.
+    fn coerce_string_to_xml(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        use mssql_tds::datatypes::column_values::SqlXml;
+
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
+
+        let xml_str = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+        // Convert string to SqlXml using the From<String> trait
+        let sqlxml = SqlXml::from(xml_str.to_string());
+        Ok(ColumnValues::Xml(sqlxml))
     }
 
     /// Coerce a Python list to a SQL Server VECTOR value.
