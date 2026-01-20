@@ -463,7 +463,30 @@ impl ParsedDataSource {
 
     /// Validate protocol-specific constraints
     fn validate_protocol(result: &mut ParsedDataSource) -> TdsResult<()> {
+        // Platform-specific protocol validation
+        #[cfg(not(windows))]
+        {
+            // Named Pipes are only supported on Windows
+            if result.protocol_name == "np" {
+                return Err(Error::ProtocolError(
+                    "Named Pipes (np:) protocol is not supported on this platform. \
+                     Named Pipes are a Windows-only feature. Use TCP instead (e.g., 'tcp:server,port')."
+                        .to_string(),
+                ));
+            }
+
+            // Shared Memory (LPC) is only supported on Windows
+            if result.protocol_name == "lpc" {
+                return Err(Error::ProtocolError(
+                    "Shared Memory (lpc:) protocol is not supported on this platform. \
+                     Shared Memory is a Windows-only feature. Use TCP instead (e.g., 'tcp:server,port')."
+                        .to_string(),
+                ));
+            }
+        }
+
         // LPC (Shared Memory) requires local server
+        #[cfg(windows)]
         if result.protocol_name == "lpc" {
             let is_local = result.original_server_name == "."
                 || result.original_server_name == "(local)"
@@ -1010,6 +1033,46 @@ mod tests {
 
         // Forward slash variant should also fail
         let result = ParsedDataSource::parse("(localdb)/v11.0", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_named_pipe_not_supported_on_non_windows() {
+        // Named Pipes should return a clear error on non-Windows platforms
+        let result = ParsedDataSource::parse("np:myserver", false);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string().to_lowercase();
+        assert!(
+            err_msg.contains("named pipe") && err_msg.contains("not supported"),
+            "Error should mention Named Pipes is not supported: {}",
+            err
+        );
+
+        // Full pipe path should also fail
+        let result = ParsedDataSource::parse("np:\\\\myserver\\pipe\\sql\\query", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_shared_memory_not_supported_on_non_windows() {
+        // Shared Memory (LPC) should return a clear error on non-Windows platforms
+        let result = ParsedDataSource::parse("lpc:.", false);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string().to_lowercase();
+        assert!(
+            err_msg.contains("shared memory") && err_msg.contains("not supported"),
+            "Error should mention Shared Memory is not supported: {}",
+            err
+        );
+
+        // localhost variant should also fail
+        let result = ParsedDataSource::parse("lpc:localhost", false);
         assert!(result.is_err());
     }
 
