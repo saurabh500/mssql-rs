@@ -541,9 +541,12 @@ impl ParsedDataSource {
             result.can_use_cache = false;
         }
 
-        if matches!(result.protocol_name.as_str(), "lpc" | "admin")
-            && !result.instance_name.is_empty()
-        {
+        // DAC (admin:) never uses cache - SQL Browser doesn't support DAC resolution
+        if result.protocol_name == "admin" {
+            result.can_use_cache = false;
+        }
+
+        if result.protocol_name == "lpc" && !result.instance_name.is_empty() {
             result.can_use_cache = false;
         }
 
@@ -1256,13 +1259,13 @@ mod tests {
         let parsed = ParsedDataSource::parse("admin:localhost", false).unwrap();
         let chain = parsed.to_connection_actions(15000);
 
-        // Admin protocol with no instance enables caching, so: CheckCache -> ConnectDac
-        assert_eq!(chain.len(), 2);
+        // DAC doesn't use cache (SQL Browser doesn't support DAC resolution)
+        // Should have single ConnectDac action
+        assert_eq!(chain.len(), 1);
         let actions = chain.actions();
 
         use crate::connection::connection_actions::ConnectionAction;
-        assert!(matches!(actions[0], ConnectionAction::CheckCache { .. }));
-        assert!(matches!(actions[1], ConnectionAction::ConnectDac { .. }));
+        assert!(matches!(actions[0], ConnectionAction::ConnectDac { .. }));
     }
 
     #[test]
