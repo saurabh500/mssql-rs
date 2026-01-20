@@ -110,10 +110,21 @@ impl ParsedDataSource {
             ));
         }
 
-        // Step 2: Check for LocalDB format (Windows only)
+        // Step 2: Check for LocalDB format
+        // LocalDB is only supported on Windows
         #[cfg(windows)]
         if normalized.starts_with("(localdb)\\") || normalized.starts_with("(localdb)/") {
             return Self::parse_localdb(original, &normalized, parallel_connect);
+        }
+
+        // On non-Windows platforms, reject LocalDB with a clear error message
+        #[cfg(not(windows))]
+        if normalized.starts_with("(localdb)\\") || normalized.starts_with("(localdb)/") {
+            return Err(Error::ProtocolError(
+                "LocalDB is not supported on this platform. LocalDB is a Windows-only feature. \
+                 Use a TCP connection string instead (e.g., 'tcp:server,port')."
+                    .to_string(),
+            ));
         }
 
         // Step 3: Parse protocol prefix (tcp:, np:, lpc:, admin:)
@@ -979,6 +990,26 @@ mod tests {
 
         // Empty instance name should fail
         let result = ParsedDataSource::parse("(localdb)\\", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_localdb_not_supported_on_non_windows() {
+        // LocalDB should return a clear error on non-Windows platforms
+        let result = ParsedDataSource::parse("(localdb)\\MSSQLLocalDB", false);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string().to_lowercase();
+        assert!(
+            err_msg.contains("localdb") && err_msg.contains("not supported"),
+            "Error should mention LocalDB is not supported: {}",
+            err
+        );
+
+        // Forward slash variant should also fail
+        let result = ParsedDataSource::parse("(localdb)/v11.0", false);
         assert!(result.is_err());
     }
 
