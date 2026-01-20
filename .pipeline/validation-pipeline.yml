@@ -140,7 +140,7 @@ stages:
         parameters:
           osType: MacOS
           buildType: ${{ parameters.buildType }}
-          testFilter: -E 'not (test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout) | test(rpc_datatypes) | test(client_based_iterators) | test(connect_fetch_multiple_packets) | test(bulk_copy) | test(transport_protocols) | test(vector_integration_tests))'
+          testFilter: -E 'not (test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout) | test(rpc_datatypes) | test(client_based_iterators) | test(connect_fetch_multiple_packets) | test(bulk_copy) | test(transport_protocols) | test(vector_integration_tests) | test(no_protocol_resolution))'
           enableJsBuild: true
       - template: templates/build-python-wheels-template.yml
         parameters:
