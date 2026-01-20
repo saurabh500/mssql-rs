@@ -27,7 +27,8 @@ pub async fn connect(context: JsClientContext) -> napi::Result<Connection> {
     init_tracing();
     let client_context: ClientContext = context.clone().into();
     let provider = TdsConnectionProvider {};
-    let datasource = format!("{}:{}", context.server_name, context.port);
+    // Use comma separator for port, not colon (SQL Server convention)
+    let datasource = format!("{},{}", context.server_name, context.port);
     let tds_client = provider
         .create_client(client_context.clone(), &datasource, None)
         .await;

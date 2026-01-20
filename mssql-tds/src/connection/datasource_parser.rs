@@ -832,6 +832,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_named_pipe_default_instance() {
         let parsed = ParsedDataSource::parse("np:\\\\myserver\\pipe\\sql\\query", false).unwrap();
         assert_eq!(parsed.protocol_name, "np");
@@ -843,6 +844,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_named_pipe_named_instance() {
         let parsed =
             ParsedDataSource::parse("\\\\myserver\\pipe\\mssql$inst1\\sql\\query", false).unwrap();
@@ -853,6 +855,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_named_pipe_non_standard() {
         let parsed =
             ParsedDataSource::parse("\\\\myserver\\pipe\\custom\\myapp\\sql", false).unwrap();
@@ -885,6 +888,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_lpc_local_only() {
         // LPC with local server should succeed
         let parsed = ParsedDataSource::parse("lpc:.", false).unwrap();
@@ -896,6 +900,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_np_with_localhost() {
         // Named Pipes protocol with localhost explicitly specified
         // Note: server_name is resolved to actual computer name for np protocol
@@ -921,6 +926,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_lpc_shared_memory_local_variants() {
         // Shared Memory (LPC) with localhost
         // Note: server_name is resolved to actual computer name for lpc protocol
@@ -1157,6 +1163,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_action_chain_named_pipe() {
         // Named pipe with explicit path
         let parsed = ParsedDataSource::parse("np:\\\\myserver\\pipe\\sql\\query", false).unwrap();
