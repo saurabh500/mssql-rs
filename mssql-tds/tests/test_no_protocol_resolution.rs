@@ -413,14 +413,18 @@ mod no_protocol_resolution {
         init_tracing();
         dotenv().ok();
 
+        // Use DB_HOST and DB_PORT from environment (works in CI with sql1)
+        let host = env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let port = env::var("DB_PORT").unwrap_or_else(|_| "1433".to_string());
+
         // Test that protocol names are case-insensitive (ODBC behavior)
         let datasources = vec![
-            "tcp:localhost,1433",
-            "TCP:localhost,1433",
-            "Tcp:localhost,1433",
+            format!("tcp:{},{}", host, port),
+            format!("TCP:{},{}", host, port),
+            format!("Tcp:{},{}", host, port),
         ];
 
-        for datasource in datasources {
+        for datasource in &datasources {
             let mut client = create_client_from_datasource(datasource).await?;
             test_simple_query(&mut client).await?;
         }
