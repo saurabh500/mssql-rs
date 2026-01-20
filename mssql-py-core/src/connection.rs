@@ -166,6 +166,11 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<bool>().ok())
             .unwrap_or(false);
 
+        // Extract server_spn for Kerberos authentication
+        let server_spn = dict
+            .get_item("server_spn")?
+            .and_then(|v| v.extract::<String>().ok());
+
         // HostnameInCertificate - used to specify the expected hostname in the server certificate
         // when it differs from the server name in the connection string
         let host_name_in_cert = dict
@@ -314,6 +319,7 @@ impl PyCoreConnection {
         context.application_intent = application_intent;
         context.workstation_id = workstation_id;
         context.language = language;
+        context.server_spn = server_spn;
         context.ipaddress_preference = ipaddress_preference;
         context.keep_alive_in_ms = keep_alive_in_ms;
         context.keep_alive_interval_in_ms = keep_alive_interval_in_ms;

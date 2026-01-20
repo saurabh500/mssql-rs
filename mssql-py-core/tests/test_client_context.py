@@ -440,7 +440,6 @@ class TestKeepAliveParameters:
         assert result[0] == "tempdb"
         assert result[1] == "KeepAliveTest"
 
-
 @pytest.mark.integration
 class TestPacketSizeParameter:
     """Tests for packet_size parameter mapping.
@@ -843,6 +842,91 @@ class TestCaseInsensitiveConnectionStringValues:
         context = get_base_context()
         context["database"] = "master"
         context["application_intent"] = "READONLY"  # uppercase
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+@pytest.mark.integration
+class TestServerCertificateParameter:
+    """Tests for server_certificate parameter mapping.
+    
+    ServerCertificate specifies a path to a certificate file to use for 
+    server certificate validation instead of the system certificate store.
+    This is useful for self-signed certificates or private CAs.
+    """
+
+    def test_server_certificate_default_none(self):
+        """Test that default server_certificate is None (use system store)."""
+        context = get_base_context()
+        context["database"] = "master"
+        # Don't set server_certificate - should default to None
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_server_certificate_with_nonexistent_path(self):
+        """Test that server_certificate with non-existent path raises an error.
+        
+        The Rust TDS client validates that the certificate file exists
+        before attempting to connect.
+        """
+        context = get_base_context()
+        context["database"] = "master"
+        context["server_certificate"] = "/path/to/certificate.pem"
+        # Should fail because the certificate file doesn't exist
+        with pytest.raises(RuntimeError) as excinfo:
+            mssql_py_core.PyCoreConnection(context)
+        assert "Certificate file not found" in str(excinfo.value)
+
+
+@pytest.mark.integration
+class TestServerSpnParameter:
+    """Tests for server_spn parameter mapping.
+    
+    ServerSPN (Service Principal Name) is used for Kerberos authentication.
+    Format: MSSQLSvc/hostname:port or MSSQLSvc/hostname
+    This overrides the auto-generated SPN for custom configurations.
+    """
+
+    def test_server_spn_default_none(self):
+        """Test that default server_spn is None (auto-generate)."""
+        context = get_base_context()
+        context["database"] = "master"
+        # Don't set server_spn - should default to None (auto-generated)
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_server_spn_custom_value(self):
+        """Test setting custom server_spn.
+        
+        Note: ServerSPN is only used with Kerberos/SSPI authentication.
+        With SQL authentication (username/password), it's stored but not used.
+        """
+        context = get_base_context()
+        context["database"] = "master"
+        context["server_spn"] = "MSSQLSvc/myserver.domain.com:1433"
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 AS connected")
+        result = cursor.fetchone()
+        conn.close()
+        assert result[0] == 1
+
+    def test_server_spn_without_port(self):
+        """Test server_spn without port number."""
+        context = get_base_context()
+        context["database"] = "master"
+        context["server_spn"] = "MSSQLSvc/myserver.domain.com"
         conn = mssql_py_core.PyCoreConnection(context)
         cursor = conn.cursor()
         cursor.execute("SELECT 1 AS connected")
