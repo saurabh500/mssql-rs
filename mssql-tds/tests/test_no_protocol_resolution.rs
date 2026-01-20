@@ -125,9 +125,13 @@ mod no_protocol_resolution {
         init_tracing();
         dotenv().ok();
 
+        // Use DB_HOST and DB_PORT from environment (works in CI with sql1)
+        let host = env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let port = env::var("DB_PORT").unwrap_or_else(|_| "1433".to_string());
+
         // Test explicit TCP protocol with port
-        let datasource = "tcp:localhost,1433";
-        let mut client = create_client_from_datasource(datasource).await?;
+        let datasource = format!("tcp:{},{}", host, port);
+        let mut client = create_client_from_datasource(&datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -182,6 +186,7 @@ mod no_protocol_resolution {
     // =========================================================================
 
     #[tokio::test]
+    #[ignore = "Requires local SQL Server on localhost - run manually"]
     async fn test_no_protocol_localhost_default_port() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -195,6 +200,7 @@ mod no_protocol_resolution {
     }
 
     #[tokio::test]
+    #[ignore = "Requires local SQL Server on localhost - run manually"]
     async fn test_no_protocol_dot_local() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -208,6 +214,7 @@ mod no_protocol_resolution {
     }
 
     #[tokio::test]
+    #[ignore = "Requires local SQL Server on 127.0.0.1 - run manually"]
     async fn test_no_protocol_127_0_0_1() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -225,9 +232,13 @@ mod no_protocol_resolution {
         init_tracing();
         dotenv().ok();
 
+        // Use DB_HOST and DB_PORT from environment (works in CI with sql1)
+        let host = env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let port = env::var("DB_PORT").unwrap_or_else(|_| "1433".to_string());
+
         // Test no protocol prefix but with port (should auto-default to TCP)
-        let datasource = "localhost,1433";
-        let mut client = create_client_from_datasource(datasource).await?;
+        let datasource = format!("{},{}", host, port);
+        let mut client = create_client_from_datasource(&datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -281,10 +292,13 @@ mod no_protocol_resolution {
         init_tracing();
         dotenv().ok();
 
+        // Use DB_HOST from environment (works in CI with sql1)
+        let host = env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
+
         // Test that instance name without port returns proper error
         // This requires SSRP (SQL Server Browser) which is not yet implemented
-        let datasource = r"localhost\SQLEXPRESS";
-        let result = create_client_from_datasource(datasource).await;
+        let datasource = format!("{}\\SQLEXPRESS", host);
+        let result = create_client_from_datasource(&datasource).await;
 
         // Should fail with SSRP not implemented error
         assert!(result.is_err(), "Should fail without SSRP implementation");
@@ -328,11 +342,15 @@ mod no_protocol_resolution {
         init_tracing();
         dotenv().ok();
 
+        // Use DB_HOST and DB_PORT from environment (works in CI with sql1)
+        let host = env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let port = env::var("DB_PORT").unwrap_or_else(|_| "1433".to_string());
+
         // ODBC behavior: when both port and instance are specified, port takes priority
         // Instance name should be ignored
         // Format: server\instance,port
-        let datasource = r"localhost\IGNORED,1433";
-        let mut client = create_client_from_datasource(datasource).await?;
+        let datasource = format!("{}\\IGNORED,{}", host, port);
+        let mut client = create_client_from_datasource(&datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -343,6 +361,7 @@ mod no_protocol_resolution {
     // =========================================================================
 
     #[tokio::test]
+    #[ignore = "Requires local SQL Server on localhost/127.0.0.1 - run manually"]
     async fn test_various_localhost_formats() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -379,6 +398,7 @@ mod no_protocol_resolution {
     // =========================================================================
 
     #[tokio::test]
+    #[ignore = "Requires local SQL Server on localhost:1433 - run manually"]
     async fn test_no_protocol_uses_default_1433() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -400,9 +420,13 @@ mod no_protocol_resolution {
         init_tracing();
         dotenv().ok();
 
+        // Use DB_HOST and DB_PORT from environment (works in CI with sql1)
+        let host = env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let port = env::var("DB_PORT").unwrap_or_else(|_| "1433".to_string());
+
         // Test that whitespace is properly trimmed (ODBC behavior)
-        let datasource = "  localhost  ,  1433  ";
-        let mut client = create_client_from_datasource(datasource).await?;
+        let datasource = format!("  {}  ,  {}  ", host, port);
+        let mut client = create_client_from_datasource(&datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -441,10 +465,14 @@ mod no_protocol_resolution {
         init_tracing();
         dotenv().ok();
 
+        // Use DB_HOST and DB_PORT from environment (works in CI with sql1)
+        let host = env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let port = env::var("DB_PORT").unwrap_or_else(|_| "1433".to_string());
+
         // Test that trailing backslash without instance name is handled
         // Format: server\ (empty instance name)
-        let datasource = r"localhost\,1433";
-        let mut client = create_client_from_datasource(datasource).await?;
+        let datasource = format!("{}\\,{}", host, port);
+        let mut client = create_client_from_datasource(&datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
