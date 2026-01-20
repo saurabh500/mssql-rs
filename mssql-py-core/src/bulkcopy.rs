@@ -1609,25 +1609,41 @@ impl PythonRowAdapter {
         // Expected dimensions from metadata
         let expected_dims = target_meta.vector_dimensions()?;
 
-        let py_str = py_obj
-            .cast::<PyString>()
-            .map_err(|e| Error::UsageError(format!("Failed to cast to string for VECTOR column '{}': {}", target_meta.column_name, e)))?;
-        let s = py_str
-            .to_str()
-            .map_err(|e| Error::UsageError(format!("Failed to extract string for VECTOR column '{}': {}", target_meta.column_name, e)))?;
+        let py_str = py_obj.cast::<PyString>().map_err(|e| {
+            Error::UsageError(format!(
+                "Failed to cast to string for VECTOR column '{}': {}",
+                target_meta.column_name, e
+            ))
+        })?;
+        let s = py_str.to_str().map_err(|e| {
+            Error::UsageError(format!(
+                "Failed to extract string for VECTOR column '{}': {}",
+                target_meta.column_name, e
+            ))
+        })?;
 
         // Parse JSON using serde_json and validate it's an array
-        let json_value: serde_json::Value = serde_json::from_str(s)
-            .map_err(|e| Error::UsageError(format!("Invalid JSON string for VECTOR column '{}': {}", target_meta.column_name, e)))?;
+        let json_value: serde_json::Value = serde_json::from_str(s).map_err(|e| {
+            Error::UsageError(format!(
+                "Invalid JSON string for VECTOR column '{}': {}",
+                target_meta.column_name, e
+            ))
+        })?;
 
-        let array = json_value.as_array()
-            .ok_or_else(|| Error::UsageError(format!("JSON is not an array for VECTOR column '{}'", target_meta.column_name)))?;
+        let array = json_value.as_array().ok_or_else(|| {
+            Error::UsageError(format!(
+                "JSON is not an array for VECTOR column '{}'",
+                target_meta.column_name
+            ))
+        })?;
 
         // Validate array length matches expected dimensions
         if array.len() != expected_dims {
             return Err(Error::UsageError(format!(
                 "JSON array length {} does not match VECTOR({}) dimension for column '{}'",
-                array.len(), expected_dims, target_meta.column_name
+                array.len(),
+                expected_dims,
+                target_meta.column_name
             )));
         }
 
