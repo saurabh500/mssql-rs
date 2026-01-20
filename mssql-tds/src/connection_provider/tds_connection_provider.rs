@@ -39,31 +39,6 @@ impl TdsConnectionProvider {
         Self
     }
 
-    /// Create a client by parsing a data source string
-    ///
-    /// This method parses the data source string and attempts connection using
-    /// the appropriate protocol. The existing TransportContext parsing logic
-    /// will handle LocalDB resolution and protocol selection.
-    ///
-    /// # Arguments
-    /// * `context` - The client context with connection parameters
-    /// * `datasource` - The data source string (e.g., "tcp:server,1433", "server\instance")
-    /// * `cancel_handle` - Optional cancellation handle
-    ///
-    /// # Returns
-    /// A connected TdsClient
-    /// Deprecated: Use create_client() instead.
-    /// This method is kept for backward compatibility.
-    #[deprecated(since = "0.1.0", note = "Use create_client() instead")]
-    pub async fn create_client_from_datasource(
-        &self,
-        context: ClientContext,
-        datasource: &str,
-        cancel_handle: Option<&CancelHandle>,
-    ) -> TdsResult<TdsClient> {
-        self.create_client(context, datasource, cancel_handle).await
-    }
-
     /// Create a client with a custom transport (used for fuzzing)
     #[cfg(fuzzing)]
     pub async fn create_client_with_transport<T>(
