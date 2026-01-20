@@ -2,7 +2,7 @@
 
 This diagram shows the complete sequence of operations when establishing a LocalDB connection.
 
-```mermaid
+::: mermaid
 sequenceDiagram
     participant Client as Application
     participant ConnStr as Connection String Parser
@@ -80,7 +80,7 @@ sequenceDiagram
     Client->>NamedPipe: Send TDS packets (login, queries)
     NamedPipe->>NamedPipe: ReadFile/WriteFile operations
     NamedPipe-->>Client: Response TDS packets
-```
+:::
 
 ## Key Phases
 

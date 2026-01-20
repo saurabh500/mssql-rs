@@ -8,16 +8,16 @@ The connection flow uses an **Action Chain Pattern** to convert a datasource str
 
 ## High-Level Flow
 
-```mermaid
+::: mermaid
 flowchart LR
     A[Application] -->|"tcp:server,1433"| B[DatasourceParser]
     B -->|ParsedDataSource| C[ConnectionActionChain]
     C -->|TransportContext| D[TdsClient<br/>Connected]
-```
+:::
 
 ## Detailed Sequence Diagram
 
-```mermaid
+::: mermaid
 sequenceDiagram
     autonumber
     participant User
@@ -55,7 +55,7 @@ sequenceDiagram
     end
     
     Provider-->>User: TdsClient (Connected)
-```
+:::
 
 ## Connection Action Types
 
@@ -75,7 +75,7 @@ sequenceDiagram
 
 ## Decision Tree for Action Chain Generation
 
-```mermaid
+::: mermaid
 flowchart TD
     A[ParsedDataSource<br/>to_connection_actions] --> B{What type<br/>of connection?}
     
@@ -98,13 +98,13 @@ flowchart TD
     E2 --> E3[SharedMemory<br/>Windows only]
     E2 --> E4[TCP]
     E2 --> E5[NamedPipe]
-```
+:::
 
 ## Example Action Chains
 
 ### 1. Explicit TCP with Port: `"tcp:myserver,1433"`
 
-```mermaid
+::: mermaid
 flowchart LR
     subgraph ActionChain
         A[ConnectTcp<br/>host: myserver<br/>port: 1433]
@@ -112,7 +112,7 @@ flowchart LR
     
     Input["tcp:myserver,1433"] --> ActionChain
     ActionChain --> Output[TdsClient]
-```
+:::
 
 ```rust
 ConnectionActionChain {
@@ -125,7 +125,7 @@ ConnectionActionChain {
 
 ### 2. Named Instance: `"myserver\SQLEXPRESS"`
 
-```mermaid
+::: mermaid
 flowchart LR
     subgraph ActionChain
         A[CheckCache] --> B[QuerySsrp]
@@ -135,7 +135,7 @@ flowchart LR
     
     Input["myserver\SQLEXPRESS"] --> ActionChain
     ActionChain --> Output[TdsClient]
-```
+:::
 
 ```rust
 ConnectionActionChain {
@@ -151,7 +151,7 @@ ConnectionActionChain {
 
 ### 3. No Protocol (Waterfall): `"myserver"`
 
-```mermaid
+::: mermaid
 flowchart LR
     subgraph ActionChain
         A[CheckCache] --> B[TrySequence]
@@ -167,7 +167,7 @@ flowchart LR
     
     Input["myserver"] --> ActionChain
     ActionChain --> Output[TdsClient]
-```
+:::
 
 ```rust
 ConnectionActionChain {
@@ -188,7 +188,7 @@ ConnectionActionChain {
 
 ### 4. LocalDB (Windows): `"(localdb)\MSSQLLocalDB"`
 
-```mermaid
+::: mermaid
 flowchart LR
     subgraph ActionChain
         A[ResolveLocalDb<br/>instance: MSSQLLocalDB] --> B[ConnectNamedPipeFromSlot]
@@ -196,7 +196,7 @@ flowchart LR
     
     Input["(localdb)\MSSQLLocalDB"] --> ActionChain
     ActionChain --> Output[TdsClient]
-```
+:::
 
 ```rust
 ConnectionActionChain {
@@ -212,7 +212,7 @@ ConnectionActionChain {
 
 The `ExecutionContext` stores intermediate results between actions:
 
-```mermaid
+::: mermaid
 classDiagram
     class ExecutionContext {
         +HashMap~ResultSlot, ActionOutcome~ slots
@@ -242,11 +242,11 @@ classDiagram
     
     ExecutionContext --> ResultSlot : uses
     ExecutionContext --> ActionOutcome : stores
-```
+:::
 
 ### Slot Usage Flow
 
-```mermaid
+::: mermaid
 sequenceDiagram
     participant SSRP as QuerySsrp Action
     participant Ctx as ExecutionContext
@@ -259,7 +259,7 @@ sequenceDiagram
     Ctx-->>TCP: Some(49721)
     
     Note over TCP: Connect to server:49721
-```
+:::
 
 ## Key Files
 
