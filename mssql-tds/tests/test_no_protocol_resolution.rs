@@ -186,7 +186,10 @@ mod no_protocol_resolution {
     // =========================================================================
 
     #[tokio::test]
-    #[ignore = "Requires local SQL Server on localhost - run manually"]
+    #[cfg_attr(
+        not(windows),
+        ignore = "Requires local SQL Server on localhost - run on Windows"
+    )]
     async fn test_no_protocol_localhost_default_port() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -200,7 +203,10 @@ mod no_protocol_resolution {
     }
 
     #[tokio::test]
-    #[ignore = "Requires local SQL Server on localhost - run manually"]
+    #[cfg_attr(
+        not(windows),
+        ignore = "Requires local SQL Server on localhost - run on Windows"
+    )]
     async fn test_no_protocol_dot_local() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -214,7 +220,10 @@ mod no_protocol_resolution {
     }
 
     #[tokio::test]
-    #[ignore = "Requires local SQL Server on 127.0.0.1 - run manually"]
+    #[cfg_attr(
+        not(windows),
+        ignore = "Requires local SQL Server on 127.0.0.1 - run on Windows"
+    )]
     async fn test_no_protocol_127_0_0_1() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -361,7 +370,10 @@ mod no_protocol_resolution {
     // =========================================================================
 
     #[tokio::test]
-    #[ignore = "Requires local SQL Server on localhost/127.0.0.1 - run manually"]
+    #[cfg_attr(
+        not(windows),
+        ignore = "Requires local SQL Server on localhost/127.0.0.1 - run on Windows"
+    )]
     async fn test_various_localhost_formats() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -398,7 +410,10 @@ mod no_protocol_resolution {
     // =========================================================================
 
     #[tokio::test]
-    #[ignore = "Requires local SQL Server on localhost:1433 - run manually"]
+    #[cfg_attr(
+        not(windows),
+        ignore = "Requires local SQL Server on localhost:1433 - run on Windows"
+    )]
     async fn test_no_protocol_uses_default_1433() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
