@@ -433,11 +433,13 @@ impl ParsedDataSource {
             || Self::is_computer_name(normalized_server);
 
         if is_local {
-            // For admin (DAC) protocol, always use "localhost"
-            if result.protocol_name == "admin" {
+            // For TCP and admin protocols, keep "localhost" as-is
+            // This preserves TLS certificate hostname validation behavior
+            // Named Pipes and Shared Memory may need the actual computer name
+            if result.protocol_name == "admin" || result.protocol_name == "tcp" {
                 result.server_name = "localhost".to_string();
             } else {
-                // For other protocols, resolve to actual computer name
+                // For np, lpc, or unspecified protocols, resolve to actual computer name
                 result.server_name =
                     Self::get_computer_name().unwrap_or_else(|| server.to_string());
             }
