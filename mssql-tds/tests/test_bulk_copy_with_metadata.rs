@@ -5,7 +5,7 @@
 mod common;
 
 mod bulk_copy_integration_tests {
-    use crate::common::{begin_connection, create_context, init_tracing};
+    use crate::common::{begin_connection, build_tcp_datasource, init_tracing};
     use async_trait::async_trait;
     use mssql_tds::connection::bulk_copy::{BulkCopy, BulkLoadRow};
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
@@ -83,8 +83,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_bulk_copy_with_server_metadata() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create temp table (automatically cleaned up)
         client
@@ -167,8 +166,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retrieve_destination_metadata_basic() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         let table_name = "#MetadataTest";
 
@@ -239,8 +237,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retrieve_destination_metadata_with_identity() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create temp table with identity column
         client
@@ -281,8 +278,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retrieve_destination_metadata_with_computed() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create temp table with computed column
         client
@@ -323,8 +319,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retrieve_destination_metadata_caching() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create temp table
         client
@@ -364,8 +359,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retrieve_destination_metadata_string_types() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create temp table with various string types
         client
@@ -427,8 +421,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retrieve_destination_metadata_numeric_types() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Create temp table with various numeric types
         client
@@ -487,8 +480,7 @@ mod bulk_copy_integration_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retrieve_destination_metadata_nonexistent_table() {
-        let context = create_context();
-        let mut client = begin_connection(context).await;
+        let mut client = begin_connection(&build_tcp_datasource()).await;
 
         // Try to retrieve metadata for a non-existent table
         let mut bulk_copy = BulkCopy::new(&mut client, "#NonExistentTable");

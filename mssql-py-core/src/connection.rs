@@ -9,9 +9,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
 use mssql_tds::{
-    connection::client_context::{
-        ClientContext, IPAddressPreference, TdsAuthenticationMethod, TransportContext,
-    },
+    connection::client_context::{ClientContext, IPAddressPreference, TdsAuthenticationMethod},
     connection::tds_client::TdsClient,
     connection_provider::tds_connection_provider::TdsConnectionProvider,
     core::{EncryptionOptions, EncryptionSetting},
@@ -34,13 +32,16 @@ impl PyCoreConnection {
         let runtime = Runtime::new()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
 
-        // Convert PyDict to ClientContext
-        let client_context = Self::dict_to_client_context(client_context_dict)?;
+        // Convert PyDict to ClientContext and get the datasource string
+        let (client_context, datasource) = Self::dict_to_client_context(client_context_dict)?;
 
         // Connect using TdsConnectionProvider
         let provider = TdsConnectionProvider {};
-        let tds_client =
-            runtime.block_on(async { provider.create_client(client_context, None).await });
+        let tds_client = runtime.block_on(async {
+            provider
+                .create_client(client_context, &datasource, None)
+                .await
+        });
 
         match tds_client {
             Ok(client) => Ok(PyCoreConnection {
@@ -109,15 +110,16 @@ impl PyCoreConnection {
 
 impl PyCoreConnection {
     /// Convert Python dict (ClientContext fields) to Rust ClientContext
-    fn dict_to_client_context(dict: &Bound<'_, PyDict>) -> PyResult<ClientContext> {
+    /// Returns (ClientContext, datasource_string)
+    fn dict_to_client_context(dict: &Bound<'_, PyDict>) -> PyResult<(ClientContext, String)> {
         // Extract required fields with defaults
         let server = dict
             .get_item("server")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| "localhost".to_string());
 
-        // Parse server string to get TransportContext (handles host:port, host,port, named pipes, localdb, etc.)
-        let transport_context = TransportContext::parse_server_name(&server, 1433);
+        // Keep the server string as datasource for create_client
+        let datasource = server.clone();
 
         let user_name = dict
             .get_item("user_name")?
@@ -293,9 +295,8 @@ impl PyCoreConnection {
             }
         };
 
-        // Create ClientContext
-        let mut context = ClientContext::new();
-        context.transport_context = transport_context;
+        // Create ClientContext with the data source (transport_context will be set by parse_datasource)
+        let mut context = ClientContext::with_data_source(&datasource);
         context.user_name = user_name;
         context.password = password;
         context.database = database;
@@ -313,6 +314,6 @@ impl PyCoreConnection {
         context.tds_authentication_method = authentication_method;
         context.access_token = access_token;
 
-        Ok(context)
+        Ok((context, datasource))
     }
 }

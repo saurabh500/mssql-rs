@@ -5,7 +5,7 @@
 mod common;
 
 mod client_based_iterators {
-    use crate::common::{create_context, init_tracing};
+    use crate::common::{build_tcp_datasource, create_context, init_tracing};
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
     use mssql_tds::message::transaction_management::TransactionIsolationLevel;
 
@@ -19,7 +19,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         client
             .begin_transaction(TransactionIsolationLevel::ReadCommitted, None)
             .await?;

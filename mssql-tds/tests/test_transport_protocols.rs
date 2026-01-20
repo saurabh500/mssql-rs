@@ -7,7 +7,7 @@ mod common;
 #[cfg(test)]
 mod transport_protocols {
     use dotenv::dotenv;
-    use mssql_tds::connection::client_context::{ClientContext, TransportContext};
+    use mssql_tds::connection::client_context::ClientContext;
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
     use mssql_tds::core::{EncryptionOptions, EncryptionSetting, TdsResult};
@@ -46,37 +46,33 @@ mod transport_protocols {
         env::var("CERT_HOST_NAME").ok()
     }
 
-    /// Create a client with the specified transport context
-    async fn create_client_with_transport(
-        transport_context: TransportContext,
-    ) -> TdsResult<TdsClient> {
-        create_client_with_transport_and_encryption(transport_context, EncryptionSetting::Strict)
-            .await
+    /// Create a client with the specified datasource string
+    async fn create_client_with_datasource(datasource: &str) -> TdsResult<TdsClient> {
+        create_client_with_datasource_and_encryption(datasource, EncryptionSetting::Strict).await
     }
 
-    /// Create a client with the specified transport context and encryption mode
-    async fn create_client_with_transport_and_encryption(
-        transport_context: TransportContext,
+    /// Create a client with the specified datasource string and encryption mode
+    async fn create_client_with_datasource_and_encryption(
+        datasource: &str,
         encryption_mode: EncryptionSetting,
     ) -> TdsResult<TdsClient> {
         let (username, password) = get_db_credentials();
 
-        let client_context = ClientContext {
-            transport_context,
-            user_name: username,
-            password,
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: encryption_mode,
-                trust_server_certificate: trust_server_certificate(),
-                host_name_in_cert: get_cert_hostname(),
-                server_certificate: None,
-            },
-            ..Default::default()
+        let mut client_context = ClientContext::default();
+        client_context.user_name = username;
+        client_context.password = password;
+        client_context.database = "master".to_string();
+        client_context.encryption_options = EncryptionOptions {
+            mode: encryption_mode,
+            trust_server_certificate: trust_server_certificate(),
+            host_name_in_cert: get_cert_hostname(),
+            server_certificate: None,
         };
 
         let provider = TdsConnectionProvider {};
-        provider.create_client(client_context, None).await
+        provider
+            .create_client(client_context, datasource, None)
+            .await
     }
 
     /// Execute a simple query and verify we get results
@@ -125,12 +121,10 @@ mod transport_protocols {
         let host = env::var("DB_HOST").expect("DB_HOST environment variable not set");
 
         // Test connecting to default instance using Named Pipe
-        // Format: \\server\pipe\sql\query
-        let pipe_name = format!(r"\\{host}\pipe\sql\query");
+        // Format: np:\\server\pipe\sql\query
+        let datasource = format!(r"np:\\{}\pipe\sql\query", host);
 
-        let transport_context = TransportContext::NamedPipe { pipe_name };
-
-        let mut client = create_client_with_transport(transport_context).await?;
+        let mut client = create_client_with_datasource(&datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -152,12 +146,10 @@ mod transport_protocols {
         }
 
         // Test connecting to local default instance using Named Pipe
-        // Format: \\.\pipe\sql\query (local machine shorthand)
-        let pipe_name = r"\\.\pipe\sql\query".to_string();
+        // Format: np:\\.\pipe\sql\query (local machine shorthand)
+        let datasource = r"np:\\.\pipe\sql\query";
 
-        let transport_context = TransportContext::NamedPipe { pipe_name };
-
-        let mut client = create_client_with_transport(transport_context).await?;
+        let mut client = create_client_with_datasource(datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -175,13 +167,10 @@ mod transport_protocols {
         // writing the TDS packet header (8 bytes) and TLS payload separately, causing SQL Server
         // to see an invalid 8-byte message and close the pipe. The fix: flatten multiple buffers
         // into a single buffer before writing during TLS handshake.
-        let pipe_name = r"\\.\pipe\sql\query".to_string();
-
-        let transport_context = TransportContext::NamedPipe { pipe_name };
+        let datasource = r"np:\\.\pipe\sql\query";
 
         let mut client =
-            create_client_with_transport_and_encryption(transport_context, EncryptionSetting::On)
-                .await?;
+            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::On).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -208,11 +197,9 @@ mod transport_protocols {
 
         // Test connecting to default instance using Shared Memory (lpc:)
         // This uses the default instance name (empty string)
-        let transport_context = TransportContext::SharedMemory {
-            instance_name: String::new(),
-        };
+        let datasource = "lpc:.";
 
-        let mut client = create_client_with_transport(transport_context).await?;
+        let mut client = create_client_with_datasource(datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -233,13 +220,12 @@ mod transport_protocols {
             return Ok(());
         }
 
-        // Test connecting using explicit MSSQLSERVER instance name
-        // (which is the default instance)
-        let transport_context = TransportContext::SharedMemory {
-            instance_name: "MSSQLSERVER".to_string(),
-        };
+        // Test connecting using explicit local server syntax
+        // lpc:. connects to the default instance via shared memory
+        // (MSSQLSERVER is reserved and maps to default instance automatically)
+        let datasource = "lpc:.";
 
-        let mut client = create_client_with_transport(transport_context).await?;
+        let mut client = create_client_with_datasource(datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -255,13 +241,11 @@ mod transport_protocols {
         // This now works! The same atomic write fix that enabled Named Pipes encryption
         // also works for Shared Memory, since both transports have message-boundary semantics
         // that require complete messages to be written atomically.
-        let transport_context = TransportContext::SharedMemory {
-            instance_name: "MSSQLSERVER".to_string(),
-        };
+        // lpc:. connects to default instance via shared memory
+        let datasource = "lpc:.";
 
         let mut client =
-            create_client_with_transport_and_encryption(transport_context, EncryptionSetting::On)
-                .await?;
+            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::On).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -291,9 +275,9 @@ mod transport_protocols {
             .map(|v| v.parse::<u16>().expect("DB_PORT must be a valid u16"))
             .unwrap_or(1433);
 
-        let transport_context = TransportContext::Tcp { host, port };
+        let datasource = format!("tcp:{},{}", host, port);
 
-        let mut client = create_client_with_transport(transport_context).await?;
+        let mut client = create_client_with_datasource(&datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -314,10 +298,10 @@ mod transport_protocols {
             .map(|v| v.parse::<u16>().expect("DB_PORT must be a valid u16"))
             .unwrap_or(1433);
 
-        let transport_context = TransportContext::Tcp { host, port };
+        let datasource = format!("tcp:{},{}", host, port);
 
         let mut client =
-            create_client_with_transport_and_encryption(transport_context, EncryptionSetting::On)
+            create_client_with_datasource_and_encryption(&datasource, EncryptionSetting::On)
                 .await?;
         test_simple_query(&mut client).await?;
 
@@ -345,18 +329,14 @@ mod transport_protocols {
 
         // Test opening 10 Named Pipe connections simultaneously
         // This verifies that our retry mechanism handles concurrent access correctly
-        let pipe_name = r"\\.\pipe\sql\query".to_string();
+        let datasource = r"np:\\.\pipe\sql\query";
 
         let mut handles = Vec::new();
 
         for i in 0..10 {
-            let pipe_name_clone = pipe_name.clone();
+            let datasource_clone = datasource;
             let handle = tokio::spawn(async move {
-                let transport_context = TransportContext::NamedPipe {
-                    pipe_name: pipe_name_clone,
-                };
-
-                let mut client = create_client_with_transport(transport_context)
+                let mut client = create_client_with_datasource(datasource_clone)
                     .await
                     .unwrap_or_else(|_| panic!("Failed to create client {i}"));
 
@@ -400,11 +380,10 @@ mod transport_protocols {
 
         for i in 0..10 {
             let handle = tokio::spawn(async move {
-                let transport_context = TransportContext::SharedMemory {
-                    instance_name: "MSSQLSERVER".to_string(),
-                };
+                // lpc:. connects to default instance via shared memory
+                let datasource = "lpc:.";
 
-                let mut client = create_client_with_transport(transport_context)
+                let mut client = create_client_with_datasource(datasource)
                     .await
                     .unwrap_or_else(|_| panic!("Failed to create client {i}"));
 
@@ -433,30 +412,11 @@ mod transport_protocols {
 
         println!("Testing LocalDB connection with MSSQLLocalDB instance...");
 
-        // Test parsing LocalDB connection string
-        let transport_context =
-            TransportContext::parse_server_name("(localdb)\\MSSQLLocalDB", 1433);
-
-        // Verify it was parsed as LocalDB
-        assert!(
-            transport_context.is_localdb(),
-            "Connection string should be detected as LocalDB"
-        );
-        assert_eq!(
-            transport_context.get_localdb_instance(),
-            Some("MSSQLLocalDB"),
-            "Instance name should be MSSQLLocalDB"
-        );
-
-        println!("LocalDB connection string parsed successfully");
-        println!("Transport context: {transport_context:?}");
-
         // Connect to LocalDB - test will fail if connection fails
-        let mut client = create_client_with_transport_and_encryption(
-            transport_context,
-            EncryptionSetting::PreferOff,
-        )
-        .await?;
+        let datasource = "(localdb)\\MSSQLLocalDB";
+        let mut client =
+            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::PreferOff)
+                .await?;
 
         println!("Connected to LocalDB successfully!");
 
@@ -475,15 +435,11 @@ mod transport_protocols {
 
         println!("Testing LocalDB query execution...");
 
-        let transport_context =
-            TransportContext::parse_server_name("(localdb)\\MSSQLLocalDB", 1433);
-
         // Connect to LocalDB - test will fail if connection fails
-        let mut client = create_client_with_transport_and_encryption(
-            transport_context,
-            EncryptionSetting::PreferOff,
-        )
-        .await?;
+        let datasource = "(localdb)\\MSSQLLocalDB";
+        let mut client =
+            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::PreferOff)
+                .await?;
 
         // Execute multiple queries to test stability
         let queries = vec![
@@ -513,66 +469,8 @@ mod transport_protocols {
         Ok(())
     }
 
-    #[tokio::test]
-    #[cfg(windows)]
-    async fn test_localdb_parsing_formats() -> TdsResult<()> {
-        init_tracing();
+    // LocalDB parsing is now handled by datasource parser
+    // These tests have been moved to datasource parser tests
 
-        println!("Testing LocalDB connection string parsing variations...");
-
-        // Test backslash separator
-        let ctx1 = TransportContext::parse_server_name("(localdb)\\MSSQLLocalDB", 1433);
-        assert!(ctx1.is_localdb());
-        assert_eq!(ctx1.get_localdb_instance(), Some("MSSQLLocalDB"));
-
-        // Test forward slash separator
-        let ctx2 = TransportContext::parse_server_name("(localdb)/MSSQLLocalDB", 1433);
-        assert!(ctx2.is_localdb());
-        assert_eq!(ctx2.get_localdb_instance(), Some("MSSQLLocalDB"));
-
-        // Test case insensitivity
-        let ctx3 = TransportContext::parse_server_name("(LocalDB)\\MSSQLLocalDB", 1433);
-        assert!(ctx3.is_localdb());
-
-        let ctx4 = TransportContext::parse_server_name("(LOCALDB)\\test", 1433);
-        assert!(ctx4.is_localdb());
-        assert_eq!(ctx4.get_localdb_instance(), Some("test"));
-
-        println!("All LocalDB parsing formats validated successfully");
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[cfg(windows)]
-    async fn test_localdb_connection_properties() -> TdsResult<()> {
-        init_tracing();
-
-        println!("Testing LocalDB connection properties...");
-
-        let transport_context =
-            TransportContext::parse_server_name("(localdb)\\MSSQLLocalDB", 1433);
-
-        // Verify properties
-        assert!(
-            transport_context.is_localdb(),
-            "Should be detected as LocalDB"
-        );
-        assert!(
-            transport_context.is_local(),
-            "LocalDB should be considered local"
-        );
-        assert_eq!(
-            transport_context.get_protocol(),
-            mssql_tds::connection::client_context::Protocol::NamedPipe,
-            "LocalDB should use NamedPipe protocol"
-        );
-        assert_eq!(
-            transport_context.get_server_name(),
-            "(localdb)\\MSSQLLocalDB",
-            "Server name should be formatted correctly"
-        );
-
-        println!("All LocalDB connection properties validated");
-        Ok(())
-    }
+    // LocalDB connection properties are now tested via datasource parser tests
 }

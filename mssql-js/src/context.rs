@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use mssql_tds::{
-    connection::client_context::{ClientContext, TransportContext},
+    connection::client_context::ClientContext,
     core::{EncryptionOptions, EncryptionSetting},
 };
 use tracing::info;
@@ -31,16 +31,11 @@ impl From<JsClientContext> for ClientContext {
             "Creating ClientContext with server_name: {}, port: {}, user_name: {}, database: {}",
             js_ctx.server_name, js_ctx.port, js_ctx.user_name, js_ctx.database
         );
-        ClientContext {
-            transport_context: TransportContext::Tcp {
-                host: js_ctx.server_name,
-                port: js_ctx.port,
-            },
-            user_name: js_ctx.user_name,
-            password: js_ctx.password,
-            database: js_ctx.database,
-            encryption_options,
-            ..Default::default()
-        }
+        let mut context = ClientContext::default();
+        context.user_name = js_ctx.user_name;
+        context.password = js_ctx.password;
+        context.database = js_ctx.database;
+        context.encryption_options = encryption_options;
+        context
     }
 }

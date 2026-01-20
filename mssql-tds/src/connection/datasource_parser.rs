@@ -6,6 +6,9 @@
 //! This module implements the SQL Network Interface (SNI) layer's connection string
 //! parsing logic, compatible with ODBC driver behavior.
 
+use crate::connection::connection_actions::{
+    ConnectionActionChain, ConnectionActionChainBuilder, ConnectionMetadata, ResultSlot,
+};
 use crate::core::TdsResult;
 use crate::error::Error;
 
@@ -107,10 +110,21 @@ impl ParsedDataSource {
             ));
         }
 
-        // Step 2: Check for LocalDB format (Windows only)
+        // Step 2: Check for LocalDB format
+        // LocalDB is only supported on Windows
         #[cfg(windows)]
         if normalized.starts_with("(localdb)\\") || normalized.starts_with("(localdb)/") {
             return Self::parse_localdb(original, &normalized, parallel_connect);
+        }
+
+        // On non-Windows platforms, reject LocalDB with a clear error message
+        #[cfg(not(windows))]
+        if normalized.starts_with("(localdb)\\") || normalized.starts_with("(localdb)/") {
+            return Err(Error::ProtocolError(
+                "LocalDB is not supported on this platform. LocalDB is a Windows-only feature. \
+                 Use a TCP connection string instead (e.g., 'tcp:server,port')."
+                    .to_string(),
+            ));
         }
 
         // Step 3: Parse protocol prefix (tcp:, np:, lpc:, admin:)
@@ -430,11 +444,13 @@ impl ParsedDataSource {
             || Self::is_computer_name(normalized_server);
 
         if is_local {
-            // For admin (DAC) protocol, always use "localhost"
-            if result.protocol_name == "admin" {
+            // For TCP and admin protocols, keep "localhost" as-is
+            // This preserves TLS certificate hostname validation behavior
+            // Named Pipes and Shared Memory may need the actual computer name
+            if result.protocol_name == "admin" || result.protocol_name == "tcp" {
                 result.server_name = "localhost".to_string();
             } else {
-                // For other protocols, resolve to actual computer name
+                // For np, lpc, or unspecified protocols, resolve to actual computer name
                 result.server_name =
                     Self::get_computer_name().unwrap_or_else(|| server.to_string());
             }
@@ -447,7 +463,30 @@ impl ParsedDataSource {
 
     /// Validate protocol-specific constraints
     fn validate_protocol(result: &mut ParsedDataSource) -> TdsResult<()> {
+        // Platform-specific protocol validation
+        #[cfg(not(windows))]
+        {
+            // Named Pipes are only supported on Windows
+            if result.protocol_name == "np" {
+                return Err(Error::ProtocolError(
+                    "Named Pipes (np:) protocol is not supported on this platform. \
+                     Named Pipes are a Windows-only feature. Use TCP instead (e.g., 'tcp:server,port')."
+                        .to_string(),
+                ));
+            }
+
+            // Shared Memory (LPC) is only supported on Windows
+            if result.protocol_name == "lpc" {
+                return Err(Error::ProtocolError(
+                    "Shared Memory (lpc:) protocol is not supported on this platform. \
+                     Shared Memory is a Windows-only feature. Use TCP instead (e.g., 'tcp:server,port')."
+                        .to_string(),
+                ));
+            }
+        }
+
         // LPC (Shared Memory) requires local server
+        #[cfg(windows)]
         if result.protocol_name == "lpc" {
             let is_local = result.original_server_name == "."
                 || result.original_server_name == "(local)"
@@ -502,9 +541,12 @@ impl ParsedDataSource {
             result.can_use_cache = false;
         }
 
-        if matches!(result.protocol_name.as_str(), "lpc" | "admin")
-            && !result.instance_name.is_empty()
-        {
+        // DAC (admin:) never uses cache - SQL Browser doesn't support DAC resolution
+        if result.protocol_name == "admin" {
+            result.can_use_cache = false;
+        }
+
+        if result.protocol_name == "lpc" && !result.instance_name.is_empty() {
             result.can_use_cache = false;
         }
 
@@ -600,11 +642,153 @@ impl ParsedDataSource {
     /// SSRP is used when:
     /// - Named instance is specified
     /// - No explicit port is provided
-    /// - No explicit protocol details are given
+    ///
+    /// Per ODBC/SNI behavior:
+    /// - `tcp:server\instance` (no port) → SSRP is required
+    /// - `tcp:server,port\instance` → SSRP is NOT required (instance is ignored per MDAC behavior)
+    /// - `server\instance` (no protocol) → SSRP is required
     pub fn needs_ssrp(&self) -> bool {
-        !self.instance_name.is_empty()
-            && self.protocol_parameter.is_empty()
-            && self.protocol_name.is_empty()
+        // SSRP is needed if:
+        // 1. Instance name is specified, AND
+        // 2. No explicit port is provided (protocol_parameter is empty or not a valid port)
+        //
+        // Note: Even with tcp: prefix, if no port is given, SSRP is required.
+        // This matches ODBC/SNI behavior where instance name is only ignored
+        // when a port (comma) is explicitly specified.
+        !self.instance_name.is_empty() && self.protocol_parameter.is_empty()
+    }
+
+    /// Generate the connection action chain for this data source
+    ///
+    /// This method converts the parsed data source into an ordered sequence of
+    /// actions to establish a connection. The action chain represents the connection
+    /// strategy, including any necessary pre-connection steps like cache checks,
+    /// SSRP queries, or protocol waterfall attempts.
+    ///
+    /// # Arguments
+    /// * `timeout_ms` - Connection timeout in milliseconds (default: 15000)
+    ///
+    /// # Returns
+    /// A `ConnectionActionChain` containing the ordered sequence of actions
+    ///
+    /// # Examples
+    /// ```
+    /// use mssql_tds::connection::datasource_parser::ParsedDataSource;
+    ///
+    /// // Simple TCP connection
+    /// let parsed = ParsedDataSource::parse("tcp:myserver,1433", false)?;
+    /// let chain = parsed.to_connection_actions(15000);
+    /// assert_eq!(chain.len(), 1); // Single ConnectTcp action
+    ///
+    /// // Named instance requiring SSRP
+    /// let parsed = ParsedDataSource::parse("myserver\\SQLEXPRESS", false)?;
+    /// let chain = parsed.to_connection_actions(15000);
+    /// // Chain: CheckCache -> QuerySsrp -> UpdateCache -> ConnectTcp
+    /// assert_eq!(chain.len(), 4);
+    /// ```
+    pub fn to_connection_actions(&self, timeout_ms: u64) -> ConnectionActionChain {
+        let metadata = ConnectionMetadata {
+            source_string: format!(
+                "{}\\{}",
+                self.original_server_name,
+                if self.instance_name.is_empty() {
+                    String::new()
+                } else {
+                    self.instance_name.clone()
+                }
+            )
+            .trim_end_matches('\\')
+            .to_string(),
+            server_name: self.server_name.clone(),
+            instance_name: self.instance_name.clone(),
+            explicit_protocol: !self.protocol_name.is_empty(),
+            timeout_ms,
+        };
+
+        let mut builder = ConnectionActionChainBuilder::new(metadata);
+
+        // Step 1: Check cache if applicable
+        if self.can_use_cache {
+            builder.add_check_cache(&self.alias);
+        }
+
+        // Step 2: Handle LocalDB resolution (Windows only)
+        #[cfg(windows)]
+        if self.protocol_name == "localdb" {
+            builder.add_resolve_localdb(&self.instance_name);
+            builder.add_connect_named_pipe_from_slot(ResultSlot::ResolvedPipePath);
+            return builder.build();
+        }
+
+        // Step 3: Handle SSRP query if needed
+        if self.needs_ssrp() {
+            builder.add_ssrp_query(&self.server_name, &self.instance_name);
+
+            // After SSRP, update cache if allowed
+            if self.can_use_cache {
+                // Note: port will be determined at execution time from SSRP result
+                builder.add_update_cache(&self.alias, 0); // 0 is placeholder
+            }
+
+            // Connect using resolved port
+            builder.add_connect_tcp_from_slot(&self.server_name, ResultSlot::ResolvedPort);
+            return builder.build();
+        }
+
+        // Step 4: Explicit protocol - single connection attempt
+        if !self.protocol_name.is_empty() {
+            match self.get_protocol_type() {
+                ProtocolType::Tcp => {
+                    let port = self.protocol_parameter.parse::<u16>().unwrap_or(1433);
+                    builder.add_connect_tcp(&self.server_name, port);
+                }
+                ProtocolType::NamedPipe => {
+                    let pipe = if !self.protocol_parameter.is_empty() {
+                        self.protocol_parameter.clone()
+                    } else if !self.instance_name.is_empty() {
+                        if self.instance_name.to_lowercase() == "default" {
+                            format!("\\\\{}\\pipe\\sql\\query", self.server_name)
+                        } else {
+                            format!(
+                                "\\\\{}\\pipe\\MSSQL${}\\sql\\query",
+                                self.server_name, self.instance_name
+                            )
+                        }
+                    } else {
+                        format!("\\\\{}\\pipe\\sql\\query", self.server_name)
+                    };
+                    builder.add_connect_named_pipe(&pipe);
+                }
+                ProtocolType::SharedMemory => {
+                    #[cfg(windows)]
+                    {
+                        let instance = if self.instance_name.is_empty() {
+                            "MSSQLSERVER"
+                        } else {
+                            &self.instance_name
+                        };
+                        builder.add_connect_shared_memory(instance);
+                    }
+                }
+                ProtocolType::Admin => {
+                    builder.add_connect_dac(&self.server_name);
+                }
+                _ => {}
+            }
+            return builder.build();
+        }
+
+        // Step 5: Parallel connect (MultiSubnetFailover)
+        if self.parallel_connect {
+            // Try TCP to all resolved addresses in parallel
+            let port = self.protocol_parameter.parse::<u16>().unwrap_or(1433);
+            builder.add_parallel_tcp_connect(&self.server_name, port);
+            return builder.build();
+        }
+
+        // Step 6: Auto-detect (protocol waterfall)
+        builder.add_protocol_waterfall(&self.server_name, self.is_local());
+        builder.build()
     }
 }
 
@@ -651,6 +835,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_named_pipe_default_instance() {
         let parsed = ParsedDataSource::parse("np:\\\\myserver\\pipe\\sql\\query", false).unwrap();
         assert_eq!(parsed.protocol_name, "np");
@@ -662,6 +847,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_named_pipe_named_instance() {
         let parsed =
             ParsedDataSource::parse("\\\\myserver\\pipe\\mssql$inst1\\sql\\query", false).unwrap();
@@ -672,6 +858,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_named_pipe_non_standard() {
         let parsed =
             ParsedDataSource::parse("\\\\myserver\\pipe\\custom\\myapp\\sql", false).unwrap();
@@ -704,6 +891,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_lpc_local_only() {
         // LPC with local server should succeed
         let parsed = ParsedDataSource::parse("lpc:.", false).unwrap();
@@ -715,6 +903,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_np_with_localhost() {
         // Named Pipes protocol with localhost explicitly specified
         // Note: server_name is resolved to actual computer name for np protocol
@@ -740,6 +929,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_lpc_shared_memory_local_variants() {
         // Shared Memory (LPC) with localhost
         // Note: server_name is resolved to actual computer name for lpc protocol
@@ -836,6 +1026,66 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
+    fn test_localdb_not_supported_on_non_windows() {
+        // LocalDB should return a clear error on non-Windows platforms
+        let result = ParsedDataSource::parse("(localdb)\\MSSQLLocalDB", false);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string().to_lowercase();
+        assert!(
+            err_msg.contains("localdb") && err_msg.contains("not supported"),
+            "Error should mention LocalDB is not supported: {}",
+            err
+        );
+
+        // Forward slash variant should also fail
+        let result = ParsedDataSource::parse("(localdb)/v11.0", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_named_pipe_not_supported_on_non_windows() {
+        // Named Pipes should return a clear error on non-Windows platforms
+        let result = ParsedDataSource::parse("np:myserver", false);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string().to_lowercase();
+        assert!(
+            err_msg.contains("named pipe") && err_msg.contains("not supported"),
+            "Error should mention Named Pipes is not supported: {}",
+            err
+        );
+
+        // Full pipe path should also fail
+        let result = ParsedDataSource::parse("np:\\\\myserver\\pipe\\sql\\query", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_shared_memory_not_supported_on_non_windows() {
+        // Shared Memory (LPC) should return a clear error on non-Windows platforms
+        let result = ParsedDataSource::parse("lpc:.", false);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string().to_lowercase();
+        assert!(
+            err_msg.contains("shared memory") && err_msg.contains("not supported"),
+            "Error should mention Shared Memory is not supported: {}",
+            err
+        );
+
+        // localhost variant should also fail
+        let result = ParsedDataSource::parse("lpc:localhost", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_case_insensitivity() {
         let parsed = ParsedDataSource::parse("TCP:MyServer,1433", false).unwrap();
         assert_eq!(parsed.protocol_name, "tcp"); // Normalized to lowercase
@@ -850,5 +1100,211 @@ mod tests {
         assert_eq!(parsed.protocol_name, "tcp");
         assert_eq!(parsed.server_name, "myserver");
         assert_eq!(parsed.protocol_parameter, "1433");
+    }
+
+    // ========== Action Chain Generation Tests ==========
+
+    #[test]
+    fn test_action_chain_simple_tcp() {
+        // Simple TCP with explicit port
+        let parsed = ParsedDataSource::parse("tcp:myserver,1433", false).unwrap();
+        let chain = parsed.to_connection_actions(15000);
+
+        // Should have single ConnectTcp action
+        assert_eq!(chain.len(), 1);
+        let actions = chain.actions();
+        assert!(matches!(
+            actions[0],
+            crate::connection::connection_actions::ConnectionAction::ConnectTcp { .. }
+        ));
+
+        // Verify description is reasonable
+        let desc = chain.describe();
+        assert!(desc.contains("myserver"));
+        assert!(desc.contains("TCP"));
+    }
+
+    #[test]
+    fn test_action_chain_named_instance_with_ssrp() {
+        // Named instance without port requires SSRP
+        let parsed = ParsedDataSource::parse("myserver\\SQLEXPRESS", false).unwrap();
+        let chain = parsed.to_connection_actions(15000);
+
+        // Should have: CheckCache -> QuerySsrp -> UpdateCache -> ConnectTcpFromSlot
+        assert_eq!(chain.len(), 4);
+        let actions = chain.actions();
+
+        use crate::connection::connection_actions::ConnectionAction;
+        assert!(matches!(actions[0], ConnectionAction::CheckCache { .. }));
+        assert!(matches!(actions[1], ConnectionAction::QuerySsrp { .. }));
+        assert!(matches!(actions[2], ConnectionAction::UpdateCache { .. }));
+        assert!(matches!(
+            actions[3],
+            ConnectionAction::ConnectTcpFromSlot { .. }
+        ));
+
+        // Verify metadata
+        let metadata = chain.metadata();
+        assert_eq!(metadata.server_name, "myserver");
+        assert_eq!(metadata.instance_name, "SQLEXPRESS");
+        assert!(!metadata.explicit_protocol);
+    }
+
+    #[test]
+    fn test_action_chain_explicit_protocol_no_cache() {
+        // Explicit port disables caching
+        let parsed = ParsedDataSource::parse("myserver,1433", false).unwrap();
+        let chain = parsed.to_connection_actions(15000);
+
+        // Should have single ConnectTcp action (no cache check)
+        assert_eq!(chain.len(), 1);
+        let actions = chain.actions();
+        assert!(matches!(
+            actions[0],
+            crate::connection::connection_actions::ConnectionAction::ConnectTcp { .. }
+        ));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_action_chain_named_pipe() {
+        // Named pipe with explicit path
+        let parsed = ParsedDataSource::parse("np:\\\\myserver\\pipe\\sql\\query", false).unwrap();
+        let chain = parsed.to_connection_actions(15000);
+
+        // Should have single ConnectNamedPipe action
+        assert_eq!(chain.len(), 1);
+        let actions = chain.actions();
+        assert!(matches!(
+            actions[0],
+            crate::connection::connection_actions::ConnectionAction::ConnectNamedPipe { .. }
+        ));
+
+        let metadata = chain.metadata();
+        assert!(metadata.explicit_protocol);
+    }
+
+    #[test]
+    fn test_action_chain_protocol_waterfall() {
+        // No explicit protocol - should use waterfall
+        let parsed = ParsedDataSource::parse("myserver", false).unwrap();
+        let chain = parsed.to_connection_actions(15000);
+
+        // Should have: CheckCache -> TrySequence
+        assert_eq!(chain.len(), 2);
+        let actions = chain.actions();
+
+        use crate::connection::connection_actions::ConnectionAction;
+        assert!(matches!(actions[0], ConnectionAction::CheckCache { .. }));
+
+        if let ConnectionAction::TrySequence {
+            actions: waterfall, ..
+        } = &actions[1]
+        {
+            // Should have TCP at minimum, possibly more on Windows
+            assert!(!waterfall.is_empty());
+
+            // At least one should be TCP
+            let has_tcp = waterfall
+                .iter()
+                .any(|a| matches!(a, ConnectionAction::ConnectTcp { .. }));
+            assert!(has_tcp, "Waterfall should include TCP");
+        } else {
+            panic!("Expected TrySequence action for protocol waterfall");
+        }
+    }
+
+    #[test]
+    fn test_action_chain_parallel_connect() {
+        // MultiSubnetFailover should use parallel connect
+        let parsed = ParsedDataSource::parse("myserver,1433", true).unwrap();
+        let chain = parsed.to_connection_actions(15000);
+
+        // Should have TCP connection (parallel logic is in the action)
+        assert_eq!(chain.len(), 1);
+        assert!(chain.metadata().explicit_protocol);
+
+        let desc = chain.describe();
+        assert!(desc.contains("Explicit protocol: true"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_action_chain_localdb() {
+        // LocalDB should resolve then connect via named pipe
+        let parsed = ParsedDataSource::parse("(localdb)\\MSSQLLocalDB", false).unwrap();
+        let chain = parsed.to_connection_actions(15000);
+
+        // Should have: ResolveLocalDb -> ConnectNamedPipeFromSlot
+        assert_eq!(chain.len(), 2);
+        let actions = chain.actions();
+
+        use crate::connection::connection_actions::ConnectionAction;
+        assert!(matches!(
+            actions[0],
+            ConnectionAction::ResolveLocalDb { .. }
+        ));
+        assert!(matches!(
+            actions[1],
+            ConnectionAction::ConnectNamedPipeFromSlot { .. }
+        ));
+
+        let metadata = chain.metadata();
+        assert_eq!(metadata.instance_name, "MSSQLLocalDB");
+    }
+
+    #[test]
+    fn test_action_chain_admin_dac() {
+        // Admin protocol should use DAC connection
+        let parsed = ParsedDataSource::parse("admin:localhost", false).unwrap();
+        let chain = parsed.to_connection_actions(15000);
+
+        // DAC doesn't use cache (SQL Browser doesn't support DAC resolution)
+        // Should have single ConnectDac action
+        assert_eq!(chain.len(), 1);
+        let actions = chain.actions();
+
+        use crate::connection::connection_actions::ConnectionAction;
+        assert!(matches!(actions[0], ConnectionAction::ConnectDac { .. }));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_action_chain_shared_memory() {
+        // LPC protocol should use shared memory
+        let parsed = ParsedDataSource::parse("lpc:.", false).unwrap();
+        let chain = parsed.to_connection_actions(15000);
+
+        // LPC with no instance enables caching, so: CheckCache -> ConnectSharedMemory
+        assert_eq!(chain.len(), 2);
+        let actions = chain.actions();
+
+        use crate::connection::connection_actions::ConnectionAction;
+        assert!(matches!(actions[0], ConnectionAction::CheckCache { .. }));
+        assert!(matches!(
+            actions[1],
+            ConnectionAction::ConnectSharedMemory { .. }
+        ));
+    }
+
+    #[test]
+    fn test_action_chain_timeout_propagation() {
+        // Verify timeout is propagated to actions
+        let parsed = ParsedDataSource::parse("tcp:myserver,1433", false).unwrap();
+        let chain = parsed.to_connection_actions(30000); // 30 second timeout
+
+        assert_eq!(chain.metadata().timeout_ms, 30000);
+
+        // Verify action contains the timeout
+        let actions = chain.actions();
+        if let crate::connection::connection_actions::ConnectionAction::ConnectTcp {
+            timeout_ms,
+            ..
+        } = &actions[0]
+        {
+            assert_eq!(*timeout_ms, 30000);
+        } else {
+            panic!("Expected ConnectTcp action");
+        }
     }
 }

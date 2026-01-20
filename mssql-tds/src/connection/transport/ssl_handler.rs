@@ -124,7 +124,18 @@ impl SslHandler {
                     .tls_handshake_completed();
                 Ok(Box::new(stream))
             }
-            Err(e) => Err(crate::error::Error::TlsError(e)),
+            Err(e) => {
+                // Always provide context about the hostname we were trying to match
+                // Note: We can't retrieve the certificate SANs from a failed handshake
+                // because the connection is terminated before we can access the peer cert
+                Err(crate::error::Error::TlsHandshakeError {
+                    source: e,
+                    expected_host: host_name.to_string(),
+                    cert_sans:
+                        "(unavailable - handshake failed before certificate could be retrieved)"
+                            .to_string(),
+                })
+            }
         }
     }
 }

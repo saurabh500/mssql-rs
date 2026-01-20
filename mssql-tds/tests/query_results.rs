@@ -6,8 +6,8 @@ mod common;
 
 mod query_result_reads {
     use crate::common::{
-        ExpectedQueryResultType, begin_connection, connect_query_and_validate, create_context,
-        run_query_and_check_results,
+        ExpectedQueryResultType, begin_connection, build_tcp_datasource,
+        connect_query_and_validate, run_query_and_check_results,
     };
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::datatypes::column_values::ColumnValues;
@@ -128,8 +128,8 @@ mod query_result_reads {
     async fn test_ntext_nchar_values_validation() {
         // Test that validates the actual values read from NTEXT and NCHAR columns
         // This ensures proper UTF-16LE decoding and empty string handling
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let datasource = build_tcp_datasource();
+        let mut connection = begin_connection(&datasource).await;
 
         connection
             .execute(
@@ -230,8 +230,7 @@ mod query_result_reads {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_tds_connection_reuse() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
         let expected = [
             ExpectedQueryResultType::Update(0),
             ExpectedQueryResultType::Update(2),
@@ -276,8 +275,7 @@ mod query_result_reads {
         // It tests the pattern: DML operations (CREATE TABLE, INSERT) followed by multiple SELECTs.
         // This should return 5 result sets total.
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         {
             // This is the EXACT query from the failing JavaScript test
@@ -368,8 +366,7 @@ mod query_result_reads {
     async fn test_multiple_result_sets_selects_only() {
         // Simpler test with just SELECTs (no DML) - this should already work
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         {
             // Use a query similar to JavaScript tests: multiple SELECTs only
@@ -450,8 +447,7 @@ mod query_result_reads {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_incomplete_result_iteration() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         {
             connection
@@ -500,8 +496,7 @@ mod query_result_reads {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_error_missed_close_result_iteration() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         {
             connection
@@ -543,8 +538,7 @@ mod query_result_reads {
         // TdsClient automatically drains (consumes) remaining rows when move_to_next() is called,
         // so there's no error for incomplete result set consumption.
         // This test verifies that TdsClient handles incomplete consumption gracefully.
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         {
             connection
@@ -583,8 +577,7 @@ mod query_result_reads {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_error_within_result_set() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
         {
             connection
                 .execute(
@@ -669,8 +662,7 @@ mod query_result_reads {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_error_within_batch() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
         {
             // Note: The INSERT with 1/0 will cause a divide by zero error during execution
             let execute_result = connection
