@@ -1,0 +1,176 @@
+# Template for running mssql-python tests with updated mssql-py-core bindings
+# Uses test-python.sh --mssql-python which builds ddbc_bindings + mssql-py-core
+# Then builds wheel artifact with both bindings
+
+steps:
+- task: DockerInstaller@0
+  inputs:
+    dockerVersion: '29.0.0'
+  displayName: Install Docker
+
+- template: install-ubuntu-dependency.yaml
+  parameters:
+    installAzCli: false
+    installDocker: true
+
+- template: azure-cli-login-template.yml
+
+- task: AzureCLI@2
+  displayName: Login to ACR and pull build image
+  inputs:
+    azureSubscription: 'Magnitude Test'
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      az acr login --name tdslibrs
+      docker pull tdslibrs.azurecr.io/build/ubuntu:22.04
+
+- script: |
+    set -euo pipefail
+    # Clone mssql-python
+    echo "Cloning microsoft/mssql-python..."
+    git clone --depth 1 https://github.com/microsoft/mssql-python.git ../mssql-python
+    
+    # Generate Certificate for SQL Server
+    bash scripts/generate_cert.sh    
+    sudo chown 10001:0 mssql.*
+
+    # Create docker network
+    docker network create testnet
+
+    # Start SQL Server
+    docker run -e "ACCEPT_EULA=Y" \
+      -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" \
+      -p 1433:1433 \
+      --hostname sql1 \
+      --network testnet \
+      --name sqlserver \
+      -v $PWD/conf/mssql.conf:/var/opt/mssql/mssql.conf \
+      -v $PWD/mssql.pem:/etc/ssl/certs/mssql.pem \
+      -v $PWD/mssql.key:/etc/ssl/private/mssql.key \
+      -u 0:0 \
+      -d mcr.microsoft.com/mssql/server:2025-latest
+
+    # Wait for SQL Server to start
+    echo "Waiting for SQL Server to start..."
+    sleep 10
+  displayName: Setup environment
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+
+# Run test-python.sh --mssql-python (builds ddbc + py-core, runs tests)
+- script: |
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
+    
+    # Build connection string for mssql-python tests (expects DB_CONNECTION_STRING env var)
+    # Format matches mssql-python's pr-validation-pipeline.yml: Uid/Pwd (not User Id/Password)
+    DB_CONN_STR="Server=sql1;Database=master;Uid=sa;Pwd=$(SQL_PASSWORD);TrustServerCertificate=yes"
+    
+    docker run --rm \
+      --network testnet \
+      -v $PWD:/workspace \
+      -v $PWD/../mssql-python:/mssql-python \
+      -v $PWD/ca.crt:/usr/local/share/ca-certificates/mssql-ca.crt:ro \
+      -v $HOME/.cargo/registry:/root/.cargo/registry \
+      -v $HOME/.cargo/git:/root/.cargo/git \
+      -e SQL_PASSWORD="$(SQL_PASSWORD)" \
+      -e DB_HOST="sql1" \
+      -e DB_USERNAME="sa" \
+      -e SQL_SERVER="sql1" \
+      -e SQL_DATABASE="master" \
+      -e TRUST_SERVER_CERTIFICATE="true" \
+      -e DB_CONNECTION_STRING="$DB_CONN_STR" \
+      -e MSSQL_PYTHON_DIR="/mssql-python" \
+      -w /workspace \
+      $BUILD_IMAGE \
+      bash -c '
+        set -e
+        update-ca-certificates
+        source ~/.cargo/env
+        
+        # Install Python 3.12 via deadsnakes PPA
+        apt-get update
+        apt-get install -y software-properties-common
+        add-apt-repository -y ppa:deadsnakes/ppa
+        apt-get update
+        apt-get install -y python3.12 python3.12-venv python3.12-dev
+        
+        # Create Python 3.12 venv and install deps
+        python3.12 -m venv /tmp/py312-venv
+        source /tmp/py312-venv/bin/activate
+        pip install --upgrade pip -q
+        pip install maturin pytest pytest-asyncio python-dotenv patchelf pybind11 wheel setuptools -q
+        
+        # Run the test script
+        ./dev/test-python.sh --mssql-python
+      '
+  displayName: Build bindings and run mssql-python tests
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+  continueOnError: true
+
+# Build wheel artifact (reuse already-built .so files from test step)
+- script: |
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
+    
+    docker run --rm \
+      -v $PWD:/workspace \
+      -v $PWD/../mssql-python:/mssql-python \
+      -w /mssql-python \
+      $BUILD_IMAGE \
+      bash -c '
+        set -e
+        
+        # Install Python 3.12
+        apt-get update
+        apt-get install -y software-properties-common
+        add-apt-repository -y ppa:deadsnakes/ppa
+        apt-get update
+        apt-get install -y python3.12 python3.12-venv
+        
+        # Setup Python 3.12 venv
+        python3.12 -m venv /tmp/wheel-venv
+        source /tmp/wheel-venv/bin/activate
+        pip install --upgrade pip -q
+        pip install wheel setuptools -q
+        
+        # Verify both .so files exist (from test-python.sh)
+        echo "Verifying bindings from test step..."
+        ls -la mssql_python/*.so
+        
+        # Create combined artifact folder
+        mkdir -p /workspace/mssql-python-artifacts
+        
+        # Copy mssql_py_core.so standalone for plug-n-play
+        cp mssql_python/mssql_py_core*.so /workspace/mssql-python-artifacts/
+        
+        # Build mssql-python wheel
+        echo "Building mssql-python wheel..."
+        rm -rf dist/ build/ *.egg-info
+        python setup.py bdist_wheel
+        
+        # Copy wheel to artifact folder
+        cp dist/*.whl /workspace/mssql-python-artifacts/
+        
+        echo "Artifacts:"
+        ls -la /workspace/mssql-python-artifacts/
+      '
+  displayName: Build mssql-python wheel
+  condition: succeeded()
+
+- task: PublishBuildArtifacts@1
+  condition: succeeded()
+  displayName: Publish mssql-python artifacts
+  inputs:
+    PathtoPublish: $(Build.SourcesDirectory)/mssql-python-artifacts
+    ArtifactName: mssql-python-artifacts-linux-x86_64
+    publishLocation: Container
+
+- script: |
+    docker stop sqlserver || true
+    docker rm sqlserver || true
+    docker network rm testnet || true
+    rm -rf ../mssql-python || true
+    rm -rf mssql-python-artifacts || true
+  displayName: Cleanup
+  condition: always()
