@@ -713,4 +713,327 @@ mod bulk_copy_integration_tests {
 
         client.close_query().await.expect("Failed to close query");
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_with_table_lock() {
+        let mut client = begin_connection(&build_tcp_datasource()).await;
+
+        // Create temp table
+        client
+            .execute(
+                "CREATE TABLE #BulkCopyTableLock (
+                    id INT NOT NULL,
+                    value1 INT NOT NULL,
+                    value2 INT NOT NULL,
+                    value3 INT NOT NULL
+                )"
+                .to_string(),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create test table");
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Prepare test data
+        let test_data = vec![
+            TestUser {
+                id: 1,
+                value1: 100,
+                value2: 200,
+                value3: 300,
+            },
+            TestUser {
+                id: 2,
+                value1: 101,
+                value2: 201,
+                value3: 301,
+            },
+            TestUser {
+                id: 3,
+                value1: 102,
+                value2: 202,
+                value3: 302,
+            },
+        ];
+
+        // Execute bulk copy WITH table_lock option enabled
+        let result = {
+            let bulk_copy = BulkCopy::new(&mut client, "#BulkCopyTableLock");
+            bulk_copy
+                .table_lock(true) // Enable TABLOCK hint
+                .batch_size(1000)
+                .write_to_server_zerocopy(&test_data)
+                .await
+                .expect("Bulk copy with table_lock failed")
+        };
+
+        println!("Bulk copy with table_lock result: {result:?}");
+        assert_eq!(result.rows_affected, 3, "Expected 3 rows to be inserted");
+
+        // Verify the data was inserted correctly
+        client
+            .execute(
+                "SELECT COUNT(*) as cnt FROM #BulkCopyTableLock".to_string(),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to count rows");
+
+        if let Some(resultset) = client.get_current_resultset()
+            && let Some(row) = resultset.next_row().await.expect("Failed to read count")
+        {
+            assert_eq!(
+                row[0],
+                ColumnValues::Int(3),
+                "Expected 3 rows in table after bulk copy with table_lock"
+            );
+            println!("Verified: 3 rows inserted with TABLOCK option");
+        }
+        client
+            .close_query()
+            .await
+            .expect("Failed to close count query");
+
+        // Verify data integrity
+        client
+            .execute(
+                "SELECT id, value1, value2, value3 FROM #BulkCopyTableLock ORDER BY id".to_string(),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to select data");
+
+        let mut row_count = 0;
+        if let Some(resultset) = client.get_current_resultset() {
+            while let Some(row) = resultset.next_row().await.expect("Failed to read row") {
+                row_count += 1;
+                match row_count {
+                    1 => {
+                        assert_eq!(row[0], ColumnValues::Int(1));
+                        assert_eq!(row[1], ColumnValues::Int(100));
+                        assert_eq!(row[2], ColumnValues::Int(200));
+                        assert_eq!(row[3], ColumnValues::Int(300));
+                    }
+                    2 => {
+                        assert_eq!(row[0], ColumnValues::Int(2));
+                        assert_eq!(row[1], ColumnValues::Int(101));
+                        assert_eq!(row[2], ColumnValues::Int(201));
+                        assert_eq!(row[3], ColumnValues::Int(301));
+                    }
+                    3 => {
+                        assert_eq!(row[0], ColumnValues::Int(3));
+                        assert_eq!(row[1], ColumnValues::Int(102));
+                        assert_eq!(row[2], ColumnValues::Int(202));
+                        assert_eq!(row[3], ColumnValues::Int(302));
+                    }
+                    _ => panic!("Unexpected row"),
+                }
+            }
+        }
+
+        assert_eq!(row_count, 3, "Expected 3 rows to be returned");
+        println!("table_lock option test passed: TABLOCK hint accepted by SQL Server");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_bulk_copy_table_lock_actual_locking_behavior() {
+        let datasource = build_tcp_datasource();
+        let mut client = begin_connection(&datasource).await;
+
+        // Create a persistent table (not temp) so we can query locks across connections
+        let table_name = format!("BulkCopyLockTest_{}", std::process::id());
+
+        // Drop table if exists from previous failed test
+        let drop_sql = format!(
+            "IF OBJECT_ID('{}', 'U') IS NOT NULL DROP TABLE {}",
+            table_name, table_name
+        );
+        client
+            .execute(drop_sql, None, None)
+            .await
+            .expect("Failed to drop test table");
+        client.close_query().await.ok();
+
+        // Create persistent table
+        let create_sql = format!(
+            "CREATE TABLE {} (
+                id INT NOT NULL,
+                value1 INT NOT NULL,
+                value2 INT NOT NULL,
+                value3 INT NOT NULL
+            )",
+            table_name
+        );
+
+        client
+            .execute(create_sql, None, None)
+            .await
+            .expect("Failed to create test table");
+        client.close_query().await.expect("Failed to close query");
+
+        // Prepare large dataset to ensure bulk copy takes measurable time
+        // Use 10,000 rows with smaller batches to extend operation duration
+        let test_data: Vec<TestUser> = (1..=10000)
+            .map(|i| TestUser {
+                id: i,
+                value1: i * 10,
+                value2: i * 20,
+                value3: i * 30,
+            })
+            .collect();
+
+        // Create a second connection for lock monitoring
+        let mut lock_monitor_client = begin_connection(&datasource).await;
+
+        // Get the session ID of the bulk copy connection
+        client
+            .execute("SELECT @@SPID as session_id".to_string(), None, None)
+            .await
+            .expect("Failed to get session ID");
+
+        let session_id: i32 = if let Some(resultset) = client.get_current_resultset()
+            && let Some(row) = resultset
+                .next_row()
+                .await
+                .expect("Failed to read session ID")
+        {
+            match row[0] {
+                ColumnValues::SmallInt(id) => id as i32,
+                ColumnValues::Int(id) => id,
+                _ => panic!("Unexpected session ID type"),
+            }
+        } else {
+            panic!("Could not retrieve session ID");
+        };
+        client.close_query().await.expect("Failed to close query");
+
+        println!("Bulk copy will run on session ID: {}", session_id);
+
+        // Use Arc and Mutex for shared state between tasks
+        use std::sync::{Arc, Mutex};
+        let lock_detected = Arc::new(Mutex::new(false));
+        let lock_detected_clone = Arc::clone(&lock_detected);
+
+        // Spawn async task for bulk copy operation
+        let table_name_clone = table_name.clone();
+        let bulk_copy_task = tokio::spawn(async move {
+            // Sleep briefly to ensure lock monitor is ready and polling
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+            let bulk_copy = BulkCopy::new(&mut client, &table_name_clone);
+            bulk_copy
+                .table_lock(true) // Enable TABLOCK - this should acquire BU lock
+                .batch_size(500) // Use smaller batches to extend operation duration
+                .write_to_server_zerocopy(&test_data)
+                .await
+                .expect("Bulk copy with table_lock failed")
+        });
+
+        // Start monitoring immediately - bulk copy will start after 200ms delay
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Query sys.dm_tran_locks to find BU (Bulk Update) lock
+        // We look for locks on our specific session that are on OBJECT or TABLE resources
+        let lock_query = format!(
+            "SELECT 
+                request_session_id,
+                resource_type,
+                resource_description,
+                request_mode,
+                request_status
+            FROM sys.dm_tran_locks
+            WHERE request_session_id = {}
+                AND resource_type IN ('OBJECT', 'TABLE', 'HOBT', 'PAGE')
+                AND request_mode LIKE '%BU%'",
+            session_id
+        );
+
+        // Poll for locks aggressively - check every 10ms for up to 100 attempts (1 second window)
+        let mut attempts = 0;
+        let max_attempts = 100;
+
+        while attempts < max_attempts {
+            lock_monitor_client
+                .execute(lock_query.clone(), None, None)
+                .await
+                .expect("Failed to query locks");
+
+            if let Some(resultset) = lock_monitor_client.get_current_resultset() {
+                while let Some(row) = resultset.next_row().await.expect("Failed to read lock row") {
+                    println!("Lock detected:");
+                    println!("  Session ID: {:?}", row[0]);
+                    println!("  Resource Type: {:?}", row[1]);
+                    println!("  Resource Description: {:?}", row[2]);
+                    println!("  Lock Mode: {:?}", row[3]);
+                    println!("  Lock Status: {:?}", row[4]);
+
+                    // Check if this is a BU lock
+                    if let ColumnValues::String(lock_mode) = &row[3] {
+                        let lock_mode_str = format!("{:?}", lock_mode);
+                        if lock_mode_str.contains("BU") {
+                            *lock_detected_clone.lock().unwrap() = true;
+                            println!("BU (Bulk Update) lock CONFIRMED!");
+                        }
+                    }
+                }
+            }
+            lock_monitor_client.close_query().await.ok();
+
+            if *lock_detected_clone.lock().unwrap() {
+                break;
+            }
+
+            attempts += 1;
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+
+        // Wait for bulk copy to complete
+        let result = bulk_copy_task.await.expect("Bulk copy task panicked");
+
+        println!("Bulk copy with table_lock completed: {:?}", result);
+        assert_eq!(
+            result.rows_affected, 10000,
+            "Expected 10000 rows to be inserted"
+        );
+
+        // Verify lock was detected
+        let lock_was_detected = *lock_detected.lock().unwrap();
+
+        assert!(
+            lock_was_detected,
+            "Expected BU (Bulk Update) lock to be detected during bulk copy with table_lock=true. \
+             The lock monitor polled {} times but did not observe a BU lock on session {}.",
+            max_attempts, session_id
+        );
+
+        // Verify data was inserted
+        lock_monitor_client
+            .execute(format!("SELECT COUNT(*) FROM {}", table_name), None, None)
+            .await
+            .expect("Failed to count rows");
+
+        if let Some(resultset) = lock_monitor_client.get_current_resultset()
+            && let Some(row) = resultset.next_row().await.expect("Failed to read count")
+        {
+            assert_eq!(
+                row[0],
+                ColumnValues::Int(10000),
+                "Expected 10000 rows in table"
+            );
+        }
+        lock_monitor_client.close_query().await.ok();
+
+        // Cleanup - drop the persistent table
+        lock_monitor_client
+            .execute(format!("DROP TABLE {}", table_name), None, None)
+            .await
+            .expect("Failed to drop test table");
+        lock_monitor_client.close_query().await.ok();
+
+        println!("Table lock locking behavior test passed: BU lock was acquired during bulk copy");
+    }
 }
