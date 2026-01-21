@@ -71,6 +71,10 @@ pub struct ClientContext {
     pub attach_db_file: String,
     pub change_password: String,
     pub connect_retry_count: u32,
+    /// Interval in seconds between connection retry attempts.
+    /// Default: 10 seconds per SQL Server client defaults.
+    /// Note: Not yet implemented internally - this field is reserved for future use.
+    pub connect_retry_interval: u32,
     pub connect_timeout: u32,
     pub database: String,
     /// The original data source string used to create this connection.
@@ -127,6 +131,7 @@ impl ClientContext {
             attach_db_file: "".to_string(),
             change_password: "".to_string(),
             connect_retry_count: 0,
+            connect_retry_interval: 10,
             connect_timeout: 15,
             database: "".to_string(),
             data_source: data_source.to_string(),
@@ -177,6 +182,7 @@ impl ClientContext {
             attach_db_file: "".to_string(),
             change_password: "".to_string(),
             connect_retry_count: 0,
+            connect_retry_interval: 10,
             connect_timeout: 15,
             database: "".to_string(),
             data_source: "".to_string(),
@@ -335,6 +341,7 @@ impl Clone for ClientContext {
             attach_db_file: self.attach_db_file.clone(),
             change_password: self.change_password.clone(),
             connect_retry_count: self.connect_retry_count,
+            connect_retry_interval: self.connect_retry_interval,
             connect_timeout: self.connect_timeout,
             database: self.database.clone(),
             data_source: self.data_source.clone(),
