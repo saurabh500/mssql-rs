@@ -447,12 +447,30 @@ impl PyCoreCursor {
                 .unwrap()
                 .to_owned()
                 .into_any(),
-            ColumnValues::Uuid(u) => u
-                .to_string()
-                .into_pyobject(py)
-                .unwrap()
-                .to_owned()
-                .into_any(),
+            ColumnValues::Uuid(u) => {
+                // Convert Rust UUID to Python UUID object
+                // Import uuid module and create UUID from bytes
+                if let Ok(uuid_module) = PyModule::import(py, "uuid") {
+                    if let Ok(uuid_class) = uuid_module.getattr("UUID") {
+                        // Convert UUID to bytes (16 bytes in RFC 4122 format)
+                        let uuid_bytes = u.as_bytes();
+                        let py_bytes = PyBytes::new(py, uuid_bytes);
+                        // Call UUID(bytes=...) - use keyword argument
+                        let kwargs = pyo3::types::PyDict::new(py);
+                        if kwargs.set_item("bytes", py_bytes).is_ok() {
+                            if let Ok(uuid_obj) = uuid_class.call((), Some(&kwargs)) {
+                                return uuid_obj.into_any();
+                            }
+                        }
+                    }
+                }
+                // Fallback to string if UUID conversion fails
+                u.to_string()
+                    .into_pyobject(py)
+                    .unwrap()
+                    .to_owned()
+                    .into_any()
+            }
             ColumnValues::Bytes(b) => PyBytes::new(py, b).into_any(),
             ColumnValues::Vector(v) => {
                 // Return Python list of floats for vectors

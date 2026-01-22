@@ -128,10 +128,7 @@ impl TdsValueSerializer {
             ColumnValues::String(v) => Self::serialize_string(writer, v, ctx).await,
             ColumnValues::Vector(v) => Self::serialize_vector(writer, v, ctx).await,
             ColumnValues::Xml(v) => Self::serialize_xml(writer, v, ctx).await,
-            _ => Err(Error::UnimplementedFeature {
-                feature: format!("Value serialization not implemented for type: {:?}", value),
-                context: "serialization".to_string(),
-            }),
+            ColumnValues::Uuid(v) => Self::serialize_uuid(writer, v, ctx).await,
         }
     }
 
@@ -836,6 +833,45 @@ impl TdsValueSerializer {
                 true => {
                     writer.write_u16_unchecked(value.days);
                     writer.write_u16_unchecked(value.time);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Serialize a UNIQUEIDENTIFIER (GUID/UUID) value.
+    ///
+    /// UNIQUEIDENTIFIER wire format:
+    /// - TDS type 0x24 (GUIDTYPE)
+    /// - Fixed 16-byte value in mixed-endian format
+    /// - Always uses nullable variant (no fixed GUID type)
+    ///
+    /// Format: 1-byte length (0x10 = 16) + 16 bytes GUID data
+    ///
+    /// The uuid crate's to_bytes_le() method directly produces the correct
+    /// SQL Server mixed-endian format (Data1-3 little-endian, Data4 big-endian).
+    #[inline(always)]
+    async fn serialize_uuid<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &uuid::Uuid,
+        _ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // GUID is always nullable (type 0x24), no fixed variant exists
+        // Length byte (0x10 = 16) + 16 bytes of GUID data = 17 bytes total
+        let guid_bytes = value.to_bytes_le();
+
+        match writer.has_space(17) {
+            false => {
+                writer.write_byte_async(16u8).await?; // Length for GUID (16 bytes)
+                writer.write_async(&guid_bytes).await?;
+            }
+            true => {
+                writer.write_byte_unchecked(16u8); // Length for GUID (16 bytes)
+                for &byte in &guid_bytes {
+                    writer.write_byte_unchecked(byte);
                 }
             }
         }

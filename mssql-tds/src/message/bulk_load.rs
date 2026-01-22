@@ -652,7 +652,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
 
             // UNIQUEIDENTIFIER (GUIDTYPE) - requires length byte (always 16)
             x if x == TdsDataType::Guid as u8 => {
-                self.packet_writer.write_byte_async(16).await?;
+                self.packet_writer.write_byte_async(16u8).await?;
             }
 
             // VECTOR type - USHORT length (total length) + SCALE (base type)

@@ -41,6 +41,7 @@ enum SourcePythonType {
     Date,
     DateTime,
     Time,
+    Uuid,
     Dict,
     List,
     Other,
@@ -74,13 +75,23 @@ impl SourcePythonType {
         } else if py_obj.is_instance_of::<PyTime>() {
             SourcePythonType::Time
         } else {
-            // Check for decimal.Decimal
             let py = py_obj.py();
+            // Check for decimal.Decimal
             if let Ok(decimal_module) = pyo3::types::PyModule::import(py, "decimal") {
                 if let Ok(decimal_class) = decimal_module.getattr("Decimal") {
                     if let Ok(is_instance) = py_obj.is_instance(&decimal_class) {
                         if is_instance {
                             return SourcePythonType::Decimal;
+                        }
+                    }
+                }
+            }
+            // Check for uuid.UUID
+            if let Ok(uuid_module) = pyo3::types::PyModule::import(py, "uuid") {
+                if let Ok(uuid_class) = uuid_module.getattr("UUID") {
+                    if let Ok(is_instance) = py_obj.is_instance(&uuid_class) {
+                        if is_instance {
+                            return SourcePythonType::Uuid;
                         }
                     }
                 }
@@ -489,6 +500,12 @@ impl PythonRowAdapter {
             // String → Vector: Parse JSON float array string to VECTOR
             (SourcePythonType::String, SqlDbType::Vector) => {
                 let result = PythonRowAdapter::coerce_string_to_vector(py_obj, target_meta)?;
+                Ok(Some(result))
+            }
+
+            // String → UniqueIdentifier: Parse UUID string to UNIQUEIDENTIFIER
+            (SourcePythonType::String, SqlDbType::UniqueIdentifier) => {
+                let result = Self::coerce_string_to_uuid(py_obj)?;
                 Ok(Some(result))
             }
 
@@ -1700,6 +1717,29 @@ impl PythonRowAdapter {
                 Ok(ColumnValues::Vector(vector))
             }
         }
+    }
+
+    /// Coerce a Python string to a SQL Server UNIQUEIDENTIFIER type by parsing UUID string.
+    ///
+    /// Accepts standard UUID string formats:
+    /// - Hyphenated: "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+    /// - Without hyphens: "6f9619ff8b86d011b42d00c04fc964ff"
+    /// - Braced: "{6f9619ff-8b86-d011-b42d-00c04fc964ff}"
+    /// - URN: "urn:uuid:6f9619ff-8b86-d011-b42d-00c04fc964ff"
+    fn coerce_string_to_uuid(py_obj: &Bound<'_, PyAny>) -> TdsResult<ColumnValues> {
+        let py_str = py_obj
+            .cast::<PyString>()
+            .map_err(|e| Error::UsageError(format!("Failed to cast to string: {}", e)))?;
+
+        let s = py_str
+            .to_str()
+            .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
+
+        // Parse string as UUID using uuid::Uuid::try_parse which supports multiple formats
+        let uuid = uuid::Uuid::try_parse(s)
+            .map_err(|e| Error::UsageError(format!("Invalid UUID string '{}': {}", s, e)))?;
+
+        Ok(ColumnValues::Uuid(uuid))
     }
 
     /// Coerce a Python integer to a SQL Server string type (NVARCHAR/VARCHAR/NCHAR/CHAR).
