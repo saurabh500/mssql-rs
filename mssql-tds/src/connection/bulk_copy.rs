@@ -760,20 +760,32 @@ impl<'a> BulkCopy<'a> {
         if self.column_mappings.is_empty() {
             let destination_metadata = self.retrieve_destination_metadata().await?;
 
+            // Filter metadata based on keep_identity option for auto-mapping
+            // When keep_identity is false, skip identity columns (they will be auto-generated)
+            let filtered_metadata: Vec<_> = if self.options.keep_identity {
+                destination_metadata.clone()
+            } else {
+                destination_metadata
+                    .iter()
+                    .filter(|col| !col.is_identity)
+                    .cloned()
+                    .collect()
+            };
+
             // Peek at first row to determine source column count
             let source_column_count = if let Some(_first_row) = rows.peek() {
                 // For BulkLoadRow trait, we can't easily determine column count without consuming
                 // So we'll map all destination columns and let the row writer handle it
                 // This is a limitation of the current design - the Python layer handles this better
-                destination_metadata.len()
+                filtered_metadata.len()
             } else {
                 // No rows, doesn't matter
                 0
             };
 
-            let mapping_count = std::cmp::min(source_column_count, destination_metadata.len());
+            let mapping_count = std::cmp::min(source_column_count, filtered_metadata.len());
             self.column_mappings.reserve(mapping_count);
-            for (i, col) in destination_metadata.iter().enumerate().take(mapping_count) {
+            for (i, col) in filtered_metadata.iter().enumerate().take(mapping_count) {
                 self.column_mappings
                     .push(ColumnMapping::by_ordinal(i, col.column_name.clone()));
             }
@@ -784,11 +796,23 @@ impl<'a> BulkCopy<'a> {
             // Retrieve destination metadata
             let destination_metadata = self.retrieve_destination_metadata().await?;
 
-            // Resolve column mappings using user-provided mappings
-            let resolved_mappings = self.resolve_column_mappings(&destination_metadata)?;
+            // Filter metadata based on keep_identity option
+            // When keep_identity is false, skip identity columns (they will be auto-generated)
+            let filtered_metadata: Vec<_> = if self.options.keep_identity {
+                destination_metadata.clone()
+            } else {
+                destination_metadata
+                    .iter()
+                    .filter(|col| !col.is_identity)
+                    .cloned()
+                    .collect()
+            };
 
-            // Destination metadata is already BulkCopyColumnMetadata - use directly
-            let dest_column_metadata = destination_metadata.clone();
+            // Resolve column mappings using user-provided mappings (using filtered metadata)
+            let resolved_mappings = self.resolve_column_mappings(&filtered_metadata)?;
+
+            // Use filtered metadata for the bulk copy operation
+            let dest_column_metadata = filtered_metadata;
 
             // Process rows with zero-copy path
             self.write_rows_to_server_zerocopy(

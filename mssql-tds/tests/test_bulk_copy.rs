@@ -1036,4 +1036,370 @@ mod bulk_copy_integration_tests {
 
         println!("Table lock locking behavior test passed: BU lock was acquired during bulk copy");
     }
+
+    // Define a test data structure for identity column tests
+    #[derive(Debug, Clone)]
+    struct TestUserWithIdentity {
+        id: i32, // This will be the identity column value we want to preserve
+        name: String,
+        value: i32,
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for TestUserWithIdentity {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            use mssql_tds::datatypes::sql_string::SqlString;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
+            *column_index += 1;
+            let sql_string = SqlString::from_utf8_string(self.name.clone());
+            writer
+                .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value))
+                .await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for &TestUserWithIdentity {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            use mssql_tds::datatypes::sql_string::SqlString;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
+            *column_index += 1;
+            let sql_string = SqlString::from_utf8_string(self.name.clone());
+            writer
+                .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value))
+                .await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    /// Test bulk copy with keep_identity option enabled.
+    /// This test verifies that when keep_identity is true, the source identity values
+    /// are preserved in the destination table instead of being auto-generated.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_with_keep_identity() {
+        let mut client = begin_connection(&build_tcp_datasource()).await;
+
+        // Create a persistent table with IDENTITY column (temp tables work too, but using persistent for clarity)
+        let table_name = format!("BulkCopyKeepIdentityTest_{}", std::process::id());
+
+        // Drop table if exists from previous failed test
+        let drop_sql = format!(
+            "IF OBJECT_ID('{}', 'U') IS NOT NULL DROP TABLE {}",
+            table_name, table_name
+        );
+        client
+            .execute(drop_sql, None, None)
+            .await
+            .expect("Failed to drop test table");
+        client.close_query().await.ok();
+
+        // Create table with IDENTITY(1,1) column
+        // Without keep_identity, values would be auto-generated as 1, 2, 3
+        let create_sql = format!(
+            "CREATE TABLE {} (
+                id INT IDENTITY(1,1) NOT NULL,
+                name NVARCHAR(50) NOT NULL,
+                value INT NOT NULL
+            )",
+            table_name
+        );
+
+        client
+            .execute(create_sql, None, None)
+            .await
+            .expect("Failed to create test table");
+        client.close_query().await.expect("Failed to close query");
+
+        // Prepare test data with specific identity values
+        // These are NOT sequential starting from 1 - we use 100, 200, 300
+        // to clearly demonstrate that keep_identity preserves our values
+        let test_data = vec![
+            TestUserWithIdentity {
+                id: 100, // Would be 1 without keep_identity
+                name: "Alice".to_string(),
+                value: 1000,
+            },
+            TestUserWithIdentity {
+                id: 200, // Would be 2 without keep_identity
+                name: "Bob".to_string(),
+                value: 2000,
+            },
+            TestUserWithIdentity {
+                id: 300, // Would be 3 without keep_identity
+                name: "Charlie".to_string(),
+                value: 3000,
+            },
+        ];
+
+        // Execute bulk copy WITH keep_identity option enabled
+        let result = {
+            let bulk_copy = BulkCopy::new(&mut client, &table_name);
+            bulk_copy
+                .keep_identity(true) // Preserve source identity values
+                .batch_size(1000)
+                .write_to_server_zerocopy(&test_data)
+                .await
+                .expect("Bulk copy with keep_identity failed")
+        };
+
+        println!("Bulk copy with keep_identity result: {result:?}");
+        assert_eq!(result.rows_affected, 3, "Expected 3 rows to be inserted");
+
+        // Verify the identity values were preserved (100, 200, 300) not auto-generated (1, 2, 3)
+        client
+            .execute(
+                format!("SELECT id, name, value FROM {} ORDER BY id", table_name),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to select data");
+
+        let mut row_count = 0;
+        if let Some(resultset) = client.get_current_resultset() {
+            while let Some(row) = resultset.next_row().await.expect("Failed to read row") {
+                row_count += 1;
+                match row_count {
+                    1 => {
+                        assert_eq!(
+                            row[0],
+                            ColumnValues::Int(100),
+                            "First row identity should be 100, not auto-generated 1"
+                        );
+                        assert_eq!(row[2], ColumnValues::Int(1000));
+                        println!("Row 1: id=100 (preserved), value=1000");
+                    }
+                    2 => {
+                        assert_eq!(
+                            row[0],
+                            ColumnValues::Int(200),
+                            "Second row identity should be 200, not auto-generated 2"
+                        );
+                        assert_eq!(row[2], ColumnValues::Int(2000));
+                        println!("Row 2: id=200 (preserved), value=2000");
+                    }
+                    3 => {
+                        assert_eq!(
+                            row[0],
+                            ColumnValues::Int(300),
+                            "Third row identity should be 300, not auto-generated 3"
+                        );
+                        assert_eq!(row[2], ColumnValues::Int(3000));
+                        println!("Row 3: id=300 (preserved), value=3000");
+                    }
+                    _ => panic!("Unexpected row"),
+                }
+            }
+        }
+
+        assert_eq!(row_count, 3, "Expected 3 rows to be returned");
+        client.close_query().await.expect("Failed to close query");
+
+        // Cleanup - drop the table
+        client
+            .execute(format!("DROP TABLE {}", table_name), None, None)
+            .await
+            .expect("Failed to drop test table");
+        client.close_query().await.ok();
+
+        println!("keep_identity option test passed: Source identity values were preserved");
+    }
+
+    /// Test bulk copy WITHOUT keep_identity to verify identity values ARE auto-generated.
+    /// This serves as a control test to confirm the default behavior.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_without_keep_identity_uses_auto_generated_values() {
+        let mut client = begin_connection(&build_tcp_datasource()).await;
+
+        // Create a persistent table with IDENTITY column
+        let table_name = format!("BulkCopyNoKeepIdentityTest_{}", std::process::id());
+
+        // Drop table if exists from previous failed test
+        let drop_sql = format!(
+            "IF OBJECT_ID('{}', 'U') IS NOT NULL DROP TABLE {}",
+            table_name, table_name
+        );
+        client
+            .execute(drop_sql, None, None)
+            .await
+            .expect("Failed to drop test table");
+        client.close_query().await.ok();
+
+        // Create table with IDENTITY(1,1) column
+        let create_sql = format!(
+            "CREATE TABLE {} (
+                id INT IDENTITY(1,1) NOT NULL,
+                name NVARCHAR(50) NOT NULL,
+                value INT NOT NULL
+            )",
+            table_name
+        );
+
+        client
+            .execute(create_sql, None, None)
+            .await
+            .expect("Failed to create test table");
+        client.close_query().await.expect("Failed to close query");
+
+        // For this test, we need a simpler row type that only writes non-identity columns
+        #[derive(Debug, Clone)]
+        struct NonIdentityRow {
+            name: String,
+            value: i32,
+        }
+
+        #[async_trait]
+        impl BulkLoadRow for NonIdentityRow {
+            async fn write_to_packet(
+                &self,
+                writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+                column_index: &mut usize,
+            ) -> TdsResult<()> {
+                use mssql_tds::datatypes::sql_string::SqlString;
+                let sql_string = SqlString::from_utf8_string(self.name.clone());
+                writer
+                    .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                    .await?;
+                *column_index += 1;
+                writer
+                    .write_column_value(*column_index, &ColumnValues::Int(self.value))
+                    .await?;
+                *column_index += 1;
+                Ok(())
+            }
+        }
+
+        #[async_trait]
+        impl BulkLoadRow for &NonIdentityRow {
+            async fn write_to_packet(
+                &self,
+                writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+                column_index: &mut usize,
+            ) -> TdsResult<()> {
+                use mssql_tds::datatypes::sql_string::SqlString;
+                let sql_string = SqlString::from_utf8_string(self.name.clone());
+                writer
+                    .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                    .await?;
+                *column_index += 1;
+                writer
+                    .write_column_value(*column_index, &ColumnValues::Int(self.value))
+                    .await?;
+                *column_index += 1;
+                Ok(())
+            }
+        }
+
+        let non_identity_data = vec![
+            NonIdentityRow {
+                name: "Alice".to_string(),
+                value: 10,
+            },
+            NonIdentityRow {
+                name: "Bob".to_string(),
+                value: 20,
+            },
+            NonIdentityRow {
+                name: "Charlie".to_string(),
+                value: 30,
+            },
+        ];
+
+        // Execute bulk copy WITHOUT keep_identity (default behavior)
+        // Identity values should be auto-generated as 1, 2, 3
+        let result = {
+            let bulk_copy = BulkCopy::new(&mut client, &table_name);
+            bulk_copy
+                // keep_identity is false by default
+                .batch_size(1000)
+                .write_to_server_zerocopy(&non_identity_data)
+                .await
+                .expect("Bulk copy without keep_identity failed")
+        };
+
+        println!("Bulk copy without keep_identity result: {result:?}");
+        assert_eq!(result.rows_affected, 3, "Expected 3 rows to be inserted");
+
+        // Verify the identity values were auto-generated (1, 2, 3)
+        client
+            .execute(
+                format!("SELECT id, name, value FROM {} ORDER BY id", table_name),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to select data");
+
+        let mut row_count = 0;
+        if let Some(resultset) = client.get_current_resultset() {
+            while let Some(row) = resultset.next_row().await.expect("Failed to read row") {
+                row_count += 1;
+                match row_count {
+                    1 => {
+                        assert_eq!(
+                            row[0],
+                            ColumnValues::Int(1),
+                            "First row identity should be auto-generated as 1"
+                        );
+                        assert_eq!(row[2], ColumnValues::Int(10));
+                        println!("Row 1: id=1 (auto-generated), value=10");
+                    }
+                    2 => {
+                        assert_eq!(
+                            row[0],
+                            ColumnValues::Int(2),
+                            "Second row identity should be auto-generated as 2"
+                        );
+                        assert_eq!(row[2], ColumnValues::Int(20));
+                        println!("Row 2: id=2 (auto-generated), value=20");
+                    }
+                    3 => {
+                        assert_eq!(
+                            row[0],
+                            ColumnValues::Int(3),
+                            "Third row identity should be auto-generated as 3"
+                        );
+                        assert_eq!(row[2], ColumnValues::Int(30));
+                        println!("Row 3: id=3 (auto-generated), value=30");
+                    }
+                    _ => panic!("Unexpected row"),
+                }
+            }
+        }
+
+        assert_eq!(row_count, 3, "Expected 3 rows to be returned");
+        client.close_query().await.expect("Failed to close query");
+
+        // Cleanup - drop the table
+        client
+            .execute(format!("DROP TABLE {}", table_name), None, None)
+            .await
+            .expect("Failed to drop test table");
+        client.close_query().await.ok();
+
+        println!("Control test passed: Without keep_identity, identity values were auto-generated");
+    }
 }

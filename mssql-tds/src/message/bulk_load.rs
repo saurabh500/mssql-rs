@@ -744,9 +744,11 @@ pub(crate) fn build_insert_bulk_command(
     if options.fire_triggers {
         option_list.push("FIRE_TRIGGERS");
     }
-    if options.keep_identity {
-        option_list.push("KEEP_IDENTITY");
-    }
+    // Note: KEEP_IDENTITY is NOT an INSERT BULK hint (unlike BULK INSERT).
+    // Identity preservation is controlled through the TDS column metadata flags
+    // (0x0010 identity flag) which is set when is_identity=true on column metadata.
+    // The keep_identity option controls whether we include identity columns in
+    // the bulk copy operation and send their values.
 
     if !option_list.is_empty() {
         command.push_str(" WITH (");
