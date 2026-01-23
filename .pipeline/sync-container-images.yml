@@ -29,6 +29,8 @@ schedules:
   branches:
     include:
     - development
+    exclude:
+    - main
   always: true
 
 pool:

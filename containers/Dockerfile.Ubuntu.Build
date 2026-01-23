@@ -16,6 +16,7 @@ RUN apt-get update && \
     pkg-config \
     openssl \ 
     libssl-dev \
+    libkrb5-dev \
     git \
     unzip \
     python3 \
