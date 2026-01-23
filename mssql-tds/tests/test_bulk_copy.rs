@@ -1402,4 +1402,242 @@ mod bulk_copy_integration_tests {
 
         println!("Control test passed: Without keep_identity, identity values were auto-generated");
     }
+
+    /// Test bulk copy with check_constraints option enabled.
+    /// This test verifies that when check_constraints is enabled, SQL Server
+    /// enforces CHECK constraints during bulk insert and returns error 547
+    /// when a constraint is violated.
+    ///
+    /// This test mirrors the .NET SqlClient CheckConstraints test:
+    /// - Creates a destination table with CHECK constraint (col2 < 500)
+    /// - Attempts to bulk insert data including a row that violates the constraint (col2 = 500)
+    /// - Verifies SQL Error 547 (constraint violation) is returned
+    #[derive(Debug, Clone)]
+    struct CheckConstraintRow {
+        col1: i32,
+        col2: i32,
+        col3: String,
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for CheckConstraintRow {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            use mssql_tds::datatypes::sql_string::SqlString;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.col1))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.col2))
+                .await?;
+            *column_index += 1;
+            let sql_string = SqlString::from_utf8_string(self.col3.clone());
+            writer
+                .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                .await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for &CheckConstraintRow {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            use mssql_tds::datatypes::sql_string::SqlString;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.col1))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.col2))
+                .await?;
+            *column_index += 1;
+            let sql_string = SqlString::from_utf8_string(self.col3.clone());
+            writer
+                .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                .await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_with_check_constraints() {
+        let mut client = begin_connection(&build_tcp_datasource()).await;
+
+        // Create destination table with CHECK constraint: col2 must be < 500
+        // This mirrors the .NET test structure
+        client
+            .execute(
+                "CREATE TABLE #BulkCopyCheckConstraint (
+                    col1 INT PRIMARY KEY,
+                    col2 INT CONSTRAINT CK_BulkCopyCheckConstraint CHECK (col2 < 500),
+                    col3 NVARCHAR(100)
+                )"
+                .to_string(),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create test table with CHECK constraint");
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Prepare test data - includes a row that violates the CHECK constraint
+        // Row 3 has col2 = 500 which violates CHECK (col2 < 500)
+        let test_data = vec![
+            CheckConstraintRow {
+                col1: 33,
+                col2: 498, // Valid: 498 < 500
+                col3: "Michael".to_string(),
+            },
+            CheckConstraintRow {
+                col1: 34,
+                col2: 499, // Valid: 499 < 500
+                col3: "Astrid".to_string(),
+            },
+            CheckConstraintRow {
+                col1: 65,
+                col2: 500, // INVALID: 500 is NOT < 500, violates CHECK constraint
+                col3: "Test User".to_string(),
+            },
+        ];
+
+        // Execute bulk copy WITH check_constraints option enabled
+        let result = {
+            let bulk_copy = BulkCopy::new(&mut client, "#BulkCopyCheckConstraint");
+            bulk_copy
+                .check_constraints(true) // Enable CHECK_CONSTRAINTS hint
+                .write_to_server_zerocopy(&test_data)
+                .await
+        };
+
+        // With check_constraints enabled, server should reject the batch with error 547
+        // Error 547: The %ls statement conflicted with the %ls constraint "%.*ls"
+        assert!(
+            result.is_err(),
+            "Expected error when inserting row that violates CHECK constraint"
+        );
+
+        let error = result.unwrap_err();
+        let error_msg = format!("{:?}", error);
+
+        // Verify it's the expected SQL Server error (error 547 - constraint violation)
+        assert!(
+            error_msg.contains("547")
+                || error_msg.contains("CHECK")
+                || error_msg.contains("constraint"),
+            "Expected error 547 about CHECK constraint violation, got: {}",
+            error_msg
+        );
+
+        println!(
+            "check_constraints test passed: Error 547 returned for CHECK constraint violation"
+        );
+    }
+
+    /// Test bulk copy WITHOUT check_constraints option.
+    /// This verifies that when check_constraints is disabled (default),
+    /// SQL Server does NOT enforce CHECK constraints and allows invalid data.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_without_check_constraints_allows_invalid_data() {
+        let mut client = begin_connection(&build_tcp_datasource()).await;
+
+        // Create destination table with CHECK constraint: col2 must be < 500
+        client
+            .execute(
+                "CREATE TABLE #BulkCopyNoCheckConstraint (
+                    col1 INT PRIMARY KEY,
+                    col2 INT CONSTRAINT CK_BulkCopyNoCheck CHECK (col2 < 500),
+                    col3 NVARCHAR(100)
+                )"
+                .to_string(),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create test table with CHECK constraint");
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Prepare test data - includes a row that violates the CHECK constraint
+        let test_data = vec![
+            CheckConstraintRow {
+                col1: 33,
+                col2: 498, // Valid
+                col3: "Michael".to_string(),
+            },
+            CheckConstraintRow {
+                col1: 34,
+                col2: 499, // Valid
+                col3: "Astrid".to_string(),
+            },
+            CheckConstraintRow {
+                col1: 65,
+                col2: 500, // INVALID but should be inserted anyway (check_constraints=false)
+                col3: "Test User".to_string(),
+            },
+        ];
+
+        // Execute bulk copy WITHOUT check_constraints (default is false)
+        let result = {
+            let mut bulk_copy = BulkCopy::new(&mut client, "#BulkCopyNoCheckConstraint");
+            bulk_copy
+                // check_constraints is false by default
+                .write_to_server_zerocopy(&test_data)
+                .await
+        };
+
+        // Without check_constraints, server should allow the invalid data
+        assert!(
+            result.is_ok(),
+            "Expected success when check_constraints is disabled, got error: {:?}",
+            result.err()
+        );
+
+        let bulk_result = result.unwrap();
+        assert_eq!(
+            bulk_result.rows_affected, 3,
+            "Expected all 3 rows to be inserted (including invalid one)"
+        );
+
+        // Verify the invalid data was actually inserted
+        client
+            .execute(
+                "SELECT col1, col2 FROM #BulkCopyNoCheckConstraint WHERE col2 >= 500".to_string(),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to query invalid data");
+
+        let mut found_invalid = false;
+        if let Some(resultset) = client.get_current_resultset() {
+            while let Some(row) = resultset.next_row().await.expect("Failed to read row") {
+                if row[0] == ColumnValues::Int(65) && row[1] == ColumnValues::Int(500) {
+                    found_invalid = true;
+                    println!(
+                        "Confirmed: Invalid row (col2=500) was inserted when check_constraints=false"
+                    );
+                }
+            }
+        }
+
+        assert!(
+            found_invalid,
+            "Expected to find invalid row (col2=500) in table when check_constraints is disabled"
+        );
+
+        client.close_query().await.expect("Failed to close query");
+
+        println!("Test passed: Invalid data inserted successfully when check_constraints=false");
+    }
 }
