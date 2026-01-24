@@ -1949,4 +1949,417 @@ mod bulk_copy_integration_tests {
 
         println!("Control test passed: Without keep_nulls, default value behavior was verified");
     }
+
+    /// Test bulk copy with fire_triggers option enabled.
+    /// This test verifies that when fire_triggers is enabled, INSERT triggers on the
+    /// destination table are executed during bulk copy operations.
+    ///
+    /// This mirrors the .NET SqlBulkCopyOptions.FireTriggers behavior:
+    /// - Creates a destination table with an INSERT trigger
+    /// - The trigger inserts a marker value into a second table when fired
+    /// - Bulk inserts data with fire_triggers=true
+    /// - Verifies the trigger fired by checking the marker table
+    #[derive(Debug, Clone)]
+    struct FireTriggersRow {
+        id: i32,
+        name: String,
+        value: i32,
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for FireTriggersRow {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            use mssql_tds::datatypes::sql_string::SqlString;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
+            *column_index += 1;
+            let sql_string = SqlString::from_utf8_string(self.name.clone());
+            writer
+                .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value))
+                .await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for &FireTriggersRow {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            use mssql_tds::datatypes::sql_string::SqlString;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
+            *column_index += 1;
+            let sql_string = SqlString::from_utf8_string(self.name.clone());
+            writer
+                .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                .await?;
+            *column_index += 1;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.value))
+                .await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_with_fire_triggers() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let mut client = begin_connection(&build_tcp_datasource()).await;
+
+        // Generate unique table names to avoid conflicts between test runs
+        // Note: We use permanent tables because SQL Server doesn't allow triggers on temp tables
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let dest_table = format!("BulkCopyFireTriggers_{}", timestamp);
+        let marker_table = format!("TriggerMarker_{}", timestamp);
+        let trigger_name = format!("TR_FireTriggerTest_{}", timestamp);
+
+        // Cleanup helper - drop tables and trigger if they exist
+        async fn cleanup(
+            client: &mut mssql_tds::connection::tds_client::TdsClient,
+            trigger_name: &str,
+            dest_table: &str,
+            marker_table: &str,
+        ) {
+            // Drop trigger first (it depends on the table)
+            let _ = client
+                .execute(
+                    format!(
+                        "IF OBJECT_ID('{}', 'TR') IS NOT NULL DROP TRIGGER {}",
+                        trigger_name, trigger_name
+                    ),
+                    None,
+                    None,
+                )
+                .await;
+            let _ = client.close_query().await;
+
+            // Drop destination table
+            let _ = client
+                .execute(
+                    format!(
+                        "IF OBJECT_ID('{}', 'U') IS NOT NULL DROP TABLE {}",
+                        dest_table, dest_table
+                    ),
+                    None,
+                    None,
+                )
+                .await;
+            let _ = client.close_query().await;
+
+            // Drop marker table
+            let _ = client
+                .execute(
+                    format!(
+                        "IF OBJECT_ID('{}', 'U') IS NOT NULL DROP TABLE {}",
+                        marker_table, marker_table
+                    ),
+                    None,
+                    None,
+                )
+                .await;
+            let _ = client.close_query().await;
+        }
+
+        // Initial cleanup in case of leftover from failed previous run
+        cleanup(&mut client, &trigger_name, &dest_table, &marker_table).await;
+
+        // Create destination table that will receive the bulk copy data
+        client
+            .execute(
+                format!(
+                    "CREATE TABLE {} (
+                    id INT PRIMARY KEY,
+                    name NVARCHAR(100),
+                    value INT NOT NULL
+                )",
+                    dest_table
+                ),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create destination table");
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Create a marker table that will receive values when the trigger fires
+        client
+            .execute(
+                format!(
+                    "CREATE TABLE {} (
+                    marker_value INT
+                )",
+                    marker_table
+                ),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create marker table");
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Create an INSERT trigger on the destination table
+        // When rows are inserted, the trigger inserts a marker value (333)
+        // This matches the .NET test pattern from FireTrigger.cs
+        client
+            .execute(
+                format!(
+                    "CREATE TRIGGER {} ON {}
+                FOR INSERT AS
+                INSERT INTO {} VALUES (333)",
+                    trigger_name, dest_table, marker_table
+                ),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create trigger");
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Prepare test data
+        let test_data = vec![
+            FireTriggersRow {
+                id: 1,
+                name: "Alice".to_string(),
+                value: 100,
+            },
+            FireTriggersRow {
+                id: 2,
+                name: "Bob".to_string(),
+                value: 200,
+            },
+        ];
+
+        // Execute bulk copy with fire_triggers=true
+        let result = {
+            let bulk_copy = BulkCopy::new(&mut client, &dest_table);
+            bulk_copy
+                .fire_triggers(true)
+                .write_to_server_zerocopy(&test_data)
+                .await
+        };
+
+        assert!(
+            result.is_ok(),
+            "Bulk copy with fire_triggers should succeed, got error: {:?}",
+            result.err()
+        );
+
+        // Verify the trigger fired by checking the marker table
+        // The trigger inserts value 333 when rows are inserted
+        client
+            .execute(
+                format!("SELECT marker_value FROM {}", marker_table),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to query marker table");
+
+        let mut trigger_fired = false;
+        if let Some(resultset) = client.get_current_resultset() {
+            while let Some(row) = resultset.next_row().await.expect("Failed to read row") {
+                if let ColumnValues::Int(333) = row[0] {
+                    trigger_fired = true;
+                    println!("Confirmed: Trigger fired and inserted marker value 333");
+                }
+            }
+        }
+
+        // Cleanup
+        cleanup(&mut client, &trigger_name, &dest_table, &marker_table).await;
+
+        assert!(
+            trigger_fired,
+            "Trigger should have fired and inserted marker value 333 into marker table"
+        );
+
+        println!("Test passed: fire_triggers=true caused the INSERT trigger to execute");
+    }
+
+    /// Control test: Verify that without fire_triggers, triggers are NOT executed
+    /// This provides a baseline to confirm that fire_triggers actually changes behavior
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_without_fire_triggers_skips_triggers() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let mut client = begin_connection(&build_tcp_datasource()).await;
+
+        // Generate unique table names
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let dest_table = format!("BulkCopyNoTriggers_{}", timestamp);
+        let marker_table = format!("NoTriggerMarker_{}", timestamp);
+        let trigger_name = format!("TR_NoTriggerTest_{}", timestamp);
+
+        // Cleanup helper
+        async fn cleanup(
+            client: &mut mssql_tds::connection::tds_client::TdsClient,
+            trigger_name: &str,
+            dest_table: &str,
+            marker_table: &str,
+        ) {
+            let _ = client
+                .execute(
+                    format!(
+                        "IF OBJECT_ID('{}', 'TR') IS NOT NULL DROP TRIGGER {}",
+                        trigger_name, trigger_name
+                    ),
+                    None,
+                    None,
+                )
+                .await;
+            let _ = client.close_query().await;
+            let _ = client
+                .execute(
+                    format!(
+                        "IF OBJECT_ID('{}', 'U') IS NOT NULL DROP TABLE {}",
+                        dest_table, dest_table
+                    ),
+                    None,
+                    None,
+                )
+                .await;
+            let _ = client.close_query().await;
+            let _ = client
+                .execute(
+                    format!(
+                        "IF OBJECT_ID('{}', 'U') IS NOT NULL DROP TABLE {}",
+                        marker_table, marker_table
+                    ),
+                    None,
+                    None,
+                )
+                .await;
+            let _ = client.close_query().await;
+        }
+
+        // Initial cleanup
+        cleanup(&mut client, &trigger_name, &dest_table, &marker_table).await;
+
+        // Create destination table
+        client
+            .execute(
+                format!(
+                    "CREATE TABLE {} (
+                    id INT PRIMARY KEY,
+                    name NVARCHAR(100),
+                    value INT NOT NULL
+                )",
+                    dest_table
+                ),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create destination table");
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Create marker table
+        client
+            .execute(
+                format!("CREATE TABLE {} (marker_value INT)", marker_table),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create marker table");
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Create INSERT trigger
+        client
+            .execute(
+                format!(
+                    "CREATE TRIGGER {} ON {}
+                FOR INSERT AS
+                INSERT INTO {} VALUES (333)",
+                    trigger_name, dest_table, marker_table
+                ),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create trigger");
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Prepare test data
+        let test_data = vec![FireTriggersRow {
+            id: 1,
+            name: "Test".to_string(),
+            value: 100,
+        }];
+
+        // Execute bulk copy WITHOUT fire_triggers (default is false)
+        let result = {
+            let mut bulk_copy = BulkCopy::new(&mut client, &dest_table);
+            // fire_triggers is false by default
+            bulk_copy.write_to_server_zerocopy(&test_data).await
+        };
+
+        assert!(
+            result.is_ok(),
+            "Bulk copy should succeed, got error: {:?}",
+            result.err()
+        );
+
+        // Check marker table - should be EMPTY because trigger didn't fire
+        client
+            .execute(format!("SELECT COUNT(*) FROM {}", marker_table), None, None)
+            .await
+            .expect("Failed to query marker table");
+
+        let marker_count = if let Some(resultset) = client.get_current_resultset() {
+            if let Some(row) = resultset.next_row().await.expect("Failed to read row") {
+                match row[0] {
+                    ColumnValues::Int(count) => count,
+                    _ => -1,
+                }
+            } else {
+                -1
+            }
+        } else {
+            -1
+        };
+
+        client.close_query().await.expect("Failed to close query");
+
+        // Cleanup
+        cleanup(&mut client, &trigger_name, &dest_table, &marker_table).await;
+
+        assert_eq!(
+            marker_count, 0,
+            "Marker table should be empty - trigger should NOT have fired without fire_triggers"
+        );
+
+        println!(
+            "Control test passed: Without fire_triggers, trigger was not executed (marker count: {})",
+            marker_count
+        );
+    }
 }
