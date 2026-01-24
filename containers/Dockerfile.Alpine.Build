@@ -15,6 +15,7 @@ RUN apk add --no-cache \
     openssl-dev \
     openssl-libs-static \
     musl-dev \
+    krb5-dev \
     curl
 
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y

@@ -333,18 +333,20 @@ stages:
         scriptType: 'bash'
         scriptLocation: 'inlineScript'
         inlineScript: |
+          set -e
           az acr login --name tdslibrs
           
           echo "==> Creating multi-arch manifest for Ubuntu 22.04 build image..."
-          docker manifest create tdslibrs.azurecr.io/build/ubuntu:22.04 \
+          # Use buildx imagetools create to properly handle manifest lists as inputs
+          docker buildx imagetools create -t tdslibrs.azurecr.io/build/ubuntu:22.04 \
             tdslibrs.azurecr.io/build/ubuntu:22.04-x64 \
             tdslibrs.azurecr.io/build/ubuntu:22.04-arm64
           
-          echo "==> Pushing multi-arch manifest..."
-          docker manifest push tdslibrs.azurecr.io/build/ubuntu:22.04
-          
           echo "✅ Multi-arch Ubuntu build image created"
           echo "   Image: tdslibrs.azurecr.io/build/ubuntu:22.04 (amd64, arm64)"
+          
+          echo "==> Verifying manifest..."
+          docker manifest inspect tdslibrs.azurecr.io/build/ubuntu:22.04
 
     - task: AzureCLI@2
       displayName: 'Create multi-arch manifest for Alpine build image'
@@ -353,18 +355,20 @@ stages:
         scriptType: 'bash'
         scriptLocation: 'inlineScript'
         inlineScript: |
+          set -e
           az acr login --name tdslibrs
           
           echo "==> Creating multi-arch manifest for Alpine 3.18 build image..."
-          docker manifest create tdslibrs.azurecr.io/build/alpine:3.18 \
+          # Use buildx imagetools create to properly handle manifest lists as inputs
+          docker buildx imagetools create -t tdslibrs.azurecr.io/build/alpine:3.18 \
             tdslibrs.azurecr.io/build/alpine:3.18-amd64 \
             tdslibrs.azurecr.io/build/alpine:3.18-arm64
           
-          echo "==> Pushing multi-arch manifest..."
-          docker manifest push tdslibrs.azurecr.io/build/alpine:3.18
-          
           echo "✅ Multi-arch Alpine build image created"
           echo "   Image: tdslibrs.azurecr.io/build/alpine:3.18 (amd64, arm64)"
+          
+          echo "==> Verifying manifest..."
+          docker manifest inspect tdslibrs.azurecr.io/build/alpine:3.18
 
   - job: VerifyAllImages
     displayName: Verify All Images in ACR
