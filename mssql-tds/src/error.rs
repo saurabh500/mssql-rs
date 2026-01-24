@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::security::SecurityError;
 use thiserror::Error;
 use tokio::time::error::Elapsed;
 
@@ -98,6 +99,9 @@ pub enum Error {
 
     #[error("No server certificate available during TLS handshake.")]
     NoServerCertificate,
+
+    #[error("Security error: {0}")]
+    Security(#[from] SecurityError),
 }
 
 #[cfg(test)]

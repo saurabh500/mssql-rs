@@ -610,6 +610,7 @@ impl NetworkTransport {
             TokenParsers::ReturnStatus(parser) => parser.parse(self, context).await,
             TokenParsers::NbcRow(parser) => parser.parse(self, context).await,
             TokenParsers::ReturnValue(parser) => parser.parse(self, context).await,
+            TokenParsers::Sspi(parser) => parser.parse(self, context).await,
         }
     }
 
