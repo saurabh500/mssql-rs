@@ -47,8 +47,9 @@
 use super::gssapi_ffi::{
     self, GSS_C_DELEG_FLAG, GSS_C_MUTUAL_FLAG, GSS_C_NO_CHANNEL_BINDINGS, GSS_C_NO_CONTEXT,
     GSS_C_NO_CREDENTIAL, GSS_C_NO_OID, GSS_S_COMPLETE, GSS_S_CONTINUE_NEEDED, GssBufferDesc,
-    GssCtxIdT, GssNameT, GssOmUint32, get_gssapi_error, gss_delete_sec_context, gss_import_name,
-    gss_init_sec_context, gss_nt_service_name, gss_release_buffer, gss_release_name,
+    GssCtxIdT, GssNameT, GssOmUint32, get_gss_nt_service_name, get_gssapi_error,
+    gss_delete_sec_context, gss_import_name, gss_init_sec_context, gss_release_buffer,
+    gss_release_name,
 };
 use crate::security::{
     IntegratedAuthConfig, SecurityContext, SecurityError, SspiAuthToken,
@@ -357,7 +358,15 @@ fn import_name(spn: &str, user_provided: bool) -> Result<GssNameT, SecurityError
     let mut name_buffer = GssBufferDesc::from_str(&gssapi_name);
 
     // Use GSS_C_NT_HOSTBASED_SERVICE for "service@host" format
-    let name_type = unsafe { gss_nt_service_name };
+    // Use safe wrapper to prevent null pointer dereference if GSSAPI library is not installed
+    let name_type = get_gss_nt_service_name().ok_or_else(|| {
+        SecurityError::LoadLibraryFailed(
+            "GSSAPI library (libgssapi_krb5.so) is not available. \
+             Please install the Kerberos libraries (e.g., 'apt install libkrb5-dev' on Debian/Ubuntu \
+             or 'yum install krb5-devel' on RHEL/CentOS)."
+                .to_string(),
+        )
+    })?;
 
     let major_status = unsafe {
         gss_import_name(

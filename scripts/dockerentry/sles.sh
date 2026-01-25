@@ -15,6 +15,7 @@ zypper install -y \
     make \
     pkg-config \
     libopenssl-devel \
+    krb5-devel \
     curl
 
 # Install Rust

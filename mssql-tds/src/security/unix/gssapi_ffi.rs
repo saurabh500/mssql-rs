@@ -12,8 +12,10 @@
 //! All FFI functions are inherently unsafe. The safe wrappers in `GssapiContext`
 //! should be used instead of calling these directly.
 
+use std::ffi::CString;
 use std::os::raw::c_void;
 use std::ptr;
+use std::sync::OnceLock;
 
 /// GSSAPI OM_uint32 type (status codes and flags)
 pub type GssOmUint32 = u32;
@@ -356,13 +358,82 @@ fn get_status_message(status: GssOmUint32, status_type: i32) -> Option<String> {
     }
 }
 
-/// Checks if GSSAPI library is available.
+/// Wrapper to make the raw pointer Send+Sync for the OnceLock.
 ///
-/// This is a compile-time check since we're statically linking.
-/// For dynamic loading, we would use dlopen here.
+/// # Safety
+///
+/// The library handle is only set once during initialization and never modified.
+/// It's safe to share across threads as we only use it for symbol lookups via dlsym.
+struct GssapiLibHandle(*mut c_void);
+
+// SAFETY: The library handle is only set once and never modified after initialization.
+// It's safe to share across threads as we only use it for symbol lookups.
+unsafe impl Send for GssapiLibHandle {}
+unsafe impl Sync for GssapiLibHandle {}
+
+/// Cached result of GSSAPI library availability check.
+static GSSAPI_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+/// Library handle for GSSAPI (kept alive for the process lifetime).
+static GSSAPI_LIB_HANDLE: OnceLock<GssapiLibHandle> = OnceLock::new();
+
+/// Checks if GSSAPI library is available at runtime.
+///
+/// This performs a dynamic library check using dlopen to verify that
+/// libgssapi_krb5.so is actually installed and loadable on the system.
+/// The result is cached after the first check.
+///
+/// # Returns
+///
+/// `true` if the GSSAPI library is available and can be loaded.
 pub fn is_gssapi_available() -> bool {
-    // If this code compiles and runs, gssapi is available
-    true
+    *GSSAPI_AVAILABLE.get_or_init(|| {
+        // Try to load the GSSAPI library dynamically to check availability
+        let lib_names = [
+            "libgssapi_krb5.so.2", // Common on most Linux distros
+            "libgssapi_krb5.so",   // Fallback
+            "libgssapi.so",        // Alternative name
+        ];
+
+        for lib_name in &lib_names {
+            if let Ok(c_name) = CString::new(*lib_name) {
+                // First check if the library is already loaded by the linker
+                let handle =
+                    unsafe { libc::dlopen(c_name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
+
+                if !handle.is_null() {
+                    // Library is already loaded (by the linker), store the handle
+                    let _ = GSSAPI_LIB_HANDLE.set(GssapiLibHandle(handle));
+                    return true;
+                }
+
+                // Try loading it explicitly
+                let handle = unsafe { libc::dlopen(c_name.as_ptr(), libc::RTLD_NOW) };
+
+                if !handle.is_null() {
+                    // Successfully loaded, store the handle
+                    let _ = GSSAPI_LIB_HANDLE.set(GssapiLibHandle(handle));
+                    return true;
+                }
+            }
+        }
+
+        false
+    })
+}
+
+/// Gets the gss_nt_service_name OID, returning None if GSSAPI is not available.
+///
+/// This is a safe wrapper that checks library availability before accessing
+/// the extern static to prevent null pointer dereferences.
+pub fn get_gss_nt_service_name() -> Option<GssOid> {
+    if !is_gssapi_available() {
+        return None;
+    }
+
+    // SAFETY: We've verified the library is loaded, so the symbol should be valid
+    let oid = unsafe { gss_nt_service_name };
+    if oid.is_null() { None } else { Some(oid) }
 }
 
 /// Checks if a valid Kerberos ticket is available.

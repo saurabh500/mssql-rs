@@ -45,6 +45,10 @@ dns-lookup = "2.0"
 winapi = { version = "0.3", features = ["namedpipeapi", "winerror"] }
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Registry"] }
 
+[target.'cfg(unix)'.dependencies]
+# For runtime GSSAPI library detection using dlopen/dlsym
+libc = "0.2"
+
 [dependencies.uuid]
 version = "1.19.0"
 features = [

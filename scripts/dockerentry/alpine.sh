@@ -15,6 +15,7 @@ apk add --no-cache \
     openssl-dev \
     openssl-libs-static \
     musl-dev \
+    krb5-dev \
     curl \
     openssl
 

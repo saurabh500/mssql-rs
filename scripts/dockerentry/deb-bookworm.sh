@@ -8,7 +8,8 @@ apt-get install -y \
     tar \
     build-essential \
     pkg-config \
-    openssl
+    openssl \
+    libkrb5-dev
 
 
 curl https://sh.rustup.rs -sSf | sh -s -- -y
