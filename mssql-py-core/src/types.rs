@@ -608,8 +608,10 @@ fn validate_type_compatibility(
             | SqlDbType::NText,
         ) => true,
 
-        // Binary
-        (ColumnValues::Bytes(_), SqlDbType::VarBinary | SqlDbType::Binary) => true,
+        // Binary (including legacy IMAGE type)
+        (ColumnValues::Bytes(_), SqlDbType::VarBinary | SqlDbType::Binary | SqlDbType::Image) => {
+            true
+        }
 
         // Boolean
         (ColumnValues::Bit(_), SqlDbType::Bit) => true,

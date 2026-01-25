@@ -34,6 +34,9 @@ const VARCHAR: u8 = TdsDataType::BigVarChar as u8; // 0xA7
 const CHAR: u8 = TdsDataType::BigChar as u8; // 0xAF
 const TEXT: u8 = TdsDataType::Text as u8; // 0x23
 
+// TDS type byte constant for binary types
+const IMAGE: u8 = TdsDataType::Image as u8; // 0x22
+
 /// Context for value serialization, containing type metadata needed for encoding.
 ///
 /// This struct encapsulates the TDS type information required to properly encode
@@ -1103,7 +1106,7 @@ impl TdsValueSerializer {
         Ok(())
     }
 
-    /// Serialize BINARY/VARBINARY data to the TDS stream.
+    /// Serialize BINARY/VARBINARY/IMAGE data to the TDS stream.
     ///
     /// BINARY/VARBINARY wire format:
     /// - For variable-length types (BINARY/VARBINARY):
@@ -1115,12 +1118,18 @@ impl TdsValueSerializer {
     ///     - chunks of data with 4-byte length prefixes
     ///     - 4-byte terminator (0x00000000)
     ///
+    /// IMAGE wire format (legacy LOB type):
+    /// - Format: textptr_len (1) + textptr (16 x 0xFF) + timestamp (8 x 0xFF) + length (4) + data
+    /// - This matches the format used by TEXT and NTEXT types
+    /// - Reference: TdsParser.cs s_longDataHeader constant
+    ///
     /// For BINARY(n): If data length < n, pad with zeros to reach fixed length
     /// For VARBINARY(n): Use exact data length, no padding
     ///
     /// TDS types:
     /// - 0xAD: BINARY(n) / VARBINARY(n) - fixed/variable-length binary
     /// - 0xA5: VARBINARY(MAX) - variable-length binary with PLP encoding
+    /// - 0x22: IMAGE - legacy LOB type with special header format
     #[inline(always)]
     async fn serialize_bytes<'a, 'b>(
         writer: &'a mut PacketWriter<'b>,
@@ -1133,16 +1142,39 @@ impl TdsValueSerializer {
         let data_len = value.len();
         let schema_size = ctx.max_size;
 
-        // Check for size overflow (skip for PLP types which support up to 2GB)
-        if !ctx.is_plp && data_len > schema_size {
+        // Check for size overflow (skip for PLP types and legacy LOB types which support up to 2GB)
+        if !ctx.is_plp && ctx.tds_type != IMAGE && data_len > schema_size {
             return Err(Error::UsageError(format!(
                 "Binary data length ({}) exceeds schema size ({})",
                 data_len, schema_size
             )));
         }
 
-        // For PLP types (MAX types), use PLP encoding
-        if ctx.is_plp {
+        // Handle IMAGE type (legacy LOB type, similar to TEXT/NTEXT)
+        if ctx.tds_type == IMAGE {
+            // Legacy LOB type format: textptr_len (1) + textptr (16 x 0xFF) + timestamp (8 x 0xFF) + length (4) + data
+            // This matches the format used by TEXT and NTEXT
+
+            // Write textptr length as 16 (0x10)
+            writer.write_byte_async(0x10).await?;
+
+            // Write 16-byte textptr (all 0xFF as per .NET SqlClient)
+            for _ in 0..16 {
+                writer.write_byte_async(0xFF).await?;
+            }
+
+            // Write 8-byte timestamp (all 0xFF as per .NET SqlClient)
+            for _ in 0..8 {
+                writer.write_byte_async(0xFF).await?;
+            }
+
+            // Write data length (4 bytes)
+            writer.write_u32_async(data_len as u32).await?;
+
+            // Write actual data
+            writer.write_async(value).await?;
+        } else if ctx.is_plp {
+            // For PLP types (MAX types), use PLP encoding
             // Write PLP_UNKNOWN_LEN (0xFFFFFFFFFFFFFFFE) to indicate total length is unknown
             // This matches .NET SqlBulkCopy behavior
             writer.write_u64_async(PLP_UNKNOWN_LEN).await?;
