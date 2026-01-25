@@ -1061,6 +1061,16 @@ bitflags::bitflags! {
     }
 }
 
+impl DoneStatus {
+    /// Check if this status indicates an attention acknowledgment.
+    ///
+    /// This is set when the server responds to an attention packet (MT_ATTN = 0x06).
+    #[inline]
+    pub fn is_attention_ack(&self) -> bool {
+        self.contains(DoneStatus::ATTN)
+    }
+}
+
 impl From<u16> for DoneStatus {
     fn from(value: u16) -> Self {
         DoneStatus::from_bits_truncate(value)
@@ -1182,6 +1192,36 @@ impl EnvChangeTokenSubType {
             EnvChangeTokenSubType::Routing => 20,
             EnvChangeTokenSubType::Unknown(val) => *val,
         }
+    }
+}
+
+#[cfg(test)]
+mod done_status_tests {
+    use super::*;
+
+    #[test]
+    fn test_is_attention_ack() {
+        let status_with_attn = DoneStatus::ATTN;
+        assert!(status_with_attn.is_attention_ack());
+
+        let status_combined = DoneStatus::ATTN | DoneStatus::COUNT;
+        assert!(status_combined.is_attention_ack());
+
+        let status_without_attn = DoneStatus::COUNT | DoneStatus::MORE;
+        assert!(!status_without_attn.is_attention_ack());
+
+        let status_final = DoneStatus::FINAL;
+        assert!(!status_final.is_attention_ack());
+    }
+
+    #[test]
+    fn test_done_status_from_u16() {
+        let status = DoneStatus::from(0x0020_u16);
+        assert!(status.is_attention_ack());
+
+        let status2 = DoneStatus::from(0x0030_u16); // ATTN | COUNT
+        assert!(status2.is_attention_ack());
+        assert!(status2.contains(DoneStatus::COUNT));
     }
 }
 

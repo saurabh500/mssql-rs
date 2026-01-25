@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 pub mod bulk_copy;
+pub mod bulk_copy_state;
 pub mod client_context;
 pub mod connection_actions;
 pub mod datasource_parser;

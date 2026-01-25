@@ -218,6 +218,14 @@ pub mod fuzz_support {
             // No-op for mock transport
             Ok(())
         }
+
+        async fn send_attention_with_timeout(
+            &mut self,
+            _timeout: std::time::Duration,
+        ) -> TdsResult<bool> {
+            // For mock transport, just return success (ACK received)
+            Ok(true)
+        }
     }
 
     // Implement TdsPacketReader by delegating to the inner packet reader

@@ -3,7 +3,7 @@
 
 // Utility functions for the PyO3 bindings
 
-use mssql_tds::error::Error as TdsError;
+use mssql_tds::error::{BulkCopyError, Error as TdsError};
 use pyo3::prelude::*;
 use pyo3::Python;
 
@@ -51,6 +51,36 @@ pub fn convert_tds_error(error: TdsError) -> PyErr {
         }
         TdsError::ProtocolError(msg) => {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Protocol Error: {}", msg))
+        }
+        TdsError::BulkCopyError(bc_err) => {
+            // Handle bulk copy specific errors with appropriate Python exceptions
+            match bc_err {
+                BulkCopyError::Timeout(timeout_err) => {
+                    // Bulk copy operation timed out - raise TimeoutError
+                    pyo3::exceptions::PyTimeoutError::new_err(format!(
+                        "Bulk copy operation timed out after {} seconds ({} rows copied){}",
+                        timeout_err.timeout_seconds,
+                        timeout_err.rows_copied,
+                        timeout_err
+                            .context
+                            .as_ref()
+                            .map(|c| format!(". {}", c))
+                            .unwrap_or_default()
+                    ))
+                }
+                BulkCopyError::AttentionTimeout(attn_err) => {
+                    // Attention ACK not received - connection is broken
+                    let msg = if attn_err.connection_broken {
+                        "Attention acknowledgment not received within 5 seconds. Connection has been broken."
+                    } else {
+                        "Attention acknowledgment not received within 5 seconds."
+                    };
+                    pyo3::exceptions::PyTimeoutError::new_err(msg)
+                }
+                BulkCopyError::ConnectionBroken(msg) => pyo3::exceptions::PyRuntimeError::new_err(
+                    format!("Connection is broken: {}", msg),
+                ),
+            }
         }
         _ => pyo3::exceptions::PyRuntimeError::new_err(error.to_string()),
     }

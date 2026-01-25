@@ -1,6 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub mod bulk_copy_errors;
+
+pub use bulk_copy_errors::{BulkCopyAttentionTimeoutError, BulkCopyError, BulkCopyTimeoutError};
+
 use crate::security::SecurityError;
 use thiserror::Error;
 use tokio::time::error::Elapsed;
@@ -99,6 +103,9 @@ pub enum Error {
 
     #[error("No server certificate available during TLS handshake.")]
     NoServerCertificate,
+
+    #[error("Bulk Copy Error: {0}")]
+    BulkCopyError(#[from] BulkCopyError),
 
     #[error("Security error: {0}")]
     Security(#[from] SecurityError),

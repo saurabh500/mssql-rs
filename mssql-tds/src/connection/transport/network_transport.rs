@@ -618,18 +618,85 @@ impl NetworkTransport {
     /// an acknowledgement.
     async fn cancel_read_stream_and_wait(&mut self) -> TdsResult<()> {
         self.cancel_read_stream().await?;
-        let dummy_context = ParserContext::None(());
-        // This method is intended to be called from receive_token(). We enforce only one level
-        // of recursion by preventing timeout and cancellation on the internal receive_token() call.
-        while let Ok(token) = self.receive_token_internal(&dummy_context).await {
-            if let Tokens::Done(done_token) = token
-                && done_token.status.contains(DoneStatus::ATTN)
-            {
-                break;
-            }
-            // Discard any other token.
-        }
+        // Wait indefinitely for attention ACK
+        let _ = self.wait_for_attention_ack(None).await?;
         Ok(())
+    }
+
+    /// Wait for attention acknowledgment from server with optional timeout.
+    ///
+    /// This helper reads tokens until it receives a DONE token with the ATTN flag set,
+    /// discarding any other tokens. If a timeout is specified and expires before
+    /// receiving the ACK, returns `Ok(false)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `attention_timeout` - Optional timeout. If `None`, waits indefinitely.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` - Attention acknowledged by server
+    /// * `Ok(false)` - Timeout expired waiting for ACK (only when timeout specified)
+    /// * `Err(_)` - Error reading response
+    async fn wait_for_attention_ack(
+        &mut self,
+        attention_timeout: Option<Duration>,
+    ) -> TdsResult<bool> {
+        let dummy_context = ParserContext::None(());
+        let start = std::time::Instant::now();
+
+        loop {
+            // Check timeout if specified
+            if let Some(timeout_duration) = attention_timeout
+                && start.elapsed() >= timeout_duration
+            {
+                debug!("Attention ACK timeout after {:?}", start.elapsed());
+                return Ok(false);
+            }
+
+            // Read next token, with timeout if specified
+            let token_result = if let Some(timeout_duration) = attention_timeout {
+                let remaining = timeout_duration.saturating_sub(start.elapsed());
+                match timeout(remaining, self.receive_token_internal(&dummy_context)).await {
+                    Ok(result) => result,
+                    Err(_elapsed) => {
+                        debug!(
+                            "Attention ACK timeout (elapsed) after {:?}",
+                            start.elapsed()
+                        );
+                        return Ok(false);
+                    }
+                }
+            } else {
+                // No timeout - wait indefinitely
+                self.receive_token_internal(&dummy_context).await
+            };
+
+            match token_result {
+                Ok(token) => {
+                    if let Tokens::Done(done_token) = token
+                        && done_token.status.contains(DoneStatus::ATTN)
+                    {
+                        debug!("Attention ACK received after {:?}", start.elapsed());
+                        return Ok(true);
+                    }
+                    // Discard other tokens and continue waiting
+                }
+                Err(e) => {
+                    if attention_timeout.is_none() {
+                        // When waiting indefinitely, errors just break the loop (original behavior)
+                        break;
+                    }
+                    // When using timeout, propagate errors
+                    debug!(
+                        "Error reading token while waiting for attention ACK: {:?}",
+                        e
+                    );
+                    return Err(e);
+                }
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -979,6 +1046,26 @@ impl crate::connection::transport::tds_transport::TdsTransport for NetworkTransp
             stream.shutdown().await?;
         }
         Ok(())
+    }
+
+    /// Send an attention packet and wait for acknowledgment with a timeout.
+    ///
+    /// This implements the attention sending flow with a configurable timeout:
+    /// 1. Send MT_ATTN (0x06) packet to the server
+    /// 2. Wait for DONE token with ATTN (0x0020) status flag
+    /// 3. If no acknowledgment within timeout, return false
+    ///
+    /// This is used by bulk copy timeout handling to implement the 5-second
+    /// attention ACK timeout per SqlClient behavior.
+    async fn send_attention_with_timeout(
+        &mut self,
+        attention_timeout: Duration,
+    ) -> TdsResult<bool> {
+        // Send attention packet
+        self.cancel_read_stream().await?;
+
+        // Wait for ACK with timeout using the shared helper
+        self.wait_for_attention_ack(Some(attention_timeout)).await
     }
 }
 

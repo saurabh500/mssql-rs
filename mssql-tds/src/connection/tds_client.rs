@@ -1036,6 +1036,28 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Send an attention packet and wait for acknowledgment with a timeout.
+    ///
+    /// This method is used by bulk copy operations to implement timeout handling
+    /// per the SqlClient behavior:
+    /// 1. Send MT_ATTN (0x06) packet to cancel the current operation
+    /// 2. Wait for DONE token with ATTN (0x0020) status flag
+    /// 3. If no acknowledgment within timeout, return false
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout` - Maximum time to wait for attention acknowledgment
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` - Attention acknowledged by server
+    /// * `Ok(false)` - Attention sent but timeout expired waiting for ACK
+    /// * `Err(_)` - Error sending attention or reading response
+    #[instrument(skip(self), level = "info")]
+    pub async fn send_attention_with_timeout(&mut self, timeout: Duration) -> TdsResult<bool> {
+        self.transport.send_attention_with_timeout(timeout).await
+    }
+
     #[instrument(skip(self), level = "info")]
     pub async fn begin_transaction(
         &mut self,

@@ -44,11 +44,15 @@
 //! println!("Inserted {} rows", result.rows_affected);
 //! ```
 
+use crate::connection::bulk_copy_state::BulkCopyTimeoutState;
 use crate::connection::metadata_retriever::{FmtOnlyMetadataRetriever, MetadataRetriever};
 use crate::connection::tds_client::TdsClient;
 use crate::core::TdsResult;
 use crate::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType};
 use crate::error::Error;
+use crate::error::bulk_copy_errors::{
+    BulkCopyAttentionTimeoutError, BulkCopyError, BulkCopyTimeoutError,
+};
 use async_trait::async_trait;
 use std::time::{Duration, Instant};
 
@@ -282,6 +286,9 @@ pub struct BulkCopy<'a> {
 
     /// Metadata retriever strategy
     metadata_retriever: Box<dyn MetadataRetriever + 'a>,
+
+    /// Timeout state for tracking operation timeout and attention handling
+    timeout_state: Option<BulkCopyTimeoutState>,
 }
 
 impl<'a> BulkCopy<'a> {
@@ -306,6 +313,7 @@ impl<'a> BulkCopy<'a> {
             progress_callback: None,
             destination_metadata: None,
             metadata_retriever: Box::new(FmtOnlyMetadataRetriever::new()),
+            timeout_state: None,
         }
     }
 
@@ -340,6 +348,7 @@ impl<'a> BulkCopy<'a> {
             progress_callback: None,
             destination_metadata: None,
             metadata_retriever: retriever,
+            timeout_state: None,
         }
     }
 
@@ -742,6 +751,10 @@ impl<'a> BulkCopy<'a> {
         let start_time = Instant::now();
         let mut total_rows = 0u64;
 
+        // Initialize timeout state for this operation
+        // A timeout of 0 means infinite (no timeout)
+        self.timeout_state = Some(BulkCopyTimeoutState::from_seconds(self.options.timeout_sec));
+
         // Peek-able iterator for batch boundary detection
         let mut rows = rows.into_iter().peekable();
 
@@ -865,6 +878,45 @@ impl<'a> BulkCopy<'a> {
                 break;
             }
 
+            // Check timeout before starting next batch
+            if let Some(ref mut state) = self.timeout_state
+                && state.is_expired()
+                && !state.is_attention_sent()
+            {
+                // Mark that we're sending attention due to timeout
+                state.mark_bulk_copy_write_timeout();
+                state.begin_sending_attention();
+
+                // Send attention and wait for ACK with 5-second timeout
+                // per SqlClient behavior
+                let attention_timeout = Duration::from_secs(5);
+                let ack_received = self
+                    .client
+                    .send_attention_with_timeout(attention_timeout)
+                    .await
+                    .unwrap_or(false);
+
+                state.mark_attention_sent();
+
+                if ack_received {
+                    state.mark_attention_received();
+                    // Attention acknowledged - return timeout error
+                    let err = BulkCopyTimeoutError::new(
+                        *total_rows,
+                        self.options.timeout_sec,
+                        Some("Bulk copy operation timed out".to_string()),
+                    );
+                    return Err(Error::BulkCopyError(BulkCopyError::Timeout(err)));
+                } else {
+                    // No attention ACK within 5 seconds - connection is broken
+                    // Close the connection to ensure it can't be reused
+                    let _ = self.client.close_connection().await;
+
+                    let err = BulkCopyAttentionTimeoutError::new(true);
+                    return Err(Error::BulkCopyError(BulkCopyError::AttentionTimeout(err)));
+                }
+            }
+
             // Create a batch iterator that yields up to batch_size rows
             // The take() adaptor just sets an upper bound, but the actual iteration ends when the input is finished.
             let batch_iter = (&mut rows).take(batch_size);
@@ -907,6 +959,41 @@ impl<'a> BulkCopy<'a> {
         }
 
         Ok(())
+    }
+
+    /// Check if the bulk copy operation has timed out.
+    ///
+    /// This can be called during long-running operations to check if the
+    /// configured timeout has expired.
+    ///
+    /// # Returns
+    ///
+    /// * `true` - if timeout has expired
+    /// * `false` - if timeout has not expired or no timeout was configured
+    pub fn is_timed_out(&self) -> bool {
+        self.timeout_state
+            .as_ref()
+            .is_some_and(|state| state.is_expired())
+    }
+
+    /// Get the remaining timeout in milliseconds.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(ms)` - remaining milliseconds until timeout
+    /// * `None` - if no timeout was configured (infinite timeout)
+    pub fn remaining_timeout_ms(&self) -> Option<u64> {
+        self.timeout_state
+            .as_ref()
+            .and_then(|state| state.remaining_ms())
+    }
+
+    /// Get a reference to the current timeout state.
+    ///
+    /// This is useful for advanced scenarios where you need to inspect
+    /// or manage the timeout state directly.
+    pub fn timeout_state(&self) -> Option<&BulkCopyTimeoutState> {
+        self.timeout_state.as_ref()
     }
 }
 
