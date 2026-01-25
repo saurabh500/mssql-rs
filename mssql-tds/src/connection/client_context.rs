@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use crate::connection::datasource_parser::{ParsedDataSource, ProtocolType};
 use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
 use crate::message::login_options::{ApplicationIntent, TdsVersion};
+use crate::security::{IntegratedAuthConfig, is_loopback_address};
 use hostname;
 
 #[derive(PartialEq, Copy, Clone)]
@@ -107,8 +108,11 @@ pub struct ClientContext {
     pub user_instance: bool,
     pub user_name: String,
     pub workstation_id: String,
-    pub server_spn: Option<String>,
     pub access_token: Option<String>,
+    /// Server Principal Name (SPN) for integrated authentication.
+    /// If not provided, the SPN will be automatically generated from the server address.
+    /// Format: MSSQLSvc/<hostname>:<port> or MSSQLSvc/<hostname>:<instance>
+    pub server_spn: Option<String>,
     pub(crate) transport_context: TransportContext,
     pub vector_version: VectorVersion,
 }
@@ -239,6 +243,37 @@ impl ClientContext {
             .iter()
             .map(|(key, value)| (key.clone(), value.clone_box()))
             .collect()
+    }
+
+    /// Creates an IntegratedAuthConfig from this ClientContext.
+    ///
+    /// This is used when setting up SSPI/GSSAPI authentication.
+    pub fn integrated_auth_config(&self) -> IntegratedAuthConfig {
+        let is_loopback = match &self.transport_context {
+            TransportContext::Tcp { host, .. } => is_loopback_address(host),
+            // For named pipes, extract server from pipe_name (\\server\pipe\...)
+            TransportContext::NamedPipe { pipe_name } => {
+                // Extract server from \\server\pipe\... format
+                let server = pipe_name
+                    .trim_start_matches("\\\\")
+                    .split('\\')
+                    .next()
+                    .unwrap_or(".");
+                is_loopback_address(server)
+            }
+            // Shared memory is always local
+            TransportContext::SharedMemory { .. } => true,
+            // LocalDB is always local
+            #[cfg(windows)]
+            TransportContext::LocalDB { .. } => true,
+        };
+
+        IntegratedAuthConfig {
+            server_spn: self.server_spn.clone(),
+            security_package: Default::default(),
+            channel_bindings: None, // Set during TLS handshake
+            is_loopback,
+        }
     }
 }
 
@@ -451,6 +486,15 @@ impl TransportContext {
             TransportContext::SharedMemory { .. } => true,
             #[cfg(windows)]
             TransportContext::LocalDB { .. } => true, // LocalDB is always local
+        }
+    }
+
+    /// Get the port for SPN construction (default 1433 for non-TCP)
+    pub fn get_port(&self) -> u16 {
+        match self {
+            TransportContext::Tcp { port, .. } => *port,
+            // For non-TCP protocols, use default SQL Server port for SPN
+            _ => 1433,
         }
     }
 

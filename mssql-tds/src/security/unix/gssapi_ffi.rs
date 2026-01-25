@@ -380,8 +380,11 @@ static GSSAPI_LIB_HANDLE: OnceLock<GssapiLibHandle> = OnceLock::new();
 /// Checks if GSSAPI library is available at runtime.
 ///
 /// This performs a dynamic library check using dlopen to verify that
-/// libgssapi_krb5.so is actually installed and loadable on the system.
+/// the GSSAPI library is actually installed and loadable on the system.
 /// The result is cached after the first check.
+///
+/// On Linux, this checks for libgssapi_krb5.so.
+/// On macOS, this checks for libgssapi_krb5.dylib (from Homebrew's krb5).
 ///
 /// # Returns
 ///
@@ -389,13 +392,28 @@ static GSSAPI_LIB_HANDLE: OnceLock<GssapiLibHandle> = OnceLock::new();
 pub fn is_gssapi_available() -> bool {
     *GSSAPI_AVAILABLE.get_or_init(|| {
         // Try to load the GSSAPI library dynamically to check availability
+        // The library names vary by platform
+        #[cfg(target_os = "macos")]
+        let lib_names = [
+            "libgssapi_krb5.dylib",                            // Homebrew's krb5 or system
+            "libgssapi_krb5.2.dylib",                          // Versioned dylib
+            "/opt/homebrew/opt/krb5/lib/libgssapi_krb5.dylib", // Apple Silicon Homebrew
+            "/usr/local/opt/krb5/lib/libgssapi_krb5.dylib",    // Intel Homebrew
+        ];
+
+        #[cfg(not(target_os = "macos"))]
         let lib_names = [
             "libgssapi_krb5.so.2", // Common on most Linux distros
             "libgssapi_krb5.so",   // Fallback
             "libgssapi.so",        // Alternative name
+            "",                    // Placeholder to match array size
         ];
 
         for lib_name in &lib_names {
+            // Skip empty placeholder entries
+            if lib_name.is_empty() {
+                continue;
+            }
             if let Ok(c_name) = CString::new(*lib_name) {
                 // First check if the library is already loaded by the linker
                 let handle =

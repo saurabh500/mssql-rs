@@ -52,6 +52,13 @@ steps:
         brew install python
       fi
 
+      # Install Kerberos (krb5) for GSSAPI support
+      brew install krb5
+      echo "##vso[task.setvariable variable=PATH]$(brew --prefix krb5)/bin:$PATH"
+      echo "##vso[task.setvariable variable=LDFLAGS]-L$(brew --prefix krb5)/lib"
+      echo "##vso[task.setvariable variable=CPPFLAGS]-I$(brew --prefix krb5)/include"
+      echo "##vso[task.setvariable variable=PKG_CONFIG_PATH]$(brew --prefix krb5)/lib/pkgconfig"
+
       # Install Rustup
       .pipeline/scripts/install-rustup.sh
     displayName: "Install MacOS dependencies"
