@@ -87,6 +87,18 @@ impl TdsConnectionProvider {
         // Parse the datasource to get the action chain
         let parsed = context.parse_datasource(datasource)?;
 
+        // Validate MultiSubnetFailover constraints
+        if context.multi_subnet_failover {
+            // MultiSubnetFailover cannot be used with database mirroring (failover_partner)
+            if !context.failover_partner.is_empty() {
+                return Err(Error::UsageError(
+                    "MultiSubnetFailover cannot be used with FailoverPartner (database mirroring). \
+                     These features are mutually exclusive. Remove one of the options."
+                        .to_string(),
+                ));
+            }
+        }
+
         // Get connection timeout
         let timeout_ms = if context.connect_timeout > 0 {
             (context.connect_timeout as u64) * 1000
@@ -248,6 +260,8 @@ impl TdsConnectionProvider {
         crate::connection::execution_context::ExecutionContext,
     )> {
         // Create network transport directly
+        // Convert connect_timeout from seconds to milliseconds
+        let connect_timeout_ms = (context.connect_timeout as u64) * 1000;
         let mut transport = network_transport::create_transport(
             context.ipaddress_preference,
             context.tds_version(),
@@ -255,6 +269,8 @@ impl TdsConnectionProvider {
             context.encryption_options.clone(),
             context.keep_alive_in_ms,
             context.keep_alive_interval_in_ms,
+            context.multi_subnet_failover,
+            connect_timeout_ms,
         )
         .await?;
 

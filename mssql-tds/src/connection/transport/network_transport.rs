@@ -3,6 +3,7 @@
 
 use crate::connection::client_context::{IPAddressPreference, TransportContext};
 use crate::connection::transport::buffers::TdsReadBuffer;
+use crate::connection::transport::parallel_connect::{ParallelConnectConfig, parallel_connect};
 use crate::connection::transport::ssl_handler::SslHandler;
 use crate::connection_provider::tds_connection_provider::PARSER_REGISTRY;
 use crate::core::{
@@ -44,87 +45,57 @@ pub(crate) const PRE_NEGOTIATED_PACKET_SIZE: u32 = 4096;
 /// Creates a base stream for the specified transport context.
 /// This function handles the transport-specific connection logic (TCP, Named Pipe, Shared Memory)
 /// and returns a boxed Stream that can be used with any TDS version.
+///
+/// # Arguments
+///
+/// * `ipaddress_preference` - Preference for IPv4 or IPv6 addresses (used only for sequential mode)
+/// * `transport_context` - The transport context specifying the connection type and parameters
+/// * `keep_alive_in_ms` - TCP keep-alive idle time in milliseconds
+/// * `keep_alive_interval_in_ms` - TCP keep-alive interval in milliseconds
+/// * `multi_subnet_failover` - If true, enables parallel connection mode for TCP
+/// * `connect_timeout_ms` - Connection timeout in milliseconds
 async fn create_base_stream(
     ipaddress_preference: IPAddressPreference,
     transport_context: &TransportContext,
     keep_alive_in_ms: u32,
     keep_alive_interval_in_ms: u32,
+    multi_subnet_failover: bool,
+    connect_timeout_ms: u64,
 ) -> TdsResult<Box<dyn Stream>> {
     match transport_context {
         TransportContext::Tcp { host, port } => {
-            info!("Connecting to TCP transport: {}:{}", host, port);
-
-            // This will cause the DNS resolution of the addresses.
-            let mut socket_addresses = (host.as_str(), *port).to_socket_addrs()?;
-
-            let mut last_error = None;
-            let mut tcp_stream = None;
-
-            // Sort the address list based on the IP address preference
-            match ipaddress_preference {
-                IPAddressPreference::UsePlatformDefault => {
-                    // Do nothing. Use whatever the OS returns.
-                    trace!("Using platform default IP address preference");
-                }
-                IPAddressPreference::IPv4First => {
-                    let mut addresses: Vec<_> = socket_addresses.collect();
-                    // Sort IPv4 addresses first
-                    addresses.sort_by_key(|a| a.is_ipv6());
-                    socket_addresses = addresses.into_iter();
-                    trace!("IPv4 addresses first");
-                }
-                IPAddressPreference::IPv6First => {
-                    let mut addresses: Vec<_> = socket_addresses.collect();
-                    // Sort IPv6 addresses first
-                    addresses.sort_by_key(|b| std::cmp::Reverse(b.is_ipv6()));
-                    socket_addresses = addresses.into_iter();
-                    trace!("IPv6 addresses first");
-                }
+            if multi_subnet_failover {
+                // Use parallel connection mode for MultiSubnetFailover
+                create_base_stream_parallel(
+                    host,
+                    *port,
+                    keep_alive_in_ms,
+                    keep_alive_interval_in_ms,
+                    connect_timeout_ms,
+                )
+                .await
+            } else {
+                // Use sequential connection mode (original behavior)
+                create_base_stream_sequential(
+                    ipaddress_preference,
+                    host,
+                    *port,
+                    keep_alive_in_ms,
+                    keep_alive_interval_in_ms,
+                    connect_timeout_ms,
+                )
+                .await
             }
-
-            info!("Socket addresses: {:?}", socket_addresses);
-
-            for socket_address in socket_addresses {
-                let socket = if socket_address.is_ipv6() {
-                    net::TcpSocket::new_v6()?
-                } else {
-                    net::TcpSocket::new_v4()?
-                };
-
-                // The defaults for the SQL Server clients are at
-                // https://learn.microsoft.com/en-us/sql/tools/configuration-manager/client-protocols-tcp-ip-properties-protocol-tab?view=sql-server-ver16
-                let keep_alive_settings = socket2::TcpKeepalive::new()
-                    .with_time(Duration::from_millis(keep_alive_in_ms as u64))
-                    .with_interval(Duration::from_millis(keep_alive_interval_in_ms as u64));
-
-                let socket2_socket = socket2::SockRef::from(&socket);
-                socket2_socket.set_tcp_keepalive(&keep_alive_settings)?;
-                socket2_socket.set_nodelay(true)?;
-
-                tcp_stream = match socket.connect(socket_address).await {
-                    Ok(stream) => {
-                        info!("Connected to TCP transport: {}:{}", host, port);
-                        Some(stream)
-                    }
-                    Err(e) => {
-                        last_error = Some(e);
-                        None
-                    }
-                };
-                if tcp_stream.is_some() {
-                    break;
-                }
-            }
-
-            // We don't have a valid TCP stream, so we need to return the last error.
-            if tcp_stream.is_none() {
-                return Err(crate::error::Error::from(last_error.unwrap()));
-            }
-
-            Ok(Box::new(tcp_stream.unwrap()))
         }
         #[cfg(windows)]
         TransportContext::NamedPipe { pipe_name } => {
+            if multi_subnet_failover {
+                return Err(crate::error::Error::UsageError(
+                    "MultiSubnetFailover is only supported with TCP connections. \
+                     Named Pipes do not support MultiSubnetFailover."
+                        .to_string(),
+                ));
+            }
             info!("Connecting to Named Pipe: {}", pipe_name);
 
             // Open Named Pipe with retry logic for ERROR_PIPE_BUSY
@@ -140,6 +111,13 @@ async fn create_base_stream(
         ))),
         #[cfg(windows)]
         TransportContext::SharedMemory { instance_name } => {
+            if multi_subnet_failover {
+                return Err(crate::error::Error::UsageError(
+                    "MultiSubnetFailover is only supported with TCP connections. \
+                     Shared Memory does not support MultiSubnetFailover."
+                        .to_string(),
+                ));
+            }
             // Shared Memory protocol is implemented as Named Pipes with a special path format.
             // For SQL Server 2005+, SharedMemory is actually LPC-over-Named-Pipes using the path:
             // \\.\pipe\SQLLocal\<INSTANCE_NAME>
@@ -178,6 +156,13 @@ async fn create_base_stream(
         }
         #[cfg(windows)]
         TransportContext::LocalDB { instance_name } => {
+            if multi_subnet_failover {
+                return Err(crate::error::Error::UsageError(
+                    "MultiSubnetFailover is only supported with TCP connections. \
+                     LocalDB does not support MultiSubnetFailover."
+                        .to_string(),
+                ));
+            }
             info!("Connecting to LocalDB instance: {}", instance_name);
 
             // Resolve the LocalDB instance to a named pipe path
@@ -196,6 +181,135 @@ async fn create_base_stream(
             Ok(Box::new(pipe_client))
         }
     }
+}
+
+/// Creates a TCP stream using sequential connection mode.
+/// Tries each resolved IP address one at a time until one succeeds.
+async fn create_base_stream_sequential(
+    ipaddress_preference: IPAddressPreference,
+    host: &str,
+    port: u16,
+    keep_alive_in_ms: u32,
+    keep_alive_interval_in_ms: u32,
+    connect_timeout_ms: u64,
+) -> TdsResult<Box<dyn Stream>> {
+    info!(
+        "Connecting to TCP transport (sequential): {}:{}",
+        host, port
+    );
+
+    // This will cause the DNS resolution of the addresses.
+    let mut socket_addresses = (host, port).to_socket_addrs()?;
+
+    let mut last_error = None;
+    let mut tcp_stream = None;
+
+    // Sort the address list based on the IP address preference
+    match ipaddress_preference {
+        IPAddressPreference::UsePlatformDefault => {
+            // Do nothing. Use whatever the OS returns.
+            trace!("Using platform default IP address preference");
+        }
+        IPAddressPreference::IPv4First => {
+            let mut addresses: Vec<_> = socket_addresses.collect();
+            // Sort IPv4 addresses first
+            addresses.sort_by_key(|a| a.is_ipv6());
+            socket_addresses = addresses.into_iter();
+            trace!("IPv4 addresses first");
+        }
+        IPAddressPreference::IPv6First => {
+            let mut addresses: Vec<_> = socket_addresses.collect();
+            // Sort IPv6 addresses first
+            addresses.sort_by_key(|b| std::cmp::Reverse(b.is_ipv6()));
+            socket_addresses = addresses.into_iter();
+            trace!("IPv6 addresses first");
+        }
+    }
+
+    info!("Socket addresses: {:?}", socket_addresses);
+
+    for socket_address in socket_addresses {
+        let socket = if socket_address.is_ipv6() {
+            net::TcpSocket::new_v6()?
+        } else {
+            net::TcpSocket::new_v4()?
+        };
+
+        // The defaults for the SQL Server clients are at
+        // https://learn.microsoft.com/en-us/sql/tools/configuration-manager/client-protocols-tcp-ip-properties-protocol-tab?view=sql-server-ver16
+        let keep_alive_settings = socket2::TcpKeepalive::new()
+            .with_time(Duration::from_millis(keep_alive_in_ms as u64))
+            .with_interval(Duration::from_millis(keep_alive_interval_in_ms as u64));
+
+        let socket2_socket = socket2::SockRef::from(&socket);
+        socket2_socket.set_tcp_keepalive(&keep_alive_settings)?;
+        socket2_socket.set_nodelay(true)?;
+
+        // Apply connection timeout to each connection attempt
+        let connect_future = socket.connect(socket_address);
+        tcp_stream = match timeout(Duration::from_millis(connect_timeout_ms), connect_future).await
+        {
+            Ok(Ok(stream)) => {
+                info!("Connected to TCP transport: {}:{}", host, port);
+                Some(stream)
+            }
+            Ok(Err(e)) => {
+                last_error = Some(e);
+                None
+            }
+            Err(_elapsed) => {
+                last_error = Some(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "Connection to {} timed out after {}ms",
+                        socket_address, connect_timeout_ms
+                    ),
+                ));
+                None
+            }
+        };
+        if tcp_stream.is_some() {
+            break;
+        }
+    }
+
+    // We don't have a valid TCP stream, so we need to return the last error.
+    if tcp_stream.is_none() {
+        return Err(crate::error::Error::from(last_error.unwrap()));
+    }
+
+    Ok(Box::new(tcp_stream.unwrap()))
+}
+
+/// Creates a TCP stream using parallel connection mode (MultiSubnetFailover).
+/// Attempts to connect to all resolved IP addresses simultaneously.
+/// The first successful connection wins.
+async fn create_base_stream_parallel(
+    host: &str,
+    port: u16,
+    keep_alive_in_ms: u32,
+    keep_alive_interval_in_ms: u32,
+    connect_timeout_ms: u64,
+) -> TdsResult<Box<dyn Stream>> {
+    info!(
+        "Connecting to TCP transport (parallel/MultiSubnetFailover): {}:{}",
+        host, port
+    );
+
+    let config = ParallelConnectConfig {
+        timeout_ms: connect_timeout_ms,
+        keep_alive_in_ms,
+        keep_alive_interval_in_ms,
+    };
+
+    let result = parallel_connect(host, port, &config).await?;
+
+    info!(
+        "Parallel connection succeeded to {} (tried {} addresses, {} failed)",
+        result.connected_address, result.total_addresses, result.failed_attempts
+    );
+
+    Ok(Box::new(result.stream))
 }
 
 /// Creates a NetworkTransport configured for the specified TDS version.
@@ -245,6 +359,19 @@ async fn create_transport_for_version(
     }
 }
 
+/// Creates a network transport for the specified parameters.
+///
+/// # Arguments
+///
+/// * `ipaddress_preference` - Preference for IPv4 or IPv6 addresses
+/// * `tds_version` - The TDS protocol version to use
+/// * `transport_context` - The transport context specifying connection type
+/// * `encryption_options` - Encryption settings for the connection
+/// * `keep_alive_in_ms` - TCP keep-alive idle time in milliseconds
+/// * `keep_alive_interval_in_ms` - TCP keep-alive interval in milliseconds
+/// * `multi_subnet_failover` - If true, enables parallel connection mode for TCP
+/// * `connect_timeout_ms` - Connection timeout in milliseconds
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_transport(
     ipaddress_preference: IPAddressPreference,
     tds_version: TdsVersion,
@@ -252,6 +379,8 @@ pub(crate) async fn create_transport(
     encryption_options: EncryptionOptions,
     keep_alive_in_ms: u32,
     keep_alive_interval_in_ms: u32,
+    multi_subnet_failover: bool,
+    connect_timeout_ms: u64,
 ) -> TdsResult<Box<NetworkTransport>> {
     let encryption_mode = encryption_options.mode;
 
@@ -261,6 +390,8 @@ pub(crate) async fn create_transport(
         transport_context,
         keep_alive_in_ms,
         keep_alive_interval_in_ms,
+        multi_subnet_failover,
+        connect_timeout_ms,
     )
     .await?;
 

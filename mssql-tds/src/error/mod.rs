@@ -26,6 +26,9 @@ pub enum Error {
     #[error("Server redirected the connection: {host}:{port} times")]
     Redirection { host: String, port: u16 },
 
+    #[error("Connection Error: {0}")]
+    ConnectionError(String),
+
     #[error("Protocol Error: {0}")]
     ProtocolError(String),
 
