@@ -8,6 +8,8 @@ mod common;
 mod transport_protocols {
     use dotenv::dotenv;
     use mssql_tds::connection::client_context::ClientContext;
+    #[cfg(all(windows, feature = "sspi"))]
+    use mssql_tds::connection::client_context::TdsAuthenticationMethod;
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
     use mssql_tds::core::{EncryptionOptions, EncryptionSetting, TdsResult};
@@ -62,6 +64,28 @@ mod transport_protocols {
         client_context.user_name = username;
         client_context.password = password;
         client_context.database = "master".to_string();
+        client_context.encryption_options = EncryptionOptions {
+            mode: encryption_mode,
+            trust_server_certificate: trust_server_certificate(),
+            host_name_in_cert: get_cert_hostname(),
+            server_certificate: None,
+        };
+
+        let provider = TdsConnectionProvider {};
+        provider
+            .create_client(client_context, datasource, None)
+            .await
+    }
+
+    /// Create a LocalDB client with integrated authentication (SSPI)
+    #[cfg(all(windows, feature = "sspi"))]
+    async fn create_localdb_client_with_integrated_auth(
+        datasource: &str,
+        encryption_mode: EncryptionSetting,
+    ) -> TdsResult<TdsClient> {
+        let mut client_context = ClientContext::default();
+        client_context.database = "master".to_string();
+        client_context.tds_authentication_method = TdsAuthenticationMethod::SSPI;
         client_context.encryption_options = EncryptionOptions {
             mode: encryption_mode,
             trust_server_certificate: trust_server_certificate(),
@@ -405,20 +429,20 @@ mod transport_protocols {
     }
 
     #[tokio::test]
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "sspi"))]
     async fn test_localdb_connection() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
 
-        println!("Testing LocalDB connection with MSSQLLocalDB instance...");
+        println!("Testing LocalDB connection with integrated authentication...");
 
-        // Connect to LocalDB - test will fail if connection fails
+        // Connect to LocalDB using integrated authentication - test will fail if connection fails
         let datasource = "(localdb)\\MSSQLLocalDB";
         let mut client =
-            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::PreferOff)
+            create_localdb_client_with_integrated_auth(datasource, EncryptionSetting::PreferOff)
                 .await?;
 
-        println!("Connected to LocalDB successfully!");
+        println!("Connected to LocalDB successfully with integrated authentication!");
 
         // Execute a simple query
         test_simple_query(&mut client).await?;
@@ -428,17 +452,17 @@ mod transport_protocols {
     }
 
     #[tokio::test]
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "sspi"))]
     async fn test_localdb_query_execution() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
 
-        println!("Testing LocalDB query execution...");
+        println!("Testing LocalDB query execution with integrated authentication...");
 
-        // Connect to LocalDB - test will fail if connection fails
+        // Connect to LocalDB using integrated authentication - test will fail if connection fails
         let datasource = "(localdb)\\MSSQLLocalDB";
         let mut client =
-            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::PreferOff)
+            create_localdb_client_with_integrated_auth(datasource, EncryptionSetting::PreferOff)
                 .await?;
 
         // Execute multiple queries to test stability
@@ -465,7 +489,7 @@ mod transport_protocols {
             println!("  ✓ Success");
         }
 
-        println!("All queries executed successfully on LocalDB");
+        println!("All queries executed successfully on LocalDB with integrated authentication");
         Ok(())
     }
 

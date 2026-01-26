@@ -35,7 +35,7 @@ steps:
       SQL_PASSWORD: $(SQL_PASSWORD)
 
   - task: PowerShell@2
-    displayName: 'Setup LocalDB with SA login'
+    displayName: 'Setup LocalDB with Integrated Authentication'
     inputs:
       targetType: 'inline'
       script: |
@@ -51,33 +51,33 @@ steps:
         
         if ($userInstanceDll) {
           echo "LocalDB runtime (sqluserinstance.dll) found at: $($userInstanceDll.FullName)"
-          echo "LocalDB API is available - proceeding with direct sqlcmd setup"
+          echo "LocalDB API is available - verifying with integrated authentication"
           
           # Set ErrorActionPreference to Continue to prevent script exit on stderr
           $ErrorActionPreference = 'Continue'
           
-          # Configure SA login with retry loop
+          # Verify LocalDB connection with integrated authentication (retry loop for startup)
           $maxAttempts = 4
           $success = $false
           
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-            echo "Configuring SA login with sqlcmd (attempt $attempt/$maxAttempts)..."
+            echo "Verifying LocalDB with integrated authentication (attempt $attempt/$maxAttempts)..."
             
             if ($attempt -eq 1) {
               # First attempt - suppress all output as it typically fails during startup
-              $null = sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" 2>&1
+              $null = sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "SELECT @@VERSION" 2>&1
             } else {
               # Subsequent attempts - capture output to check for errors
-              $output = sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;" 2>&1 | Out-String
+              $output = sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "SELECT @@VERSION" 2>&1 | Out-String
               echo $output
               
               # Check if output contains error messages
               if ($output -notmatch "Msg \d+" -and $output -notmatch "Error:" -and $output -notmatch "failed") {
                 $success = $true
-                echo "SA login configured successfully"
+                echo "LocalDB verified successfully with integrated authentication"
                 break
               } else {
-                echo "SA login configuration had errors, will retry..."
+                echo "LocalDB verification had errors, will retry..."
               }
             }
             
@@ -88,21 +88,11 @@ steps:
           }
           
           if (-not $success) {
-            echo "Failed to configure SA login after $maxAttempts attempts"
+            echo "Failed to verify LocalDB after $maxAttempts attempts"
             exit 1
           }
           
-          echo "Verifying SA login..."
-          sqlcmd -S "(localdb)\MSSQLLocalDB" -U sa -P $(SQL_PASSWORD) -Q "SELECT @@VERSION"
-          
-          if ($LASTEXITCODE -ne 0) {
-            echo "Failed to verify SA login (exit code: $LASTEXITCODE)"
-            exit 1
-          }
-          
-          echo "LocalDB setup complete using direct sqlcmd connection"
-          
-          echo "LocalDB setup complete using direct sqlcmd connection"
+          echo "LocalDB setup complete using integrated authentication"
         } else {
           echo "sqluserinstance.dll not found. Checking for SqlLocalDB.exe..."
           
@@ -144,18 +134,12 @@ steps:
           echo "LocalDB instance info:"
           SqlLocalDB info "MSSQLLocalDB"
           
-          # Enable SA login and set password
-          echo "Enabling SA login with password..."
-          sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = '$(SQL_PASSWORD)'; ALTER LOGIN sa WITH CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;"
+          # Verify connection with integrated authentication
+          echo "Verifying integrated authentication..."
+          sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "SELECT @@VERSION"
           
-          # Verify connection with SA
-          echo "Verifying SA login..."
-          sqlcmd -S "(localdb)\MSSQLLocalDB" -U sa -P $(SQL_PASSWORD) -Q "SELECT @@VERSION"
-          
-          echo "LocalDB setup complete"
+          echo "LocalDB setup complete using integrated authentication"
         }
-    env:
-      SQL_PASSWORD: $(SQL_PASSWORD)
 
   - task: PowerShell@2
     displayName: 'Enable SQL Browser service'
