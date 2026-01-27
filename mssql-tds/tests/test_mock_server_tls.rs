@@ -241,10 +241,10 @@ mod mock_server_tls_tests {
         Ok(())
     }
 
-    /// Test connecting to strict TLS (TDS 8.0) mock server with TrustServerCertificate=true
+    /// Test that TrustServerCertificate=true is ignored in strict TLS (TDS 8.0) mode
     ///
-    /// In strict mode, TLS handshake happens directly on the TCP socket
-    /// before any TDS packets are exchanged.
+    /// In strict mode, TrustServerCertificate is ignored and certificate validation
+    /// is always enforced. This test verifies the connection fails with a self-signed cert.
     #[tokio::test]
     async fn test_connect_strict_tls_with_trust_certificate()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -263,6 +263,7 @@ mod mock_server_tls_tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         // Connect with strict encryption and trust_server_certificate=true
+        // This should fail because TrustServerCertificate is ignored in Strict mode
         let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
         let mut context = ClientContext::default();
         context.user_name = "sa".to_string();
@@ -270,19 +271,22 @@ mod mock_server_tls_tests {
         context.database = "master".to_string();
         context.encryption_options = EncryptionOptions {
             mode: EncryptionSetting::Strict,
-            trust_server_certificate: true,
+            trust_server_certificate: true, // Ignored in Strict mode
             host_name_in_cert: None,
             server_certificate: None,
         };
 
         let provider = TdsConnectionProvider {};
-        let client = provider.create_client(context, &datasource, None).await?;
+        let result = provider.create_client(context, &datasource, None).await;
 
+        assert!(
+            result.is_err(),
+            "Expected connection to fail when TrustServerCertificate is ignored in Strict mode"
+        );
         println!(
-            "✓ Successfully connected to Strict TLS mock server with TrustServerCertificate=true"
+            "Correctly rejected connection with Strict TLS when TrustServerCertificate=true (ignored)"
         );
 
-        drop(client);
         let _ = shutdown_tx.send(());
         let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_handle).await;
 
@@ -306,7 +310,7 @@ mod mock_server_tls_tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        // Connect with strict TLS
+        // Connect with strict TLS using ServerCertificate for certificate pinning
         let datasource = format!("tcp:{},{}", server_addr.ip(), server_addr.port());
         let mut context = ClientContext::default();
         context.user_name = "sa".to_string();
@@ -314,9 +318,9 @@ mod mock_server_tls_tests {
         context.database = "master".to_string();
         context.encryption_options = EncryptionOptions {
             mode: EncryptionSetting::Strict,
-            trust_server_certificate: true,
+            trust_server_certificate: false,
             host_name_in_cert: None,
-            server_certificate: None,
+            server_certificate: Some("tests/test_certificates/valid_cert.pem".to_string()),
         };
 
         let provider = TdsConnectionProvider {};

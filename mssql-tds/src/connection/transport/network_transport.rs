@@ -3,6 +3,7 @@
 
 use crate::connection::client_context::{IPAddressPreference, TransportContext};
 use crate::connection::transport::buffers::TdsReadBuffer;
+use crate::connection::transport::extractable_stream;
 use crate::connection::transport::parallel_connect::{ParallelConnectConfig, parallel_connect};
 use crate::connection::transport::ssl_handler::SslHandler;
 use crate::connection_provider::tds_connection_provider::PARSER_REGISTRY;
@@ -33,7 +34,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{self, TcpStream};
 use tokio::time::timeout;
-use tracing::{debug, event, info, trace};
+use tracing::{debug, error, event, info, trace};
 
 #[cfg(windows)]
 use crate::connection::transport::localdb::resolve_localdb_instance;
@@ -332,7 +333,7 @@ async fn create_transport_for_version(
             // negotiation. TLS must be wrapped in TDS packets for this version.
             info!("Creating NetworkTransport for TDS 7.4 with TLS wrapping");
 
-            Ok(Box::new(NetworkTransport::new_with_tls_mode(
+            Ok(Box::new(NetworkTransport::new(
                 stream,
                 ssl_handler,
                 PRE_NEGOTIATED_PACKET_SIZE,
@@ -351,6 +352,7 @@ async fn create_transport_for_version(
                 ssl_handler,
                 PRE_NEGOTIATED_PACKET_SIZE,
                 encryption_mode,
+                false, // TDS 8.0 uses standard TLS (no TDS wrapping)
             )))
         }
         TdsVersion::Unknown(version_value) => Err(crate::error::Error::ProtocolError(format!(
@@ -445,6 +447,9 @@ pub(crate) struct NetworkTransport {
     encryption_setting: EncryptionSetting,
     tds_read_buffer: TdsReadBuffer,
     use_tds74_tls_wrapping: bool,
+    /// Handle to extract the underlying stream when disabling TLS.
+    /// This is set during enable_ssl and used during disable_ssl for "Login Only" mode.
+    extractable_stream_handle: Option<extractable_stream::ExtractableStreamHandle>,
 }
 
 impl std::fmt::Debug for NetworkTransport {
@@ -511,15 +516,6 @@ impl NetworkTransport {
         ssl_handler: SslHandler,
         packet_size: u32,
         encryption_setting: EncryptionSetting,
-    ) -> Self {
-        Self::new_with_tls_mode(stream, ssl_handler, packet_size, encryption_setting, false)
-    }
-
-    pub fn new_with_tls_mode(
-        stream: Box<dyn Stream>,
-        ssl_handler: SslHandler,
-        packet_size: u32,
-        encryption_setting: EncryptionSetting,
         use_tds74_tls_wrapping: bool,
     ) -> Self {
         Self {
@@ -530,6 +526,7 @@ impl NetworkTransport {
             encryption_setting,
             tds_read_buffer: TdsReadBuffer::new(packet_size as usize),
             use_tds74_tls_wrapping,
+            extractable_stream_handle: None,
         }
     }
 
@@ -600,23 +597,59 @@ impl NetworkTransport {
             base_stream
         };
 
-        // Perform TLS handshake (consumes base_stream, returns TlsStream)
+        // Wrap the stream in ExtractableStream so we can reclaim it when disabling TLS
+        // This is needed for "Login Only" encryption mode where TLS is disabled after login
+        let (handle, extractable_stream) =
+            extractable_stream::ExtractableStreamHandle::new(base_stream);
+        self.extractable_stream_handle = Some(handle);
+
+        // Perform TLS handshake (consumes extractable_stream, returns TlsStream)
         // enable_ssl_async will call tls_handshake_starting and tls_handshake_completed internally
-        let encrypted_stream = self.ssl_handler.enable_ssl_async(base_stream).await?;
+        let encrypted_stream = self
+            .ssl_handler
+            .enable_ssl_async(Box::new(extractable_stream))
+            .await?;
 
         // Put back the encrypted stream
         self.stream = Some(encrypted_stream);
         Ok(())
     }
 
-    async fn disable_ssl_internal(&mut self) {
-        // Take the current stream (which should be encrypted)
-        let _encrypted_stream = self.stream.take().expect("Stream not available");
+    async fn disable_ssl_internal(&mut self) -> TdsResult<()> {
+        // Take the current encrypted TLS stream
+        let encrypted_stream = self.stream.take().ok_or_else(|| {
+            crate::error::Error::ImplementationError(
+                "disable_ssl called but stream is not available".to_string(),
+            )
+        })?;
 
-        // For disable_ssl, we would need to extract the base stream from the TLS wrapper
-        // This is not currently supported in the architecture, so this is a placeholder
-        // In practice, disabling SSL mid-connection is rare
-        panic!("Disabling SSL is not supported in the simplified stream model");
+        // Extract the underlying stream from the ExtractableStream wrapper.
+        // We use mem::forget on the TLS stream to avoid sending TLS close_notify,
+        // which would confuse SQL Server in "Login Only" mode.
+        std::mem::forget(encrypted_stream);
+
+        // Get the underlying stream from our stored handle.
+        // This can fail if:
+        // 1. enable_ssl was never called (extractable_stream_handle is None)
+        // 2. disable_ssl was called twice (stream already extracted)
+        let handle = self.extractable_stream_handle.take().ok_or_else(|| {
+            error!("disable_ssl called but enable_ssl was never called");
+            crate::error::Error::ImplementationError(
+                "Cannot disable TLS: TLS was never enabled (no extractable stream handle)"
+                    .to_string(),
+            )
+        })?;
+
+        let base_stream = handle.extract().ok_or_else(|| {
+            error!("Failed to extract underlying stream - was disable_ssl called twice?");
+            crate::error::Error::ImplementationError(
+                "Cannot disable TLS: underlying stream was already extracted".to_string(),
+            )
+        })?;
+
+        info!("Successfully disabled TLS, reverting to unencrypted stream");
+        self.stream = Some(base_stream);
+        Ok(())
     }
 
     pub(crate) async fn close_transport(&mut self) -> TdsResult<()> {
@@ -838,23 +871,14 @@ impl TransportSslHandler for NetworkTransport {
     }
 
     async fn disable_ssl(&mut self) -> TdsResult<()> {
-        let encryption_type_check = match self.encryption_setting {
-            EncryptionSetting::Strict => {
-                // TODO: Evaluate this error.
-                Err(crate::error::Error::from(Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Under strict mode the client must communicate over TLS",
-                )))
-            }
-            _ => Ok(()),
-        };
-
-        if encryption_type_check.is_err() {
-            encryption_type_check
-        } else {
-            self.disable_ssl_internal().await;
-            Ok(())
+        if self.encryption_setting == EncryptionSetting::Strict {
+            return Err(crate::error::Error::from(Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Under strict mode the client must communicate over TLS",
+            )));
         }
+
+        self.disable_ssl_internal().await
     }
 }
 
@@ -1247,6 +1271,7 @@ pub(crate) mod tests {
                 ssl_handler,
                 context.packet_size as u32,
                 context.encryption_options.mode,
+                false,
             ),
             server_side,
         )
@@ -1268,6 +1293,7 @@ pub(crate) mod tests {
                 ssl_handler,
                 context.packet_size as u32,
                 context.encryption_options.mode,
+                false,
             ),
             NetworkTransport::new(
                 Box::new(server_side),
@@ -1277,6 +1303,7 @@ pub(crate) mod tests {
                 },
                 context.packet_size as u32,
                 context.encryption_options.mode,
+                false,
             ),
         )
     }
@@ -1350,6 +1377,7 @@ pub(crate) mod tests {
             ssl_handler,
             context.packet_size as u32,
             context.encryption_options.mode,
+            false,
         );
 
         let mut rng = rand::rng();

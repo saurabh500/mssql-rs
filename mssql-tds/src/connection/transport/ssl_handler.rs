@@ -15,7 +15,7 @@ use tokio_native_tls::TlsStream;
 use tracing::{debug, error, info, warn};
 
 use super::network_transport::PRE_NEGOTIATED_PACKET_SIZE;
-use crate::core::{EncryptionOptions, TdsResult};
+use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
 #[cfg(target_os = "macos")]
 use std::io::{ErrorKind, Write};
 
@@ -62,7 +62,15 @@ impl SslHandler {
             builder.danger_accept_invalid_certs(true);
             builder.danger_accept_invalid_hostnames(true);
         } else if self.encryption_options.trust_server_certificate {
-            builder.danger_accept_invalid_certs(true);
+            // For Strict encryption mode (TDS 8.0), TrustServerCertificate is ignored.
+            // Certificate validation must always be enforced for Strict mode.
+            if self.encryption_options.mode == EncryptionSetting::Strict {
+                warn!(
+                    "TrustServerCertificate is ignored for Strict encryption mode. Certificate validation will be enforced."
+                );
+            } else {
+                builder.danger_accept_invalid_certs(true);
+            }
         }
 
         let host_name = self

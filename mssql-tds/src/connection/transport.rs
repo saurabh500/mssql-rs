@@ -3,6 +3,7 @@
 
 pub(crate) mod buffers;
 pub(crate) mod certificate_validator;
+pub(crate) mod extractable_stream;
 #[cfg(windows)]
 pub(crate) mod localdb;
 #[cfg(windows)]

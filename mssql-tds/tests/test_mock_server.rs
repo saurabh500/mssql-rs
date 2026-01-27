@@ -798,7 +798,8 @@ mod mock_server_tests {
             drop(client);
         }
 
-        // Test 2: Connect with strict encryption and TrustServerCertificate=true
+        // Test 2: Verify that TrustServerCertificate=true is ignored in Strict mode
+        // The connection should fail because the self-signed cert is not in the trust store
         {
             let mut context = ClientContext::default();
             context.user_name = "sa".to_string();
@@ -806,17 +807,20 @@ mod mock_server_tests {
             context.database = "master".to_string();
             context.encryption_options = EncryptionOptions {
                 mode: EncryptionSetting::Strict,
-                trust_server_certificate: true,
+                trust_server_certificate: true, // This is ignored in Strict mode
                 host_name_in_cert: None,
                 server_certificate: None,
             };
 
             let provider = TdsConnectionProvider {};
-            let client = provider.create_client(context, &datasource, None).await?;
-            println!(
-                "✓ Successfully connected with Strict encryption and TrustServerCertificate=true"
+            let result = provider.create_client(context, &datasource, None).await;
+            assert!(
+                result.is_err(),
+                "Expected connection to fail when TrustServerCertificate is ignored in Strict mode"
             );
-            drop(client);
+            println!(
+                "✓ Correctly rejected connection with Strict encryption when TrustServerCertificate=true (ignored)"
+            );
         }
 
         // Test 3: Execute a query over strict TLS connection
