@@ -32,8 +32,9 @@ mod multi_subnet_failover_tests {
     async fn create_client_with_msf(datasource: &str) -> TdsResult<TdsClient> {
         let mut client_context = create_context();
         client_context.multi_subnet_failover = true; // Enable MSF
-        // Override encryption to Strict for these tests
-        client_context.encryption_options.mode = EncryptionSetting::Strict;
+        // Use PreferOff encryption to test MSF without TDS 8.0 strict mode
+        // trust_server_certificate is read from TRUST_SERVER_CERTIFICATE env var by create_context()
+        client_context.encryption_options.mode = EncryptionSetting::PreferOff;
 
         let provider = TdsConnectionProvider {};
         provider
@@ -45,8 +46,9 @@ mod multi_subnet_failover_tests {
     async fn create_client_sequential(datasource: &str) -> TdsResult<TdsClient> {
         let mut client_context = create_context();
         client_context.multi_subnet_failover = false; // Disable MSF (sequential)
-        // Override encryption to Strict for these tests
-        client_context.encryption_options.mode = EncryptionSetting::Strict;
+        // Use PreferOff encryption to test sequential mode without TDS 8.0 strict mode
+        // trust_server_certificate is read from TRUST_SERVER_CERTIFICATE env var by create_context()
+        client_context.encryption_options.mode = EncryptionSetting::PreferOff;
 
         let provider = TdsConnectionProvider {};
         provider
