@@ -1189,6 +1189,7 @@ impl crate::connection::transport::tds_transport::TdsTransport for NetworkTransp
     }
 
     fn reset_reader(&mut self) {
+        self.tds_read_buffer.change_packet_size(self.packet_size);
         self.tds_read_buffer.reset_to_length(0);
     }
 
@@ -1397,5 +1398,98 @@ pub(crate) mod tests {
         assert_eq!(buffer, data_written);
 
         Ok(())
+    }
+
+    /// Test that TdsTransport::reset_reader() properly resizes the buffer after packet size change.
+    ///
+    /// This test validates the fix for the buffer overflow bug that occurred when:
+    /// 1. Connection starts with packet_size = 4096 (buffer = 8192 bytes)
+    /// 2. Login negotiates packet_size = 8000
+    /// 3. reset_reader() is called before first command
+    /// 4. Without the fix, buffer stayed at 8192 bytes, causing panic on 8000-byte packets
+    ///
+    /// The fix ensures reset_reader() calls change_packet_size() to resize the buffer.
+    #[test]
+    fn test_tds_transport_reset_reader_resizes_buffer_after_packet_size_change() {
+        use crate::connection::transport::tds_transport::TdsTransport;
+
+        let initial_packet_size: u32 = 4096;
+        let negotiated_packet_size: u32 = 8000;
+
+        let context = ClientContext {
+            packet_size: initial_packet_size as i16,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: true,
+                ..EncryptionOptions::default()
+            },
+            ..Default::default()
+        };
+
+        let (mut transport, _server_side) = create_readable_network_transport(&context);
+
+        // Verify initial state: buffer sized for 4096 packets
+        assert_eq!(transport.packet_size, initial_packet_size);
+        assert_eq!(transport.tds_read_buffer.working_buffer.len(), 8192); // 4096 * 2
+        assert_eq!(transport.tds_read_buffer.max_packet_size, 4096);
+
+        // Simulate packet size negotiation (what happens after login)
+        transport.packet_size = negotiated_packet_size;
+
+        // Call reset_reader via TdsTransport trait - this is what TdsClient does
+        TdsTransport::reset_reader(&mut transport);
+
+        // Verify the fix: buffer should now be sized for 8000-byte packets
+        assert_eq!(
+            transport.tds_read_buffer.working_buffer.len(),
+            16000,
+            "Buffer should be resized to 8000 * 2 = 16000 bytes after reset_reader()"
+        );
+        assert_eq!(
+            transport.tds_read_buffer.max_packet_size, 8000,
+            "max_packet_size should be updated to 8000"
+        );
+        assert_eq!(
+            transport.tds_read_buffer.buffer_position, 0,
+            "buffer_position should be reset to 0"
+        );
+        assert_eq!(
+            transport.tds_read_buffer.buffer_length, 0,
+            "buffer_length should be reset to 0"
+        );
+    }
+
+    /// Test that reset_reader() is idempotent when packet size hasn't changed.
+    #[test]
+    fn test_tds_transport_reset_reader_same_size_preserves_buffer() {
+        use crate::connection::transport::tds_transport::TdsTransport;
+
+        let packet_size: u32 = 4096;
+
+        let context = ClientContext {
+            packet_size: packet_size as i16,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: true,
+                ..EncryptionOptions::default()
+            },
+            ..Default::default()
+        };
+
+        let (mut transport, _server_side) = create_readable_network_transport(&context);
+
+        // Verify initial buffer size
+        let initial_buffer_len = transport.tds_read_buffer.working_buffer.len();
+        assert_eq!(initial_buffer_len, 8192);
+
+        // Call reset_reader - packet size hasn't changed
+        TdsTransport::reset_reader(&mut transport);
+
+        // Buffer size should remain the same (no unnecessary reallocation)
+        assert_eq!(
+            transport.tds_read_buffer.working_buffer.len(),
+            initial_buffer_len
+        );
+        assert_eq!(transport.tds_read_buffer.max_packet_size, 4096);
     }
 }
