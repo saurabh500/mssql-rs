@@ -818,13 +818,9 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
                         .await?;
                 }
                 LoginDeferredPayload::ServerName => {
-                    let server_name = self.model.transport_context.get_server_name();
-                    // let server_name = self
-                    //     .model
-                    //     .user_input
-                    //     .transport
-                    //     .get_servername()
-                    //     .to_string();
+                    let server_name = self.model.transport_context.get_login_server_name();
+                    // Use get_login_server_name() to get DataSource format (host,port)
+                    // This matches SqlClient behavior for redirected connections
                     info!("Login Server name: {}", server_name);
                     self.payload_writer
                         .write_string_unicode_async(server_name.as_str())
@@ -957,9 +953,10 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
     }
 
     /// Writes the value of the target sql server to the login packet.
+    /// Uses get_login_server_name() to get DataSource format (host,port) for TCP connections.
     async fn write_server_name(&mut self) -> TdsResult<()> {
         if self
-            .write_metadata(self.model.transport_context.get_server_name().len() as i16)
+            .write_metadata(self.model.transport_context.get_login_server_name().len() as i16)
             .await?
         {
             self.deferred_actions_indicator
@@ -1154,7 +1151,9 @@ trait SizedLoginItem {
 
 impl SizedLoginItem for TransportContext {
     fn len_bytes(&self) -> i32 {
-        self.get_server_name().len_bytes()
+        // Must match what get_login_server_name() returns for consistency
+        // with write_server_name() which serializes get_login_server_name()
+        self.get_login_server_name().len_bytes()
     }
 }
 

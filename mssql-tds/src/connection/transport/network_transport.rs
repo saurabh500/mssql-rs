@@ -64,7 +64,7 @@ async fn create_base_stream(
     connect_timeout_ms: u64,
 ) -> TdsResult<Box<dyn Stream>> {
     match transport_context {
-        TransportContext::Tcp { host, port } => {
+        TransportContext::Tcp { host, port, .. } => {
             if multi_subnet_failover {
                 // Use parallel connection mode for MultiSubnetFailover
                 create_base_stream_parallel(

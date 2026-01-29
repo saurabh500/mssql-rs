@@ -309,7 +309,6 @@ impl<S: Stream> AsyncRead for TlsOverTdsStream<S> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        debug!("poll_read() called");
         if self.has_completed_tls_handshake {
             AsyncRead::poll_read(Pin::new(&mut self.wrapped_stream), cx, buf)
         } else if self.remaining_read_packet_payload_length > 0 {
@@ -343,7 +342,6 @@ impl<S: Stream> AsyncRead for TlsOverTdsStream<S> {
                         break Poll::Ready(Err(e));
                     }
                     Poll::Pending => {
-                        debug!("Read pending");
                         break Poll::Pending;
                     }
                     Poll::Ready(Ok(())) => {

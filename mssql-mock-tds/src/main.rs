@@ -78,6 +78,14 @@ struct Args {
     #[arg(long, default_value = "")]
     pfx_password: String,
 
+    /// Enable connection redirection: host to redirect clients to
+    #[arg(long)]
+    redirect_host: Option<String>,
+
+    /// Enable connection redirection: port to redirect clients to (requires --redirect-host)
+    #[arg(long, default_value = "1433")]
+    redirect_port: u16,
+
     /// Enable verbose logging (can be repeated for more verbosity)
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -149,27 +157,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bind_addr = format!("{}:{}", args.host, args.port);
 
+    // Check for redirection configuration
+    let redirection_info = if let Some(ref redirect_host) = args.redirect_host {
+        Some((redirect_host.clone(), args.redirect_port))
+    } else {
+        None
+    };
+
     // Create the server based on TLS mode
     // FedAuth and username/password authentication are always supported
-    let server = match args.tls_mode {
-        TlsMode::None => {
+    let server = match (&args.tls_mode, &redirection_info) {
+        (TlsMode::None, Some((host, port))) => {
+            info!(
+                "Starting Mock TDS Server without TLS on {} with redirection to {}:{}",
+                bind_addr, host, port
+            );
+            MockTdsServer::new_with_redirection(&bind_addr, host.clone(), *port).await?
+        }
+        (TlsMode::None, None) => {
             info!("Starting Mock TDS Server without TLS on {}", bind_addr);
             MockTdsServer::new(&bind_addr).await?
         }
-        TlsMode::Optional => {
+        (TlsMode::Optional, _) => {
             let identity = load_identity(&args)?;
             info!(
                 "Starting Mock TDS Server with optional TLS (TDS 7.4 mode) on {}",
                 bind_addr
             );
+            if redirection_info.is_some() {
+                info!(
+                    "Note: Redirection with TLS is not yet fully supported in CLI. Use programmatic API."
+                );
+            }
             MockTdsServer::new_with_tls(&bind_addr, Some(identity)).await?
         }
-        TlsMode::Strict => {
+        (TlsMode::Strict, _) => {
             let identity = load_identity(&args)?;
             info!(
                 "Starting Mock TDS Server with strict TLS (TDS 8.0 mode) on {}",
                 bind_addr
             );
+            if redirection_info.is_some() {
+                info!(
+                    "Note: Redirection with TLS is not yet fully supported in CLI. Use programmatic API."
+                );
+            }
             MockTdsServer::new_with_strict_tls(&bind_addr, identity).await?
         }
     };
@@ -177,6 +209,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let actual_addr = server.local_addr();
     info!("Mock TDS Server is running on {}", actual_addr);
     println!("Mock TDS Server listening on {}", actual_addr);
+    if let Some((host, port)) = &redirection_info {
+        println!(
+            "Redirection enabled: clients will be redirected to {}:{}",
+            host, port
+        );
+    }
     println!("Press Ctrl+C to stop the server.");
 
     // Set up graceful shutdown

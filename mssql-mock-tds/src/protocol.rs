@@ -170,6 +170,8 @@ pub struct Login7AuthInfo {
     pub access_token_bytes: Option<Vec<u8>>,
     /// FedAuth library type (0x01 = SecurityToken, 0x02 = MSAL)
     pub fedauth_library: u8,
+    /// Server name from Login7 packet (the data source string sent by client)
+    pub server_name: Option<String>,
 }
 
 /// Parse Login7 packet to extract FedAuth feature extension with access token
@@ -190,13 +192,35 @@ pub fn parse_login7_auth(packet_data: &[u8]) -> Login7AuthInfo {
     // - 4 bytes: ClientTimezone (offset 28)
     // - 4 bytes: ClientLCID (offset 32)
     // - Variable length offset/length pairs start at offset 36
+    //   Each pair is 4 bytes: 2 bytes offset (from start of packet), 2 bytes length (in chars)
+    //   Order: HostName, UserName, Password, AppName, ServerName, ...
+    //   ServerName is at offset 36 + 16 = 52 (5th entry, 0-indexed as 4)
 
     // The packet_body should already have TDS header stripped (done in server.rs)
     let data = packet_data;
 
-    if data.len() < 36 {
-        debug!("Login7 packet too short for feature extension parsing");
+    if data.len() < 56 {
+        debug!("Login7 packet too short for server name parsing");
         return auth_info;
+    }
+
+    // Parse ServerName from offset table
+    // ServerName offset/length is at bytes 52-55 (5th entry in offset table)
+    let server_name_offset = u16::from_le_bytes([data[52], data[53]]) as usize;
+    let server_name_length = u16::from_le_bytes([data[54], data[55]]) as usize; // length in chars
+
+    if server_name_length > 0 && server_name_offset + server_name_length * 2 <= data.len() {
+        // ServerName is UTF-16LE encoded, length is in characters
+        let server_name_bytes =
+            &data[server_name_offset..server_name_offset + server_name_length * 2];
+        let u16_chars: Vec<u16> = server_name_bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        if let Ok(server_name) = String::from_utf16(&u16_chars) {
+            debug!("Login7 ServerName: '{}'", server_name);
+            auth_info.server_name = Some(server_name);
+        }
     }
 
     // Read OptionFlags3 at offset 27
@@ -631,6 +655,94 @@ fn wrap_in_packet(packet_type: PacketType, data: BytesMut) -> BytesMut {
     packet
 }
 
+/// EnvChange subtype for Routing
+pub const ENVCHANGE_ROUTING: u8 = 20; // 0x14
+
+/// Build a routing EnvChange token for connection redirection
+///
+/// This token is sent by the server during login to redirect the client
+/// to a different server endpoint (e.g., in Azure SQL Database scenarios).
+///
+/// # Arguments
+/// * `redirect_host` - The hostname of the server to redirect to
+/// * `redirect_port` - The port of the server to redirect to
+///
+/// # Returns
+/// A BytesMut containing the complete EnvChange routing token
+pub fn build_routing_envchange_token(redirect_host: &str, redirect_port: u16) -> BytesMut {
+    let mut token_data = BytesMut::new();
+
+    // EnvChange token (0xE3)
+    token_data.put_u8(TokenType::EnvChange as u8);
+
+    // Calculate lengths
+    // Server name in UTF-16LE: length prefix (2 bytes) + chars (2 bytes each)
+    let server_utf16: Vec<u16> = redirect_host.encode_utf16().collect();
+    let server_bytes_len = 2 + (server_utf16.len() * 2); // u16 length + UTF-16LE chars
+
+    // New routing value: protocol (1) + port (2) + server name with length
+    let new_value_len = 1 + 2 + server_bytes_len;
+
+    // Token body: subtype (1) + new_value_length (2) + new_value + old_value_length (2)
+    let token_body_len = 1 + 2 + new_value_len + 2;
+
+    // Token length (little-endian)
+    token_data.put_u16_le(token_body_len as u16);
+
+    // Subtype: Routing (0x14 = 20)
+    token_data.put_u8(ENVCHANGE_ROUTING);
+
+    // New value length (little-endian)
+    token_data.put_u16_le(new_value_len as u16);
+
+    // Protocol: TCP (0x00)
+    token_data.put_u8(0x00);
+
+    // Port (little-endian)
+    token_data.put_u16_le(redirect_port);
+
+    // Server name: u16 length in chars, then UTF-16LE encoded string
+    token_data.put_u16_le(server_utf16.len() as u16);
+    for ch in server_utf16 {
+        token_data.put_u16_le(ch);
+    }
+
+    // Old value length: 0 (no old routing info)
+    token_data.put_u16_le(0);
+
+    debug!(
+        "Built routing EnvChange token: redirect to {}:{}",
+        redirect_host, redirect_port
+    );
+
+    token_data
+}
+
+/// Build a redirection response for login
+///
+/// This response is sent instead of a normal login response when the server
+/// wants to redirect the client to a different endpoint. The response contains:
+/// - Routing EnvChange token (tells client where to connect)
+/// - DONE token (indicates end of response)
+///
+/// # Arguments
+/// * `redirect_host` - The hostname to redirect to
+/// * `redirect_port` - The port to redirect to
+///
+/// # Returns
+/// A BytesMut containing the complete TDS packet with routing response
+pub fn build_routing_response(redirect_host: &str, redirect_port: u16) -> BytesMut {
+    let mut response = BytesMut::new();
+
+    // Add routing EnvChange token
+    response.extend_from_slice(&build_routing_envchange_token(redirect_host, redirect_port));
+
+    // Add DONE token
+    response.extend_from_slice(&build_done_token(0));
+
+    wrap_in_packet(PacketType::TabularResult, response)
+}
+
 /// Parse a SQL batch from packet data
 pub fn parse_sql_batch(data: &[u8]) -> Result<String, ProtocolError> {
     if data.is_empty() {
@@ -703,5 +815,33 @@ mod tests {
         use crate::query_response::QueryResponse;
         let response = build_query_result(&QueryResponse::select_one());
         assert!(response.len() >= PACKET_HEADER_SIZE);
+    }
+
+    #[test]
+    fn test_routing_envchange_token() {
+        let token = build_routing_envchange_token("sqlserver.database.windows.net", 1433);
+
+        // Token should start with EnvChange token type (0xE3)
+        assert_eq!(token[0], TokenType::EnvChange as u8);
+
+        // Followed by length (u16 LE), then subtype (0x14 = 20)
+        assert_eq!(token[3], ENVCHANGE_ROUTING);
+
+        // Should have reasonable length
+        assert!(token.len() > 10);
+    }
+
+    #[test]
+    fn test_routing_response() {
+        let response = build_routing_response("sqlserver.database.windows.net", 1433);
+
+        // Should be a complete TDS packet
+        assert!(response.len() >= PACKET_HEADER_SIZE);
+
+        // First byte should be packet type (TabularResult = 0x04)
+        assert_eq!(response[0], PacketType::TabularResult as u8);
+
+        // After header, should have EnvChange token (0xE3)
+        assert_eq!(response[PACKET_HEADER_SIZE], TokenType::EnvChange as u8);
     }
 }

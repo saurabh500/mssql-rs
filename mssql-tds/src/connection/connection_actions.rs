@@ -460,6 +460,7 @@ impl ConnectionAction {
             ConnectionAction::ConnectTcp { host, port, .. } => Some(TransportContext::Tcp {
                 host: host.clone(),
                 port: *port,
+                instance_name: None,
             }),
             ConnectionAction::ConnectTcpFromSlot {
                 host, port_slot, ..
@@ -468,6 +469,7 @@ impl ConnectionAction {
                 Some(TransportContext::Tcp {
                     host: host.clone(),
                     port,
+                    instance_name: None,
                 })
             }
             ConnectionAction::ConnectNamedPipe { pipe_path, .. } => {
@@ -496,6 +498,7 @@ impl ConnectionAction {
                 Some(TransportContext::Tcp {
                     host: host.clone(),
                     port: 1434, // DAC default port
+                    instance_name: None,
                 })
             }
             // Non-connection actions
@@ -1067,7 +1070,7 @@ mod tests {
         assert_eq!(transports.len(), 1);
         assert!(matches!(
             &transports[0].0,
-            TransportContext::Tcp { host, port } if host == "myserver" && *port == 1433
+            TransportContext::Tcp { host, port, .. } if host == "myserver" && *port == 1433
         ));
         assert_eq!(transports[0].1, 15000);
     }
@@ -1095,7 +1098,7 @@ mod tests {
 
         // First transport should be TCP (on non-local, no shared memory)
         let has_tcp = transports.iter().any(|(t, _)| {
-            matches!(t, TransportContext::Tcp { host, port } if host == "myserver" && *port == 1433)
+            matches!(t, TransportContext::Tcp { host, port, .. } if host == "myserver" && *port == 1433)
         });
         assert!(has_tcp, "Waterfall should include TCP transport");
     }
@@ -1145,7 +1148,7 @@ mod tests {
         let transport = action.to_transport_context(&ctx);
         assert!(matches!(
             transport,
-            Some(TransportContext::Tcp { host, port }) if host == "myserver" && port == 1433
+            Some(TransportContext::Tcp { host, port, .. }) if host == "myserver" && port == 1433
         ));
 
         // Named pipe action

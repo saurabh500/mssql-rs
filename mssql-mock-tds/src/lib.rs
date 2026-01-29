@@ -28,6 +28,6 @@ pub mod tls_helper;
 pub use query_response::{
     ColumnDefinition, ColumnValue, QueryRegistry, QueryResponse, Row, SqlDataType,
 };
-pub use server::{ConnectionInfo, ConnectionStore, MockTdsServer};
+pub use server::{ConnectionInfo, ConnectionStore, MockTdsServer, RedirectionConfig};
 pub use tds_tls_wrapper::TdsTlsWrapper;
 pub use tls_helper::{create_test_identity, load_identity_from_file};

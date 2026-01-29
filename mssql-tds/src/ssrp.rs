@@ -115,6 +115,7 @@ pub fn build_transport_list(
                     transports.push(TransportContext::Tcp {
                         host: server.to_string(),
                         port,
+                        instance_name: None,
                     });
                 }
             }

@@ -6,7 +6,8 @@
 use crate::protocol::{
     PACKET_HEADER_SIZE, PacketHeader, PacketType, ProtocolError, build_done_token,
     build_error_response, build_feature_ext_ack_fedauth, build_login_ack, build_prelogin_response,
-    build_prelogin_response_with_fedauth, build_query_result, parse_login7_auth, parse_sql_batch,
+    build_prelogin_response_with_fedauth, build_query_result, build_routing_response,
+    parse_login7_auth, parse_sql_batch,
 };
 use crate::query_response::QueryRegistry;
 use bytes::BytesMut;
@@ -19,6 +20,28 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio_native_tls::{TlsAcceptor, TlsStream};
 use tracing::{debug, error, info, warn};
+
+/// Configuration for connection redirection
+///
+/// When set, the server will redirect clients to a different endpoint
+/// during the login phase instead of completing authentication.
+#[derive(Debug, Clone)]
+pub struct RedirectionConfig {
+    /// The hostname to redirect clients to
+    pub redirect_host: String,
+    /// The port to redirect clients to
+    pub redirect_port: u16,
+}
+
+impl RedirectionConfig {
+    /// Create a new redirection configuration
+    pub fn new(host: impl Into<String>, port: u16) -> Self {
+        Self {
+            redirect_host: host.into(),
+            redirect_port: port,
+        }
+    }
+}
 
 /// Per-connection processor that tracks all connection-specific state.
 /// Each connection gets its own processor instance.
@@ -34,6 +57,8 @@ pub struct ConnectionProcessor {
     query_registry: Arc<Mutex<QueryRegistry>>,
     /// Packet buffer for this connection
     buffer: BytesMut,
+    /// Optional redirection configuration
+    redirection: Option<RedirectionConfig>,
 }
 
 impl ConnectionProcessor {
@@ -45,6 +70,23 @@ impl ConnectionProcessor {
             received_token: None,
             query_registry,
             buffer: BytesMut::with_capacity(4096),
+            redirection: None,
+        }
+    }
+
+    /// Create a new connection processor with redirection configuration
+    pub fn new_with_redirection(
+        addr: SocketAddr,
+        query_registry: Arc<Mutex<QueryRegistry>>,
+        redirection: Option<RedirectionConfig>,
+    ) -> Self {
+        Self {
+            addr,
+            is_authenticated: false,
+            received_token: None,
+            query_registry,
+            buffer: BytesMut::with_capacity(4096),
+            redirection,
         }
     }
 
@@ -125,6 +167,16 @@ impl ConnectionProcessor {
                 let packet_body = &packet_data[PACKET_HEADER_SIZE..];
                 let auth_info = parse_login7_auth(packet_body);
 
+                // Log the server name sent by client (important for verifying redirection behavior)
+                if let Some(ref server_name) = auth_info.server_name {
+                    info!(
+                        "Login7 from {}: client sent ServerName='{}'",
+                        self.addr, server_name
+                    );
+                } else {
+                    info!("Login7 from {}: no ServerName in packet", self.addr);
+                }
+
                 // FedAuth is always supported - check if client used it
                 if auth_info.has_fedauth {
                     let token_len = auth_info
@@ -151,25 +203,38 @@ impl ConnectionProcessor {
                 // Always authenticate (both FedAuth and username/password are supported)
                 self.is_authenticated = true;
 
-                // Build response with LoginAck + optional FeatureExtAck + Done
-                let mut response = build_login_ack();
+                // Check if redirection is configured
+                if let Some(ref redir) = self.redirection {
+                    // Redirect the client to a different server
+                    info!(
+                        "Redirecting client {} to {}:{}",
+                        self.addr, redir.redirect_host, redir.redirect_port
+                    );
+                    Some(build_routing_response(
+                        &redir.redirect_host,
+                        redir.redirect_port,
+                    ))
+                } else {
+                    // Build response with LoginAck + optional FeatureExtAck + Done
+                    let mut response = build_login_ack();
 
-                // If client sent FedAuth, respond with FeatureExtAck
-                if auth_info.has_fedauth {
-                    debug!("Including FeatureExtAck for FedAuth");
-                    response.extend_from_slice(&build_feature_ext_ack_fedauth());
+                    // If client sent FedAuth, respond with FeatureExtAck
+                    if auth_info.has_fedauth {
+                        debug!("Including FeatureExtAck for FedAuth");
+                        response.extend_from_slice(&build_feature_ext_ack_fedauth());
+                    }
+
+                    response.extend_from_slice(&build_done_token(0));
+
+                    // Wrap in packet
+                    let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
+                    let mut packet = BytesMut::with_capacity(total_length as usize);
+                    let resp_header = PacketHeader::new(PacketType::TabularResult, total_length, 1);
+                    resp_header.write(&mut packet);
+                    packet.extend_from_slice(&response);
+
+                    Some(packet)
                 }
-
-                response.extend_from_slice(&build_done_token(0));
-
-                // Wrap in packet
-                let total_length = (PACKET_HEADER_SIZE + response.len()) as u16;
-                let mut packet = BytesMut::with_capacity(total_length as usize);
-                let resp_header = PacketHeader::new(PacketType::TabularResult, total_length, 1);
-                resp_header.write(&mut packet);
-                packet.extend_from_slice(&response);
-
-                Some(packet)
             }
 
             PacketType::SqlBatch => {
@@ -334,13 +399,37 @@ pub struct MockTdsServer {
     strict_mode: bool,
     /// Store for captured connection info (for test verification)
     connection_store: Arc<Mutex<ConnectionStore>>,
+    /// Optional redirection configuration for testing client redirection behavior
+    redirection: Option<RedirectionConfig>,
 }
 
 impl MockTdsServer {
     /// Create a new mock TDS server without TLS encryption.
     /// FedAuth and username/password authentication are always supported.
     pub async fn new(addr: &str) -> Result<Self, std::io::Error> {
-        Self::new_internal(addr, None, false).await
+        Self::new_internal(addr, None, false, None).await
+    }
+
+    /// Create a new mock TDS server with connection redirection.
+    /// When configured, the server will redirect clients to a different endpoint
+    /// during login instead of completing authentication.
+    ///
+    /// # Arguments
+    /// * `addr` - Address to bind to (e.g., "127.0.0.1:1433")
+    /// * `redirect_host` - The hostname to redirect clients to
+    /// * `redirect_port` - The port to redirect clients to
+    pub async fn new_with_redirection(
+        addr: &str,
+        redirect_host: impl Into<String>,
+        redirect_port: u16,
+    ) -> Result<Self, std::io::Error> {
+        Self::new_internal(
+            addr,
+            None,
+            false,
+            Some(RedirectionConfig::new(redirect_host, redirect_port)),
+        )
+        .await
     }
 
     /// Create a new mock TDS server with optional TLS support (TDS 7.4 style).
@@ -353,7 +442,7 @@ impl MockTdsServer {
         addr: &str,
         identity: Option<Identity>,
     ) -> Result<Self, std::io::Error> {
-        Self::new_internal(addr, identity, false).await
+        Self::new_internal(addr, identity, false, None).await
     }
 
     /// Create a new mock TDS server with strict/TDS 8.0 mode.
@@ -367,7 +456,7 @@ impl MockTdsServer {
         addr: &str,
         identity: Identity,
     ) -> Result<Self, std::io::Error> {
-        Self::new_internal(addr, Some(identity), true).await
+        Self::new_internal(addr, Some(identity), true, None).await
     }
 
     /// Internal constructor
@@ -375,6 +464,7 @@ impl MockTdsServer {
         addr: &str,
         identity: Option<Identity>,
         strict_mode: bool,
+        redirection: Option<RedirectionConfig>,
     ) -> Result<Self, std::io::Error> {
         let listener = TcpListener::bind(addr).await?;
         let local_addr = listener.local_addr()?;
@@ -404,6 +494,13 @@ impl MockTdsServer {
             );
         }
 
+        if let Some(ref redir) = redirection {
+            info!(
+                "Redirection enabled: clients will be redirected to {}:{}",
+                redir.redirect_host, redir.redirect_port
+            );
+        }
+
         Ok(Self {
             listener,
             local_addr,
@@ -411,6 +508,7 @@ impl MockTdsServer {
             tls_acceptor,
             strict_mode,
             connection_store: Arc::new(Mutex::new(ConnectionStore::new())),
+            redirection,
         })
     }
 
@@ -437,6 +535,7 @@ impl MockTdsServer {
         let tls_acceptor = self.tls_acceptor.map(Arc::new);
         let strict_mode = self.strict_mode;
         let connection_store = self.connection_store;
+        let redirection = self.redirection.map(Arc::new);
 
         loop {
             let (socket, addr) = listener.accept().await?;
@@ -445,6 +544,7 @@ impl MockTdsServer {
             let registry_clone = Arc::clone(&registry);
             let tls_acceptor_clone = tls_acceptor.clone();
             let store_clone = Arc::clone(&connection_store);
+            let redirection_clone = redirection.clone();
 
             // Spawn a task to handle this connection
             tokio::spawn(async move {
@@ -455,6 +555,7 @@ impl MockTdsServer {
                     tls_acceptor_clone,
                     strict_mode,
                     store_clone,
+                    redirection_clone,
                 )
                 .await
                 {
@@ -474,6 +575,7 @@ impl MockTdsServer {
         let tls_acceptor = self.tls_acceptor.map(Arc::new);
         let strict_mode = self.strict_mode;
         let connection_store = self.connection_store;
+        let redirection = self.redirection.map(Arc::new);
 
         tokio::select! {
             result = async {
@@ -487,9 +589,10 @@ impl MockTdsServer {
                             let registry_clone = Arc::clone(&registry);
                             let tls_acceptor_clone = tls_acceptor.clone();
                             let store_clone = Arc::clone(&connection_store);
+                            let redirection_clone = redirection.clone();
 
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone, strict_mode, store_clone).await {
+                                if let Err(e) = handle_connection_with_tls(socket, addr, registry_clone, tls_acceptor_clone, strict_mode, store_clone, redirection_clone).await {
                                     error!("Error handling connection from {}: {}", addr, e);
                                 }
                             });
@@ -518,6 +621,7 @@ async fn handle_connection_with_tls(
     tls_acceptor: Option<Arc<TlsAcceptor>>,
     strict_mode: bool,
     connection_store: Arc<Mutex<ConnectionStore>>,
+    redirection: Option<Arc<RedirectionConfig>>,
 ) -> Result<(), ProtocolError> {
     if strict_mode {
         // TDS 8.0 Strict mode: TLS handshake happens immediately on the socket
@@ -540,7 +644,14 @@ async fn handle_connection_with_tls(
         })?;
 
         info!("TLS handshake successful for {} (strict mode)", addr);
-        handle_strict_encrypted_connection(tls_stream, addr, query_registry, connection_store).await
+        handle_strict_encrypted_connection(
+            tls_stream,
+            addr,
+            query_registry,
+            connection_store,
+            redirection,
+        )
+        .await
     } else {
         // TDS 7.4 mode: First handle PreLogin, then optionally do TDS-wrapped TLS
         let supports_tls = tls_acceptor.is_some();
@@ -573,12 +684,19 @@ async fn handle_connection_with_tls(
                 addr,
                 query_registry,
                 connection_store,
+                redirection,
             )
             .await
         } else {
             // Continue without encryption
-            handle_unencrypted_connection(prelogin_socket, addr, query_registry, connection_store)
-                .await
+            handle_unencrypted_connection(
+                prelogin_socket,
+                addr,
+                query_registry,
+                connection_store,
+                redirection,
+            )
+            .await
         }
     }
 }
@@ -641,8 +759,13 @@ async fn handle_strict_encrypted_connection(
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
     connection_store: Arc<Mutex<ConnectionStore>>,
+    redirection: Option<Arc<RedirectionConfig>>,
 ) -> Result<(), ProtocolError> {
-    let mut processor = ConnectionProcessor::new(addr, query_registry);
+    let redir_config = redirection
+        .as_ref()
+        .map(|r| RedirectionConfig::new(r.redirect_host.clone(), r.redirect_port));
+    let mut processor =
+        ConnectionProcessor::new_with_redirection(addr, query_registry, redir_config);
     let mut prelogin_handled = false;
 
     loop {
@@ -749,8 +872,13 @@ async fn handle_encrypted_tds_wrapped_connection(
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
     connection_store: Arc<Mutex<ConnectionStore>>,
+    redirection: Option<Arc<RedirectionConfig>>,
 ) -> Result<(), ProtocolError> {
-    let mut processor = ConnectionProcessor::new(addr, query_registry);
+    let redir_config = redirection
+        .as_ref()
+        .map(|r| RedirectionConfig::new(r.redirect_host.clone(), r.redirect_port));
+    let mut processor =
+        ConnectionProcessor::new_with_redirection(addr, query_registry, redir_config);
 
     loop {
         // Read data from TLS socket (which wraps TdsTlsWrapper)
@@ -787,8 +915,13 @@ async fn handle_unencrypted_connection(
     addr: SocketAddr,
     query_registry: Arc<Mutex<QueryRegistry>>,
     connection_store: Arc<Mutex<ConnectionStore>>,
+    redirection: Option<Arc<RedirectionConfig>>,
 ) -> Result<(), ProtocolError> {
-    let mut processor = ConnectionProcessor::new(addr, query_registry);
+    let redir_config = redirection
+        .as_ref()
+        .map(|r| RedirectionConfig::new(r.redirect_host.clone(), r.redirect_port));
+    let mut processor =
+        ConnectionProcessor::new_with_redirection(addr, query_registry, redir_config);
 
     loop {
         // Read data from plain socket

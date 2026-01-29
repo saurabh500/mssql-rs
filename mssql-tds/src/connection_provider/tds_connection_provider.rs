@@ -221,7 +221,7 @@ impl TdsConnectionProvider {
                                 ));
                             }
 
-                            let tcp_transport_context = TransportContext::Tcp { host, port };
+                            let tcp_transport_context = TransportContext::from_routing_token(host, port);
                             connection_result = Self::connect_with_transport_context(
                                 context,
                                 &tcp_transport_context,

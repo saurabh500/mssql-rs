@@ -165,6 +165,7 @@ impl ClientContext {
             transport_context: TransportContext::Tcp {
                 host: "localhost".to_string(),
                 port: 1433,
+                instance_name: None,
             },
             vector_version: VectorVersion::V1,
         }
@@ -216,6 +217,7 @@ impl ClientContext {
             transport_context: TransportContext::Tcp {
                 host: "localhost".to_string(),
                 port: 1433,
+                instance_name: None,
             },
             vector_version: VectorVersion::V1,
         }
@@ -423,7 +425,15 @@ pub enum Protocol {
 #[derive(PartialEq, Clone, Debug)]
 pub enum TransportContext {
     /// TCP/IP connection with host and port
-    Tcp { host: String, port: u16 },
+    /// - `host`: Network hostname for TCP connection (hostname part only, no instance name)
+    /// - `port`: TCP port number
+    /// - `instance_name`: Optional SQL Server instance name (e.g., "SQLEXPRESS").
+    ///   Used for redirected connections where the routing token contains "host\instance"
+    Tcp {
+        host: String,
+        port: u16,
+        instance_name: Option<String>,
+    },
     /// Named Pipe connection with pipe path
     /// Format: \\server\pipe\sql\query or \\server\pipe\MSSQL$INSTANCE\sql\query
     NamedPipe { pipe_name: String },
@@ -436,7 +446,46 @@ pub enum TransportContext {
 }
 
 impl TransportContext {
-    /// Get the server name from the transport context
+    /// Create a TCP TransportContext from a routing token.
+    ///
+    /// The routing token may contain "host\instance" format from SQL Server redirection.
+    /// This method uses the datasource parser to extract host, instance, and port.
+    ///
+    /// # Arguments
+    /// * `host` - The host string from the routing token (e.g., "myserver" or "myserver\SQLEXPRESS")
+    /// * `port` - The TCP port from the routing token
+    ///
+    /// # Returns
+    /// A TCP TransportContext with the network hostname and optional instance name
+    pub fn from_routing_token(host: String, port: u16) -> Self {
+        // Format as "host,port" or "host\instance,port" and parse using datasource parser
+        let datasource = format!("{},{}", host, port);
+
+        // Use the datasource parser to extract server and instance names
+        // If parsing fails, fall back to using the host as-is
+        let (network_host, instance_name) = match ParsedDataSource::parse(&datasource, false) {
+            Ok(parsed) => {
+                let instance = if parsed.instance_name.is_empty() {
+                    None
+                } else {
+                    Some(parsed.instance_name)
+                };
+                (parsed.server_name, instance)
+            }
+            Err(_) => {
+                // Fallback: use host directly without instance
+                (host, None)
+            }
+        };
+
+        TransportContext::Tcp {
+            host: network_host,
+            port,
+            instance_name,
+        }
+    }
+
+    /// Get the server name from the transport context (hostname only, for internal use)
     pub fn get_server_name(&self) -> String {
         match self {
             TransportContext::Tcp { host, .. } => host.clone(),
@@ -459,6 +508,31 @@ impl TransportContext {
             TransportContext::LocalDB { instance_name } => {
                 format!("(localdb)\\{instance_name}")
             }
+        }
+    }
+
+    /// Get the server name in DataSource format for Login7 packet.
+    /// For TCP connections, this returns "host,port" or "host\instance,port" format.
+    /// This matches SqlClient behavior where the client sends the full DataSource string
+    /// back to the server, especially important for redirected connections.
+    ///
+    /// If `instance_name` is set (from routing token), formats as "host\instance,port".
+    pub fn get_login_server_name(&self) -> String {
+        match self {
+            TransportContext::Tcp {
+                host,
+                port,
+                instance_name,
+            } => {
+                // Derive full server name from host and optional instance_name
+                if let Some(instance) = instance_name {
+                    format!("{}\\{},{}", host, instance, port)
+                } else {
+                    format!("{},{}", host, port)
+                }
+            }
+            // For non-TCP protocols, just return the server name
+            _ => self.get_server_name(),
         }
     }
 
@@ -519,6 +593,7 @@ impl TransportContext {
                 Ok(TransportContext::Tcp {
                     host: parsed.server_name.clone(),
                     port,
+                    instance_name: None,
                 })
             }
             ProtocolType::NamedPipe => {
@@ -557,6 +632,7 @@ impl TransportContext {
                 Ok(TransportContext::Tcp {
                     host: parsed.server_name.clone(),
                     port: 1434,
+                    instance_name: None,
                 })
             }
             ProtocolType::Auto => {
@@ -564,6 +640,7 @@ impl TransportContext {
                 Ok(TransportContext::Tcp {
                     host: parsed.server_name.clone(),
                     port: 1433,
+                    instance_name: None,
                 })
             }
         }
@@ -606,7 +683,11 @@ impl TransportContext {
             let host = server_name[..comma_idx].to_string();
             let port_str = &server_name[comma_idx + 1..];
             if let Ok(port) = port_str.parse::<u16>() {
-                return TransportContext::Tcp { host, port };
+                return TransportContext::Tcp {
+                    host,
+                    port,
+                    instance_name: None,
+                };
             }
         }
 
@@ -614,6 +695,7 @@ impl TransportContext {
         TransportContext::Tcp {
             host: server_name.to_string(),
             port: default_port,
+            instance_name: None,
         }
     }
 
@@ -682,6 +764,7 @@ mod tests {
         let ctx = TransportContext::Tcp {
             host: "myserver.example.com".to_string(),
             port: 1433,
+            instance_name: None,
         };
         assert_eq!(ctx.get_server_name(), "myserver.example.com");
         assert_eq!(ctx.get_protocol(), Protocol::Tcp);
@@ -693,6 +776,7 @@ mod tests {
         let ctx = TransportContext::Tcp {
             host: "localhost".to_string(),
             port: 1433,
+            instance_name: None,
         };
         assert_eq!(ctx.get_server_name(), "localhost");
         assert!(ctx.is_local());
@@ -752,6 +836,7 @@ mod tests {
         let tcp_context = TransportContext::Tcp {
             host: "localhost".to_string(),
             port: 1433,
+            instance_name: None,
         };
         assert_eq!(tcp_context.get_server_name(), "localhost");
 
@@ -784,6 +869,7 @@ mod tests {
         let tcp_context = TransportContext::Tcp {
             host: "remote-server".to_string(),
             port: 1433,
+            instance_name: None,
         };
         assert!(!tcp_context.is_local());
 
@@ -791,6 +877,7 @@ mod tests {
         let tcp_localhost = TransportContext::Tcp {
             host: "localhost".to_string(),
             port: 1433,
+            instance_name: None,
         };
         assert!(tcp_localhost.is_local());
 
@@ -798,6 +885,7 @@ mod tests {
         let tcp_loopback = TransportContext::Tcp {
             host: "127.0.0.1".to_string(),
             port: 1433,
+            instance_name: None,
         };
         assert!(tcp_loopback.is_local());
 
@@ -826,6 +914,7 @@ mod tests {
         let tcp_context = TransportContext::Tcp {
             host: "localhost".to_string(),
             port: 1433,
+            instance_name: None,
         };
         assert!(matches!(tcp_context.get_protocol(), Protocol::Tcp));
 
@@ -876,7 +965,7 @@ mod tests {
         let ctx = TransportContext::parse_server_name("myserver", 1433);
         assert_eq!(ctx.get_server_name(), "myserver");
         assert_eq!(ctx.get_protocol(), Protocol::Tcp);
-        if let TransportContext::Tcp { host, port } = ctx {
+        if let TransportContext::Tcp { host, port, .. } = ctx {
             assert_eq!(host, "myserver");
             assert_eq!(port, 1433);
         } else {
@@ -885,7 +974,7 @@ mod tests {
 
         // Hostname with port (SQL Server uses comma as separator)
         let ctx2 = TransportContext::parse_server_name("myserver,1434", 1433);
-        if let TransportContext::Tcp { host, port } = ctx2 {
+        if let TransportContext::Tcp { host, port, .. } = ctx2 {
             assert_eq!(host, "myserver");
             assert_eq!(port, 1434);
         } else {
@@ -894,7 +983,7 @@ mod tests {
 
         // Hostname with domain
         let ctx3 = TransportContext::parse_server_name("sql.contoso.com", 1433);
-        if let TransportContext::Tcp { host, port } = ctx3 {
+        if let TransportContext::Tcp { host, port, .. } = ctx3 {
             assert_eq!(host, "sql.contoso.com");
             assert_eq!(port, 1433);
         } else {
@@ -903,7 +992,7 @@ mod tests {
 
         // IP address with port
         let ctx4 = TransportContext::parse_server_name("192.168.1.100,5000", 1433);
-        if let TransportContext::Tcp { host, port } = ctx4 {
+        if let TransportContext::Tcp { host, port, .. } = ctx4 {
             assert_eq!(host, "192.168.1.100");
             assert_eq!(port, 5000);
         } else {
@@ -985,6 +1074,7 @@ mod tests {
         let tcp_ctx = TransportContext::Tcp {
             host: "localhost".to_string(),
             port: 1433,
+            instance_name: None,
         };
         assert!(!tcp_ctx.is_localdb());
         assert_eq!(tcp_ctx.get_localdb_instance(), None);
