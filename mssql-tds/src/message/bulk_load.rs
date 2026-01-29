@@ -650,6 +650,11 @@ impl<'a> StreamingBulkLoadWriter<'a> {
             // DATE - no type info
             x if x == TdsDataType::DateN as u8 => {}
 
+            // SQL_VARIANT - 4-byte max length
+            x if x == TdsDataType::SsVariant as u8 => {
+                self.packet_writer.write_u32_async(col_meta.length as u32).await?;
+            }
+
             // UNIQUEIDENTIFIER (GUIDTYPE) - requires length byte (always 16)
             x if x == TdsDataType::Guid as u8 => {
                 self.packet_writer.write_byte_async(16u8).await?;

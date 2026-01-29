@@ -88,6 +88,16 @@ fn py_to_column_value_internal(
     // Fast path: check instance type directly
     // This is much faster than trying extract::<T>() in sequence
 
+    // Check for bool FIRST (before int check)
+    // Important: In Python, bool is a subclass of int, so isinstance(True, int) returns True.
+    // We must check for bool before int to ensure booleans map to Bit instead of Int.
+    if py_obj.is_instance_of::<PyBool>() {
+        let val = py_obj
+            .extract::<bool>()
+            .map_err(|e| Error::UsageError(format!("Failed to extract bool: {}", e)))?;
+        return Ok(ColumnValues::Bit(val));
+    }
+
     // Check for int (most common in bulk copy)
     if py_obj.is_instance_of::<PyInt>() {
         // Try i32 first (most common range)
@@ -108,14 +118,6 @@ fn py_to_column_value_internal(
             .map_err(|e| Error::UsageError(format!("Failed to extract string: {}", e)))?;
         let sql_string = SqlString::from_utf8_string(val);
         return Ok(ColumnValues::String(sql_string));
-    }
-
-    // Check for bool (must be before int check in fallback, but after PyInt instance check)
-    if py_obj.is_instance_of::<PyBool>() {
-        let val = py_obj
-            .extract::<bool>()
-            .map_err(|e| Error::UsageError(format!("Failed to extract bool: {}", e)))?;
-        return Ok(ColumnValues::Bit(val));
     }
 
     // Check for float
@@ -636,6 +638,16 @@ fn validate_type_compatibility(
 
         // Vector
         (ColumnValues::Vector(_), SqlDbType::Vector) => true,
+
+        // Variant - can hold most types except text, ntext, image, timestamp, sql_variant, vector, xml, json
+        // Note: text/ntext/image don't have dedicated ColumnValues variants (use String/Bytes)
+        (_, SqlDbType::Variant) => {
+            // Check if the type is NOT one of the unsupported types in sql_variant
+            !matches!(
+                result,
+                ColumnValues::Xml(_) | ColumnValues::Json(_) | ColumnValues::Vector(_)
+            )
+        }
 
         // NULL is always compatible
         (ColumnValues::Null, _) => true,

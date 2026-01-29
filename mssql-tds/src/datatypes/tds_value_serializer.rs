@@ -13,6 +13,7 @@ use crate::datatypes::lcid_encoding::lcid_to_encoding;
 use crate::datatypes::sql_json::SqlJson;
 use crate::datatypes::sql_vector::{SqlVector, VectorData};
 use crate::datatypes::sqldatatypes::TdsDataType;
+use crate::datatypes::sqltypes::get_time_length_from_scale;
 use crate::error::Error;
 use crate::io::packet_writer::{PacketWriter, TdsPacketWriter, TdsPacketWriterUnchecked};
 use crate::token::tokens::SqlCollation;
@@ -33,6 +34,7 @@ const NTEXT: u8 = TdsDataType::NText as u8; // 0x63
 const VARCHAR: u8 = TdsDataType::BigVarChar as u8; // 0xA7
 const CHAR: u8 = TdsDataType::BigChar as u8; // 0xAF
 const TEXT: u8 = TdsDataType::Text as u8; // 0x23
+const SQL_VARIANT: u8 = TdsDataType::SsVariant as u8; // 0x62
 
 // TDS type byte constant for binary types
 const IMAGE: u8 = TdsDataType::Image as u8; // 0x22
@@ -55,7 +57,8 @@ pub struct TdsTypeContext {
     /// Whether this is a PLP (Partial Length Prefix) type (MAX types)
     pub is_plp: bool,
 
-    /// Whether this is a fixed-length type (e.g., BINARY(n) vs VARBINARY(n))
+    /// Whether this is a fixed-length type (e.g., BINARY(n) vs VARBINARY(n)), or an
+    /// element of sql_variant with fixed length (e.g., INT4, GUID, NUMERIC inside sql_variant).
     /// Fixed-length types write exactly max_size bytes with no length prefix in ROW tokens
     pub is_fixed_length: bool,
 
@@ -78,7 +81,7 @@ impl TdsTypeContext {
         matches!(
             self.tds_type,
             // Fixed types: INT1-INT8, BIT, FLT4, FLT8, DATETIME, MONEY, etc.
-            0x30..=0x3F | 0x7F
+            0x30..=0x3F | 0x7A | 0x7F
         )
     }
 }
@@ -106,33 +109,13 @@ impl TdsValueSerializer {
     where
         'b: 'a,
     {
-        match value {
-            ColumnValues::Null => Self::serialize_null(writer, ctx).await,
-            ColumnValues::Bit(v) => Self::serialize_bit(writer, *v, ctx).await,
-            ColumnValues::TinyInt(v) => Self::serialize_tinyint(writer, *v, ctx).await,
-            ColumnValues::SmallInt(v) => Self::serialize_smallint(writer, *v, ctx).await,
-            ColumnValues::Int(v) => Self::serialize_int(writer, *v, ctx).await,
-            ColumnValues::BigInt(v) => Self::serialize_bigint(writer, *v, ctx).await,
-            ColumnValues::Real(v) => Self::serialize_real(writer, *v, ctx).await,
-            ColumnValues::Float(v) => Self::serialize_float(writer, *v, ctx).await,
-            ColumnValues::Decimal(v) | ColumnValues::Numeric(v) => {
-                Self::serialize_decimal(writer, v, ctx).await
-            }
-            ColumnValues::SmallMoney(v) => Self::serialize_smallmoney(writer, v, ctx).await,
-            ColumnValues::Money(v) => Self::serialize_money(writer, v, ctx).await,
-            ColumnValues::Date(v) => Self::serialize_date(writer, v, ctx).await,
-            ColumnValues::Time(v) => Self::serialize_time(writer, v, ctx).await,
-            ColumnValues::DateTime(v) => Self::serialize_datetime(writer, v, ctx).await,
-            ColumnValues::DateTime2(v) => Self::serialize_datetime2(writer, v, ctx).await,
-            ColumnValues::DateTimeOffset(v) => Self::serialize_datetimeoffset(writer, v, ctx).await,
-            ColumnValues::SmallDateTime(v) => Self::serialize_smalldatetime(writer, v, ctx).await,
-            ColumnValues::Bytes(v) => Self::serialize_bytes(writer, v, ctx).await,
-            ColumnValues::Json(v) => Self::serialize_json(writer, v, ctx).await,
-            ColumnValues::String(v) => Self::serialize_string(writer, v, ctx).await,
-            ColumnValues::Vector(v) => Self::serialize_vector(writer, v, ctx).await,
-            ColumnValues::Xml(v) => Self::serialize_xml(writer, v, ctx).await,
-            ColumnValues::Uuid(v) => Self::serialize_uuid(writer, v, ctx).await,
+        // Check if target column is sql_variant (TDS type SQL_VARIANT)
+        // If so, wrap the value with variant wire format
+        if ctx.tds_type == SQL_VARIANT {
+            return Self::serialize_as_variant(writer, value, ctx).await;
         }
+
+        Self::serialize_value_inner(writer, value, ctx).await
     }
 
     /// Serialize a NULL value using the appropriate NULL marker for the type.
@@ -478,8 +461,10 @@ impl TdsValueSerializer {
 
         let total_length = 1 + value_bytes; // sign byte + value bytes
 
-        // Write length byte
-        writer.write_byte_async(total_length as u8).await?;
+        // Write length byte (skip in case of sql_variant when is_fixed_length=true)
+        if !ctx.is_fixed_length {
+            writer.write_byte_async(total_length as u8).await?;
+        }
 
         // Write sign byte
         writer
@@ -512,7 +497,9 @@ impl TdsValueSerializer {
         // The value is stored as a 4-byte signed integer scaled by 10,000
         // (e.g., $123.4567 is stored as 1234567)
 
-        if !ctx.is_fixed_type() {
+        // Skip length prefix in case of sql_variant when is_fixed_length=true or
+        // when we're dealing with fixed Money types
+        if !ctx.is_fixed_type() && !ctx.is_fixed_length {
             // MoneyN with length 4: length byte + value (5 bytes total)
             match writer.has_space(5) {
                 false => {
@@ -597,12 +584,13 @@ impl TdsValueSerializer {
         // DATE format in TDS:
         // - For DateN (nullable, 0x28): length byte (3) + 3-byte unsigned integer
         // - For Date (fixed, 0x2A): 3-byte unsigned integer only
+        // - In sql_variant: 3-byte unsigned integer (no length prefix due to is_fixed_length flag)
         // The value is stored as a 3-byte unsigned integer representing days since 0001-01-01
         // Valid range: 1 (0001-01-01) to 3,652,059 (9999-12-31)
         // The 3-byte unsigned integer can hold values up to 0xFFFFFF (16,777,215),
         // but SQL Server DATE type has a more restricted range.
 
-        if !ctx.is_fixed_type() {
+        if !ctx.is_fixed_type() && !ctx.is_fixed_length {
             // DateN with length 3: length byte + value (4 bytes total)
             let days = value.get_days();
             match writer.has_space(4) {
@@ -660,17 +648,7 @@ impl TdsValueSerializer {
         //   - Scale 5-7: 5 bytes
 
         // Determine the byte length based on scale
-        let time_length = match value.scale {
-            0..=2 => 3u8,
-            3 | 4 => 4u8,
-            5..=7 => 5u8,
-            _ => {
-                return Err(Error::UsageError(format!(
-                    "Invalid scale for Time type: {}. Valid range: 0-7",
-                    value.scale
-                )));
-            }
-        };
+        let time_length = get_time_length_from_scale(value.scale)?;
 
         // Scale the time value based on the scale
         // The time_nanoseconds is always in 100-nanosecond units internally
@@ -695,7 +673,7 @@ impl TdsValueSerializer {
             _ => value.time_nanoseconds,
         };
 
-        if !ctx.is_fixed_type() {
+        if !ctx.is_fixed_type() && !ctx.is_fixed_length {
             // TimeN with length prefix
             let total_size = (1 + time_length) as usize;
             match writer.has_space(total_size) {
@@ -857,24 +835,40 @@ impl TdsValueSerializer {
     async fn serialize_uuid<'a, 'b>(
         writer: &'a mut PacketWriter<'b>,
         value: &uuid::Uuid,
-        _ctx: &TdsTypeContext,
+        ctx: &TdsTypeContext,
     ) -> TdsResult<()>
     where
         'b: 'a,
     {
-        // GUID is always nullable (type 0x24), no fixed variant exists
-        // Length byte (0x10 = 16) + 16 bytes of GUID data = 17 bytes total
+        // GUID wire format:
+        // - In sql_variant: Fixed 16 bytes (no length prefix)
+        // - In regular columns: 1-byte length (0x10) + 16 bytes of GUID data
         let guid_bytes = value.to_bytes_le();
 
-        match writer.has_space(17) {
-            false => {
-                writer.write_byte_async(16u8).await?; // Length for GUID (16 bytes)
-                writer.write_async(&guid_bytes).await?;
+        if ctx.is_fixed_length {
+            // Fixed-length context (sql_variant) - write 16 bytes directly without length prefix
+            match writer.has_space(16) {
+                false => {
+                    writer.write_async(&guid_bytes).await?;
+                }
+                true => {
+                    for &byte in &guid_bytes {
+                        writer.write_byte_unchecked(byte);
+                    }
+                }
             }
-            true => {
-                writer.write_byte_unchecked(16u8); // Length for GUID (16 bytes)
-                for &byte in &guid_bytes {
-                    writer.write_byte_unchecked(byte);
+        } else {
+            // Nullable context (regular columns) - write length byte + 16 bytes
+            match writer.has_space(17) {
+                false => {
+                    writer.write_byte_async(16u8).await?;
+                    writer.write_async(&guid_bytes).await?;
+                }
+                true => {
+                    writer.write_byte_unchecked(16u8);
+                    for &byte in &guid_bytes {
+                        writer.write_byte_unchecked(byte);
+                    }
                 }
             }
         }
@@ -900,17 +894,7 @@ impl TdsValueSerializer {
         //   - Scale 5-7: 8 bytes (5 for time + 3 for date)
 
         // Determine the time length based on scale
-        let time_length = match value.time.scale {
-            0..=2 => 3u8,
-            3 | 4 => 4u8,
-            5..=7 => 5u8,
-            _ => {
-                return Err(Error::UsageError(format!(
-                    "Invalid scale for DateTime2 type: {}. Valid range: 0-7",
-                    value.time.scale
-                )));
-            }
-        };
+        let time_length = get_time_length_from_scale(value.time.scale)?;
 
         let date_length = 3u8;
         let total_value_length = time_length + date_length;
@@ -928,7 +912,7 @@ impl TdsValueSerializer {
             _ => value.time.time_nanoseconds,
         };
 
-        if !ctx.is_fixed_type() {
+        if !ctx.is_fixed_type() && !ctx.is_fixed_length {
             // DateTime2N with length prefix
             let total_size = (1 + total_value_length) as usize;
             match writer.has_space(total_size) {
@@ -1028,17 +1012,7 @@ impl TdsValueSerializer {
         //   - Scale 5-7: 10 bytes (5 for time + 3 for date + 2 for offset)
 
         // Determine the time length based on scale
-        let time_length = match value.datetime2.time.scale {
-            0..=2 => 3u8,
-            3 | 4 => 4u8,
-            5..=7 => 5u8,
-            _ => {
-                return Err(Error::UsageError(format!(
-                    "Invalid scale for DateTimeOffset type: {}. Valid range: 0-7",
-                    value.datetime2.time.scale
-                )));
-            }
-        };
+        let time_length = get_time_length_from_scale(value.datetime2.time.scale)?;
 
         let date_length = 3u8;
         let offset_length = 2u8;
@@ -1057,7 +1031,7 @@ impl TdsValueSerializer {
             _ => value.datetime2.time.time_nanoseconds,
         };
 
-        if !ctx.is_fixed_type() {
+        if !ctx.is_fixed_type() && !ctx.is_fixed_length {
             // DateTimeOffsetN with length prefix
             let total_size = (1 + total_value_length) as usize;
             match writer.has_space(total_size) {
@@ -1088,6 +1062,46 @@ impl TdsValueSerializer {
                     for i in 0..time_length {
                         let byte_val = ((time_value >> (i * 8)) & 0xFF) as u8;
                         writer.write_byte_unchecked(byte_val);
+                    }
+
+                    // Write date as 3-byte little-endian unsigned integer
+                    let date_bytes = value.datetime2.days.to_le_bytes();
+                    writer.write_byte_unchecked(date_bytes[0]);
+                    writer.write_byte_unchecked(date_bytes[1]);
+                    writer.write_byte_unchecked(date_bytes[2]);
+
+                    // Write timezone offset as 2-byte little-endian signed integer
+                    let offset_bytes = value.offset.to_le_bytes();
+                    writer.write_byte_unchecked(offset_bytes[0]);
+                    writer.write_byte_unchecked(offset_bytes[1]);
+                }
+            }
+        } else {
+            // Fixed type or sql_variant - just write value (time + date + offset, no length prefix)
+            match writer.has_space(total_value_length as usize) {
+                false => {
+                    // Write time_value in little-endian format (variable bytes)
+                    for i in 0..time_length {
+                        writer
+                            .write_byte_async(((time_value >> (i * 8)) & 0xFF) as u8)
+                            .await?;
+                    }
+
+                    // Write date as 3-byte little-endian unsigned integer
+                    let date_bytes = value.datetime2.days.to_le_bytes();
+                    writer.write_byte_async(date_bytes[0]).await?;
+                    writer.write_byte_async(date_bytes[1]).await?;
+                    writer.write_byte_async(date_bytes[2]).await?;
+
+                    // Write timezone offset as 2-byte little-endian signed integer
+                    let offset_bytes = value.offset.to_le_bytes();
+                    writer.write_byte_async(offset_bytes[0]).await?;
+                    writer.write_byte_async(offset_bytes[1]).await?;
+                }
+                true => {
+                    // Write time_value in little-endian format (variable bytes)
+                    for i in 0..time_length {
+                        writer.write_byte_unchecked(((time_value >> (i * 8)) & 0xFF) as u8);
                     }
 
                     // Write date as 3-byte little-endian unsigned integer
@@ -1742,6 +1756,665 @@ impl TdsValueSerializer {
         }
 
         Ok(())
+    }
+
+    /// Serialize a value as SQL_VARIANT type (TdsDataType::SsVariant).
+    ///
+    /// This wraps any inner value with the variant wire format:
+    /// ```text
+    /// [4-byte total_length][1-byte base_type][1-byte prop_len][N-byte props][M-byte data]
+    /// ```
+    ///
+    /// For NULL values, total_length is 0 and no other bytes are written.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - Packet writer for TDS stream
+    /// * `value` - The value to wrap as variant (can be any ColumnValues type)
+    /// * `ctx` - Type context (should have tds_type == SQL_VARIANT)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Value type is not supported in sql_variant (text, ntext, image, timestamp)
+    /// - Value serialization fails
+    async fn serialize_as_variant<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &ColumnValues,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // Handle NULL variant: just write 4-byte length = 0
+        if matches!(value, ColumnValues::Null) {
+            writer.write_u32_async(0).await?;
+            return Ok(());
+        }
+
+        // Get the base TDS type for this value
+        let base_type = Self::get_variant_base_type(value)?;
+
+        // Calculate property byte length using shared function
+        let prop_len = Self::calculate_type_info_length(base_type, value);
+
+        // Calculate the data size without actually serializing (to avoid creating temp writer)
+        let data_size = Self::calculate_value_size(value)?;
+
+        // SQL_VARIANT has a maximum data size of 8000 bytes (excluding metadata)
+        const MAX_VARIANT_DATA_SIZE: u32 = 8000;
+        if data_size > MAX_VARIANT_DATA_SIZE {
+            return Err(Error::UsageError(format!(
+                "SQL_VARIANT data size ({} bytes) exceeds maximum ({} bytes). \
+                 The base data type cannot store more than {} bytes in SQL_VARIANT.",
+                data_size, MAX_VARIANT_DATA_SIZE, MAX_VARIANT_DATA_SIZE
+            )));
+        }
+
+        // Calculate total length: type_byte(1) + prop_len_byte(1) + prop_bytes + data_bytes
+        let total_length = 2u32 + (prop_len as u32) + data_size;
+
+        // SQL_VARIANT total size (including metadata) cannot exceed 8016 bytes
+        const MAX_VARIANT_SIZE: u32 = 8016;
+        if total_length > MAX_VARIANT_SIZE {
+            return Err(Error::UsageError(format!(
+                "SQL_VARIANT total size ({} bytes) exceeds maximum size ({} bytes). \
+                 The variant contains {} bytes of data plus {} bytes of metadata.",
+                total_length,
+                MAX_VARIANT_SIZE,
+                data_size,
+                2 + prop_len as u32
+            )));
+        }
+
+        // Write variant wrapper
+        writer.write_u32_async(total_length).await?; // 4-byte total length
+        writer.write_byte_async(base_type).await?; // 1-byte base type
+        writer.write_byte_async(prop_len).await?; // 1-byte property length
+
+        // Write property bytes using shared function
+        if prop_len > 0 {
+            Self::write_type_info_bytes(writer, base_type, value, ctx).await?;
+        }
+
+        // Create a temporary context with the correct base type for serializing the inner value
+        let temp_ctx = Self::create_variant_inner_context(value, base_type, ctx)?;
+
+        // Now write the actual value data using the inner serialization
+        Self::serialize_value_inner(writer, value, &temp_ctx).await?;
+
+        Ok(())
+    }
+
+    /// Calculate the serialized size of a value in bytes.
+    ///
+    /// This estimates the size without actually serializing, used for variant
+    /// length calculation. Doesn't include the length prefix bytes coz it is
+    /// not encoded in case of sql_variant.
+    fn calculate_value_size(value: &ColumnValues) -> TdsResult<u32> {
+        let size = match value {
+            ColumnValues::TinyInt(_) => 1,
+            ColumnValues::SmallInt(_) => 2,
+            ColumnValues::Int(_) => 4,
+            ColumnValues::BigInt(_) => 8,
+
+            ColumnValues::Real(_) => 4,
+            ColumnValues::Float(_) => 8,
+
+            ColumnValues::Bit(_) => 1,
+
+            ColumnValues::Decimal(v) | ColumnValues::Numeric(v) => {
+                // Decimal/Numeric size based on precision (matching serialize_decimal logic)
+                // Precision 1-9:   5 bytes (1 sign + 4 value bytes)
+                // Precision 10-19: 9 bytes (1 sign + 8 value bytes)
+                // Precision 20-28: 13 bytes (1 sign + 12 value bytes)
+                // Precision 29-38: 17 bytes (1 sign + 16 value bytes)
+                let precision = v.precision;
+                let value_bytes = match precision {
+                    1..=9 => 4,
+                    10..=19 => 8,
+                    20..=28 => 12,
+                    29..=38 => 16,
+                    _ => 16, // Default to max
+                };
+                1 + value_bytes // sign(1) + value_bytes
+            }
+
+            ColumnValues::Money(_) => 8,
+            ColumnValues::SmallMoney(_) => 4,
+
+            ColumnValues::Date(_) => 3,
+            ColumnValues::Time(v) => get_time_length_from_scale(v.scale)? as u32,
+            ColumnValues::DateTime(_) => 8, // days(4) + time(4)
+            ColumnValues::DateTime2(v) => {
+                let time_len = get_time_length_from_scale(v.time.scale)? as u32;
+                time_len + 3 // time + days(3)
+            }
+            ColumnValues::DateTimeOffset(v) => {
+                let time_len = get_time_length_from_scale(v.datetime2.time.scale)? as u32;
+                time_len + 3 + 2 // time + days(3) + offset(2)
+            }
+            ColumnValues::SmallDateTime(_) => 4, // days(2) + time(2)
+
+            ColumnValues::Bytes(v) => v.len() as u32,
+
+            ColumnValues::String(s) => s.bytes.len() as u32,
+
+            ColumnValues::Uuid(_) => 16,
+
+            // Unsupported types in variant
+            ColumnValues::Vector(_) | ColumnValues::Xml(_) | ColumnValues::Json(_) => {
+                return Err(Error::UsageError(
+                    "Unsupported data type in sql_variant".to_string(),
+                ));
+            }
+
+            ColumnValues::Null => 0, // Should have been handled earlier
+        };
+
+        Ok(size)
+    }
+
+    /// Calculate the length of TYPE_INFO property bytes for a given type.
+    ///
+    /// This determines how many bytes of type-specific metadata are needed:
+    /// - 0 bytes: Fixed-length types (INT, FLOAT, BIT, DATETIME, MONEY, GUID, DATE)
+    /// - 1 byte: TIME, DATETIME2, DATETIMEOFFSET (scale)
+    /// - 2 bytes: DECIMAL/NUMERIC (precision + scale), BINARY/VARBINARY (max_length)
+    /// - 7 bytes: String types (collation[5] + max_length[2])
+    ///
+    /// This function is shared between sql_variant serialization and COLMETADATA encoding.
+    fn calculate_type_info_length(tds_type: u8, _value: &ColumnValues) -> u8 {
+        match tds_type {
+            // Fixed-length types: 0 property bytes (type code defines everything)
+            x if x == TdsDataType::Int1 as u8
+                || x == TdsDataType::Int2 as u8
+                || x == TdsDataType::Int4 as u8
+                || x == TdsDataType::Int8 as u8
+                || x == TdsDataType::Flt4 as u8
+                || x == TdsDataType::Flt8 as u8
+                || x == TdsDataType::Bit as u8
+                || x == TdsDataType::Money as u8
+                || x == TdsDataType::Money4 as u8
+                || x == TdsDataType::DateTime as u8
+                || x == TdsDataType::DateTim4 as u8 =>
+            {
+                0
+            }
+
+            // DateN and Guid: 0 property bytes
+            x if x == TdsDataType::DateN as u8 || x == TdsDataType::Guid as u8 => 0,
+
+            // Time types: 1 byte (scale)
+            x if x == TdsDataType::TimeN as u8
+                || x == TdsDataType::DateTime2N as u8
+                || x == TdsDataType::DateTimeOffsetN as u8 =>
+            {
+                1
+            }
+
+            // Decimal/Numeric: 2 bytes (precision + scale)
+            x if x == TdsDataType::DecimalN as u8 || x == TdsDataType::NumericN as u8 => 2,
+
+            // Binary types: 2 bytes (max_length as u16)
+            x if x == TdsDataType::BigVarBinary as u8 || x == TdsDataType::BigBinary as u8 => 2,
+
+            // String types: 7 bytes (collation[5] + max_length[2])
+            x if x == TdsDataType::NVarChar as u8
+                || x == TdsDataType::NChar as u8
+                || x == TdsDataType::BigChar as u8
+                || x == TdsDataType::BigVarChar as u8 =>
+            {
+                7
+            }
+
+            // All valid types from get_variant_base_type are handled above
+            _ => unreachable!("Invalid TDS type 0x{:02X} for sql_variant", tds_type),
+        }
+    }
+
+    /// Write TYPE_INFO bytes for a sql_variant value to the packet writer.
+    /// We don't use metadata info from the context here, as it contains sql_variant
+    /// metadata, & not metadata for the inner value. Instead, we extract the necessary
+    /// metadata bytes directly from the value itself.
+    async fn write_type_info_bytes<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        tds_type: u8,
+        value: &ColumnValues,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        match tds_type {
+            // Fixed-length types: No property bytes to write
+            x if x == TdsDataType::Int1 as u8
+                || x == TdsDataType::Int2 as u8
+                || x == TdsDataType::Int4 as u8
+                || x == TdsDataType::Int8 as u8
+                || x == TdsDataType::Flt4 as u8
+                || x == TdsDataType::Flt8 as u8
+                || x == TdsDataType::Bit as u8
+                || x == TdsDataType::Money as u8
+                || x == TdsDataType::Money4 as u8
+                || x == TdsDataType::DateTime as u8
+                || x == TdsDataType::DateTim4 as u8 =>
+            {
+                // No property bytes - type code fully defines the format
+            }
+
+            // DateN and Guid: 0 property bytes (no need to write anything)
+            x if x == TdsDataType::DateN as u8 || x == TdsDataType::Guid as u8 => {
+                // No property bytes
+            }
+
+            // Time types: 1 byte (scale)
+            x if x == TdsDataType::TimeN as u8 => {
+                if let ColumnValues::Time(v) = value {
+                    writer.write_byte_async(v.scale).await?;
+                }
+            }
+            x if x == TdsDataType::DateTime2N as u8 => {
+                if let ColumnValues::DateTime2(v) = value {
+                    writer.write_byte_async(v.time.scale).await?;
+                }
+            }
+            x if x == TdsDataType::DateTimeOffsetN as u8 => {
+                if let ColumnValues::DateTimeOffset(v) = value {
+                    writer.write_byte_async(v.datetime2.time.scale).await?;
+                }
+            }
+
+            // Decimal/Numeric: 2 bytes (precision + scale)
+            x if x == TdsDataType::DecimalN as u8 || x == TdsDataType::NumericN as u8 => {
+                if let ColumnValues::Decimal(v) | ColumnValues::Numeric(v) = value {
+                    writer.write_byte_async(v.precision).await?;
+                    writer.write_byte_async(v.scale).await?;
+                }
+            }
+
+            // Binary types: 2 bytes (max_length as u16)
+            x if x == TdsDataType::BigVarBinary as u8 => {
+                if let ColumnValues::Bytes(v) = value {
+                    let max_length = v.len() as u16;
+                    writer.write_u16_async(max_length).await?;
+                }
+            }
+
+            // String types: 7 bytes (collation[5] + max_length[2])
+            x if x == TdsDataType::NVarChar as u8 => {
+                // Get collation from context or use SQL_Latin1_General_CP1_CI_AS as default
+                // This is the most common SQL Server collation for US English
+                // TODO: Check which collation ODBC/.NET uses by default
+                let collation = ctx.collation.unwrap_or(SqlCollation {
+                    info: 0x00000409, // LCID 1033 (US English)
+                    lcid_language_id: 0x0409,
+                    col_flags: 0,
+                    sort_id: 52, // SQL_Latin1_General_CP1_CI_AS
+                });
+
+                // Write collation (5 bytes): info (4 bytes) + sort_id (1 byte)
+                writer.write_u32_async(collation.info).await?;
+                writer.write_byte_async(collation.sort_id).await?;
+
+                // Calculate max_length based on value type
+                let max_length = match value {
+                    ColumnValues::String(s) => s.bytes.len() as u16,
+                    _ => 0,
+                };
+
+                // Write max_length (2 bytes)
+                writer.write_u16_async(max_length).await?;
+            }
+
+            // All valid types from get_variant_base_type are handled above
+            _ => unreachable!("Invalid TDS type 0x{:02X} for sql_variant", tds_type),
+        }
+
+        Ok(())
+    }
+
+    /// Get the TDS base type byte for a ColumnValues variant.
+    ///
+    /// Maps ColumnValues enum variants to their TDS type codes.
+    ///
+    /// IMPORTANT: SQL_VARIANT uses fixed-length type codes (INT4, FLT8, etc.)
+    /// not nullable variants (INTN, FLTN).
+    fn get_variant_base_type(value: &ColumnValues) -> TdsResult<u8> {
+        let tds_type = match value {
+            // Integer types
+            ColumnValues::TinyInt(_) => TdsDataType::Int1 as u8,
+            ColumnValues::SmallInt(_) => TdsDataType::Int2 as u8,
+            ColumnValues::Int(_) => TdsDataType::Int4 as u8,
+            ColumnValues::BigInt(_) => TdsDataType::Int8 as u8,
+
+            // Floating point types
+            ColumnValues::Real(_) => TdsDataType::Flt4 as u8,
+            ColumnValues::Float(_) => TdsDataType::Flt8 as u8,
+
+            // Bit type
+            ColumnValues::Bit(_) => TdsDataType::Bit as u8,
+
+            // Decimal and numeric types
+            ColumnValues::Decimal(_) => TdsDataType::DecimalN as u8,
+            ColumnValues::Numeric(_) => TdsDataType::NumericN as u8,
+
+            // Money types
+            ColumnValues::Money(_) => TdsDataType::Money as u8,
+            ColumnValues::SmallMoney(_) => TdsDataType::Money4 as u8,
+
+            // Date/time types
+            ColumnValues::Date(_) => TdsDataType::DateN as u8,
+            ColumnValues::Time(_) => TdsDataType::TimeN as u8,
+            ColumnValues::DateTime(_) => TdsDataType::DateTime as u8,
+            ColumnValues::DateTime2(_) => TdsDataType::DateTime2N as u8,
+            ColumnValues::DateTimeOffset(_) => TdsDataType::DateTimeOffsetN as u8,
+            ColumnValues::SmallDateTime(_) => TdsDataType::DateTim4 as u8,
+
+            // Binary types - use BigVarBinary for variable-length binary data
+            ColumnValues::Bytes(_) => TdsDataType::BigVarBinary as u8,
+
+            // String types - determine based on encoding (will be refined in calculate_variant_prop_bytes)
+            // For now, default to NVarChar for Unicode strings
+            ColumnValues::String(_) => TdsDataType::NVarChar as u8,
+
+            // GUID - use nullable GUID type
+            ColumnValues::Uuid(_) => TdsDataType::Guid as u8,
+
+            ColumnValues::Null => {
+                // Should have been handled earlier
+                return Err(Error::ProtocolError(
+                    "NULL should be handled before get_variant_base_type".to_string(),
+                ));
+            }
+
+            // Catch-all for unsupported types in sql_variant (XML, JSON, Vector, etc.)
+            _ => {
+                return Err(Error::UsageError(
+                    "Unsupported data type in sql_variant columns".to_string(),
+                ));
+            }
+        };
+
+        Ok(tds_type)
+    }
+
+    /// Create a TdsTypeContext for serializing the inner value of a variant.
+    ///
+    /// This creates a context with the correct base type (not SQL_VARIANT) so that
+    /// the inner value serialization works correctly.
+    fn create_variant_inner_context(
+        value: &ColumnValues,
+        base_type: u8,
+        _original_ctx: &TdsTypeContext,
+    ) -> TdsResult<TdsTypeContext> {
+        let ctx = match value {
+            // Integer types: use fixed-length types (INT1, INT2, INT4, INT8)
+            // is_fixed_length=true means skip the length byte prefix in serialization
+            ColumnValues::TinyInt(_) => TdsTypeContext {
+                tds_type: TdsDataType::Int1 as u8,
+                max_size: 1,
+                is_nullable: false,
+                is_plp: false,
+                is_fixed_length: true, // Already fixed type, but keep flag for consistency
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+            ColumnValues::SmallInt(_) => TdsTypeContext {
+                tds_type: TdsDataType::Int2 as u8,
+                max_size: 2,
+                is_nullable: false,
+                is_plp: false,
+                is_fixed_length: true, // Already fixed type, but keep flag for consistency
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+            ColumnValues::Int(_) => TdsTypeContext {
+                tds_type: TdsDataType::Int4 as u8,
+                max_size: 4,
+                is_nullable: false,
+                is_plp: false,
+                is_fixed_length: true, // Already fixed type, but keep flag for consistency
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+            ColumnValues::BigInt(_) => TdsTypeContext {
+                tds_type: TdsDataType::Int8 as u8,
+                max_size: 8,
+                is_nullable: false,
+                is_plp: false,
+                is_fixed_length: true, // Already fixed type, but keep flag for consistency
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+
+            ColumnValues::Real(_) => TdsTypeContext {
+                tds_type: TdsDataType::Flt4 as u8,
+                max_size: 4,
+                is_nullable: false,
+                is_plp: false,
+                is_fixed_length: true, // Already fixed type, but keep flag for consistency
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+            ColumnValues::Float(_) => TdsTypeContext {
+                tds_type: TdsDataType::Flt8 as u8,
+                max_size: 8,
+                is_nullable: false,
+                is_plp: false,
+                is_fixed_length: true, // Already fixed type, but keep flag for consistency
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+
+            ColumnValues::Bit(_) => TdsTypeContext {
+                tds_type: TdsDataType::Bit as u8,
+                max_size: 1,
+                is_nullable: false,
+                is_plp: false,
+                is_fixed_length: true, // Already fixed type, but keep flag for consistency
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+
+            ColumnValues::Decimal(v) | ColumnValues::Numeric(v) => TdsTypeContext {
+                tds_type: base_type, // 0x6A or 0x6C
+                max_size: 17,        // Max size for decimal
+                is_nullable: true,
+                is_plp: false,
+                is_fixed_length: true, // Skip length prefix in sql_variant
+                precision: Some(v.precision),
+                scale: Some(v.scale),
+                collation: None,
+            },
+
+            ColumnValues::Money(_) => TdsTypeContext {
+                tds_type: TdsDataType::Money as u8,
+                max_size: 8,
+                is_nullable: false,
+                is_plp: false,
+                is_fixed_length: true, // Already fixed type, but keep flag for consistency
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+            ColumnValues::SmallMoney(_) => TdsTypeContext {
+                tds_type: TdsDataType::Money4 as u8,
+                max_size: 4,
+                is_nullable: false,
+                is_plp: false,
+                is_fixed_length: true, // Already fixed type, but keep flag for consistency
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+
+            // Date/Time types
+            ColumnValues::Date(_) => TdsTypeContext {
+                tds_type: TdsDataType::DateN as u8,
+                max_size: 3,
+                is_nullable: true,
+                is_plp: false,
+                is_fixed_length: true, // Skip length prefix in sql_variant
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+            ColumnValues::Time(v) => TdsTypeContext {
+                tds_type: TdsDataType::TimeN as u8,
+                max_size: 5,
+                is_nullable: true,
+                is_plp: false,
+                is_fixed_length: true, // Skip length prefix in sql_variant
+                precision: None,
+                scale: Some(v.scale),
+                collation: None,
+            },
+            ColumnValues::DateTime(_) => TdsTypeContext {
+                tds_type: TdsDataType::DateTime as u8,
+                max_size: 8,
+                is_nullable: false,
+                is_plp: false,
+                is_fixed_length: true, // Already fixed type, but keep flag for consistency
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+            ColumnValues::DateTime2(v) => TdsTypeContext {
+                tds_type: TdsDataType::DateTime2N as u8,
+                max_size: 8,
+                is_nullable: true,
+                is_plp: false,
+                is_fixed_length: true, // Skip length prefix in sql_variant
+                precision: None,
+                scale: Some(v.time.scale),
+                collation: None,
+            },
+            ColumnValues::DateTimeOffset(v) => TdsTypeContext {
+                tds_type: TdsDataType::DateTimeOffsetN as u8,
+                max_size: 10,
+                is_nullable: true,
+                is_plp: false,
+                is_fixed_length: true, // Skip length prefix in sql_variant
+                precision: None,
+                scale: Some(v.datetime2.time.scale),
+                collation: None,
+            },
+            ColumnValues::SmallDateTime(_) => TdsTypeContext {
+                tds_type: TdsDataType::DateTim4 as u8,
+                max_size: 4,
+                is_nullable: false,
+                is_plp: false,
+                is_fixed_length: true, // Already fixed type, but keep flag for consistency
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+
+            // Binary types
+            ColumnValues::Bytes(v) => TdsTypeContext {
+                tds_type: TdsDataType::BigVarBinary as u8,
+                max_size: v.len(),
+                is_nullable: true,
+                is_plp: false,
+                is_fixed_length: true, // Skip length prefix in sql_variant
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+
+            // String types
+            // Encode ColumnValues::String as NVARCHAR
+            ColumnValues::String(s) => {
+                TdsTypeContext {
+                    tds_type: TdsDataType::NVarChar as u8,
+                    max_size: s.bytes.len() / 2, // Character count for Unicode (UTF-16LE = 2 bytes per char)
+                    is_nullable: true,
+                    is_plp: false,
+                    is_fixed_length: true, // Skip length prefix in sql_variant
+                    precision: None,
+                    scale: None,
+                    // Use column collation if known (from original context), else fall back to default
+                    // This matches ODBC behavior: use column collation if available, else connection default
+                    collation: _original_ctx.collation,
+                }
+            }
+
+            // GUID
+            ColumnValues::Uuid(_) => TdsTypeContext {
+                tds_type: TdsDataType::Guid as u8,
+                max_size: 16,
+                is_nullable: true,
+                is_plp: false,
+                is_fixed_length: true, // In sql_variant, GUID is serialized as fixed 16 bytes without length prefix
+                precision: None,
+                scale: None,
+                collation: None,
+            },
+
+            ColumnValues::Vector(_) | ColumnValues::Xml(_) | ColumnValues::Json(_) => {
+                return Err(Error::UsageError(
+                    "Unsupported data type in sql_variant".to_string(),
+                ));
+            }
+
+            ColumnValues::Null => {
+                return Err(Error::ProtocolError(
+                    "NULL should be handled before create_variant_inner_context".to_string(),
+                ));
+            }
+        };
+
+        Ok(ctx)
+    }
+
+    /// Serialize the inner value without the variant wrapper check.
+    ///
+    /// This is used internally by serialize_as_variant to avoid infinite recursion.
+    /// It performs the same serialization as serialize_value but skips the variant check.
+    async fn serialize_value_inner<'a, 'b>(
+        writer: &'a mut PacketWriter<'b>,
+        value: &ColumnValues,
+        ctx: &TdsTypeContext,
+    ) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // Direct dispatch without variant check
+        match value {
+            ColumnValues::Null => Self::serialize_null(writer, ctx).await,
+            ColumnValues::Bit(v) => Self::serialize_bit(writer, *v, ctx).await,
+            ColumnValues::TinyInt(v) => Self::serialize_tinyint(writer, *v, ctx).await,
+            ColumnValues::SmallInt(v) => Self::serialize_smallint(writer, *v, ctx).await,
+            ColumnValues::Int(v) => Self::serialize_int(writer, *v, ctx).await,
+            ColumnValues::BigInt(v) => Self::serialize_bigint(writer, *v, ctx).await,
+            ColumnValues::Real(v) => Self::serialize_real(writer, *v, ctx).await,
+            ColumnValues::Float(v) => Self::serialize_float(writer, *v, ctx).await,
+            ColumnValues::Decimal(v) | ColumnValues::Numeric(v) => {
+                Self::serialize_decimal(writer, v, ctx).await
+            }
+            ColumnValues::SmallMoney(v) => Self::serialize_smallmoney(writer, v, ctx).await,
+            ColumnValues::Money(v) => Self::serialize_money(writer, v, ctx).await,
+            ColumnValues::Date(v) => Self::serialize_date(writer, v, ctx).await,
+            ColumnValues::Time(v) => Self::serialize_time(writer, v, ctx).await,
+            ColumnValues::DateTime(v) => Self::serialize_datetime(writer, v, ctx).await,
+            ColumnValues::DateTime2(v) => Self::serialize_datetime2(writer, v, ctx).await,
+            ColumnValues::DateTimeOffset(v) => Self::serialize_datetimeoffset(writer, v, ctx).await,
+            ColumnValues::SmallDateTime(v) => Self::serialize_smalldatetime(writer, v, ctx).await,
+            ColumnValues::Bytes(v) => Self::serialize_bytes(writer, v, ctx).await,
+            ColumnValues::Json(v) => Self::serialize_json(writer, v, ctx).await,
+            ColumnValues::String(v) => Self::serialize_string(writer, v, ctx).await,
+            ColumnValues::Vector(v) => Self::serialize_vector(writer, v, ctx).await,
+            ColumnValues::Xml(v) => Self::serialize_xml(writer, v, ctx).await,
+            ColumnValues::Uuid(v) => Self::serialize_uuid(writer, v, ctx).await,
+        }
     }
 }
 
