@@ -170,6 +170,7 @@ impl TdsClient {
         self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
+        self.transport.reset_reader();
         let database_collation = self.negotiated_settings.database_collation;
 
         let sql_statement_value =

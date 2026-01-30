@@ -542,10 +542,12 @@ impl<S: Stream> AsyncWrite for TlsOverTdsStream<S> {
 impl<S: Stream> Stream for TlsOverTdsStream<S> {
     fn tls_handshake_starting(&mut self) {
         self.has_completed_tls_handshake = false;
+        self.wrapped_stream.tls_handshake_starting();
     }
 
     fn tls_handshake_completed(&mut self) {
         self.has_completed_tls_handshake = true;
+        self.wrapped_stream.tls_handshake_completed();
     }
 }
 

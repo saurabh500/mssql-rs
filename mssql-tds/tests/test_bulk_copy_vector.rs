@@ -5,6 +5,8 @@
 mod common;
 
 mod bulk_copy_vector_tests {
+    #[cfg(windows)]
+    use crate::common::build_named_pipe_datasource;
     use crate::common::{begin_connection, build_tcp_datasource, init_tracing};
     use async_trait::async_trait;
     use mssql_tds::connection::bulk_copy::{BulkCopy, BulkLoadRow};
@@ -369,23 +371,25 @@ mod bulk_copy_vector_tests {
         assert_eq!(row_count, 2, "Expected 2 rows in result set");
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[cfg_attr(target_os = "windows", ignore = "41865")]
-    async fn test_bulk_copy_vector_large_dimensions() {
-        let mut client = begin_connection(&build_tcp_datasource()).await;
+    /// Helper function to test bulk copy with large vectors (1998 dimensions).
+    /// This tests multi-packet TDS responses since each vector is ~8KB.
+    async fn bulk_copy_vector_large_dimensions_impl(datasource: &str, table_name: &str) {
+        let mut client = begin_connection(datasource).await;
 
         // Create temp table with VECTOR(1998) - maximum supported dimensions
         client
             .execute(
-                "CREATE TABLE #BulkCopyLargeVectorTest (id INT NOT NULL, embedding VECTOR(1998))"
-                    .to_string(),
+                format!(
+                    "CREATE TABLE {} (id INT NOT NULL, embedding VECTOR(1998))",
+                    table_name
+                ),
                 None,
                 None,
             )
             .await
             .unwrap();
 
-        // Generate 1998-dimensional vectors
+        // Generate 1998-dimensional vectors (~8KB each, spans multiple TDS packets)
         let vec1: Vec<f32> = (0..1998).map(|i| i as f32 * 0.001).collect();
         let vec2: Vec<f32> = (0..1998).map(|i| (1998 - i) as f32 * 0.001).collect();
 
@@ -402,7 +406,7 @@ mod bulk_copy_vector_tests {
 
         // Execute bulk copy
         let result = {
-            let bulk_copy = BulkCopy::new(&mut client, "#BulkCopyLargeVectorTest");
+            let bulk_copy = BulkCopy::new(&mut client, table_name);
             bulk_copy
                 .batch_size(1000)
                 .write_to_server_zerocopy(&rows)
@@ -414,7 +418,7 @@ mod bulk_copy_vector_tests {
         // Verify the data
         client
             .execute(
-                "SELECT id, embedding FROM #BulkCopyLargeVectorTest ORDER BY id".to_string(),
+                format!("SELECT id, embedding FROM {} ORDER BY id", table_name),
                 None,
                 None,
             )
@@ -456,6 +460,26 @@ mod bulk_copy_vector_tests {
             }
         }
         assert_eq!(row_count, 2, "Expected 2 rows in result set");
+    }
+
+    /// Test bulk copy with large vectors (1998 dimensions) over TCP.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_vector_large_dimensions_tcp() {
+        bulk_copy_vector_large_dimensions_impl(&build_tcp_datasource(), "#BulkCopyLargeVectorTest")
+            .await;
+    }
+
+    /// Test bulk copy with large vectors (1998 dimensions) over Named Pipes.
+    /// Named Pipes have different read semantics (message mode) that can cause
+    /// issues with multi-packet reads if not handled correctly.
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_vector_large_dimensions_named_pipe() {
+        bulk_copy_vector_large_dimensions_impl(
+            &build_named_pipe_datasource(),
+            "#BulkCopyLargeVectorNPTest",
+        )
+        .await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

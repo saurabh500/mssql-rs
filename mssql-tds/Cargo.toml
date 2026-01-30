@@ -42,7 +42,7 @@ x509-parser = "0.18.0"
 dns-lookup = "2.0"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["namedpipeapi", "winerror"] }
+winapi = { version = "0.3", features = ["namedpipeapi", "winerror", "winbase"] }
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Registry"] }
 
 [target.'cfg(unix)'.dependencies]

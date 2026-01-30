@@ -80,11 +80,8 @@ pub fn build_tcp_datasource() -> String {
         .map(|v| v.parse::<u16>().expect("DB_PORT must be a valid u16"))
         .unwrap_or(1433);
 
-    if port == 1433 {
-        host
-    } else {
-        format!("{},{}", host, port)
-    }
+    // Always use explicit TCP protocol prefix to avoid Named Pipes fallback
+    format!("tcp:{},{}", host, port)
 }
 
 /// Build datasource string for TCP connection with explicit protocol prefix

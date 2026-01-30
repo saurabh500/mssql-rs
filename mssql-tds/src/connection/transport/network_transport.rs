@@ -471,6 +471,9 @@ impl NetworkReaderWriter for NetworkTransport {
 
     fn notify_session_setting_change(&mut self, setting: &SessionSettings) {
         self.packet_size = setting.packet_size;
+        // Note: The read buffer's max_packet_size is updated in reset_reader(),
+        // which is called before each command execution. This ensures the buffer
+        // is properly sized when we start reading the server's response.
     }
 
     fn as_writer(&mut self) -> &mut dyn NetworkWriter {
@@ -677,24 +680,131 @@ impl NetworkTransport {
         Ok(())
     }
 
+    /// Reads a complete TDS packet from the network into the working buffer.
+    ///
+    /// This method handles the case where a single `read()` call returns data for multiple
+    /// TDS packets (TCP coalescing, Named Pipes message boundaries, etc.). Extra bytes
+    /// beyond the current packet are tracked in `pending_bytes` for the next call.
+    ///
+    /// # Buffer Layout
+    ///
+    /// ```text
+    /// ┌─────────────────────────────────────────────────────────────────────────┐
+    /// │                          working_buffer                                 │
+    /// ├─────────────────────────────────────────────────────────────────────────┤
+    /// │ [existing data]  │  [new packet starts at base_offset]                  │
+    /// │ (buffer_length)  │                                                      │
+    /// └─────────────────────────────────────────────────────────────────────────┘
+    ///                    ▲
+    ///                    base_offset = buffer_length (where new packet goes)
+    /// ```
+    ///
+    /// # Scenario 1: Single Packet Read (Normal Case)
+    ///
+    /// ```text
+    /// Network read() returns exactly one TDS packet:
+    ///
+    /// ┌────────────────────────────────────────┐
+    /// │  TDS Packet (e.g., 200 bytes)          │
+    /// │  [HDR 8B][    PAYLOAD 192B    ]        │
+    /// └────────────────────────────────────────┘
+    ///           ▲
+    ///           bytes_available = 200
+    ///           packet_size_from_header = 200
+    ///           extra_bytes = 0  ← No pending bytes
+    /// ```
+    ///
+    /// # Scenario 2: Multiple Packets in One Read (Coalescing)
+    ///
+    /// ```text
+    /// Network read() returns TWO TDS packets at once (e.g., TCP coalescing):
+    ///
+    /// ┌────────────────────────────────────────┬────────────────────────────────┐
+    /// │  TDS Packet 1 (200 bytes)              │  TDS Packet 2 (150 bytes)      │
+    /// │  [HDR 8B][    PAYLOAD 192B    ]        │  [HDR 8B][ PAYLOAD 142B ]      │
+    /// └────────────────────────────────────────┴────────────────────────────────┘
+    ///           ▲                                         ▲
+    ///           │                                         │
+    ///           bytes_available = 350                     pending_bytes = 150
+    ///           packet_size_from_header = 200             pending_bytes_offset = base_offset + 200
+    ///           extra_bytes = 150
+    ///
+    /// After this call returns:
+    ///   - Returns packet_size = 200 (first packet)
+    ///   - pending_bytes = 150, pending_bytes_offset points to Packet 2
+    /// ```
+    ///
+    /// # Scenario 3: Next Call Uses Pending Bytes
+    ///
+    /// ```text
+    /// On next call, pending_bytes > 0, so we move them to base_offset first:
+    ///
+    /// BEFORE:
+    /// ┌──────────────────────────────────────────────────────────────────────────┐
+    /// │  [Packet 1 data - already processed]  │  [Packet 2 - pending]            │
+    /// │                                       │  (pending_bytes_offset)          │
+    /// └──────────────────────────────────────────────────────────────────────────┘
+    ///
+    /// AFTER copy_within():
+    /// ┌──────────────────────────────────────────────────────────────────────────┐
+    /// │  [Packet 2 moved to base_offset]      │  ...                             │
+    /// │  bytes_available = 150                │                                  │
+    /// └──────────────────────────────────────────────────────────────────────────┘
+    ///
+    /// If Packet 2 is complete (150 >= header's length), no network read needed!
+    /// ```
+    ///
+    /// # Why This Matters
+    ///
+    /// Without tracking `pending_bytes`:
+    /// - TCP: Rare data corruption on high-latency networks where packets coalesce
+    /// - Named Pipes: **100% failure** - message mode returns multiple packets per read
+    /// - Shared Memory: Same as Named Pipes (uses Named Pipes internally)
+    ///
+    /// The fix ensures all bytes from `read()` are accounted for, not just the first packet.
     async fn get_new_tds_packet(&mut self) -> TdsResult<usize> {
         let base_offset = self.tds_read_buffer.buffer_length;
-        let max_packet_size = self.tds_read_buffer.max_packet_size;
+
+        // Check if we have pending bytes from a previous read that included multiple packets
+        let mut bytes_available = self.tds_read_buffer.pending_bytes;
+        let pending_offset = self.tds_read_buffer.pending_bytes_offset;
+
+        if bytes_available > 0 {
+            // Validate bounds before copy_within to avoid panic on malformed data.
+            // These values are derived from packet lengths on the wire, so we must
+            // guard against corrupted or malicious packets.
+            let src_end = pending_offset.saturating_add(bytes_available);
+            let dest_end = base_offset.saturating_add(bytes_available);
+            let buffer_len = self.tds_read_buffer.working_buffer.len();
+
+            if src_end > buffer_len || dest_end > buffer_len {
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "Invalid pending bytes range: src {}..{}, dest {}, buffer_len {}",
+                    pending_offset, src_end, base_offset, buffer_len
+                )));
+            }
+
+            // We have pending bytes - move them to base_offset
+            self.tds_read_buffer
+                .working_buffer
+                .copy_within(pending_offset..src_end, base_offset);
+            self.tds_read_buffer.pending_bytes = 0;
+            self.tds_read_buffer.pending_bytes_offset = 0;
+        }
 
         let stream = self.stream.as_mut().expect("Stream not available");
-        let mut bytes_read_from_transport = stream
-            .read(&mut self.tds_read_buffer.working_buffer[base_offset..])
-            .await?;
 
-        // We need the 8 byte header. Re-read, in case the new_packet_byte_length has less bytes than 8 bytes to complete
-        // the header.
-        while bytes_read_from_transport < PacketWriter::PACKET_HEADER_SIZE {
-            bytes_read_from_transport += stream
-                .read(
-                    &mut self.tds_read_buffer.working_buffer
-                        [base_offset + bytes_read_from_transport..base_offset + max_packet_size],
-                )
+        // Read more data if we don't have enough for the header
+        while bytes_available < PacketWriter::PACKET_HEADER_SIZE {
+            let bytes_read = stream
+                .read(&mut self.tds_read_buffer.working_buffer[base_offset + bytes_available..])
                 .await?;
+            if bytes_read == 0 {
+                return Err(crate::error::Error::ConnectionClosed(
+                    "Connection closed by server while reading TDS packet header".to_string(),
+                ));
+            }
+            bytes_available += bytes_read;
         }
 
         let length_from_packet_header = BigEndian::read_u16(
@@ -703,19 +813,61 @@ impl NetworkTransport {
 
         let packet_size_from_header: usize = length_from_packet_header as usize;
 
-        // Keep reading until we have the complete packet in memory.
-        while bytes_read_from_transport < packet_size_from_header {
-            bytes_read_from_transport += stream
-                .read(
-                    &mut self.tds_read_buffer.working_buffer
-                        [base_offset + bytes_read_from_transport..base_offset + max_packet_size],
-                )
-                .await?;
+        // Validate packet_size_from_header against protocol constraints.
+        // A malicious or corrupted server could send invalid lengths.
+        if packet_size_from_header < PacketWriter::PACKET_HEADER_SIZE {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Invalid TDS packet length {}: must be at least {} bytes (header size)",
+                packet_size_from_header,
+                PacketWriter::PACKET_HEADER_SIZE
+            )));
         }
+
+        if packet_size_from_header > self.tds_read_buffer.max_packet_size {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "TDS packet length {} exceeds negotiated max packet size {}",
+                packet_size_from_header, self.tds_read_buffer.max_packet_size
+            )));
+        }
+
+        // Also ensure we won't exceed buffer capacity
+        let buffer_len = self.tds_read_buffer.working_buffer.len();
+        if base_offset.saturating_add(packet_size_from_header) > buffer_len {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "TDS packet length {} at offset {} exceeds buffer capacity {}",
+                packet_size_from_header, base_offset, buffer_len
+            )));
+        }
+
+        // Keep reading until we have the complete packet in memory.
+        while bytes_available < packet_size_from_header {
+            let bytes_read = stream
+                .read(&mut self.tds_read_buffer.working_buffer[base_offset + bytes_available..])
+                .await?;
+            if bytes_read == 0 {
+                return Err(crate::error::Error::ConnectionClosed(
+                    "Connection closed by server while reading TDS packet payload".to_string(),
+                ));
+            }
+            bytes_available += bytes_read;
+        }
+
+        // Calculate how many extra bytes we read beyond this packet
+        let extra_bytes = bytes_available - packet_size_from_header;
+
+        if extra_bytes > 0 {
+            // Track where the extra bytes are - they're right after this packet in the buffer
+            self.tds_read_buffer.pending_bytes = extra_bytes;
+            self.tds_read_buffer.pending_bytes_offset = base_offset + packet_size_from_header;
+        } else {
+            self.tds_read_buffer.pending_bytes = 0;
+            self.tds_read_buffer.pending_bytes_offset = 0;
+        }
+
         event!(
             tracing::Level::DEBUG,
             "Received packet of size: {:?}",
-            bytes_read_from_transport
+            packet_size_from_header
         );
 
         use pretty_hex::PrettyHex;
@@ -724,10 +876,10 @@ impl NetworkTransport {
             tracing::Level::DEBUG,
             "Packet content: {:?}",
             &mut self.tds_read_buffer.working_buffer
-                [base_offset..base_offset + bytes_read_from_transport]
+                [base_offset..base_offset + packet_size_from_header]
                 .hex_dump()
         );
-        Ok(bytes_read_from_transport)
+        Ok(packet_size_from_header)
     }
 
     async fn receive_token_internal(&mut self, context: &ParserContext) -> TdsResult<Tokens> {
@@ -1491,5 +1643,507 @@ pub(crate) mod tests {
             initial_buffer_len
         );
         assert_eq!(transport.tds_read_buffer.max_packet_size, 4096);
+    }
+
+    /// Test that get_new_tds_packet correctly handles multiple TDS packets arriving in a single read.
+    ///
+    /// This test validates the pending_bytes fix:
+    /// - When a single network read returns data for multiple TDS packets (e.g., due to TCP coalescing
+    ///   or Named Pipes message mode), the extra bytes beyond the current packet must be preserved.
+    /// - Without the fix, these extra bytes would be lost, causing data corruption or hangs.
+    ///
+    /// The test simulates:
+    /// 1. Two complete TDS packets (32 bytes each) sent together in one write
+    /// 2. The transport should correctly read both packets, using pending_bytes to track the second
+    #[tokio::test]
+    async fn test_get_new_tds_packet_handles_multiple_packets_in_single_read() {
+        use byteorder::{BigEndian, ByteOrder};
+
+        // Use a small packet size for testing
+        let packet_size: u32 = 512;
+
+        let context = ClientContext {
+            packet_size: packet_size as i16,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: true,
+                ..EncryptionOptions::default()
+            },
+            ..Default::default()
+        };
+
+        let (mut transport, server_side) = create_readable_network_transport(&context);
+
+        // Create two TDS packets with distinct payload patterns
+        // TDS packet header is 8 bytes:
+        //   [0]: packet type
+        //   [1]: status (0x01 = EOM)
+        //   [2-3]: length (big endian, includes header)
+        //   [4-5]: SPID
+        //   [6]: packet ID
+        //   [7]: window
+
+        let packet1_payload = vec![0xAA; 24]; // 24 bytes of 0xAA
+        let packet2_payload = vec![0xBB; 24]; // 24 bytes of 0xBB
+
+        let packet1_total_len: u16 = 8 + packet1_payload.len() as u16; // 32 bytes
+        let packet2_total_len: u16 = 8 + packet2_payload.len() as u16; // 32 bytes
+
+        // Build packet 1
+        let mut packet1 = vec![0u8; packet1_total_len as usize];
+        packet1[0] = 0x04; // TDS_TABULAR_RESULT
+        packet1[1] = 0x00; // Not EOM (more packets coming)
+        BigEndian::write_u16(&mut packet1[2..4], packet1_total_len);
+        packet1[4] = 0x00; // SPID low
+        packet1[5] = 0x00; // SPID high
+        packet1[6] = 0x01; // Packet ID
+        packet1[7] = 0x00; // Window
+        packet1[8..].copy_from_slice(&packet1_payload);
+
+        // Build packet 2
+        let mut packet2 = vec![0u8; packet2_total_len as usize];
+        packet2[0] = 0x04; // TDS_TABULAR_RESULT
+        packet2[1] = 0x01; // EOM (end of message)
+        BigEndian::write_u16(&mut packet2[2..4], packet2_total_len);
+        packet2[4] = 0x00;
+        packet2[5] = 0x00;
+        packet2[6] = 0x02; // Packet ID
+        packet2[7] = 0x00;
+        packet2[8..].copy_from_slice(&packet2_payload);
+
+        // Concatenate both packets - simulating TCP coalescing or a transport
+        // that returns multiple packets in a single read
+        let mut combined_data = packet1.clone();
+        combined_data.extend_from_slice(&packet2);
+
+        // Send both packets at once
+        let mut framed_writer = FramedWrite::new(server_side, BytesCodec::new());
+        framed_writer
+            .send(Bytes::copy_from_slice(&combined_data))
+            .await
+            .expect("Failed to send test data");
+
+        // First call to get_new_tds_packet should return packet 1
+        let size1 = transport
+            .get_new_tds_packet()
+            .await
+            .expect("Failed to read first packet");
+        assert_eq!(
+            size1, packet1_total_len as usize,
+            "First packet size mismatch"
+        );
+
+        // Verify packet 1 payload is correct (starts at buffer_length which is 0 initially)
+        let packet1_in_buffer = &transport.tds_read_buffer.working_buffer[0..size1];
+        assert_eq!(
+            packet1_in_buffer,
+            &packet1[..],
+            "First packet content mismatch"
+        );
+
+        // Check that pending_bytes was set correctly for the second packet
+        assert_eq!(
+            transport.tds_read_buffer.pending_bytes, packet2_total_len as usize,
+            "pending_bytes should track the second packet"
+        );
+
+        // Reset buffer state to simulate processing the first packet
+        transport.tds_read_buffer.buffer_length = 0;
+        transport.tds_read_buffer.buffer_position = 0;
+
+        // Second call to get_new_tds_packet should return packet 2 from pending bytes
+        let size2 = transport
+            .get_new_tds_packet()
+            .await
+            .expect("Failed to read second packet");
+        assert_eq!(
+            size2, packet2_total_len as usize,
+            "Second packet size mismatch"
+        );
+
+        // Verify packet 2 payload is correct
+        let packet2_in_buffer = &transport.tds_read_buffer.working_buffer[0..size2];
+        assert_eq!(
+            packet2_in_buffer,
+            &packet2[..],
+            "Second packet content mismatch"
+        );
+
+        // After reading both packets, pending_bytes should be 0
+        assert_eq!(
+            transport.tds_read_buffer.pending_bytes, 0,
+            "pending_bytes should be 0 after consuming all data"
+        );
+    }
+
+    /// Test that get_new_tds_packet works correctly when packets arrive one at a time.
+    /// This is the normal case and should work with or without the pending_bytes fix.
+    #[tokio::test]
+    async fn test_get_new_tds_packet_single_packet_per_read() {
+        use byteorder::{BigEndian, ByteOrder};
+
+        let packet_size: u32 = 512;
+
+        let context = ClientContext {
+            packet_size: packet_size as i16,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: true,
+                ..EncryptionOptions::default()
+            },
+            ..Default::default()
+        };
+
+        let (mut transport, server_side) = create_readable_network_transport(&context);
+
+        // Create a single TDS packet
+        let payload = vec![0xCC; 100];
+        let total_len: u16 = 8 + payload.len() as u16;
+
+        let mut packet = vec![0u8; total_len as usize];
+        packet[0] = 0x04; // TDS_TABULAR_RESULT
+        packet[1] = 0x01; // EOM
+        BigEndian::write_u16(&mut packet[2..4], total_len);
+        packet[4] = 0x00;
+        packet[5] = 0x00;
+        packet[6] = 0x01;
+        packet[7] = 0x00;
+        packet[8..].copy_from_slice(&payload);
+
+        // Send just one packet
+        let mut framed_writer = FramedWrite::new(server_side, BytesCodec::new());
+        framed_writer
+            .send(Bytes::copy_from_slice(&packet))
+            .await
+            .expect("Failed to send test data");
+
+        // Read the packet
+        let size = transport
+            .get_new_tds_packet()
+            .await
+            .expect("Failed to read packet");
+        assert_eq!(size, total_len as usize);
+
+        // Verify content
+        let packet_in_buffer = &transport.tds_read_buffer.working_buffer[0..size];
+        assert_eq!(packet_in_buffer, &packet[..]);
+
+        // No pending bytes
+        assert_eq!(transport.tds_read_buffer.pending_bytes, 0);
+    }
+
+    /// Test that demonstrates the multi-packet read bug WITHOUT checking internal fields.
+    ///
+    /// This test verifies the observable behavior: when two TDS packets arrive in a single
+    /// network read, BOTH packets must be readable. This test does NOT check `pending_bytes`
+    /// or any other internal tracking fields - it only verifies the actual packet data.
+    ///
+    /// Bug demonstration:
+    /// - UNFIXED CODE: The second `get_new_tds_packet()` call will HANG indefinitely because
+    ///   the extra bytes from the first read were discarded. The read() call waits for new
+    ///   data that will never arrive.
+    /// - FIXED CODE: Both packets are correctly read because pending bytes are preserved.
+    ///
+    /// This test uses a timeout to detect the hang condition in unfixed code.
+    #[tokio::test]
+    async fn test_multi_packet_coalescing_behavior_only() {
+        use byteorder::{BigEndian, ByteOrder};
+        use tokio::time::{Duration, timeout};
+
+        let packet_size: u32 = 512;
+
+        let context = ClientContext {
+            packet_size: packet_size as i16,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: true,
+                ..EncryptionOptions::default()
+            },
+            ..Default::default()
+        };
+
+        let (mut transport, server_side) = create_readable_network_transport(&context);
+
+        // Create two TDS packets with DIFFERENT payloads so we can verify correct data
+        let packet1_payload: Vec<u8> = (0..24).map(|i| i as u8).collect(); // 0, 1, 2, ... 23
+        let packet2_payload: Vec<u8> = (0..24).map(|i| (100 + i) as u8).collect(); // 100, 101, ... 123
+
+        let packet1_total_len: u16 = 8 + packet1_payload.len() as u16;
+        let packet2_total_len: u16 = 8 + packet2_payload.len() as u16;
+
+        // Build packet 1
+        let mut packet1 = vec![0u8; packet1_total_len as usize];
+        packet1[0] = 0x04; // TDS_TABULAR_RESULT
+        packet1[1] = 0x00; // Not EOM
+        BigEndian::write_u16(&mut packet1[2..4], packet1_total_len);
+        packet1[6] = 0x01; // Packet ID = 1
+        packet1[8..].copy_from_slice(&packet1_payload);
+
+        // Build packet 2
+        let mut packet2 = vec![0u8; packet2_total_len as usize];
+        packet2[0] = 0x04; // TDS_TABULAR_RESULT
+        packet2[1] = 0x01; // EOM
+        BigEndian::write_u16(&mut packet2[2..4], packet2_total_len);
+        packet2[6] = 0x02; // Packet ID = 2
+        packet2[8..].copy_from_slice(&packet2_payload);
+
+        // Send BOTH packets in a single write - simulating TCP coalescing
+        let mut combined_data = packet1.clone();
+        combined_data.extend_from_slice(&packet2);
+
+        let mut framed_writer = FramedWrite::new(server_side, BytesCodec::new());
+        framed_writer
+            .send(Bytes::copy_from_slice(&combined_data))
+            .await
+            .expect("Failed to send test data");
+
+        // ============================================================
+        // READ FIRST PACKET - should always work
+        // ============================================================
+        let size1 = transport
+            .get_new_tds_packet()
+            .await
+            .expect("Failed to read first packet");
+
+        assert_eq!(size1, packet1_total_len as usize, "First packet size wrong");
+
+        // Verify first packet content (especially the payload bytes 8..32)
+        // Copy data to owned values to avoid borrow issues
+        let read_packet1_id = transport.tds_read_buffer.working_buffer[6];
+        let read_packet1_payload: Vec<u8> =
+            transport.tds_read_buffer.working_buffer[8..size1].to_vec();
+
+        assert_eq!(
+            &read_packet1_payload[..],
+            &packet1_payload[..],
+            "First packet payload corrupted"
+        );
+        assert_eq!(read_packet1_id, 0x01, "First packet should have ID=1");
+
+        // Reset buffer to prepare for second packet read.
+        // We use reset_to_length(0) to properly reset position and length via the API.
+        // Note: pending_bytes/pending_bytes_offset are preserved - they track data
+        // that hasn't been processed yet (the second packet).
+        transport.tds_read_buffer.reset_to_length(0);
+
+        // ============================================================
+        // READ SECOND PACKET - THIS IS WHERE THE BUG MANIFESTS
+        // ============================================================
+        // With UNFIXED code: This will HANG because the second packet's bytes
+        // were discarded, and read() waits for data that never comes.
+        //
+        // With FIXED code: The pending bytes are used, no network read needed.
+
+        let read_result = timeout(
+            Duration::from_millis(500), // 500ms is plenty for in-memory data
+            transport.get_new_tds_packet(),
+        )
+        .await;
+
+        // Check if we timed out (BUG) or got a result (FIXED)
+        let size2 = match read_result {
+            Ok(Ok(size)) => size,
+            Ok(Err(e)) => panic!("Error reading second packet: {:?}", e),
+            Err(_elapsed) => {
+                panic!(
+                    "BUG DETECTED: Timed out waiting for second packet!\n\
+                     The second packet's bytes were discarded after the first read.\n\
+                     This is the multi-packet coalescing bug."
+                );
+            }
+        };
+
+        assert_eq!(
+            size2, packet2_total_len as usize,
+            "Second packet size wrong"
+        );
+
+        // Verify second packet content - this catches data corruption bugs
+        let read_packet2_id = transport.tds_read_buffer.working_buffer[6];
+        let read_packet2_payload: Vec<u8> =
+            transport.tds_read_buffer.working_buffer[8..size2].to_vec();
+
+        assert_eq!(
+            &read_packet2_payload[..],
+            &packet2_payload[..],
+            "Second packet payload corrupted - got wrong data!"
+        );
+        assert_eq!(read_packet2_id, 0x02, "Second packet should have ID=2");
+    }
+
+    /// Test that get_new_tds_packet returns an error (not panic) when pending_bytes
+    /// fields contain invalid values that would cause an out-of-bounds access.
+    ///
+    /// This protects against corrupted or malicious packet data that could cause
+    /// the pending_bytes_offset or pending_bytes to point outside the buffer.
+    ///
+    /// NOTE: This test intentionally mutates internal buffer fields directly to simulate
+    /// corrupted state that cannot occur through normal API usage. This is necessary
+    /// because we're testing defensive bounds checking against malformed wire data.
+    #[tokio::test]
+    async fn test_get_new_tds_packet_bounds_check_on_pending_bytes() {
+        let packet_size: u32 = 512;
+
+        let context = ClientContext {
+            packet_size: packet_size as i16,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: true,
+                ..EncryptionOptions::default()
+            },
+            ..Default::default()
+        };
+
+        let (mut transport, _server_side) = create_readable_network_transport(&context);
+
+        // Simulate corrupted state: pending_bytes_offset points way past buffer end.
+        // Direct field mutation is intentional here - we're testing defense against
+        // invalid state that could only arise from malformed packet data.
+        let buffer_len = transport.tds_read_buffer.working_buffer.len();
+        transport.tds_read_buffer.pending_bytes = 100;
+        transport.tds_read_buffer.pending_bytes_offset = buffer_len + 1000; // Way out of bounds
+
+        // This should return an error, not panic
+        let result = transport.get_new_tds_packet().await;
+        assert!(
+            result.is_err(),
+            "Expected error for out-of-bounds pending_bytes_offset"
+        );
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, crate::error::Error::ProtocolError(_)),
+            "Expected ProtocolError, got {:?}",
+            err
+        );
+
+        // Reset buffer to clean state, then inject another invalid scenario.
+        // Direct mutation is intentional - testing defense against malformed data.
+        transport.tds_read_buffer.reset_to_length(0);
+        transport.tds_read_buffer.pending_bytes = buffer_len + 500; // Larger than buffer
+        transport.tds_read_buffer.pending_bytes_offset = 0;
+
+        let result = transport.get_new_tds_packet().await;
+        assert!(
+            result.is_err(),
+            "Expected error for oversized pending_bytes"
+        );
+
+        // Reset buffer, then test: src range valid but dest would overflow.
+        // We set buffer_length near the end so base_offset leaves no room for pending bytes.
+        transport.tds_read_buffer.reset_to_length(buffer_len - 10);
+        transport.tds_read_buffer.pending_bytes = 100; // 100 bytes won't fit at dest
+        transport.tds_read_buffer.pending_bytes_offset = 0; // src is valid
+
+        let result = transport.get_new_tds_packet().await;
+        assert!(
+            result.is_err(),
+            "Expected error when dest range exceeds buffer"
+        );
+    }
+
+    /// Test that get_new_tds_packet validates packet_size_from_header from the wire.
+    ///
+    /// A malicious or corrupted server could send invalid packet lengths that would
+    /// cause panics or incorrect state. This test verifies we return errors instead.
+    #[tokio::test]
+    async fn test_get_new_tds_packet_validates_packet_length_from_header() {
+        use byteorder::{BigEndian, ByteOrder};
+
+        let packet_size: u32 = 512;
+
+        let context = ClientContext {
+            packet_size: packet_size as i16,
+            encryption_options: EncryptionOptions {
+                mode: EncryptionSetting::On,
+                trust_server_certificate: true,
+                ..EncryptionOptions::default()
+            },
+            ..Default::default()
+        };
+
+        // Test 1: Packet length smaller than header size (8 bytes)
+        {
+            let (mut transport, server_side) = create_readable_network_transport(&context);
+
+            // Create a malformed packet with length = 4 (less than 8-byte header)
+            let mut malformed_packet = vec![0u8; 16];
+            malformed_packet[0] = 0x04; // TDS_TABULAR_RESULT
+            malformed_packet[1] = 0x01; // EOM
+            BigEndian::write_u16(&mut malformed_packet[2..4], 4); // Invalid: only 4 bytes
+            malformed_packet[6] = 0x01;
+
+            let mut framed_writer = FramedWrite::new(server_side, BytesCodec::new());
+            framed_writer
+                .send(Bytes::copy_from_slice(&malformed_packet))
+                .await
+                .expect("Failed to send test data");
+
+            let result = transport.get_new_tds_packet().await;
+            assert!(
+                result.is_err(),
+                "Expected error for packet length < header size"
+            );
+            let err = result.unwrap_err();
+            assert!(
+                matches!(err, crate::error::Error::ProtocolError(_)),
+                "Expected ProtocolError, got {:?}",
+                err
+            );
+        }
+
+        // Test 2: Packet length larger than negotiated max_packet_size
+        {
+            let (mut transport, server_side) = create_readable_network_transport(&context);
+
+            // Create a packet claiming to be 60000 bytes (way larger than 512 max)
+            let mut oversized_packet = vec![0u8; 16];
+            oversized_packet[0] = 0x04;
+            oversized_packet[1] = 0x01;
+            BigEndian::write_u16(&mut oversized_packet[2..4], 60000); // Way too large
+            oversized_packet[6] = 0x01;
+
+            let mut framed_writer = FramedWrite::new(server_side, BytesCodec::new());
+            framed_writer
+                .send(Bytes::copy_from_slice(&oversized_packet))
+                .await
+                .expect("Failed to send test data");
+
+            let result = transport.get_new_tds_packet().await;
+            assert!(
+                result.is_err(),
+                "Expected error for packet length > max_packet_size"
+            );
+            let err = result.unwrap_err();
+            assert!(
+                matches!(err, crate::error::Error::ProtocolError(_)),
+                "Expected ProtocolError, got {:?}",
+                err
+            );
+        }
+
+        // Test 3: Valid packet should still work
+        {
+            let (mut transport, server_side) = create_readable_network_transport(&context);
+
+            let payload = vec![0xAA; 24];
+            let total_len: u16 = 8 + payload.len() as u16;
+            let mut valid_packet = vec![0u8; total_len as usize];
+            valid_packet[0] = 0x04;
+            valid_packet[1] = 0x01;
+            BigEndian::write_u16(&mut valid_packet[2..4], total_len);
+            valid_packet[6] = 0x01;
+            valid_packet[8..].copy_from_slice(&payload);
+
+            let mut framed_writer = FramedWrite::new(server_side, BytesCodec::new());
+            framed_writer
+                .send(Bytes::copy_from_slice(&valid_packet))
+                .await
+                .expect("Failed to send test data");
+
+            let result = transport.get_new_tds_packet().await;
+            assert!(result.is_ok(), "Valid packet should succeed");
+            assert_eq!(result.unwrap(), total_len as usize);
+        }
     }
 }

@@ -349,4 +349,82 @@ mod rpc_datatypes {
         }
         select_statement
     }
+
+    /// Test that verifies packet size negotiation works correctly with sp_executesql.
+    ///
+    /// This test reproduces a bug where `notify_session_setting_change` only updated
+    /// `self.packet_size` but NOT `self.tds_read_buffer.max_packet_size`. Since
+    /// `execute_sp_executesql` doesn't call `reset_reader()` before executing, the
+    /// validation check would reject valid packets that exceeded the initial 4096-byte
+    /// limit but were within the negotiated size (e.g., 8000 bytes).
+    ///
+    /// The test executes a parameterized query returning large data that requires
+    /// packets at the negotiated size.
+    #[tokio::test]
+    async fn test_sp_executesql_with_negotiated_packet_size() -> TdsResult<()> {
+        let mut client = create_client(&build_tcp_datasource()).await?;
+
+        // Create a large string value that will require negotiated packet size
+        let large_string = "X".repeat(6000);
+        let large_string2 = "Y".repeat(6000);
+
+        let query =
+            "SELECT @large1 AS LargeColumn1, @large2 AS LargeColumn2, @small AS SmallColumn"
+                .to_string();
+
+        let named_parameters = vec![
+            RpcParameter::new(
+                Some("@large1".to_string()),
+                StatusFlags::NONE,
+                SqlType::NVarcharMax(Some(SqlString::from_utf8_string(large_string.clone()))),
+            ),
+            RpcParameter::new(
+                Some("@large2".to_string()),
+                StatusFlags::NONE,
+                SqlType::NVarcharMax(Some(SqlString::from_utf8_string(large_string2.clone()))),
+            ),
+            RpcParameter::new(
+                Some("@small".to_string()),
+                StatusFlags::NONE,
+                SqlType::Int(Some(42)),
+            ),
+        ];
+
+        // This would fail with "TDS packet length 8000 exceeds negotiated max packet size 4096"
+        // if the buffer's max_packet_size wasn't updated in notify_session_setting_change
+        client
+            .execute_sp_executesql(query, named_parameters, None, None)
+            .await?;
+
+        let (metadata, first_row) = get_first_row(&mut client).await?;
+
+        assert_eq!(metadata.len(), 3, "Expected 3 columns");
+        assert_eq!(first_row.len(), 3, "Expected 3 column values");
+
+        // Verify LargeColumn1
+        match &first_row[0] {
+            ColumnValues::String(s) => {
+                assert_eq!(s.to_utf8_string().len(), 6000, "Expected 6000 X characters");
+            }
+            _ => panic!("Expected String value for LargeColumn1"),
+        }
+
+        // Verify LargeColumn2
+        match &first_row[1] {
+            ColumnValues::String(s) => {
+                assert_eq!(s.to_utf8_string().len(), 6000, "Expected 6000 Y characters");
+            }
+            _ => panic!("Expected String value for LargeColumn2"),
+        }
+
+        // Verify SmallColumn
+        match &first_row[2] {
+            ColumnValues::Int(v) => {
+                assert_eq!(*v, 42, "Expected SmallColumn to be 42");
+            }
+            _ => panic!("Expected Int value for SmallColumn"),
+        }
+
+        Ok(())
+    }
 }

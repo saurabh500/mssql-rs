@@ -15,6 +15,11 @@ pub(crate) struct TdsReadBuffer {
     pub(crate) buffer_length: usize,
     pub(crate) max_packet_size: usize,
     pub(crate) working_buffer: Vec<u8>,
+    /// Bytes that have been read from the network but are beyond the current packet.
+    /// This happens when a single read returns data for multiple TDS packets.
+    pub(crate) pending_bytes: usize,
+    /// The offset where pending bytes are located in working_buffer.
+    pub(crate) pending_bytes_offset: usize,
 }
 
 impl TdsReadBuffer {
@@ -25,6 +30,8 @@ impl TdsReadBuffer {
             buffer_length: 0,
             max_packet_size: packet_size,
             working_buffer: vec![0; packet_storage],
+            pending_bytes: 0,
+            pending_bytes_offset: 0,
         }
     }
 
@@ -34,6 +41,8 @@ impl TdsReadBuffer {
             self.working_buffer.resize(packet_size as usize * 2, 0);
             self.buffer_position = 0;
             self.buffer_length = 0;
+            self.pending_bytes = 0;
+            self.pending_bytes_offset = 0;
         }
     }
 
@@ -66,6 +75,18 @@ impl TdsReadBuffer {
 
     pub(crate) fn shift_data_to_front(&mut self) {
         let remaining = self.get_remaining_byte_count();
+
+        // Move pending bytes right after where remaining data will be
+        if self.pending_bytes > 0 {
+            let pending_src_start = self.pending_bytes_offset;
+            let pending_src_end = self.pending_bytes_offset + self.pending_bytes;
+            let pending_dest = remaining;
+            self.working_buffer
+                .copy_within(pending_src_start..pending_src_end, pending_dest);
+            self.pending_bytes_offset = remaining;
+        }
+
+        // Now move the remaining data to front
         self.working_buffer
             .copy_within(self.buffer_position..self.buffer_length, 0);
         self.buffer_position = 0;
