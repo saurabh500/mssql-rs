@@ -10,7 +10,7 @@
 //!
 //! Set SSPI_TEST=1 to enable this test.
 
-#![cfg(all(windows, feature = "sspi"))]
+#![cfg(windows)]
 
 use std::env;
 
@@ -129,7 +129,9 @@ async fn test_windows_integrated_auth_connection() -> TdsResult<()> {
 /// Full integration test: Connect to LocalDB with Windows Integrated Auth
 ///
 /// LocalDB uses named pipes and only supports Windows Integrated Authentication.
-/// Note: LocalDB typically does not support encryption.
+/// Note: LocalDB typically does not support encryption, but we specify Strict here
+/// to verify that the connection provider automatically overrides it to PreferOff
+/// (matching ODBC behavior).
 /// Set SSPI_TEST=1 to enable this test.
 #[tokio::test]
 #[ignore = "Requires LocalDB instance - set SSPI_TEST=1 to run"]
@@ -142,12 +144,12 @@ async fn test_localdb_integrated_auth_connection() -> TdsResult<()> {
     common::init_tracing();
 
     // Create client context for integrated authentication
-    // Note: LocalDB does not support encryption, so we disable it
+    // Specify Strict encryption to verify automatic override to PreferOff for LocalDB
     let mut context = ClientContext::default();
     context.database = "master".to_string();
     context.tds_authentication_method = TdsAuthenticationMethod::SSPI;
     context.encryption_options = EncryptionOptions {
-        mode: EncryptionSetting::PreferOff,
+        mode: EncryptionSetting::Strict,
         trust_server_certificate: true,
         host_name_in_cert: None,
         server_certificate: None,

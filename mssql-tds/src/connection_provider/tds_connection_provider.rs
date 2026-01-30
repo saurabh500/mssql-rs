@@ -10,6 +10,8 @@ use crate::connection::connection_actions::ConnectionActionChain;
 use crate::connection::tds_client::TdsClient;
 use crate::connection::transport::network_transport;
 use crate::connection::transport::tds_transport::TdsTransport;
+#[cfg(windows)]
+use crate::core::EncryptionSetting;
 use crate::core::{CancelHandle, TdsResult};
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::{Error, TimeoutErrorType};
@@ -137,22 +139,35 @@ impl TdsConnectionProvider {
             }
 
             // Check if LocalDB resolution is required (Windows only)
+            // Apply encryption override for LocalDB connections at resolution time
             #[cfg(windows)]
-            let transport_contexts = {
+            let (transport_contexts, context) = {
                 if let Some(instance_name) = action_chain.requires_localdb_resolution() {
                     debug!("Action chain requires LocalDB resolution for instance: {}", instance_name);
+
+                    // Apply LocalDB encryption override
+                    let mut modified_context = context.clone();
+                    if modified_context.encryption_options.mode != EncryptionSetting::PreferOff {
+                        debug!(
+                            "LocalDB connection detected: overriding encryption from {:?} to PreferOff",
+                            modified_context.encryption_options.mode
+                        );
+                        modified_context.encryption_options.mode = EncryptionSetting::PreferOff;
+                    }
+
                     // Resolve LocalDB instance to get the named pipe path
                     use crate::connection::transport::localdb::resolve_localdb_instance;
                     let pipe_path = resolve_localdb_instance(&instance_name).await?;
                     debug!("LocalDB resolved to pipe: {}", pipe_path);
-                    vec![(TransportContext::NamedPipe { pipe_name: pipe_path }, context.connect_timeout as u64 * 1000)]
+
+                    (vec![(TransportContext::NamedPipe { pipe_name: pipe_path }, modified_context.connect_timeout as u64 * 1000)], modified_context)
                 } else {
-                    action_chain.resolve_transport_contexts()
+                    (action_chain.resolve_transport_contexts(), context.clone())
                 }
             };
 
             #[cfg(not(windows))]
-            let transport_contexts = action_chain.resolve_transport_contexts();
+            let (transport_contexts, context) = (action_chain.resolve_transport_contexts(), context.clone());
 
             if transport_contexts.is_empty() {
                 return Err(Error::ProtocolError(
@@ -187,7 +202,7 @@ impl TdsConnectionProvider {
                     ));
                 }
 
-                let connect_future = Self::connect_with_transport_context(context, transport_ctx);
+                let connect_future = Self::connect_with_transport_context(&context, transport_ctx);
 
                 let mut connection_result = match timeout_duration.as_ref() {
                     Some(duration) => {
@@ -223,7 +238,7 @@ impl TdsConnectionProvider {
 
                             let tcp_transport_context = TransportContext::from_routing_token(host, port);
                             connection_result = Self::connect_with_transport_context(
-                                context,
+                                &context,
                                 &tcp_transport_context,
                             ).await;
                         }

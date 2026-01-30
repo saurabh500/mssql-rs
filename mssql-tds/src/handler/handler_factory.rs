@@ -555,11 +555,6 @@ impl LoginHandler<'_> {
                 initial_token.len(),
                 handler.package_name()
             );
-            eprintln!(
-                "[DEBUG] Generated initial SSPI token ({} bytes) using {}",
-                initial_token.len(),
-                handler.package_name()
-            );
 
             (Some(initial_token), Some(handler))
         } else {

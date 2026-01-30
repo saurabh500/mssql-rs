@@ -8,7 +8,7 @@ mod common;
 mod transport_protocols {
     use dotenv::dotenv;
     use mssql_tds::connection::client_context::ClientContext;
-    #[cfg(all(windows, feature = "sspi"))]
+    #[cfg(windows)]
     use mssql_tds::connection::client_context::TdsAuthenticationMethod;
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
@@ -78,7 +78,7 @@ mod transport_protocols {
     }
 
     /// Create a LocalDB client with integrated authentication (SSPI)
-    #[cfg(all(windows, feature = "sspi"))]
+    #[cfg(windows)]
     async fn create_localdb_client_with_integrated_auth(
         datasource: &str,
         encryption_mode: EncryptionSetting,
@@ -429,7 +429,7 @@ mod transport_protocols {
     }
 
     #[tokio::test]
-    #[cfg(all(windows, feature = "sspi"))]
+    #[cfg(windows)]
     async fn test_localdb_connection() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -437,9 +437,11 @@ mod transport_protocols {
         println!("Testing LocalDB connection with integrated authentication...");
 
         // Connect to LocalDB using integrated authentication - test will fail if connection fails
+        // Use Strict encryption to verify that the connection provider automatically
+        // overrides it to PreferOff for LocalDB connections (matching ODBC behavior)
         let datasource = "(localdb)\\MSSQLLocalDB";
         let mut client =
-            create_localdb_client_with_integrated_auth(datasource, EncryptionSetting::PreferOff)
+            create_localdb_client_with_integrated_auth(datasource, EncryptionSetting::Strict)
                 .await?;
 
         println!("Connected to LocalDB successfully with integrated authentication!");
@@ -452,7 +454,7 @@ mod transport_protocols {
     }
 
     #[tokio::test]
-    #[cfg(all(windows, feature = "sspi"))]
+    #[cfg(windows)]
     async fn test_localdb_query_execution() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
@@ -460,9 +462,11 @@ mod transport_protocols {
         println!("Testing LocalDB query execution with integrated authentication...");
 
         // Connect to LocalDB using integrated authentication - test will fail if connection fails
+        // Use Required encryption to verify that the connection provider automatically
+        // overrides it to PreferOff for LocalDB connections (matching ODBC behavior)
         let datasource = "(localdb)\\MSSQLLocalDB";
         let mut client =
-            create_localdb_client_with_integrated_auth(datasource, EncryptionSetting::PreferOff)
+            create_localdb_client_with_integrated_auth(datasource, EncryptionSetting::Required)
                 .await?;
 
         // Execute multiple queries to test stability

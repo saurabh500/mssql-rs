@@ -27,23 +27,23 @@ pub use security_context::{IntegratedAuthConfig, SecurityContext, SecurityPackag
 pub use spn::{canonicalize_hostname, is_loopback_address, make_spn, make_spn_canonicalized};
 
 // Platform-specific implementations
-#[cfg(all(windows, feature = "sspi"))]
+#[cfg(windows)]
 pub mod windows;
 
-#[cfg(all(unix, feature = "gssapi"))]
+#[cfg(unix)]
 pub mod unix;
 
 // Re-export platform implementations
-#[cfg(all(windows, feature = "sspi"))]
+#[cfg(windows)]
 pub use windows::WindowsSspiContext;
 
-#[cfg(all(unix, feature = "gssapi"))]
+#[cfg(unix)]
 pub use unix::GssapiContext;
 
 /// Creates a platform-appropriate security context.
 ///
-/// On Windows with the `sspi` feature, creates a `WindowsSspiContext`.
-/// On Unix with the `gssapi` feature, creates a `GssapiContext`.
+/// On Windows, creates a `WindowsSspiContext`.
+/// On Unix, creates a `GssapiContext`.
 ///
 /// # Arguments
 ///
@@ -54,7 +54,7 @@ pub use unix::GssapiContext;
 /// # Errors
 ///
 /// Returns `SecurityError` if the security context cannot be created.
-#[cfg(all(windows, feature = "sspi"))]
+#[cfg(windows)]
 pub fn create_security_context(
     config: &IntegratedAuthConfig,
     server: &str,
@@ -65,7 +65,7 @@ pub fn create_security_context(
     )?))
 }
 
-#[cfg(all(unix, feature = "gssapi"))]
+#[cfg(unix)]
 pub fn create_security_context(
     config: &IntegratedAuthConfig,
     server: &str,
@@ -74,13 +74,13 @@ pub fn create_security_context(
     Ok(Box::new(unix::GssapiContext::new(config, server, port)?))
 }
 
-#[cfg(not(any(all(windows, feature = "sspi"), all(unix, feature = "gssapi"))))]
+#[cfg(not(any(windows, unix)))]
 pub fn create_security_context(
     _config: &IntegratedAuthConfig,
     _server: &str,
     _port: u16,
 ) -> Result<Box<dyn SecurityContext>, SecurityError> {
     Err(SecurityError::NotSupported(
-        "Integrated authentication requires the 'sspi' feature on Windows or 'gssapi' feature on Unix".to_string()
+        "Integrated authentication is only supported on Windows and Unix platforms".to_string(),
     ))
 }

@@ -13,7 +13,7 @@
 //! - SQL Server at sql.example.local with Kerberos enabled
 //! - Test user: testuser@EXAMPLE.LOCAL / TestUser123!
 
-#![cfg(all(unix, feature = "gssapi"))]
+#![cfg(unix)]
 
 use mssql_tds::security::unix::{GssapiContext, has_valid_credentials, is_gssapi_available};
 use mssql_tds::security::{IntegratedAuthConfig, SecurityContext, SecurityPackage};
