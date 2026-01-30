@@ -7,6 +7,7 @@ source ~/.cargo/env
 export PATH="/root/.local/share/fnm:$PATH"
 eval "$(fnm env --shell bash)"
 fnm use 20
+corepack enable
 
 cd mssql-js
 yarn testci > junit.xml
