@@ -183,19 +183,18 @@ impl PyCoreCursor {
     ///
     /// * `table_name` - Name of the destination table (can include schema: "schema.table")
     /// * `data_source` - Python iterator yielding tuples of data to insert
-    /// * `kwargs` - Optional keyword arguments for bulk copy options:
-    ///   - `batch_size` (int): Number of rows per batch (default: 0)
-    ///   - `timeout` (int): Timeout in seconds (default: 30)
-    ///   - `column_mappings` (list): Optional list of (source, dest) tuples for column mapping.
-    ///     Source can be an integer (0-based ordinal) or string (column name).
-    ///     Destination is a string column name.
-    ///     If not provided, automatic ordinal-based mapping is used (0→0, 1→1, etc.).
-    ///     Example: [(0, 'id'), (1, 'name')] or [('src_id', 'dest_id')]
-    ///   - `keep_identity` (bool): Preserve source identity values. When not specified, identity values are assigned by the destination.
-    ///   - `check_constraints` (bool): Check constraints while data is being inserted. By default, constraints are not checked.
-    ///   - `table_lock` (bool): Obtain a bulk update lock for the duration of the bulk copy operation. When not specified, row locks are used.
-    ///   - `keep_nulls` (bool): Preserve null values in the destination table regardless of the settings for default values. When not specified, null values are replaced by default values where applicable.
-    ///   - `fire_triggers` (bool): When specified, cause the server to fire the insert triggers for the rows being inserted into the database.
+    /// * `batch_size` - Number of rows per batch (default: 0, meaning server decides)
+    /// * `timeout` - Timeout in seconds (default: 30)
+    /// * `column_mappings` - Optional list for column mapping. Can be:
+    ///   - List of column names: `['id', 'name', 'email']` - maps by ordinal position
+    ///   - List of (ordinal, name) tuples: `[(0, 'id'), (1, 'name')]` - explicit mapping
+    ///   If not provided, automatic ordinal-based mapping is used (0→0, 1→1, etc.).
+    /// * `keep_identity` - Preserve source identity values. When False, identity values are assigned by the destination.
+    /// * `check_constraints` - Check constraints while data is being inserted. By default, constraints are not checked.
+    /// * `table_lock` - Obtain a bulk update lock for the duration of the bulk copy operation. When False, row locks are used.
+    /// * `keep_nulls` - Preserve null values in the destination table regardless of the settings for default values.
+    /// * `fire_triggers` - When True, cause the server to fire the insert triggers for the rows being inserted into the database.
+    /// * `use_internal_transaction` - When True, wraps the bulk copy in an internal transaction.
     ///
     /// # Returns
     ///
@@ -209,21 +208,43 @@ impl PyCoreCursor {
     /// ```python
     /// cursor = connection.cursor()
     /// data = [(1, 'Alice'), (2, 'Bob')]
-    /// result = cursor.bulkcopy('Users', iter(data), batch_size=1000)
+    /// # Simple usage with explicit params
+    /// result = cursor.bulkcopy('Users', iter(data), batch_size=1000, timeout=60)
+    /// # With column mappings as list of names
+    /// result = cursor.bulkcopy('Users', iter(data), column_mappings=['id', 'name'])
     /// print(f"Copied {result['rows_copied']} rows")
     /// ```
-    #[pyo3(signature = (table_name, data_source, kwargs=None))]
+    #[pyo3(signature = (table_name, data_source, batch_size=0, timeout=30, column_mappings=None, keep_identity=false, check_constraints=false, table_lock=false, keep_nulls=false, fire_triggers=false, use_internal_transaction=false))]
+    #[allow(clippy::too_many_arguments)]
     fn bulkcopy(
         &mut self,
         py: Python,
         table_name: String,
         data_source: &Bound<'_, PyIterator>,
-        kwargs: Option<&Bound<'_, PyDict>>,
+        batch_size: usize,
+        timeout: u64,
+        column_mappings: Option<&Bound<'_, PyAny>>,
+        keep_identity: bool,
+        check_constraints: bool,
+        table_lock: bool,
+        keep_nulls: bool,
+        fire_triggers: bool,
+        use_internal_transaction: bool,
     ) -> PyResult<Py<PyDict>> {
         info!("bulkcopy: Starting bulkcopy to table: {}", table_name);
 
-        // Parse kwargs with defaults
-        let options = Self::parse_bulkcopy_kwargs(kwargs)?;
+        // Build options from explicit parameters (defaults handled by PyO3 signature)
+        let options = BulkCopyOptions {
+            batch_size,
+            timeout: Duration::from_secs(timeout),
+            column_mappings: Self::parse_column_mappings(column_mappings)?,
+            keep_identity,
+            check_constraints,
+            table_lock,
+            keep_nulls,
+            fire_triggers,
+            use_internal_transaction,
+        };
         info!(
             "bulkcopy: Parsed options - batch_size={}, timeout={:?}",
             options.batch_size, options.timeout
@@ -861,71 +882,33 @@ impl PyCoreCursor {
         }
     }
 
-    /// Parse bulk copy keyword arguments from Python dict
-    fn parse_bulkcopy_kwargs(kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<BulkCopyOptions> {
-        let mut options = BulkCopyOptions::default();
-
-        if let Some(dict) = kwargs {
-            // Performance settings
-            if let Some(batch_size) = dict.get_item("batch_size")? {
-                options.batch_size = batch_size.extract::<usize>()?;
-            }
-
-            if let Some(timeout) = dict.get_item("timeout")? {
-                let timeout_secs = timeout.extract::<u64>()?;
-                options.timeout = Duration::from_secs(timeout_secs);
-            }
-
-            // Column mappings
-            if let Some(mappings) = dict.get_item("column_mappings")? {
-                options.column_mappings = Self::parse_column_mappings(&mappings)?;
-            }
-
-            // Bulk copy options
-            if let Some(keep_identity) = dict.get_item("keep_identity")? {
-                options.keep_identity = keep_identity.extract::<bool>()?;
-            }
-
-            if let Some(check_constraints) = dict.get_item("check_constraints")? {
-                options.check_constraints = check_constraints.extract::<bool>()?;
-            }
-
-            if let Some(table_lock) = dict.get_item("table_lock")? {
-                options.table_lock = table_lock.extract::<bool>()?;
-            }
-
-            if let Some(keep_nulls) = dict.get_item("keep_nulls")? {
-                options.keep_nulls = keep_nulls.extract::<bool>()?;
-            }
-
-            if let Some(fire_triggers) = dict.get_item("fire_triggers")? {
-                options.fire_triggers = fire_triggers.extract::<bool>()?;
-            }
-
-            if let Some(use_internal_transaction) = dict.get_item("use_internal_transaction")? {
-                options.use_internal_transaction = use_internal_transaction.extract::<bool>()?;
-            }
-        }
-
-        Ok(options)
-    }
-
-    /// Parse column mappings from Python list of tuples
-    fn parse_column_mappings(mappings_obj: &Bound<'_, PyAny>) -> PyResult<Vec<ColumnMapping>> {
+    /// Parse column mappings from Python list of tuples.
+    ///
+    /// Format: `[(source, 'destination'), ...]` where source can be:
+    /// - string: column name mapping (ByName)
+    /// - int: ordinal mapping (ByOrdinal)
+    fn parse_column_mappings(
+        mappings_obj: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Vec<ColumnMapping>> {
         use pyo3::exceptions::PyTypeError;
         use pyo3::types::PyList;
 
+        let mappings = match mappings_obj {
+            Some(obj) => obj,
+            None => return Ok(Vec::new()),
+        };
+
         // Check if it's a list
-        if !mappings_obj.is_instance_of::<PyList>() {
+        if !mappings.is_instance_of::<PyList>() {
             return Err(PyTypeError::new_err("column_mappings must be a list"));
         }
 
         let mut result = Vec::new();
 
         // Iterate through list items
-        let list_len = mappings_obj.len()?;
+        let list_len = mappings.len()?;
         for i in 0..list_len {
-            let item = mappings_obj.get_item(i)?;
+            let item = mappings.get_item(i)?;
 
             // Check if it's a tuple
             if !item.is_instance_of::<PyTuple>() {

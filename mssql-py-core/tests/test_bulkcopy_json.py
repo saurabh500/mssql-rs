@@ -33,14 +33,12 @@ def test_cursor_bulkcopy_json_basic(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),
-                (1, "json_data"),
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "id"),
+            (1, "json_data"),
+        ],
     )
 
     # Verify results
@@ -89,7 +87,7 @@ def test_cursor_bulkcopy_json_from_dict(client_context):
 
     # Execute bulk copy without explicit type conversion
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -145,7 +143,7 @@ def test_cursor_bulkcopy_json_from_list(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -202,7 +200,7 @@ def test_cursor_bulkcopy_json_null_values(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -266,7 +264,7 @@ def test_cursor_bulkcopy_json_nested_objects(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -312,7 +310,7 @@ def test_cursor_bulkcopy_json_with_isjson_check(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     assert result["rows_copied"] == 3
@@ -357,7 +355,7 @@ def test_cursor_bulkcopy_json_special_characters(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -406,7 +404,7 @@ def test_cursor_bulkcopy_json_empty_structures(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -457,7 +455,7 @@ def test_cursor_bulkcopy_json_numeric_types(client_context):
     # Execute bulk copy - note that infinity might cause issues
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         rows_copied = result["rows_copied"]
     except (ValueError, OverflowError, RuntimeError) as e:
@@ -470,7 +468,7 @@ def test_cursor_bulkcopy_json_numeric_types(client_context):
             (3, {"scientific": 1.23e-10}),
         ]
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         rows_copied = result["rows_copied"]
 
@@ -507,7 +505,7 @@ def test_cursor_bulkcopy_json_boolean_values(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results

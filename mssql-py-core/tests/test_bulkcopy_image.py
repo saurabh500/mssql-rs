@@ -41,15 +41,13 @@ def test_cursor_bulkcopy_image_basic(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),
-                (1, "data"),
-                (2, "thumbnail"),
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "id"),
+            (1, "data"),
+            (2, "thumbnail"),
+        ],
     )
 
     # Verify results
@@ -100,7 +98,7 @@ def test_cursor_bulkcopy_image_auto_mapping(client_context):
 
     # Execute bulk copy WITHOUT column mappings
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -152,7 +150,7 @@ def test_cursor_bulkcopy_image_large_data(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -213,7 +211,7 @@ def test_cursor_bulkcopy_image_to_varbinary(client_context):
 
     # Execute bulk copy - byte arrays should work with VARBINARY(MAX)
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -264,7 +262,7 @@ def test_cursor_bulkcopy_varbinary_to_image(client_context):
 
     # Execute bulk copy - byte arrays should work with IMAGE
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -315,7 +313,7 @@ def test_cursor_bulkcopy_image_empty_bytes(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -371,7 +369,7 @@ def test_cursor_bulkcopy_image_null_to_non_nullable(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
         print(f"No error raised. Result: {result}")
     except ValueError as e:
@@ -414,7 +412,7 @@ def test_cursor_bulkcopy_string_to_image_fails(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, TypeError, RuntimeError) as e:
@@ -456,7 +454,7 @@ def test_cursor_bulkcopy_int_to_image_fails(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, TypeError, RuntimeError) as e:
@@ -503,7 +501,7 @@ def test_cursor_bulkcopy_image_bytearray_type(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -563,7 +561,7 @@ def test_cursor_bulkcopy_image_multiple_columns(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -630,7 +628,7 @@ def test_cursor_bulkcopy_image_large_batch(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 60},
+        batch_size=1000, timeout=60,
     )
 
     # Verify results

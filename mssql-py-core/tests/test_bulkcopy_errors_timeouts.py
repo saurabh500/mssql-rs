@@ -41,7 +41,7 @@ class TestBulkCopyTimeoutBasics:
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 1000},
+            batch_size=1000,
         )
 
         # Verify it completed successfully
@@ -66,7 +66,7 @@ class TestBulkCopyTimeoutBasics:
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 100, "timeout": 60},
+            batch_size=100, timeout=60,
         )
 
         # Verify it completed successfully
@@ -96,7 +96,7 @@ class TestBulkCopyTimeoutBasics:
             cursor.bulkcopy(
                 table_name,
                 iter(data),
-                kwargs={"timeout": -1},
+                timeout=-1,
             )
 
         # Check error was raised (type check is sufficient since we caught it)
@@ -133,7 +133,7 @@ class TestBulkCopyTimeoutBehavior:
         result = cursor.bulkcopy(
             table_name,
             slow_data_generator(),
-            kwargs={"batch_size": 10, "timeout": 30},
+            batch_size=10, timeout=30,
         )
 
         assert result is not None
@@ -162,7 +162,7 @@ class TestBulkCopyTimeoutBehavior:
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 100, "timeout": 60},
+            batch_size=100, timeout=60,
         )
 
         assert result is not None
@@ -191,7 +191,7 @@ class TestBulkCopyErrorPropagation:
             cursor.bulkcopy(
                 table_name,
                 iter(data),
-                kwargs={"timeout": 30},
+                timeout=30,
             )
 
         error_msg = str(exc_info.value).lower()
@@ -215,7 +215,7 @@ class TestBulkCopyErrorPropagation:
             cursor.bulkcopy(
                 table_name,
                 iter(data),
-                kwargs={"timeout": 30},
+                timeout=30,
             )
 
         error_msg = str(exc_info.value).lower()
@@ -234,7 +234,7 @@ class TestBulkCopyErrorPropagation:
             cursor.bulkcopy(
                 "NonExistentTable_XXXXXXXX",
                 iter(data),
-                kwargs={"timeout": 30},
+                timeout=30,
             )
 
         error_msg = str(exc_info.value).lower()
@@ -269,7 +269,7 @@ class TestBulkCopyLargeDataTimeout:
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 120},  # 2 minute timeout
+            batch_size=1000, timeout=120,  # 2 minute timeout
         )
         elapsed = time.time() - start_time
 
@@ -294,7 +294,7 @@ class TestBulkCopyLargeDataTimeout:
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 500, "timeout": 60},
+            batch_size=500, timeout=60,
         )
 
         assert result is not None
@@ -321,7 +321,7 @@ class TestBulkCopyElapsedTime:
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 100},
+            batch_size=100,
         )
 
         assert "elapsed_time" in result
@@ -348,7 +348,7 @@ class TestBulkCopyElapsedTime:
         result = cursor.bulkcopy(
             table_name,
             slow_generator(),
-            kwargs={"batch_size": 10},
+            batch_size=10,
         )
         external_elapsed = time.time() - start
 

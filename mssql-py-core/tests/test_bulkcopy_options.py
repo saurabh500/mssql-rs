@@ -83,10 +83,8 @@ def test_bulkcopy_fire_triggers_true(client_context):
         result = cursor.bulkcopy(
             main_table,
             iter(data),
-            kwargs={
-                "fire_triggers": True,
-                "batch_size": 1000,
-            },
+            fire_triggers=True,
+            batch_size=1000,
         )
 
         # Verify bulk copy succeeded
@@ -157,9 +155,7 @@ def test_bulkcopy_fire_triggers_default_skips_triggers(client_context):
         result = cursor.bulkcopy(
             main_table,
             iter(data),
-            kwargs={
-                "batch_size": 1000,
-            },
+            batch_size=1000,
         )
 
         # Verify bulk copy succeeded
@@ -229,10 +225,8 @@ def test_bulkcopy_fire_triggers_false_skips_triggers(client_context):
         result = cursor.bulkcopy(
             main_table,
             iter(data),
-            kwargs={
-                "fire_triggers": False,
-                "batch_size": 1000,
-            },
+            fire_triggers=False,
+            batch_size=1000,
         )
 
         # Verify bulk copy succeeded
@@ -293,10 +287,8 @@ def test_bulkcopy_check_constraints_true_enforces_constraints(client_context):
             cursor.bulkcopy(
                 table_name,
                 iter(data),
-                kwargs={
-                    "check_constraints": True,
-                    "batch_size": 1000,
-                },
+                check_constraints=True,
+                batch_size=1000,
             )
 
         # Verify we got a constraint violation error
@@ -346,10 +338,8 @@ def test_bulkcopy_check_constraints_false_allows_violations(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={
-                "check_constraints": False,
-                "batch_size": 1000,
-            },
+            check_constraints=False,
+            batch_size=1000,
         )
 
         # Verify bulk copy succeeded
@@ -416,10 +406,8 @@ def test_bulkcopy_keep_nulls_true_preserves_nulls(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={
-                "keep_nulls": True,
-                "batch_size": 1000,
-            },
+            keep_nulls=True,
+            batch_size=1000,
         )
 
         # Verify bulk copy succeeded
@@ -481,10 +469,8 @@ def test_bulkcopy_keep_nulls_false_uses_defaults(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={
-                "keep_nulls": False,
-                "batch_size": 1000,
-            },
+            keep_nulls=False,
+            batch_size=1000,
         )
 
         # Verify bulk copy succeeded
@@ -551,10 +537,8 @@ def test_bulkcopy_keep_identity_true_uses_explicit_values(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={
-                "keep_identity": True,
-                "batch_size": 1000,
-            },
+            keep_identity=True,
+            batch_size=1000,
         )
 
         # Verify bulk copy succeeded
@@ -619,11 +603,9 @@ def test_bulkcopy_keep_identity_false_auto_generates(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={
-                "keep_identity": False,
-                "batch_size": 1000,
-                "column_mappings": [(0, "value")],  # Map only to non-identity column
-            },
+            keep_identity=False,
+            batch_size=1000,
+            column_mappings=[(0, "value")],  # Map only to non-identity column
         )
 
         # Verify bulk copy succeeded
@@ -684,10 +666,8 @@ def test_bulkcopy_table_lock_true(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={
-                "table_lock": True,
-                "batch_size": 1000,
-            },
+            table_lock=True,
+            batch_size=1000,
         )
 
         # Verify bulk copy succeeded
@@ -767,13 +747,11 @@ def test_bulkcopy_multiple_options_combined(client_context):
         result = cursor.bulkcopy(
             main_table,
             iter(data),
-            kwargs={
-                "fire_triggers": True,
-                "check_constraints": True,
-                "keep_nulls": True,
-                "table_lock": True,
-                "batch_size": 1000,
-            },
+            fire_triggers=True,
+            check_constraints=True,
+            keep_nulls=True,
+            table_lock=True,
+            batch_size=1000,
         )
 
         # Verify bulk copy succeeded
@@ -844,10 +822,8 @@ def test_bulkcopy_check_constraints_true_rejects_boundary_violation(client_conte
             cursor.bulkcopy(
                 table_name,
                 iter(data),
-                kwargs={
-                    "check_constraints": True,
-                    "batch_size": 1000,
-                },
+                check_constraints=True,
+                batch_size=1000,
             )
 
         # Verify we got a constraint violation error

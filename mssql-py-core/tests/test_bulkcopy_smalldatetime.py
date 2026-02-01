@@ -31,14 +31,12 @@ def test_cursor_bulkcopy_smalldatetime_basic(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "event_time"),
-                (1, "birth_time"),
-            ],  # Map tuple positions to columns
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "event_time"),
+            (1, "birth_time"),
+        ],  # Map tuple positions to columns
     )
 
     # Verify results
@@ -84,7 +82,7 @@ def test_cursor_bulkcopy_smalldatetime_auto_mapping(client_context):
 
     # Execute bulk copy WITHOUT column mappings - should auto-generate
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -130,7 +128,7 @@ def test_cursor_bulkcopy_smalldatetime_string_to_datetime_conversion(client_cont
 
     # Execute bulk copy without explicit mappings
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -176,7 +174,7 @@ def test_cursor_bulkcopy_smalldatetime_null_to_non_nullable_column(client_contex
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, no error was raised
         print(f"No error raised. Result: {result}")
@@ -226,7 +224,7 @@ def test_cursor_bulkcopy_smalldatetime_invalid_string_to_datetime_conversion(cli
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, no error was raised
         print(f"No error raised. Result: {result}")
@@ -276,7 +274,7 @@ def test_cursor_bulkcopy_smalldatetime_boundary_values(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -337,7 +335,7 @@ def test_cursor_bulkcopy_smalldatetime_out_of_range(client_context):
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, no error was raised
         print(f"No error raised. Result: {result}")
@@ -388,7 +386,7 @@ def test_cursor_bulkcopy_smalldatetime_rounding_exceeds_max(client_context):
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, no error was raised
         print(f"No error raised. Result: {result}")
@@ -434,7 +432,7 @@ def test_cursor_bulkcopy_smalldatetime_max_boundary_2079_06_06(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify bulk copy succeeded
@@ -484,15 +482,13 @@ def test_cursor_bulkcopy_smalldatetime_with_int_columns(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),
-                (1, "event_time"),
-                (2, "count"),
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "id"),
+            (1, "event_time"),
+            (2, "count"),
+        ],
     )
 
     # Verify results
@@ -543,7 +539,7 @@ def test_cursor_bulkcopy_smalldatetime_with_seconds_truncation(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -627,7 +623,7 @@ def test_cursor_bulkcopy_smalldatetime_with_microseconds(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results

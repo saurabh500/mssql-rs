@@ -43,7 +43,7 @@ def test_cursor_bulkcopy_datetimeoffset_basic(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify bulk copy succeeded
@@ -131,7 +131,7 @@ def test_cursor_bulkcopy_datetimeoffset_precision_0(client_context):
     ]
 
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     assert result is not None

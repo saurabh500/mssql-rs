@@ -39,10 +39,8 @@ def test_bulkcopy_auto_mapping_fewer_columns(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-        },
+        batch_size=1000,
+        timeout=30,
     )
 
     # Verify results

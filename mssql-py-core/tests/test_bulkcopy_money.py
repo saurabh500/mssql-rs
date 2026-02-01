@@ -31,14 +31,12 @@ def test_cursor_bulkcopy_money_basic(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),
-                (1, "value"),
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "id"),
+            (1, "value"),
+        ],
     )
 
     # Verify results
@@ -85,7 +83,7 @@ def test_cursor_bulkcopy_money_auto_mapping(client_context):
 
     # Execute bulk copy WITHOUT column mappings - should auto-generate
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -134,7 +132,7 @@ def test_cursor_bulkcopy_money_string_to_money_conversion(client_context):
 
     # Execute bulk copy without explicit mappings
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -182,7 +180,7 @@ def test_cursor_bulkcopy_money_integer_to_money_conversion(client_context):
 
     # Execute bulk copy without explicit mappings
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -230,7 +228,7 @@ def test_cursor_bulkcopy_money_float_to_money_conversion(client_context):
 
     # Execute bulk copy without explicit mappings
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -277,7 +275,7 @@ def test_cursor_bulkcopy_money_decimal_to_money_conversion(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -325,7 +323,7 @@ def test_cursor_bulkcopy_money_null_to_non_nullable_column(client_context):
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, no error was raised
         print(f"No error raised. Result: {result}")
@@ -375,7 +373,7 @@ def test_cursor_bulkcopy_money_invalid_string_to_money_conversion(client_context
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, no error was raised
         print(f"No error raised. Result: {result}")
@@ -427,7 +425,7 @@ def test_cursor_bulkcopy_smallmoney_range_overflow(client_context):
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, no error was raised (unexpected)
         print(f"No error raised. Result: {result}")
@@ -479,7 +477,7 @@ def test_cursor_bulkcopy_money_range_overflow(client_context):
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, no error was raised (unexpected)
         print(f"No error raised. Result: {result}")
@@ -526,7 +524,7 @@ def test_cursor_bulkcopy_money_negative_values(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -575,7 +573,7 @@ def test_cursor_bulkcopy_money_zero_values(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -623,7 +621,7 @@ def test_cursor_bulkcopy_money_precision_handling(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -679,7 +677,7 @@ def test_cursor_bulkcopy_money_high_scale_precision(client_context):
 
     # Execute bulk copy to see what happens in Rust code
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -742,7 +740,7 @@ def test_cursor_bulkcopy_money_large_values(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results

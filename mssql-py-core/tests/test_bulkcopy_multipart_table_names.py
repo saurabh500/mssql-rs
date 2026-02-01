@@ -30,7 +30,7 @@ def test_cursor_bulkcopy_one_part_table_name(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -76,7 +76,7 @@ def test_cursor_bulkcopy_two_part_table_name(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -133,7 +133,7 @@ def test_cursor_bulkcopy_three_part_table_name(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -178,7 +178,7 @@ def test_cursor_bulkcopy_quoted_table_name(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -224,7 +224,7 @@ def test_cursor_bulkcopy_quoted_two_part_name(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -269,7 +269,7 @@ def test_cursor_bulkcopy_escaped_brackets_in_name(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -310,7 +310,7 @@ def test_cursor_bulkcopy_temp_table(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -358,7 +358,7 @@ def test_cursor_bulkcopy_sql_injection_protection(client_context):
         result = cursor.bulkcopy(
             malicious_name,
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
     except Exception as e:
         error_raised = True
@@ -405,7 +405,7 @@ def test_cursor_bulkcopy_invalid_multipart_names(client_context):
         result = cursor.bulkcopy(
             "Server.DB.Schema.Table.Extra",
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
     except Exception as e:
         error_raised = True
@@ -419,7 +419,7 @@ def test_cursor_bulkcopy_invalid_multipart_names(client_context):
         result = cursor.bulkcopy(
             "",
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
     except Exception as e:
         error_raised = True
@@ -433,7 +433,7 @@ def test_cursor_bulkcopy_invalid_multipart_names(client_context):
         result = cursor.bulkcopy(
             "[UnclosedTable",
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
     except Exception as e:
         error_raised = True
@@ -474,7 +474,7 @@ def test_cursor_bulkcopy_multipart_with_different_schemas(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results

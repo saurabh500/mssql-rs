@@ -46,15 +46,13 @@ def test_cursor_bulkcopy_char_latin1_general_ci_as(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),
-                (1, "name"),
-                (2, "description"),
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "id"),
+            (1, "name"),
+            (2, "description"),
+        ],
     )
 
     # Verify results
@@ -107,7 +105,7 @@ def test_cursor_bulkcopy_char_latin1_general_cs_as(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -159,7 +157,7 @@ def test_cursor_bulkcopy_char_latin1_general_bin(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -212,7 +210,7 @@ def test_cursor_bulkcopy_char_sql_latin1_general_cp1_ci_as(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -263,7 +261,7 @@ def test_cursor_bulkcopy_char_chinese_prc_ci_as(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -314,7 +312,7 @@ def test_cursor_bulkcopy_char_japanese_ci_as(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -368,7 +366,7 @@ def test_cursor_bulkcopy_char_mixed_collations_null_values(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -422,7 +420,7 @@ def test_cursor_bulkcopy_char_numbers_to_char_collations(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -476,7 +474,7 @@ def test_cursor_bulkcopy_char_fixed_length_padding_collations(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -539,7 +537,7 @@ def test_cursor_bulkcopy_char_latin1_general_bin2(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results

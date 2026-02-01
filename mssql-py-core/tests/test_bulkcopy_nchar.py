@@ -32,15 +32,13 @@ def test_cursor_bulkcopy_nchar_basic(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),
-                (1, "name"),
-                (2, "description"),
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "id"),
+            (1, "name"),
+            (2, "description"),
+        ],
     )
 
     # Verify results
@@ -90,7 +88,7 @@ def test_cursor_bulkcopy_nchar_auto_mapping(client_context):
 
     # Execute bulk copy WITHOUT column mappings
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -141,7 +139,7 @@ def test_cursor_bulkcopy_nchar_numbers_as_strings(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -195,7 +193,7 @@ def test_cursor_bulkcopy_nchar_string_numbers_to_nchar(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -252,7 +250,7 @@ def test_cursor_bulkcopy_nchar_varying_lengths(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -311,7 +309,7 @@ def test_cursor_bulkcopy_nchar_null_to_non_nullable_column(client_context):
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, no error was raised
         print(f"No error raised. Result: {result}")
@@ -362,7 +360,7 @@ def test_cursor_bulkcopy_nchar_exceeds_length(client_context):
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, the operation succeeded (possibly with truncation)
         print(f"Operation completed. Result: {result}")
@@ -415,7 +413,7 @@ def test_cursor_bulkcopy_nchar_unicode_characters(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -467,7 +465,7 @@ def test_cursor_bulkcopy_nchar_empty_strings(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -520,7 +518,7 @@ def test_cursor_bulkcopy_nchar_mixed_types(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -574,7 +572,7 @@ def test_cursor_bulkcopy_nchar_padding_verification(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results

@@ -31,14 +31,12 @@ def test_cursor_bulkcopy_datetime_basic(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "start_datetime"),
-                (1, "end_datetime"),
-            ],  # Map tuple positions to columns
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "start_datetime"),
+            (1, "end_datetime"),
+        ],  # Map tuple positions to columns
     )
 
     # Verify results
@@ -84,7 +82,7 @@ def test_cursor_bulkcopy_datetime_auto_mapping(client_context):
 
     # Execute bulk copy WITHOUT column mappings - should auto-generate
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -130,7 +128,7 @@ def test_cursor_bulkcopy_datetime_string_to_datetime_conversion(client_context):
 
     # Execute bulk copy without explicit mappings
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -176,7 +174,7 @@ def test_cursor_bulkcopy_datetime_null_to_non_nullable_column(client_context):
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, no error was raised
         print(f"No error raised. Result: {result}")
@@ -226,7 +224,7 @@ def test_cursor_bulkcopy_datetime_invalid_string_to_datetime_conversion(client_c
     error_message = ""
     try:
         result = cursor.bulkcopy(
-            table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+            table_name, iter(data), batch_size=1000, timeout=30
         )
         # If we get here, no error was raised
         print(f"No error raised. Result: {result}")
@@ -275,7 +273,7 @@ def test_cursor_bulkcopy_datetime_boundary_values(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -334,7 +332,7 @@ def test_cursor_bulkcopy_datetime_with_milliseconds(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify bulk copy succeeded
@@ -397,7 +395,7 @@ def test_cursor_bulkcopy_datetime_max_boundary_9999_12_31(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify bulk copy succeeded
@@ -451,7 +449,7 @@ def test_cursor_bulkcopy_datetime_date_only(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify bulk copy succeeded
@@ -504,7 +502,7 @@ def test_cursor_bulkcopy_datetime_various_years(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify bulk copy succeeded
@@ -557,7 +555,7 @@ def test_cursor_bulkcopy_datetime_leap_years(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify bulk copy succeeded
@@ -614,7 +612,7 @@ def test_cursor_bulkcopy_datetime_mixed_data_types(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify bulk copy succeeded

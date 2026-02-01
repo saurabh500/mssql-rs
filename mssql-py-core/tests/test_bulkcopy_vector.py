@@ -38,11 +38,9 @@ def test_cursor_bulkcopy_vector_basic(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [(0, "id"), (1, "embedding")],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[(0, "id"), (1, "embedding")],
     )
 
     assert result is not None
@@ -120,7 +118,7 @@ def test_cursor_bulkcopy_vector_via_generator(client_context):
             yield (i, vals)
 
     total_rows = 10
-    result = cursor.bulkcopy(table_name, gen_rows(total_rows, vals), kwargs={"timeout": 10000})
+    result = cursor.bulkcopy(table_name, gen_rows(total_rows, vals), timeout=10000)
 
     assert result is not None
     assert result["rows_copied"] == total_rows
@@ -298,11 +296,9 @@ def test_cursor_bulkcopy_vector_from_json_string(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [(0, "id"), (1, "embedding")],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[(0, "id"), (1, "embedding")],
     )
 
     assert result is not None
@@ -339,11 +335,9 @@ def test_cursor_bulkcopy_vector_from_bad_json_string_1(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={
-                "batch_size": 1000,
-                "timeout": 30,
-                "column_mappings": [(0, "id"), (1, "embedding")],
-            },
+            batch_size=1000,
+            timeout=30,
+            column_mappings=[(0, "id"), (1, "embedding")],
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, RuntimeError) as e:
@@ -380,11 +374,9 @@ def test_cursor_bulkcopy_vector_from_bad_json_string_2(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={
-                "batch_size": 1000,
-                "timeout": 30,
-                "column_mappings": [(0, "id"), (1, "embedding")],
-            },
+            batch_size=1000,
+            timeout=30,
+            column_mappings=[(0, "id"), (1, "embedding")],
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, RuntimeError) as e:
@@ -421,11 +413,9 @@ def test_cursor_bulkcopy_vector_from_bad_json_string_3(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={
-                "batch_size": 1000,
-                "timeout": 30,
-                "column_mappings": [(0, "id"), (1, "embedding")],
-            },
+            batch_size=1000,
+            timeout=30,
+            column_mappings=[(0, "id"), (1, "embedding")],
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, RuntimeError) as e:

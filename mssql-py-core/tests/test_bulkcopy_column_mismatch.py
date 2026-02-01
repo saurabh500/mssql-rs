@@ -48,16 +48,14 @@ def test_bulkcopy_more_columns_than_table(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),       # Map source column 0 to 'id'
-                (1, "value1"),   # Map source column 1 to 'value1'
-                (2, "value2"),   # Map source column 2 to 'value2'
-                # Columns 3 and 4 are NOT mapped, so they're dropped
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "id"),       # Map source column 0 to 'id'
+            (1, "value1"),   # Map source column 1 to 'value1'
+            (2, "value2"),   # Map source column 2 to 'value2'
+            # Columns 3 and 4 are NOT mapped, so they're dropped
+        ],
     )
 
     # Verify results
@@ -112,15 +110,13 @@ def test_bulkcopy_fewer_columns_than_table(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),       # Map source column 0 to 'id'
-                (1, "value1"),   # Map source column 1 to 'value1'
-                # 'value2' is not mapped, should be NULL
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "id"),       # Map source column 0 to 'id'
+            (1, "value1"),   # Map source column 1 to 'value1'
+            # 'value2' is not mapped, should be NULL
+        ],
     )
 
     # Verify results
@@ -175,10 +171,8 @@ def test_bulkcopy_auto_mapping_with_extra_columns(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-        },
+        batch_size=1000,
+        timeout=30,
     )
 
     # Verify results
@@ -231,10 +225,8 @@ def test_bulkcopy_auto_mapping_fewer_columns(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-        },
+        batch_size=1000,
+        timeout=30,
     )
 
     # Verify results
@@ -285,15 +277,13 @@ def test_bulkcopy_partial_column_mapping(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),       # Map source column 0 to 'id'
-                (1, "value2"),   # Map source column 1 to 'value2'
-                # 'value1' is not mapped, should be NULL
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "id"),       # Map source column 0 to 'id'
+            (1, "value2"),   # Map source column 1 to 'value2'
+            # 'value1' is not mapped, should be NULL
+        ],
     )
 
     # Verify results
@@ -348,15 +338,13 @@ def test_bulkcopy_with_default_values(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),
-                (1, "value1"),
-                # status and counter not mapped - should use defaults
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "id"),
+            (1, "value1"),
+            # status and counter not mapped - should use defaults
+        ],
     )
 
     # Verify results
@@ -405,10 +393,8 @@ def test_bulkcopy_empty_source(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-        },
+        batch_size=1000,
+        timeout=30,
     )
 
     # Verify results
@@ -456,15 +442,13 @@ def test_bulkcopy_column_order_mismatch(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "value2"),   # Source column 0 -> table column 'value2'
-                (1, "id"),       # Source column 1 -> table column 'id'
-                (2, "value1"),   # Source column 2 -> table column 'value1'
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "value2"),   # Source column 0 -> table column 'value2'
+            (1, "id"),       # Source column 1 -> table column 'id'
+            (2, "value1"),   # Source column 2 -> table column 'value1'
+        ],
     )
 
     # Verify results
@@ -515,15 +499,13 @@ def test_bulkcopy_duplicate_source_column_mapping(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "col1"),  # Source column 0 -> table column 'col1'
-                (0, "col2"),  # Source column 0 -> table column 'col2'
-                (0, "col3"),  # Source column 0 -> table column 'col3'
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "col1"),  # Source column 0 -> table column 'col1'
+            (0, "col2"),  # Source column 0 -> table column 'col2'
+            (0, "col3"),  # Source column 0 -> table column 'col3'
+        ],
     )
 
     # Verify results
@@ -576,14 +558,12 @@ def test_bulkcopy_single_column_to_middle_target(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "col2"),  # Source column 0 -> table column 'col2' only
-                # col1 and col3 are not mapped, should be NULL
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "col2"),  # Source column 0 -> table column 'col2' only
+            # col1 and col3 are not mapped, should be NULL
+        ],
     )
 
     # Verify results

@@ -44,10 +44,8 @@ def test_cursor_bulkcopy_uuid_basic(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "timeout": 30,
-            "column_mappings": [(0, "id"), (1, "uuid_col")],
-        },
+        timeout=30,
+        column_mappings=[(0, "id"), (1, "uuid_col")],
     )
 
     assert result is not None
@@ -91,10 +89,8 @@ def test_cursor_bulkcopy_uuid_multiple_columns(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "timeout": 30,
-            "column_mappings": [(0, "id"), (1, "uuid1"), (2, "uuid2"), (3, "uuid3")],
-        },
+        timeout=30,
+        column_mappings=[(0, "id"), (1, "uuid1"), (2, "uuid2"), (3, "uuid3")],
     )
 
     assert result is not None
@@ -137,10 +133,8 @@ def test_cursor_bulkcopy_uuid_mixed_types(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "timeout": 30,
-            "column_mappings": [(0, "id"), (1, "name"), (2, "uuid_col"), (3, "value")],
-        },
+        timeout=30,
+        column_mappings=[(0, "id"), (1, "name"), (2, "uuid_col"), (3, "value")],
     )
 
     assert result is not None
@@ -201,10 +195,8 @@ def test_cursor_bulkcopy_uuid_string_valid_formats(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "timeout": 30,
-            "column_mappings": [(0, "id"), (1, "format_name"), (2, "uuid_col")],
-        },
+        timeout=30,
+        column_mappings=[(0, "id"), (1, "format_name"), (2, "uuid_col")],
     )
 
     assert result is not None
@@ -245,10 +237,8 @@ def test_cursor_bulkcopy_uuid_string_invalid_format(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={
-                "timeout": 30,
-                "column_mappings": [(0, "id"), (1, "uuid_col")],
-            },
+            timeout=30,
+            column_mappings=[(0, "id"), (1, "uuid_col")],
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, RuntimeError) as e:
@@ -286,10 +276,8 @@ def test_cursor_bulkcopy_uuid_invalid_type(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={
-                "timeout": 30,
-                "column_mappings": [(0, "id"), (1, "uuid_col")],
-            },
+            timeout=30,
+            column_mappings=[(0, "id"), (1, "uuid_col")],
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, RuntimeError) as e:

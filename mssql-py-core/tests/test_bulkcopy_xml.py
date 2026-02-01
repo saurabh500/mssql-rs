@@ -38,10 +38,8 @@ def test_cursor_bulkcopy_xml_basic(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "timeout": 30,
-            "column_mappings": [(0, "id"), (1, "xml_col")],
-        },
+        timeout=30,
+        column_mappings=[(0, "id"), (1, "xml_col")],
     )
 
     assert result is not None
@@ -90,10 +88,8 @@ def test_cursor_bulkcopy_xml_malformed(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(malformed_data),
-            kwargs={
-                "timeout": 30,
-                "column_mappings": [(0, "id"), (1, "xml_col")],
-            },
+            timeout=30,
+            column_mappings=[(0, "id"), (1, "xml_col")],
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, RuntimeError) as e:
@@ -131,10 +127,8 @@ def test_cursor_bulkcopy_xml_large_document(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "timeout": 30,
-            "column_mappings": [(0, "id"), (1, "xml_col")],
-        },
+        timeout=30,
+        column_mappings=[(0, "id"), (1, "xml_col")],
     )
 
     assert result is not None
@@ -170,10 +164,8 @@ def test_cursor_bulkcopy_xml_multiple_columns(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "timeout": 30,
-            "column_mappings": [(0, "id"), (1, "xml_col1"), (2, "xml_col2"), (3, "xml_col3")],
-        },
+        timeout=30,
+        column_mappings=[(0, "id"), (1, "xml_col1"), (2, "xml_col2"), (3, "xml_col3")],
     )
 
     assert result is not None
@@ -221,16 +213,14 @@ def test_cursor_bulkcopy_xml_mixed_with_other_types(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),
-                (1, "name"),
-                (2, "xml_col"),
-                (3, "amount"),
-                (4, "created")
-            ],
-        },
+        timeout=30,
+        column_mappings=[
+            (0, "id"),
+            (1, "name"),
+            (2, "xml_col"),
+            (3, "amount"),
+            (4, "created")
+        ],
     )
 
     assert result is not None

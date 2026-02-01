@@ -39,11 +39,9 @@ def test_cursor_bulkcopy_variant_integers(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [(0, "id"), (1, "data")],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[(0, "id"), (1, "data")],
     )
 
     assert result is not None

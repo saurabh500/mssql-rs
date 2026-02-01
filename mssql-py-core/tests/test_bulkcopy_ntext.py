@@ -36,15 +36,13 @@ def test_cursor_bulkcopy_ntext_basic(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={
-            "batch_size": 1000,
-            "timeout": 30,
-            "column_mappings": [
-                (0, "id"),
-                (1, "name"),
-                (2, "description"),
-            ],
-        },
+        batch_size=1000,
+        timeout=30,
+        column_mappings=[
+            (0, "id"),
+            (1, "name"),
+            (2, "description"),
+        ],
     )
 
     # Verify results
@@ -92,7 +90,7 @@ def test_cursor_bulkcopy_ntext_auto_mapping(client_context):
 
     # Execute bulk copy WITHOUT column mappings
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -144,7 +142,7 @@ def test_cursor_bulkcopy_ntext_numbers_as_strings(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -196,7 +194,7 @@ def test_cursor_bulkcopy_ntext_string_numbers_to_ntext(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -248,7 +246,7 @@ def test_cursor_bulkcopy_ntext_large_text(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -308,7 +306,7 @@ def test_cursor_bulkcopy_ntext_unicode_characters(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -359,7 +357,7 @@ def test_cursor_bulkcopy_ntext_empty_strings(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -410,7 +408,7 @@ def test_cursor_bulkcopy_ntext_mixed_types(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -463,7 +461,7 @@ literal"""),
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -513,7 +511,7 @@ def test_cursor_bulkcopy_ntext_special_characters(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -563,7 +561,7 @@ def test_cursor_bulkcopy_ntext_long_unicode_text(client_context):
 
     # Execute bulk copy
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 1000, "timeout": 30}
+        table_name, iter(data), batch_size=1000, timeout=30
     )
 
     # Verify results
@@ -616,7 +614,7 @@ def test_cursor_bulkcopy_ntext_batch_processing(client_context):
 
     # Execute bulk copy with small batch size to force multiple batches
     result = cursor.bulkcopy(
-        table_name, iter(data), kwargs={"batch_size": 10, "timeout": 30}
+        table_name, iter(data), batch_size=10, timeout=30
     )
 
     # Verify results

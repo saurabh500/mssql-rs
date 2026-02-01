@@ -39,7 +39,7 @@ def test_cursor_bulkcopy_binary_basic(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -97,7 +97,7 @@ def test_cursor_bulkcopy_binary_padding(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify the bulk copy succeeded
@@ -145,7 +145,7 @@ def test_cursor_bulkcopy_binary_varbinary_no_padding(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -201,7 +201,7 @@ def test_cursor_bulkcopy_binary_too_large(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, RuntimeError) as e:
@@ -242,7 +242,7 @@ def test_cursor_bulkcopy_varbinary_too_large(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, RuntimeError) as e:
@@ -289,7 +289,7 @@ def test_cursor_bulkcopy_binary_null_handling(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -338,7 +338,7 @@ def test_cursor_bulkcopy_binary_null_to_non_nullable(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
         print(f"No error raised. Result: {result}")
     except ValueError as e:
@@ -381,7 +381,7 @@ def test_cursor_bulkcopy_string_to_binary_fails(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, TypeError, RuntimeError) as e:
@@ -433,7 +433,7 @@ def test_cursor_bulkcopy_varbinary_max(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -501,7 +501,7 @@ def test_cursor_bulkcopy_int_to_binary_fails(client_context):
         result = cursor.bulkcopy(
             table_name,
             iter(data),
-            kwargs={"batch_size": 1000, "timeout": 30},
+            batch_size=1000, timeout=30,
         )
         print(f"No error raised. Result: {result}")
     except (ValueError, TypeError, RuntimeError) as e:
@@ -546,7 +546,7 @@ def test_cursor_bulkcopy_binary_with_explicit_encoding(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -596,7 +596,7 @@ def test_cursor_bulkcopy_binary_empty_bytes(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
@@ -646,7 +646,7 @@ def test_cursor_bulkcopy_binary_bytearray_type(client_context):
     result = cursor.bulkcopy(
         table_name,
         iter(data),
-        kwargs={"batch_size": 1000, "timeout": 30},
+        batch_size=1000, timeout=30,
     )
 
     # Verify results
