@@ -26,12 +26,10 @@ rustup target add "$RUST_TARGET"
 
 cd mssql-tds
 
-# Build tests for musl WITHOUT gssapi feature to avoid dynamic linking to libkrb5
-# The gssapi feature uses #[link(name = "gssapi_krb5", kind = "dylib")] which
-# forces dynamic linking to glibc's libgssapi_krb5.so, making binaries incompatible
-# with musl libc. Disabling gssapi produces fully static binaries.
-#
-# We only build the mssql-tds package (not --workspace) because workspace builds
-# don't properly propagate --no-default-features to internal dependencies.
-echo "==> Building tests without gssapi feature for static musl binary"
-cargo nextest archive --target "$RUST_TARGET" --archive-file ../tdslib-nextest-musl.tar.zst -p mssql-tds --no-default-features
+# Build tests with GSSAPI feature enabled.
+# With the new dlopen-based implementation, there's no compile-time dependency on krb5.
+# GSSAPI support is loaded at runtime via dlopen - if libgssapi_krb5.so is not installed,
+# is_gssapi_available() returns false and Kerberos auth gracefully fails.
+# This matches ODBC's approach: no compile-time linking, runtime detection.
+echo "==> Building tests with GSSAPI (dlopen-based, no krb5 compile-time dependency)"
+cargo nextest archive --target "$RUST_TARGET" --features gssapi --archive-file ../tdslib-nextest-musl.tar.zst -p mssql-tds

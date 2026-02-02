@@ -19,15 +19,33 @@ use mssql_tds::security::unix::{GssapiContext, has_valid_credentials, is_gssapi_
 use mssql_tds::security::{IntegratedAuthConfig, SecurityContext, SecurityPackage};
 use std::env;
 
-/// Test that GSSAPI library is available (on Linux) or gracefully unavailable (on macOS CI)
+/// Test that GSSAPI library availability check works correctly.
+///
+/// The library is loaded via dlopen at runtime, so availability depends on
+/// whether libgssapi_krb5.so is installed on the system. This matches ODBC's
+/// approach of having no compile-time krb5 dependency.
 #[test]
 fn test_gssapi_available() {
     let available = is_gssapi_available();
 
+    // On Alpine (musl) without krb5-dev, GSSAPI won't be available - this is expected.
     // On macOS, GSSAPI may not be available in CI environments since Homebrew's krb5
-    // is keg-only and requires special library path configuration. We accept either
-    // available or unavailable on macOS, but require it on Linux.
-    #[cfg(target_os = "macos")]
+    // is keg-only and requires special library path configuration.
+    // On standard Linux systems with krb5 installed, it should be available.
+    #[cfg(target_env = "musl")]
+    {
+        println!(
+            "GSSAPI library availability on musl: {}",
+            if available {
+                "available"
+            } else {
+                "not available (expected if krb5-dev not installed)"
+            }
+        );
+        // On musl, availability depends on whether krb5 package is installed
+    }
+
+    #[cfg(all(target_os = "macos", not(target_env = "musl")))]
     {
         println!(
             "GSSAPI library availability on macOS: {}",
@@ -40,31 +58,34 @@ fn test_gssapi_available() {
         // On macOS, we just verify the function doesn't panic - availability is optional
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
     {
         assert!(
             available,
-            "GSSAPI library (libgssapi_krb5) should be available on Linux"
+            "GSSAPI library (libgssapi_krb5) should be available on glibc Linux"
         );
     }
 }
 
 /// Test GssapiContext creation with valid SPN
+///
+/// With the dlopen-based approach, this test works on all platforms including musl.
+/// If libgssapi_krb5 is not installed, GssapiContext::new() returns an error early.
 #[test]
 fn test_gssapi_context_creation() {
     let config = IntegratedAuthConfig::new();
     let result = GssapiContext::new(&config, "sql.example.local", 1433);
 
-    // This will fail without valid credentials, but should not panic
+    // This will fail if GSSAPI is not available or no credentials exist
     match result {
         Ok(ctx) => {
             assert_eq!(ctx.spn(), "MSSQLSvc/sql.example.local:1433");
             assert!(!ctx.is_complete());
         }
         Err(e) => {
-            // Expected if no Kerberos ticket is available
+            // Expected if GSSAPI library not available or no Kerberos ticket
             println!(
-                "GssapiContext creation failed (expected without ticket): {:?}",
+                "GssapiContext creation failed (expected without krb5/ticket): {:?}",
                 e
             );
         }
@@ -82,7 +103,7 @@ fn test_gssapi_context_with_explicit_spn() {
             assert_eq!(ctx.spn(), "MSSQLSvc/custom.host:5000");
         }
         Err(_) => {
-            // Expected if no Kerberos ticket is available
+            // Expected if GSSAPI not available or no Kerberos ticket
         }
     }
 }
@@ -146,7 +167,8 @@ fn test_kerberos_token_generation() {
 /// Test credential checking
 #[test]
 fn test_has_valid_credentials() {
-    // This just tests that the function doesn't panic
+    // This just tests that the function doesn't panic.
+    // With dlopen, this returns false if GSSAPI library is not available.
     let has_creds = has_valid_credentials();
     println!("Has valid Kerberos credentials: {}", has_creds);
 }

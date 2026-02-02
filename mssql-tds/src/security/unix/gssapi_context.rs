@@ -138,6 +138,7 @@ impl GssapiContext {
     ///
     /// # Errors
     ///
+    /// - `SecurityError::LoadLibraryFailed` if GSSAPI library is not available
     /// - `SecurityError::NoCredentials` if no Kerberos ticket is available
     /// - `SecurityError::InvalidSpn` if the SPN cannot be imported
     pub fn new(
@@ -145,6 +146,9 @@ impl GssapiContext {
         server: &str,
         port: u16,
     ) -> Result<Self, SecurityError> {
+        // Check GSSAPI availability first
+        Self::check_availability()?;
+
         // Determine SPN and whether it was user-provided
         // For auto-generated SPNs, canonicalize the hostname via DNS lookup
         // to ensure it matches the SPN registered in Active Directory
@@ -308,6 +312,12 @@ impl SecurityContext for GssapiContext {
 /// GSSAPI resources including the security context handle and imported name.
 impl Drop for GssapiContext {
     fn drop(&mut self) {
+        // Only release resources if GSSAPI library is available.
+        // If it was unloaded or never loaded, we can't call the cleanup functions.
+        if !gssapi_ffi::is_gssapi_available() {
+            return;
+        }
+
         let mut minor_status: GssOmUint32 = 0;
 
         // Delete security context if it was created
@@ -358,15 +368,7 @@ fn import_name(spn: &str, user_provided: bool) -> Result<GssNameT, SecurityError
     let mut name_buffer = GssBufferDesc::from_str(&gssapi_name);
 
     // Use GSS_C_NT_HOSTBASED_SERVICE for "service@host" format
-    // Use safe wrapper to prevent null pointer dereference if GSSAPI library is not installed
-    let name_type = get_gss_nt_service_name().ok_or_else(|| {
-        SecurityError::LoadLibraryFailed(
-            "GSSAPI library (libgssapi_krb5.so) is not available. \
-             Please install the Kerberos libraries (e.g., 'apt install libkrb5-dev' on Debian/Ubuntu \
-             or 'yum install krb5-devel' on RHEL/CentOS)."
-                .to_string(),
-        )
-    })?;
+    let name_type = get_gss_nt_service_name();
 
     let major_status = unsafe {
         gss_import_name(
@@ -431,7 +433,7 @@ mod tests {
         let config = IntegratedAuthConfig::new();
         let result = GssapiContext::new(&config, "server.contoso.com", 1433);
 
-        // This may fail if GSSAPI is not properly configured,
+        // This may fail if GSSAPI is not available (no krb5 installed),
         // but should at least not panic
         if let Ok(ctx) = result {
             assert_eq!(ctx.spn(), "MSSQLSvc/server.contoso.com:1433");
