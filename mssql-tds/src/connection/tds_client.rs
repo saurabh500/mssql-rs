@@ -1059,6 +1059,19 @@ impl TdsClient {
         self.transport.send_attention_with_timeout(timeout).await
     }
 
+    /// Check if the connection has an active transaction.
+    ///
+    /// A transaction is considered active when a BEGIN TRANSACTION has been
+    /// executed and no corresponding COMMIT or ROLLBACK has occurred.
+    ///
+    /// # Returns
+    ///
+    /// * `true` - if a transaction is active on this connection
+    /// * `false` - if no transaction is active (autocommit mode)
+    pub fn has_active_transaction(&self) -> bool {
+        self.execution_context.has_active_transaction()
+    }
+
     #[instrument(skip(self), level = "info")]
     pub async fn begin_transaction(
         &mut self,

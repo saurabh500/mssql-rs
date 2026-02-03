@@ -53,6 +53,7 @@ use crate::error::Error;
 use crate::error::bulk_copy_errors::{
     BulkCopyAttentionTimeoutError, BulkCopyError, BulkCopyTimeoutError,
 };
+use crate::message::transaction_management::TransactionIsolationLevel;
 use async_trait::async_trait;
 use std::time::{Duration, Instant};
 
@@ -84,8 +85,21 @@ pub struct BulkCopyOptions {
     /// Obtain a bulk update lock for the duration of the operation. Default: false
     pub table_lock: bool,
 
-    /// Use an internal transaction for the bulk copy. Default: true
-    /// If true, the entire operation is wrapped in a transaction.
+    /// Use an internal transaction for the bulk copy. Default: false
+    ///
+    /// When `true`, each batch is wrapped in its own transaction:
+    /// - BEGIN TRANSACTION before each batch
+    /// - COMMIT TRANSACTION on successful batch completion
+    /// - ROLLBACK TRANSACTION on batch failure
+    ///
+    /// When `false` (the default, matching .NET SqlBulkCopy behavior):
+    /// - If the connection has an active API transaction, the bulk copy
+    ///   participates in that transaction
+    /// - If no transaction exists, SQL Server's autocommit mode applies
+    ///   (each batch is auto-committed when the DONE packet is acknowledged)
+    ///
+    /// **Note**: This option cannot be used when the connection already has
+    /// an active transaction. Attempting to do so will result in an error.
     pub use_internal_transaction: bool,
 
     /// Number of rows to process before calling the progress callback.
@@ -103,7 +117,7 @@ impl Default for BulkCopyOptions {
             keep_identity: false,
             keep_nulls: false,
             table_lock: false,
-            use_internal_transaction: true,
+            use_internal_transaction: false, // Matches .NET SqlBulkCopy default
             notification_interval: 0,
         }
     }
@@ -481,16 +495,27 @@ impl<'a> BulkCopy<'a> {
 
     /// Set whether to use an internal transaction.
     ///
-    /// Default: true (entire operation wrapped in a transaction)
+    /// Default: false (matches .NET SqlBulkCopy behavior)
+    ///
+    /// When `true`, each batch is wrapped in its own transaction:
+    /// - BEGIN TRANSACTION before each batch
+    /// - COMMIT TRANSACTION on successful batch completion
+    /// - ROLLBACK TRANSACTION on batch failure
+    ///
+    /// When `false` (the default):
+    /// - If the connection has an active API transaction, bulk copy participates in it
+    /// - If no transaction exists, SQL Server's autocommit mode applies
+    ///
+    /// **Note**: Cannot be used when the connection already has an active transaction.
     ///
     /// # Arguments
     ///
-    /// * `enabled` - If true, the operation will use an internal transaction
+    /// * `enabled` - If true, use internal per-batch transactions
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// bulk_copy.use_internal_transaction(false); // Use external transaction
+    /// bulk_copy.use_internal_transaction(true); // Use internal transaction per batch
     /// ```
     pub fn use_internal_transaction(mut self, enabled: bool) -> Self {
         self.options.use_internal_transaction = enabled;
@@ -596,6 +621,44 @@ impl<'a> BulkCopy<'a> {
         resolved.sort_by_key(|m| m.destination_index);
 
         Ok(resolved)
+    }
+
+    /// Validate transaction state before starting bulk copy.
+    ///
+    /// This method checks for conflicting transaction configurations and ensures
+    /// the connection is in a valid state for bulk copy operations.
+    ///
+    /// # Validation Rules
+    ///
+    /// 1. If `use_internal_transaction` is true and the connection already has
+    ///    an active transaction, this is an error (mirrors .NET Transaction4.cs test:
+    ///    "BulkLoadConflictingTransactionOption")
+    ///
+    /// 2. If the connection has an active transaction but `use_internal_transaction`
+    ///    is false, the bulk copy will participate in that external transaction
+    ///    (this is valid - mirrors .NET Transaction2.cs behavior)
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::UsageError` if the transaction state is invalid.
+    fn validate_transaction_state(&self) -> TdsResult<()> {
+        let has_active_transaction = self.client.has_active_transaction();
+        let use_internal_transaction = self.options.use_internal_transaction;
+
+        // Check for conflicting configuration:
+        // Cannot use internal transaction when connection already has a transaction
+        // This mirrors .NET SqlBulkCopy constructor validation (line 264-269):
+        // "Must not specify SqlBulkCopyOption.UseInternalTransaction and pass an
+        //  external Transaction at the same time."
+        if use_internal_transaction && has_active_transaction {
+            return Err(Error::UsageError(
+                "Cannot use UseInternalTransaction when the connection already has an active transaction. \
+                 Either commit/rollback the existing transaction, or set use_internal_transaction to false \
+                 to participate in the existing transaction.".to_string()
+            ));
+        }
+
+        Ok(())
     }
 
     /// Get resolved column mappings for the current configuration.
@@ -755,6 +818,12 @@ impl<'a> BulkCopy<'a> {
         // A timeout of 0 means infinite (no timeout)
         self.timeout_state = Some(BulkCopyTimeoutState::from_seconds(self.options.timeout_sec));
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // VALIDATION: Check for conflicting transaction states
+        // This mirrors .NET SqlBulkCopy behavior from AnalyzeTargetAndCreateUpdateBulkCommand
+        // ═══════════════════════════════════════════════════════════════════════
+        self.validate_transaction_state()?;
+
         // Peek-able iterator for batch boundary detection
         let mut rows = rows.into_iter().peekable();
 
@@ -873,6 +942,9 @@ impl<'a> BulkCopy<'a> {
             None
         };
 
+        // Capture use_internal_transaction flag at start (matches .NET _savedBatchSize pattern)
+        let use_internal_transaction = self.options.use_internal_transaction;
+
         loop {
             if rows.peek().is_none() {
                 break;
@@ -921,8 +993,19 @@ impl<'a> BulkCopy<'a> {
             // The take() adaptor just sets an upper bound, but the actual iteration ends when the input is finished.
             let batch_iter = (&mut rows).take(batch_size);
 
+            // ═══════════════════════════════════════════════════════════════════
+            // BEGIN TRANSACTION: Start internal transaction before each batch
+            // (if UseInternalTransaction is enabled)
+            // This mirrors .NET SqlBulkCopy.CopyBatchesAsync behavior
+            // ═══════════════════════════════════════════════════════════════════
+            if use_internal_transaction {
+                self.client
+                    .begin_transaction(TransactionIsolationLevel::ReadCommitted, None)
+                    .await?;
+            }
+
             // Execute streaming bulk load with zero-copy path
-            let batch_count = self
+            let batch_result = self
                 .client
                 .execute_bulk_load_streaming_zerocopy(
                     self.table_name.clone(),
@@ -933,9 +1016,35 @@ impl<'a> BulkCopy<'a> {
                     batch_iter,
                     resolved_mappings,
                 )
-                .await?;
+                .await;
 
-            *total_rows += batch_count;
+            // Handle batch result with transaction management
+            match batch_result {
+                Ok(batch_count) => {
+                    // ═══════════════════════════════════════════════════════════
+                    // COMMIT TRANSACTION: Commit on successful batch completion
+                    // This mirrors .NET SqlBulkCopy.CommitTransaction() behavior
+                    // ═══════════════════════════════════════════════════════════
+                    if use_internal_transaction {
+                        self.client.commit_transaction(None, None).await?;
+                    }
+
+                    *total_rows += batch_count;
+                }
+                Err(e) => {
+                    // ═══════════════════════════════════════════════════════════
+                    // ROLLBACK TRANSACTION: Rollback on batch failure
+                    // This mirrors .NET SqlBulkCopy.AbortTransaction() behavior
+                    // Note: Only rollback if we have an active internal transaction
+                    // ═══════════════════════════════════════════════════════════
+                    if use_internal_transaction && self.client.has_active_transaction() {
+                        // Attempt rollback, but don't mask the original error
+                        let _ = self.client.rollback_transaction(None, None).await;
+                    }
+
+                    return Err(e);
+                }
+            }
 
             // Report progress if callback is configured
             if let Some(ref mut callback) = self.progress_callback
@@ -1077,7 +1186,7 @@ mod tests {
         assert!(!opts.keep_identity);
         assert!(!opts.keep_nulls);
         assert!(!opts.table_lock);
-        assert!(opts.use_internal_transaction);
+        assert!(!opts.use_internal_transaction); // Matches .NET default
         assert_eq!(opts.notification_interval, 0);
     }
 
@@ -1339,6 +1448,71 @@ mod tests {
         assert!(!check_compat(SqlDbType::VarBinary, SqlDbType::VarChar));
     }
 
-    // Note: Full integration tests for BulkCopy require a TdsClient connection
-    // and will be added in the integration test phase
+    // =========================================================================
+    // Transaction-related unit tests
+    // =========================================================================
+
+    #[test]
+    fn test_use_internal_transaction_default_is_false() {
+        // Verify the default matches .NET SqlBulkCopy behavior:
+        // SqlBulkCopyOptions.Default = 0 means no flags are set,
+        // so UseInternalTransaction is off by default.
+        let opts = BulkCopyOptions::default();
+        assert!(
+            !opts.use_internal_transaction,
+            "use_internal_transaction should default to false (matching .NET)"
+        );
+    }
+
+    #[test]
+    fn test_batch_size_zero_means_single_batch() {
+        let opts = BulkCopyOptions::default();
+        assert_eq!(opts.batch_size, 0, "batch_size should default to 0");
+
+        // When batch_size is 0, effective batch size is usize::MAX (single batch)
+        let effective_batch_size = if opts.batch_size == 0 {
+            usize::MAX
+        } else {
+            opts.batch_size
+        };
+        assert_eq!(
+            effective_batch_size,
+            usize::MAX,
+            "batch_size=0 should mean single batch (usize::MAX)"
+        );
+    }
+
+    #[test]
+    fn test_batch_size_positive_value() {
+        let opts = BulkCopyOptions {
+            batch_size: 1000,
+            ..Default::default()
+        };
+        assert_eq!(opts.batch_size, 1000);
+
+        // Effective batch size should be the configured value
+        let effective_batch_size = if opts.batch_size == 0 {
+            usize::MAX
+        } else {
+            opts.batch_size
+        };
+        assert_eq!(effective_batch_size, 1000);
+    }
+
+    #[test]
+    fn test_use_internal_transaction_can_be_enabled() {
+        // UseInternalTransaction can be explicitly enabled
+        let opts = BulkCopyOptions {
+            use_internal_transaction: true,
+            ..Default::default()
+        };
+        assert!(
+            opts.use_internal_transaction,
+            "use_internal_transaction should be configurable to true"
+        );
+    }
+
+    // Note: Full integration tests for BulkCopy transaction behavior require
+    // a TdsClient connection and will be added in the integration test phase.
+    // See the Implementation Guide for comprehensive integration test specifications.
 }
