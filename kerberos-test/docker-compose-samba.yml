@@ -1,0 +1,98 @@
+services:
+  # Samba AD Domain Controller
+  dc:
+    build:
+      context: .
+      dockerfile: Dockerfile.samba-dc
+    container_name: samba-dc
+    hostname: dc
+    domainname: example.local
+    privileged: true
+    environment:
+      - KERBEROS_ADMIN_PASSWORD=${KERBEROS_ADMIN_PASSWORD}
+    volumes:
+      - samba-data:/var/lib/samba
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.10
+    ports:
+      - "8053:53/tcp"
+      - "8053:53/udp"
+      - "8888:88/tcp"
+      - "8888:88/udp"
+      - "8389:389"
+      - "8636:636"
+    healthcheck:
+      test: ["CMD", "samba-tool", "domain", "info", "127.0.0.1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  # SQL Server on Linux with SSSD/AD integration
+  mssql:
+    build:
+      context: .
+      dockerfile: Dockerfile.mssql-ad
+    container_name: mssql-kerberos
+    hostname: sql
+    domainname: example.local
+    privileged: true  # Required for sssd
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${KERBEROS_SA_PASSWORD}
+      - MSSQL_PID=Developer
+      - KERBEROS_ADMIN_PASSWORD=${KERBEROS_ADMIN_PASSWORD}
+    volumes:
+      - mssql-data:/var/opt/mssql
+      - ./scripts:/scripts:ro
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.20
+    ports:
+      - "1433:1433"
+    dns:
+      - 172.20.0.10
+    extra_hosts:
+      - "dc.example.local:172.20.0.10"
+      - "example.local:172.20.0.10"
+    depends_on:
+      dc:
+        condition: service_healthy
+
+  # Client container for testing
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: kerberos-client
+    hostname: client
+    domainname: example.local
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./dotnet-app:/app:rw
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.30
+    dns:
+      - 172.20.0.10
+    extra_hosts:
+      - "dc.example.local:172.20.0.10"
+      - "sql.example.local:172.20.0.20"
+      - "example.local:172.20.0.10"
+    depends_on:
+      - mssql
+    stdin_open: true
+    tty: true
+    command: ["tail", "-f", "/dev/null"]
+
+networks:
+  kerberos-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+volumes:
+  samba-data:
+  mssql-data:

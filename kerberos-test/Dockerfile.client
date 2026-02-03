@@ -1,0 +1,25 @@
+# Client container with .NET 9 SDK, Kerberos tools, and sqlcmd
+FROM mcr.microsoft.com/dotnet/sdk:9.0
+
+# Install Kerberos client tools and SQL Server tools
+RUN apt-get update && apt-get install -y \
+    krb5-user \
+    krb5-config \
+    libgssapi-krb5-2 \
+    curl \
+    gnupg2 \
+    apt-transport-https \
+    ca-certificates \
+    bzip2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install go-sqlcmd via direct download
+RUN curl -sSL -o /tmp/sqlcmd.tar.bz2 "https://github.com/microsoft/go-sqlcmd/releases/download/v1.8.0/sqlcmd-linux-amd64.tar.bz2" \
+    && tar -xjf /tmp/sqlcmd.tar.bz2 -C /usr/local/bin \
+    && rm /tmp/sqlcmd.tar.bz2 \
+    && chmod +x /usr/local/bin/sqlcmd
+
+WORKDIR /app
+
+# Default command
+CMD ["tail", "-f", "/dev/null"]

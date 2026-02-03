@@ -31,5 +31,9 @@ cd mssql-tds
 # GSSAPI support is loaded at runtime via dlopen - if libgssapi_krb5.so is not installed,
 # is_gssapi_available() returns false and Kerberos auth gracefully fails.
 # This matches ODBC's approach: no compile-time linking, runtime detection.
-echo "==> Building tests with GSSAPI (dlopen-based, no krb5 compile-time dependency)"
-cargo nextest archive --target "$RUST_TARGET" --features gssapi --archive-file ../tdslib-nextest-musl.tar.zst -p mssql-tds
+#
+# IMPORTANT: Must use -C target-feature=-crt-static to enable dynamic linking.
+# Rust defaults to static linking on musl, but GSSAPI uses dlopen() to load
+# the Kerberos library at runtime. Static binaries cannot use dlopen().
+echo "==> Building tests with GSSAPI (dlopen-based, dynamic linking for dlopen support)"
+RUSTFLAGS="-C target-feature=-crt-static" cargo nextest archive --target "$RUST_TARGET" --features gssapi --archive-file ../tdslib-nextest-musl.tar.zst -p mssql-tds

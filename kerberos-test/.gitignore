@@ -1,0 +1,101 @@
+# Generated credentials (NEVER COMMIT)
+.env
+
+# .NET build outputs
+bin/
+obj/
+out/
+
+# Test results (JUnit XML)
+test-results/
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# User-specific files
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+build/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.sln.docstates
+*.csproj.user
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# VS Code
+.vscode/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+*.nuget.props
+*.nuget.targets
+
+# Test results
+*.trx
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# Publish output
+publish/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.bak
+
+# Docker
+.docker/
+
+# Kerberos keytabs (sensitive!)
+*.keytab
+
+# Python bytecode (if any Python scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Environment files
+.env
+.env.local

@@ -147,6 +147,42 @@ stages:
           osType: MacOS
           architecture: x64
 
+# Kerberos tests for PRs (fast - 2 distros: ubuntu22 + alpine318)
+- stage: Kerberos_Test_PR
+  displayName: Kerberos Test (PR)
+  dependsOn: []  # Run in parallel with Build stage
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'), eq('${{ parameters.RunFuzz }}', 'false'))
+  jobs:
+    - template: templates/kerberos-test-template.yml
+      parameters:
+        profiles:
+          - ubuntu22
+          - alpine318
+        testTimeout: 45
+        useArchive: false  # PR builds compile from source to validate the PR code
+
+# Kerberos tests for merge (full matrix across all distros)
+- stage: Kerberos_Test_Full
+  displayName: Kerberos Test (Full Matrix)
+  dependsOn:
+    - Build
+  condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'), eq('${{ parameters.RunFuzz }}', 'false'))
+  jobs:
+    - template: templates/kerberos-test-template.yml
+      parameters:
+        profiles:
+          - ubuntu22
+          - ubuntu24
+          - alpine318
+          - alpine319
+          - alpine320
+          - alpine321
+          - debian
+          - rhel9
+          - oracle9
+        testTimeout: 60
+        # useArchive: true (default) - uses pre-built nextest archives for faster testing
+
 - stage: Fuzz
   displayName: Fuzz Testing Stage
   dependsOn: []

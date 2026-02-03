@@ -1,0 +1,59 @@
+# Parameterized Kerberos test client
+# Usage: docker build --build-arg BASE_IMAGE=tdslibrs.azurecr.io/import/alpine:3.18 \
+#                     --build-arg ENTRY_SCRIPT=alpine.sh \
+#                     -f Dockerfile.client.matrix .
+#
+# Supported base images from tdslibrs.azurecr.io/import/:
+#   - alpine:3.18, alpine:3.19, alpine:3.20, alpine:3.21
+#   - ubuntu:22.04, ubuntu:24.04
+#   - debian:bookworm
+#   - redhat/ubi9:latest
+#   - oraclelinux:9
+
+ARG BASE_IMAGE=tdslibrs.azurecr.io/import/ubuntu:22.04
+FROM ${BASE_IMAGE}
+
+ARG ENTRY_SCRIPT=deb-bookworm.sh
+
+# Detect OS type and install dependencies
+# This reuses the same logic as the CI matrix test entry scripts
+RUN if [ -f /etc/alpine-release ]; then \
+        # Alpine (musl) \
+        apk update && apk add --no-cache \
+            ca-certificates zstd tar gcc g++ make pkgconfig \
+            openssl-dev openssl-libs-static musl-dev krb5-dev krb5 curl bash git; \
+    elif [ -f /etc/debian_version ]; then \
+        # Debian/Ubuntu (glibc) - use noninteractive to avoid krb5-user prompts \
+        export DEBIAN_FRONTEND=noninteractive && \
+        apt-get update && apt-get install -y \
+            ca-certificates zstd tar build-essential pkg-config \
+            openssl libssl-dev libkrb5-dev krb5-user curl git \
+        && rm -rf /var/lib/apt/lists/*; \
+    elif [ -f /etc/redhat-release ] || [ -f /etc/oracle-release ]; then \
+        # RHEL/Oracle/CentOS (glibc) - use allowerasing for curl-minimal vs curl conflict \
+        dnf update -y && dnf install -y --allowerasing \
+            ca-certificates zstd tar gcc gcc-c++ make pkgconfig \
+            openssl-devel krb5-workstation krb5-devel curl git \
+        && dnf clean all; \
+    else \
+        echo "Unsupported OS" && exit 1; \
+    fi
+
+# Install Rust
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install go-sqlcmd for debugging (optional, skip if it fails on some platforms)
+RUN curl -sSL -o /tmp/sqlcmd.tar.bz2 "https://github.com/microsoft/go-sqlcmd/releases/download/v1.8.0/sqlcmd-linux-amd64.tar.bz2" 2>/dev/null \
+    && tar -xjf /tmp/sqlcmd.tar.bz2 -C /usr/local/bin 2>/dev/null \
+    && rm /tmp/sqlcmd.tar.bz2 \
+    && chmod +x /usr/local/bin/sqlcmd 2>/dev/null \
+    || echo "sqlcmd installation skipped (optional)"
+
+WORKDIR /workspace
+
+# Store the entry script name for reference
+ENV ENTRY_SCRIPT=${ENTRY_SCRIPT}
+
+# Default command - keep container running
+CMD ["tail", "-f", "/dev/null"]

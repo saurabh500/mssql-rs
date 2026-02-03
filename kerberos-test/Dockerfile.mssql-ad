@@ -1,0 +1,27 @@
+# SQL Server on Linux with AD integration (sssd/realmd)
+FROM mcr.microsoft.com/mssql/server:2022-latest
+
+USER root
+
+# Install AD integration packages
+RUN apt-get update && ACCEPT_EULA=Y apt-get install -y \
+    realmd \
+    sssd \
+    sssd-tools \
+    sssd-ad \
+    adcli \
+    krb5-user \
+    packagekit \
+    samba-common-bin \
+    oddjob \
+    oddjob-mkhomedir \
+    sudo \
+    vim \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy initialization script
+COPY scripts/init-mssql-ad.sh /init-mssql-ad.sh
+RUN chmod +x /init-mssql-ad.sh
+
+# SQL Server runs as mssql user, but we need root for domain join
+ENTRYPOINT ["/init-mssql-ad.sh"]
