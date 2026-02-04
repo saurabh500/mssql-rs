@@ -44,7 +44,16 @@ services:
     container_name: samba-dc
     hostname: dc
     domainname: example.local
-    privileged: true
+    # Specific capabilities instead of privileged: true
+    cap_add:
+      - SYS_ADMIN      # Samba AD operations, mount, namespaces
+      - NET_ADMIN      # Network configuration
+      - SETUID         # User management
+      - SETGID         # Group management
+      - CHOWN          # File ownership
+      - DAC_OVERRIDE   # Bypass file permission checks
+      - FOWNER         # Bypass ownership checks
+      - NET_RAW        # Raw sockets for DNS
     environment:
       - KERBEROS_ADMIN_PASSWORD=${KERBEROS_ADMIN_PASSWORD}
     volumes:
@@ -74,7 +83,13 @@ services:
     container_name: mssql-kerberos
     hostname: sql
     domainname: example.local
-    privileged: true
+    # Specific capabilities instead of privileged: true
+    cap_add:
+      - SYS_ADMIN      # SSSD requires for cgroups/namespaces
+      - SYS_PTRACE     # SQL Server diagnostics
+      - SETUID         # SSSD user switching
+      - SETGID         # SSSD group switching
+      - DAC_READ_SEARCH # SSSD reads user info
     environment:
       - ACCEPT_EULA=Y
       - MSSQL_SA_PASSWORD=${KERBEROS_SA_PASSWORD}

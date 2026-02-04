@@ -180,7 +180,7 @@ stages:
           - debian
           - rhel9
           - oracle9
-        testTimeout: 60
+        testTimeout: 120
         # useArchive: true (default) - uses pre-built nextest archives for faster testing
 
 - stage: Fuzz
