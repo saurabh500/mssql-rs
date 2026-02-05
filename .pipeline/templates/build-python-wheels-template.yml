@@ -58,7 +58,7 @@ steps:
     displayName: 'Build Python wheels in manylinux container (${{ parameters.architecture }})'
 
 # Native builds for MacOS (no Windows support)
-# Native builds for MacOS (no Windows support)
+# Native builds for MacOS (universal2 = x86_64 + ARM64 in single binary)
 - ${{ if eq(parameters.osType, 'MacOS') }}:
   - script: |
       echo "Installing maturin via pipx..."
@@ -66,24 +66,27 @@ steps:
       python3 -m pipx ensurepath
       export PATH="$HOME/.local/bin:$PATH"
       pipx install maturin
-    displayName: Install maturin
+      
+      echo "Installing Rust targets for universal2 build..."
+      rustup target add x86_64-apple-darwin
+      rustup target add aarch64-apple-darwin
+    displayName: Install maturin and Rust targets
 
   - ${{ each pythonVersion in parameters.pythonVersions }}:
     - task: UsePythonVersion@0
       displayName: 'Use Python ${{ pythonVersion }}'
       inputs:
         versionSpec: '${{ pythonVersion }}'
-        architecture: '${{ parameters.architecture }}'
         addToPath: true
     
     - script: |
-        echo "Building Python wheel for Python ${{ pythonVersion }}..."
+        echo "Building universal2 Python wheel for Python ${{ pythonVersion }}..."
         export PATH="$HOME/.local/bin:$PATH"
         python${{ pythonVersion }} --version
         cd mssql-py-core
-        maturin build --release --interpreter python${{ pythonVersion }} --out $(Build.ArtifactStagingDirectory)/wheels
-        echo "Wheel built successfully for Python ${{ pythonVersion }}"
-      displayName: 'Build wheel for Python ${{ pythonVersion }} (MacOS)'
+        maturin build --release --target universal2-apple-darwin --interpreter python${{ pythonVersion }} --out $(Build.ArtifactStagingDirectory)/wheels
+        echo "Universal2 wheel built successfully for Python ${{ pythonVersion }}"
+      displayName: 'Build universal2 wheel for Python ${{ pythonVersion }} (MacOS)'
   
   - script: |
       echo "All wheels built:"
