@@ -146,7 +146,6 @@ steps:
       summaryFileLocation: "$(Build.SourcesDirectory)/target/lcov.info"
       pathToSources: "$(Build.SourcesDirectory)"
 
-
 - task: CopyFiles@2
   displayName: Copy Rust Debug Build
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'),  or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))

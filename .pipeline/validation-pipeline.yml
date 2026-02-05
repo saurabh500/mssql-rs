@@ -43,25 +43,44 @@ stages:
           osType: Windows
           buildType: ${{ parameters.buildType }}
           testFilter: -E "not (test(connectivity))"
-      # Note: Windows Python wheel builds are not supported - use Linux/Alpine/MacOS only
+      - template: templates/build-python-wheels-template.yml
+        parameters:
+          osType: Windows
+          architecture: x64
 
-  # - job: Build_Windows_Arm
-  #   displayName: Build Windows ARM
-  #   pool:
-  #     name: RUST-1ES-POOL-ARM-WUS3
-  #     demands:
-  #       - imageOverride -equals ADO-WIN11-ARM64
-  #   variables:
-  #     # For details on this CARGO_TARGET_DIR setting, see https://eng.ms/docs/more/rust/topics/onebranch-workaround
-  #     CARGO_TARGET_DIR: C:\cargo_target_dir
-  #   steps:
-  #     - template: templates/sql-setup-template.yml
-  #       parameters:
-  #         buildTarget: Windows
-  #     - template: templates/build-template.yml
-  #       parameters:
-  #         osType: Windows
-  #         buildType: ${{ parameters.buildType }}
+  - job: Build_Windows_Arm
+    displayName: Build Windows ARM
+    pool:
+      name: RUST-1ES-POOL-ARM-WUS3
+      demands:
+        - imageOverride -equals RUST-WINSRV-ARM
+    variables:
+      # For details on this CARGO_TARGET_DIR setting, see https://eng.ms/docs/more/rust/topics/onebranch-workaround
+      CARGO_TARGET_DIR: C:\cargo_target_dir
+    steps:
+      # Add Node.js to PATH for Azure DevOps tasks
+      # Using x64 Node.js via Windows ARM64 emulation since ARM64 Node isn't available
+      - pwsh: ./scripts/setup-nodejs-path.ps1
+        displayName: 'Add Node.js to PATH for ADO tasks'
+
+      # Create Node.js in the agent's externals folder where ADO tasks expect it
+      - pwsh: ./scripts/install-nodejs-to-agent.ps1
+        displayName: 'Install Node.js to agent externals folder'
+
+      - template: templates/install-dependencies.yml
+        parameters:
+          osType: Windows
+          enableJsDeps: false
+      - template: templates/build-python-wheels-template.yml
+        parameters:
+          osType: Windows
+          architecture: arm64
+          # Python 3.10 excluded - limited ARM64 support
+          pythonVersions:
+          - '3.11'
+          - '3.12'
+          - '3.13'
+          - '3.14'
 
   - job: Build_Linux
     displayName: Build Linux
