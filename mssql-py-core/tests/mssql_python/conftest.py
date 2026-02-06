@@ -23,7 +23,15 @@ def get_connection_string():
     server = os.environ.get("DB_HOST", os.environ.get("SQL_SERVER", "localhost"))
     database = os.environ.get("SQL_DATABASE", "master")
     username = os.environ.get("DB_USERNAME", "sa")
-    password = os.environ.get("SQL_PASSWORD", "")
+    
+    # Try SQL_PASSWORD env var first, then /tmp/password file (same as main conftest.py)
+    password = os.environ.get("SQL_PASSWORD")
+    if not password:
+        try:
+            with open("/tmp/password", "r") as f:
+                password = f.read().strip()
+        except FileNotFoundError:
+            pytest.skip("SQL_PASSWORD not set and /tmp/password not found")
     
     return f"Server={server};Database={database};UID={username};PWD={password};TrustServerCertificate=Yes"
 
@@ -37,7 +45,7 @@ def conn_str():
 @pytest.fixture
 def connection(conn_str):
     """Provides a connected mssql_python connection."""
-    conn = connect(conn_str)
+    conn = connect(conn_str, autocommit=True)
     yield conn
     conn.close()
 

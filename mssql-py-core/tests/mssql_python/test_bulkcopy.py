@@ -34,3 +34,42 @@ def test_insert_and_fetch(cursor):
     
     # Cleanup
     cursor.execute(f"DROP TABLE {table_name}")
+
+
+def test_bulkcopy_basic(cursor):
+    """Test basic bulkcopy operation via mssql_python driver with auto-mapping.
+    
+    Uses automatic column mapping (columns mapped by ordinal position).
+    """
+    table_name = "mssql_python_bulkcopy_test"
+    
+    # Create table
+    cursor.execute(f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}")
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, name VARCHAR(50), value FLOAT)")
+    
+    # Prepare test data - columns match table order (id, name, value)
+    data = [
+        (1, "Alice", 100.5),
+        (2, "Bob", 200.75),
+        (3, "Charlie", 300.25),
+    ]
+    
+    # Perform bulkcopy with auto-mapping (no column_mappings specified)
+    # Using explicit timeout parameter instead of kwargs
+    result = cursor._bulkcopy(table_name, data, timeout=60)
+    
+    # Verify result
+    assert result is not None
+    assert result["rows_copied"] == 3
+    
+    # Verify data was inserted correctly
+    cursor.execute(f"SELECT id, name, value FROM {table_name} ORDER BY id")
+    rows = cursor.fetchall()
+    
+    assert len(rows) == 3
+    assert rows[0][0] == 1 and rows[0][1] == "Alice" and abs(rows[0][2] - 100.5) < 0.01
+    assert rows[1][0] == 2 and rows[1][1] == "Bob" and abs(rows[1][2] - 200.75) < 0.01
+    assert rows[2][0] == 3 and rows[2][1] == "Charlie" and abs(rows[2][2] - 300.25) < 0.01
+    
+    # Cleanup
+    cursor.execute(f"DROP TABLE {table_name}")
