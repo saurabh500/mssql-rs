@@ -44,7 +44,7 @@
 //! println!("Inserted {} rows", result.rows_affected);
 //! ```
 
-use crate::connection::bulk_copy_state::BulkCopyTimeoutState;
+use crate::connection::bulk_copy_state::{ATTENTION_TIMEOUT_SECONDS, BulkCopyTimeoutState};
 use crate::connection::metadata_retriever::{FmtOnlyMetadataRetriever, MetadataRetriever};
 use crate::connection::tds_client::TdsClient;
 use crate::core::TdsResult;
@@ -959,9 +959,9 @@ impl<'a> BulkCopy<'a> {
                 state.mark_bulk_copy_write_timeout();
                 state.begin_sending_attention();
 
-                // Send attention and wait for ACK with 5-second timeout
+                // Send attention and wait for ACK with ATTENTION_TIMEOUT_SECONDS timeout
                 // per SqlClient behavior
-                let attention_timeout = Duration::from_secs(5);
+                let attention_timeout = Duration::from_secs(ATTENTION_TIMEOUT_SECONDS);
                 let ack_received = self
                     .client
                     .send_attention_with_timeout(attention_timeout)

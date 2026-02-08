@@ -78,11 +78,11 @@ echo ""
 if [ "$SKIP_INTEGRATION" = true ]; then
     echo "Running pytest (unit tests only, skipping integration tests)..."
     echo "==================================="
-    pytest tests/ -v -m "not integration" --ignore=tests/mssql_python --junitxml=pytest-results.xml
+    pytest tests/ -v -m "not integration and not longhaul" --ignore=tests/mssql_python --junitxml=pytest-results.xml
 else
-    echo "Running pytest (unit and integration tests)..."
+    echo "Running pytest (unit and integration tests, excluding longhaul tests)..."
     echo "==================================="
-    pytest tests/ -v --ignore=tests/mssql_python --junitxml=pytest-results.xml
+    pytest tests/ -v -m "not longhaul" --ignore=tests/mssql_python --junitxml=pytest-results.xml
 fi
 
 echo ""

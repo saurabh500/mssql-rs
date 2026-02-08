@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use crate::connection::bulk_copy::{BulkCopyOptions, BulkLoadRow, ResolvedColumnMapping};
+use crate::connection::bulk_copy_state::ATTENTION_TIMEOUT_SECONDS;
 use crate::datatypes::bulk_copy_metadata::BulkCopyColumnMetadata;
 use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqltypes::SqlType;
@@ -318,9 +319,28 @@ impl TdsClient {
         writer.begin().await?;
 
         // STEP 3: Stream rows using zero-copy path
+        // If an error occurs during row writing, we need to send an attention packet
+        // to gracefully cancel the bulk load operation and leave the connection usable.
+        let mut row_write_error: Option<crate::error::Error> = None;
         for row in rows {
             // Write the row directly using the streaming writer
-            writer.write_row_zerocopy(&row).await?;
+            if let Err(e) = writer.write_row_zerocopy(&row).await {
+                row_write_error = Some(e);
+                break;
+            }
+        }
+
+        // Handle error during row streaming
+        if let Some(original_error) = row_write_error {
+            // Send attention packet to cancel the bulk load operation gracefully
+            // This tells SQL Server to abort the current operation and resets the
+            // TDS protocol state so the connection can be reused.
+            let attention_timeout = Duration::from_secs(ATTENTION_TIMEOUT_SECONDS);
+            let _ = self.send_attention_with_timeout(attention_timeout).await;
+            // Clear the open batch flag since we've cancelled the operation
+            // This allows subsequent operations to use this connection
+            self.execution_context.set_has_open_batch(false);
+            return Err(original_error);
         }
 
         // STEP 4: End streaming (write DONE token and finalize)
