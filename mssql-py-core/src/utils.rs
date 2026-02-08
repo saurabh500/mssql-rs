@@ -4,8 +4,8 @@
 // Utility functions for the PyO3 bindings
 
 use mssql_tds::error::{BulkCopyError, Error as TdsError};
-use pyo3::prelude::*;
 use pyo3::Python;
+use pyo3::prelude::*;
 
 /// Emit a Python warning for unimplemented features.
 ///

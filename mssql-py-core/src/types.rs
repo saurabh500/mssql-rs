@@ -485,74 +485,68 @@ fn py_to_column_value_internal(
     // Check for decimal.Decimal type
     // We need to check if the object is an instance of decimal.Decimal
     let py = py_obj.py();
-    if let Ok(decimal_module) = PyModule::import(py, "decimal") {
-        if let Ok(decimal_class) = decimal_module.getattr("Decimal") {
-            if let Ok(is_instance) = py_obj.is_instance(&decimal_class) {
-                if is_instance {
-                    // Extract Decimal as string and parse it
-                    if let Ok(decimal_str) = py_obj.call_method0("__str__") {
-                        if let Ok(s) = decimal_str.extract::<String>() {
-                            // Use a reasonable precision and scale for default conversion
-                            // This will be validated/adjusted during bulk copy if metadata is available
-                            match DecimalParts::from_string(&s, 38, 10) {
-                                Ok(decimal_parts) => {
-                                    return Ok(ColumnValues::Decimal(decimal_parts))
-                                }
-                                Err(e) => {
-                                    return Err(Error::UsageError(format!(
-                                        "Failed to convert Python Decimal '{}': {}",
-                                        s, e
-                                    )));
-                                }
-                            }
-                        }
-                    }
-                    return Err(Error::UsageError(
-                        "Failed to extract Decimal value as string".to_string(),
-                    ));
+    if let Ok(decimal_module) = PyModule::import(py, "decimal")
+        && let Ok(decimal_class) = decimal_module.getattr("Decimal")
+        && let Ok(is_instance) = py_obj.is_instance(&decimal_class)
+        && is_instance
+    {
+        // Extract Decimal as string and parse it
+        if let Ok(decimal_str) = py_obj.call_method0("__str__")
+            && let Ok(s) = decimal_str.extract::<String>()
+        {
+            // Use a reasonable precision and scale for default conversion
+            // This will be validated/adjusted during bulk copy if metadata is available
+            match DecimalParts::from_string(&s, 38, 10) {
+                Ok(decimal_parts) => return Ok(ColumnValues::Decimal(decimal_parts)),
+                Err(e) => {
+                    return Err(Error::UsageError(format!(
+                        "Failed to convert Python Decimal '{}': {}",
+                        s, e
+                    )));
                 }
             }
         }
+        return Err(Error::UsageError(
+            "Failed to extract Decimal value as string".to_string(),
+        ));
     }
 
     // Check for uuid.UUID type
     // Python's UUID type from the uuid module
-    if let Ok(uuid_module) = PyModule::import(py, "uuid") {
-        if let Ok(uuid_class) = uuid_module.getattr("UUID") {
-            if let Ok(is_instance) = py_obj.is_instance(&uuid_class) {
-                if is_instance {
-                    // Extract UUID bytes (16 bytes in big-endian RFC 4122 format)
-                    // Python's UUID.bytes property returns bytes in big-endian order
-                    let bytes_obj = py_obj.getattr("bytes").map_err(|e| {
-                        Error::UsageError(format!(
-                            "Failed to get 'bytes' attribute from Python UUID object: {}",
-                            e
-                        ))
-                    })?;
+    if let Ok(uuid_module) = PyModule::import(py, "uuid")
+        && let Ok(uuid_class) = uuid_module.getattr("UUID")
+        && let Ok(is_instance) = py_obj.is_instance(&uuid_class)
+        && is_instance
+    {
+        // Extract UUID bytes (16 bytes in big-endian RFC 4122 format)
+        // Python's UUID.bytes property returns bytes in big-endian order
+        let bytes_obj = py_obj.getattr("bytes").map_err(|e| {
+            Error::UsageError(format!(
+                "Failed to get 'bytes' attribute from Python UUID object: {}",
+                e
+            ))
+        })?;
 
-                    let uuid_bytes = bytes_obj.extract::<Vec<u8>>().map_err(|e| {
-                        Error::UsageError(format!(
-                            "Failed to extract bytes from Python UUID.bytes property: {}",
-                            e
-                        ))
-                    })?;
+        let uuid_bytes = bytes_obj.extract::<Vec<u8>>().map_err(|e| {
+            Error::UsageError(format!(
+                "Failed to extract bytes from Python UUID.bytes property: {}",
+                e
+            ))
+        })?;
 
-                    if uuid_bytes.len() != 16 {
-                        return Err(Error::UsageError(format!(
-                            "Invalid UUID byte length: expected 16, got {}",
-                            uuid_bytes.len()
-                        )));
-                    }
-
-                    // Convert Python UUID bytes to Rust uuid::Uuid
-                    // Python's UUID.bytes is in RFC 4122 big-endian format
-                    let mut uuid_array = [0u8; 16];
-                    uuid_array.copy_from_slice(&uuid_bytes);
-                    let rust_uuid = uuid::Uuid::from_bytes(uuid_array);
-                    return Ok(ColumnValues::Uuid(rust_uuid));
-                }
-            }
+        if uuid_bytes.len() != 16 {
+            return Err(Error::UsageError(format!(
+                "Invalid UUID byte length: expected 16, got {}",
+                uuid_bytes.len()
+            )));
         }
+
+        // Convert Python UUID bytes to Rust uuid::Uuid
+        // Python's UUID.bytes is in RFC 4122 big-endian format
+        let mut uuid_array = [0u8; 16];
+        uuid_array.copy_from_slice(&uuid_bytes);
+        let rust_uuid = uuid::Uuid::from_bytes(uuid_array);
+        return Ok(ColumnValues::Uuid(rust_uuid));
     }
 
     // Unsupported type

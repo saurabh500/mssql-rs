@@ -25,8 +25,8 @@ use mssql_tds::message::bulk_load::StreamingBulkLoadWriter;
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateTime, PyTime};
 use pyo3::types::{PyString, PyTuple};
-use rust_decimal::prelude::*;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::*;
 
 /// Represents the source Python type for conversion mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,24 +77,20 @@ impl SourcePythonType {
         } else {
             let py = py_obj.py();
             // Check for decimal.Decimal
-            if let Ok(decimal_module) = pyo3::types::PyModule::import(py, "decimal") {
-                if let Ok(decimal_class) = decimal_module.getattr("Decimal") {
-                    if let Ok(is_instance) = py_obj.is_instance(&decimal_class) {
-                        if is_instance {
-                            return SourcePythonType::Decimal;
-                        }
-                    }
-                }
+            if let Ok(decimal_module) = pyo3::types::PyModule::import(py, "decimal")
+                && let Ok(decimal_class) = decimal_module.getattr("Decimal")
+                && let Ok(is_instance) = py_obj.is_instance(&decimal_class)
+                && is_instance
+            {
+                return SourcePythonType::Decimal;
             }
             // Check for uuid.UUID
-            if let Ok(uuid_module) = pyo3::types::PyModule::import(py, "uuid") {
-                if let Ok(uuid_class) = uuid_module.getattr("UUID") {
-                    if let Ok(is_instance) = py_obj.is_instance(&uuid_class) {
-                        if is_instance {
-                            return SourcePythonType::Uuid;
-                        }
-                    }
-                }
+            if let Ok(uuid_module) = pyo3::types::PyModule::import(py, "uuid")
+                && let Ok(uuid_class) = uuid_module.getattr("UUID")
+                && let Ok(is_instance) = py_obj.is_instance(&uuid_class)
+                && is_instance
+            {
+                return SourcePythonType::Uuid;
             }
             SourcePythonType::Other
         }
@@ -173,10 +169,10 @@ impl PythonRowAdapter {
         }
 
         // Step 3: Check if we need type coercion based on source → target mapping
-        if let Some(meta) = target_metadata {
-            if let Some(coerced_value) = Self::try_type_coercion(py_obj, source_type, meta)? {
-                return Ok(coerced_value);
-            }
+        if let Some(meta) = target_metadata
+            && let Some(coerced_value) = Self::try_type_coercion(py_obj, source_type, meta)?
+        {
+            return Ok(coerced_value);
         }
 
         // Step 4: Fall back to default Python → TDS conversion
@@ -202,13 +198,13 @@ impl PythonRowAdapter {
     fn handle_null_value(
         target_metadata: Option<&BulkCopyColumnMetadata>,
     ) -> TdsResult<ColumnValues> {
-        if let Some(meta) = target_metadata {
-            if !meta.is_nullable {
-                return Err(Error::UsageError(format!(
-                    "Cannot insert NULL value into non-nullable column '{}'. Conversion not possible for NULL to non-nullable column",
-                    meta.column_name
-                )));
-            }
+        if let Some(meta) = target_metadata
+            && !meta.is_nullable
+        {
+            return Err(Error::UsageError(format!(
+                "Cannot insert NULL value into non-nullable column '{}'. Conversion not possible for NULL to non-nullable column",
+                meta.column_name
+            )));
         }
         Ok(ColumnValues::Null)
     }
@@ -273,7 +269,7 @@ impl PythonRowAdapter {
                         return Err(Error::UsageError(format!(
                             "Cannot convert string '{}' to BIT. Valid values: '0', '1', 'true', 'false'",
                             s
-                        )))
+                        )));
                     }
                 };
                 Ok(Some(ColumnValues::Bit(bit_value)))
@@ -711,16 +707,16 @@ impl PythonRowAdapter {
         target_meta: &BulkCopyColumnMetadata,
     ) -> TdsResult<ColumnValues> {
         // Extract Decimal as string
-        if let Ok(decimal_str) = py_obj.call_method0("__str__") {
-            if let Ok(s) = decimal_str.extract::<String>() {
-                let decimal_parts =
-                    DecimalParts::from_string(&s, target_meta.precision, target_meta.scale)?;
+        if let Ok(decimal_str) = py_obj.call_method0("__str__")
+            && let Ok(s) = decimal_str.extract::<String>()
+        {
+            let decimal_parts =
+                DecimalParts::from_string(&s, target_meta.precision, target_meta.scale)?;
 
-                if target_meta.sql_type == SqlDbType::Numeric {
-                    return Ok(ColumnValues::Numeric(decimal_parts));
-                } else {
-                    return Ok(ColumnValues::Decimal(decimal_parts));
-                }
+            if target_meta.sql_type == SqlDbType::Numeric {
+                return Ok(ColumnValues::Numeric(decimal_parts));
+            } else {
+                return Ok(ColumnValues::Decimal(decimal_parts));
             }
         }
 
@@ -786,15 +782,15 @@ impl PythonRowAdapter {
         target_type: SqlDbType,
     ) -> TdsResult<ColumnValues> {
         // Extract Decimal as string
-        if let Ok(decimal_str) = py_obj.call_method0("__str__") {
-            if let Ok(s) = decimal_str.extract::<String>() {
-                // Parse using rust_decimal - handles precision perfectly
-                let decimal = Decimal::from_str(&s).map_err(|e| {
-                    Error::UsageError(format!("Failed to parse Decimal '{}': {}", s, e))
-                })?;
+        if let Ok(decimal_str) = py_obj.call_method0("__str__")
+            && let Ok(s) = decimal_str.extract::<String>()
+        {
+            // Parse using rust_decimal - handles precision perfectly
+            let decimal = Decimal::from_str(&s).map_err(|e| {
+                Error::UsageError(format!("Failed to parse Decimal '{}': {}", s, e))
+            })?;
 
-                return Self::decimal_to_money(decimal, target_type);
-            }
+            return Self::decimal_to_money(decimal, target_type);
         }
 
         Err(Error::UsageError(

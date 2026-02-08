@@ -256,7 +256,9 @@ impl PyCoreCursor {
         // Track whether we need to auto-generate mappings
         let auto_generate_mappings = options.column_mappings.is_empty();
         if auto_generate_mappings {
-            info!("bulkcopy: No column mappings provided, will auto-generate from first row during streaming");
+            info!(
+                "bulkcopy: No column mappings provided, will auto-generate from first row during streaming"
+            );
         }
 
         // Execute async bulk copy while keeping the GIL
@@ -471,18 +473,18 @@ impl PyCoreCursor {
             ColumnValues::Uuid(u) => {
                 // Convert Rust UUID to Python UUID object
                 // Import uuid module and create UUID from bytes
-                if let Ok(uuid_module) = PyModule::import(py, "uuid") {
-                    if let Ok(uuid_class) = uuid_module.getattr("UUID") {
-                        // Convert UUID to bytes (16 bytes in RFC 4122 format)
-                        let uuid_bytes = u.as_bytes();
-                        let py_bytes = PyBytes::new(py, uuid_bytes);
-                        // Call UUID(bytes=...) - use keyword argument
-                        let kwargs = pyo3::types::PyDict::new(py);
-                        if kwargs.set_item("bytes", py_bytes).is_ok() {
-                            if let Ok(uuid_obj) = uuid_class.call((), Some(&kwargs)) {
-                                return uuid_obj.into_any();
-                            }
-                        }
+                if let Ok(uuid_module) = PyModule::import(py, "uuid")
+                    && let Ok(uuid_class) = uuid_module.getattr("UUID")
+                {
+                    // Convert UUID to bytes (16 bytes in RFC 4122 format)
+                    let uuid_bytes = u.as_bytes();
+                    let py_bytes = PyBytes::new(py, uuid_bytes);
+                    // Call UUID(bytes=...) - use keyword argument
+                    let kwargs = pyo3::types::PyDict::new(py);
+                    if kwargs.set_item("bytes", py_bytes).is_ok()
+                        && let Ok(uuid_obj) = uuid_class.call((), Some(&kwargs))
+                    {
+                        return uuid_obj.into_any();
                     }
                 }
                 // Fallback to string if UUID conversion fails
@@ -513,12 +515,11 @@ impl PyCoreCursor {
             ColumnValues::Numeric(n) | ColumnValues::Decimal(n) => {
                 // Convert DecimalParts to Python Decimal object
                 let decimal_str = n.to_string();
-                if let Ok(decimal_module) = PyModule::import(py, "decimal") {
-                    if let Ok(decimal_class) = decimal_module.getattr("Decimal") {
-                        if let Ok(decimal_obj) = decimal_class.call1((decimal_str.as_str(),)) {
-                            return decimal_obj.into_any();
-                        }
-                    }
+                if let Ok(decimal_module) = PyModule::import(py, "decimal")
+                    && let Ok(decimal_class) = decimal_module.getattr("Decimal")
+                    && let Ok(decimal_obj) = decimal_class.call1((decimal_str.as_str(),))
+                {
+                    return decimal_obj.into_any();
                 }
                 // Fallback to string if Decimal conversion fails
                 decimal_str.into_pyobject(py).unwrap().to_owned().into_any()
@@ -526,49 +527,47 @@ impl PyCoreCursor {
             ColumnValues::DateTime(dt) => {
                 // Convert SqlDateTime to Python datetime.datetime object
                 // SqlDateTime: days since 1900-01-01 (signed i32), time in 1/300th seconds (u32)
-                if let Ok(datetime_module) = PyModule::import(py, "datetime") {
-                    if let Ok(date_class) = datetime_module.getattr("date") {
-                        if let Ok(datetime_class) = datetime_module.getattr("datetime") {
-                            // Calculate the date by adding days to 1900-01-01
-                            // 1900-01-01 has ordinal 693596 (days since 0001-01-01)
-                            let base_ordinal: i32 = 693596;
-                            let target_ordinal = base_ordinal + dt.days;
+                if let Ok(datetime_module) = PyModule::import(py, "datetime")
+                    && let Ok(date_class) = datetime_module.getattr("date")
+                    && let Ok(datetime_class) = datetime_module.getattr("datetime")
+                {
+                    // Calculate the date by adding days to 1900-01-01
+                    // 1900-01-01 has ordinal 693596 (days since 0001-01-01)
+                    let base_ordinal: i32 = 693596;
+                    let target_ordinal = base_ordinal + dt.days;
 
-                            // Get the date from ordinal
-                            if let Ok(date_obj) =
-                                date_class.call_method1("fromordinal", (target_ordinal,))
-                            {
-                                // Extract year, month, day from the date
-                                if let (Ok(year), Ok(month), Ok(day)) = (
-                                    date_obj.getattr("year").and_then(|v| v.extract::<i32>()),
-                                    date_obj.getattr("month").and_then(|v| v.extract::<u8>()),
-                                    date_obj.getattr("day").and_then(|v| v.extract::<u8>()),
-                                ) {
-                                    // Convert time ticks (1/300th seconds) to time components
-                                    // dt.time is in units of 1/300 second
-                                    let total_ms = ((dt.time as u64) * 1000) / 300;
+                    // Get the date from ordinal
+                    if let Ok(date_obj) = date_class.call_method1("fromordinal", (target_ordinal,))
+                    {
+                        // Extract year, month, day from the date
+                        if let (Ok(year), Ok(month), Ok(day)) = (
+                            date_obj.getattr("year").and_then(|v| v.extract::<i32>()),
+                            date_obj.getattr("month").and_then(|v| v.extract::<u8>()),
+                            date_obj.getattr("day").and_then(|v| v.extract::<u8>()),
+                        ) {
+                            // Convert time ticks (1/300th seconds) to time components
+                            // dt.time is in units of 1/300 second
+                            let total_ms = ((dt.time as u64) * 1000) / 300;
 
-                                    let hour = (total_ms / 3_600_000) as u8;
-                                    let remainder = total_ms % 3_600_000;
+                            let hour = (total_ms / 3_600_000) as u8;
+                            let remainder = total_ms % 3_600_000;
 
-                                    let minute = (remainder / 60_000) as u8;
-                                    let remainder = remainder % 60_000;
+                            let minute = (remainder / 60_000) as u8;
+                            let remainder = remainder % 60_000;
 
-                                    let second = (remainder / 1_000) as u8;
-                                    let microsecond = ((remainder % 1_000) * 1_000) as u32;
+                            let second = (remainder / 1_000) as u8;
+                            let microsecond = ((remainder % 1_000) * 1_000) as u32;
 
-                                    if let Ok(datetime_obj) = datetime_class.call1((
-                                        year,
-                                        month,
-                                        day,
-                                        hour,
-                                        minute,
-                                        second,
-                                        microsecond,
-                                    )) {
-                                        return datetime_obj.into_any();
-                                    }
-                                }
+                            if let Ok(datetime_obj) = datetime_class.call1((
+                                year,
+                                month,
+                                day,
+                                hour,
+                                minute,
+                                second,
+                                microsecond,
+                            )) {
+                                return datetime_obj.into_any();
                             }
                         }
                     }
@@ -583,36 +582,34 @@ impl PyCoreCursor {
             ColumnValues::SmallDateTime(dt) => {
                 // Convert SqlSmallDateTime to Python datetime.datetime object
                 // SqlSmallDateTime: days since 1900-01-01 (unsigned u16), time in minutes (u16)
-                if let Ok(datetime_module) = PyModule::import(py, "datetime") {
-                    if let Ok(date_class) = datetime_module.getattr("date") {
-                        if let Ok(datetime_class) = datetime_module.getattr("datetime") {
-                            // Calculate the date by adding days to 1900-01-01
-                            // 1900-01-01 has ordinal 693596 (days since 0001-01-01)
-                            let base_ordinal: i32 = 693596;
-                            let target_ordinal = base_ordinal + (dt.days as i32);
+                if let Ok(datetime_module) = PyModule::import(py, "datetime")
+                    && let Ok(date_class) = datetime_module.getattr("date")
+                    && let Ok(datetime_class) = datetime_module.getattr("datetime")
+                {
+                    // Calculate the date by adding days to 1900-01-01
+                    // 1900-01-01 has ordinal 693596 (days since 0001-01-01)
+                    let base_ordinal: i32 = 693596;
+                    let target_ordinal = base_ordinal + (dt.days as i32);
 
-                            // Get the date from ordinal
-                            if let Ok(date_obj) =
-                                date_class.call_method1("fromordinal", (target_ordinal,))
+                    // Get the date from ordinal
+                    if let Ok(date_obj) = date_class.call_method1("fromordinal", (target_ordinal,))
+                    {
+                        // Extract year, month, day from the date
+                        if let (Ok(year), Ok(month), Ok(day)) = (
+                            date_obj.getattr("year").and_then(|v| v.extract::<i32>()),
+                            date_obj.getattr("month").and_then(|v| v.extract::<u8>()),
+                            date_obj.getattr("day").and_then(|v| v.extract::<u8>()),
+                        ) {
+                            // Convert time in minutes to time components
+                            let total_minutes = dt.time as u32;
+
+                            let hour = (total_minutes / 60) as u8;
+                            let minute = (total_minutes % 60) as u8;
+
+                            if let Ok(datetime_obj) =
+                                datetime_class.call1((year, month, day, hour, minute, 0, 0))
                             {
-                                // Extract year, month, day from the date
-                                if let (Ok(year), Ok(month), Ok(day)) = (
-                                    date_obj.getattr("year").and_then(|v| v.extract::<i32>()),
-                                    date_obj.getattr("month").and_then(|v| v.extract::<u8>()),
-                                    date_obj.getattr("day").and_then(|v| v.extract::<u8>()),
-                                ) {
-                                    // Convert time in minutes to time components
-                                    let total_minutes = dt.time as u32;
-
-                                    let hour = (total_minutes / 60) as u8;
-                                    let minute = (total_minutes % 60) as u8;
-
-                                    if let Ok(datetime_obj) =
-                                        datetime_class.call1((year, month, day, hour, minute, 0, 0))
-                                    {
-                                        return datetime_obj.into_any();
-                                    }
-                                }
+                                return datetime_obj.into_any();
                             }
                         }
                     }
@@ -635,12 +632,11 @@ impl PyCoreCursor {
                 let fractional_part = (money_val % 10000).abs();
                 let decimal_str = format!("{}.{:04}", integer_part, fractional_part);
 
-                if let Ok(decimal_module) = PyModule::import(py, "decimal") {
-                    if let Ok(decimal_class) = decimal_module.getattr("Decimal") {
-                        if let Ok(decimal_obj) = decimal_class.call1((decimal_str.as_str(),)) {
-                            return decimal_obj.into_any();
-                        }
-                    }
+                if let Ok(decimal_module) = PyModule::import(py, "decimal")
+                    && let Ok(decimal_class) = decimal_module.getattr("Decimal")
+                    && let Ok(decimal_obj) = decimal_class.call1((decimal_str.as_str(),))
+                {
+                    return decimal_obj.into_any();
                 }
                 // Fallback to string if Decimal conversion fails
                 decimal_str.into_pyobject(py).unwrap().to_owned().into_any()
@@ -655,12 +651,11 @@ impl PyCoreCursor {
                 let fractional_part = (money_val % 10000).abs();
                 let decimal_str = format!("{}.{:04}", integer_part, fractional_part);
 
-                if let Ok(decimal_module) = PyModule::import(py, "decimal") {
-                    if let Ok(decimal_class) = decimal_module.getattr("Decimal") {
-                        if let Ok(decimal_obj) = decimal_class.call1((decimal_str.as_str(),)) {
-                            return decimal_obj.into_any();
-                        }
-                    }
+                if let Ok(decimal_module) = PyModule::import(py, "decimal")
+                    && let Ok(decimal_class) = decimal_module.getattr("Decimal")
+                    && let Ok(decimal_obj) = decimal_class.call1((decimal_str.as_str(),))
+                {
+                    return decimal_obj.into_any();
                 }
                 // Fallback to string if Decimal conversion fails
                 decimal_str.into_pyobject(py).unwrap().to_owned().into_any()
@@ -670,13 +665,13 @@ impl PyCoreCursor {
                 // SqlDate stores 0-based days since 0001-01-01 (date(1,1,1) = day 0)
                 // Python's fromordinal() expects 1-based ordinals (date(1,1,1) = ordinal 1)
                 // So we need to add 1 to convert back
-                if let Ok(datetime_module) = PyModule::import(py, "datetime") {
-                    if let Ok(date_class) = datetime_module.getattr("date") {
-                        // Add 1 to convert from 0-based days to 1-based ordinal
-                        let ordinal = sql_date.get_days() + 1;
-                        if let Ok(date_obj) = date_class.call_method1("fromordinal", (ordinal,)) {
-                            return date_obj.into_any();
-                        }
+                if let Ok(datetime_module) = PyModule::import(py, "datetime")
+                    && let Ok(date_class) = datetime_module.getattr("date")
+                {
+                    // Add 1 to convert from 0-based days to 1-based ordinal
+                    let ordinal = sql_date.get_days() + 1;
+                    if let Ok(date_obj) = date_class.call_method1("fromordinal", (ordinal,)) {
+                        return date_obj.into_any();
                     }
                 }
                 // Fallback to string if date conversion fails
@@ -690,31 +685,30 @@ impl PyCoreCursor {
                 // Convert SqlTime to Python datetime.time object
                 // SqlTime stores time as 100-nanosecond units since midnight
                 // We need to extract hours, minutes, seconds, and microseconds
-                if let Ok(datetime_module) = PyModule::import(py, "datetime") {
-                    if let Ok(time_class) = datetime_module.getattr("time") {
-                        let time_100ns = sql_time.time_nanoseconds;
+                if let Ok(datetime_module) = PyModule::import(py, "datetime")
+                    && let Ok(time_class) = datetime_module.getattr("time")
+                {
+                    let time_100ns = sql_time.time_nanoseconds;
 
-                        // Convert 100-nanosecond units to components
-                        // 1 hour = 36,000,000,000 units (100ns)
-                        // 1 minute = 600,000,000 units (100ns)
-                        // 1 second = 10,000,000 units (100ns)
-                        // 1 microsecond = 10 units (100ns)
+                    // Convert 100-nanosecond units to components
+                    // 1 hour = 36,000,000,000 units (100ns)
+                    // 1 minute = 600,000,000 units (100ns)
+                    // 1 second = 10,000,000 units (100ns)
+                    // 1 microsecond = 10 units (100ns)
 
-                        let hour = (time_100ns / 36_000_000_000) as u8;
-                        let remainder = time_100ns % 36_000_000_000;
+                    let hour = (time_100ns / 36_000_000_000) as u8;
+                    let remainder = time_100ns % 36_000_000_000;
 
-                        let minute = (remainder / 600_000_000) as u8;
-                        let remainder = remainder % 600_000_000;
+                    let minute = (remainder / 600_000_000) as u8;
+                    let remainder = remainder % 600_000_000;
 
-                        let second = (remainder / 10_000_000) as u8;
-                        let remainder = remainder % 10_000_000;
+                    let second = (remainder / 10_000_000) as u8;
+                    let remainder = remainder % 10_000_000;
 
-                        let microsecond = (remainder / 10) as u32;
+                    let microsecond = (remainder / 10) as u32;
 
-                        if let Ok(time_obj) = time_class.call1((hour, minute, second, microsecond))
-                        {
-                            return time_obj.into_any();
-                        }
+                    if let Ok(time_obj) = time_class.call1((hour, minute, second, microsecond)) {
+                        return time_obj.into_any();
                     }
                 }
                 // Fallback to string if time conversion fails
@@ -727,50 +721,48 @@ impl PyCoreCursor {
             ColumnValues::DateTime2(dt2) => {
                 // Convert SqlDateTime2 to Python datetime.datetime object
                 // SqlDateTime2: days since 0001-01-01 (0-based, u32), time as SqlTime (100ns units)
-                if let Ok(datetime_module) = PyModule::import(py, "datetime") {
-                    if let Ok(date_class) = datetime_module.getattr("date") {
-                        if let Ok(datetime_class) = datetime_module.getattr("datetime") {
-                            // Calculate ordinal: SqlDateTime2.days is 0-based from 0001-01-01
-                            // Python's fromordinal is 1-based (date(1,1,1) = ordinal 1)
-                            // So we need to add 1
-                            let ordinal = dt2.days + 1;
+                if let Ok(datetime_module) = PyModule::import(py, "datetime")
+                    && let Ok(date_class) = datetime_module.getattr("date")
+                    && let Ok(datetime_class) = datetime_module.getattr("datetime")
+                {
+                    // Calculate ordinal: SqlDateTime2.days is 0-based from 0001-01-01
+                    // Python's fromordinal is 1-based (date(1,1,1) = ordinal 1)
+                    // So we need to add 1
+                    let ordinal = dt2.days + 1;
 
-                            // Get the date from ordinal
-                            if let Ok(date_obj) = date_class.call_method1("fromordinal", (ordinal,))
-                            {
-                                // Extract year, month, day from the date
-                                if let (Ok(year), Ok(month), Ok(day)) = (
-                                    date_obj.getattr("year").and_then(|v| v.extract::<i32>()),
-                                    date_obj.getattr("month").and_then(|v| v.extract::<u8>()),
-                                    date_obj.getattr("day").and_then(|v| v.extract::<u8>()),
-                                ) {
-                                    // Convert time from 100-nanosecond units to time components
-                                    // SqlTime.time_nanoseconds is already in 100ns units
-                                    let time_100ns = dt2.time.time_nanoseconds;
+                    // Get the date from ordinal
+                    if let Ok(date_obj) = date_class.call_method1("fromordinal", (ordinal,)) {
+                        // Extract year, month, day from the date
+                        if let (Ok(year), Ok(month), Ok(day)) = (
+                            date_obj.getattr("year").and_then(|v| v.extract::<i32>()),
+                            date_obj.getattr("month").and_then(|v| v.extract::<u8>()),
+                            date_obj.getattr("day").and_then(|v| v.extract::<u8>()),
+                        ) {
+                            // Convert time from 100-nanosecond units to time components
+                            // SqlTime.time_nanoseconds is already in 100ns units
+                            let time_100ns = dt2.time.time_nanoseconds;
 
-                                    let hour = (time_100ns / 36_000_000_000) as u8;
-                                    let remainder = time_100ns % 36_000_000_000;
+                            let hour = (time_100ns / 36_000_000_000) as u8;
+                            let remainder = time_100ns % 36_000_000_000;
 
-                                    let minute = (remainder / 600_000_000) as u8;
-                                    let remainder = remainder % 600_000_000;
+                            let minute = (remainder / 600_000_000) as u8;
+                            let remainder = remainder % 600_000_000;
 
-                                    let second = (remainder / 10_000_000) as u8;
-                                    let remainder = remainder % 10_000_000;
+                            let second = (remainder / 10_000_000) as u8;
+                            let remainder = remainder % 10_000_000;
 
-                                    let microsecond = (remainder / 10) as u32;
+                            let microsecond = (remainder / 10) as u32;
 
-                                    if let Ok(datetime_obj) = datetime_class.call1((
-                                        year,
-                                        month,
-                                        day,
-                                        hour,
-                                        minute,
-                                        second,
-                                        microsecond,
-                                    )) {
-                                        return datetime_obj.into_any();
-                                    }
-                                }
+                            if let Ok(datetime_obj) = datetime_class.call1((
+                                year,
+                                month,
+                                day,
+                                hour,
+                                minute,
+                                second,
+                                microsecond,
+                            )) {
+                                return datetime_obj.into_any();
                             }
                         }
                     }
@@ -785,73 +777,57 @@ impl PyCoreCursor {
             ColumnValues::DateTimeOffset(dto) => {
                 // Convert SqlDateTimeOffset to Python datetime.datetime object with timezone
                 // SqlDateTimeOffset: datetime2 (SqlDateTime2) + offset (i16, minutes from UTC)
-                if let Ok(datetime_module) = PyModule::import(py, "datetime") {
-                    if let Ok(date_class) = datetime_module.getattr("date") {
-                        if let Ok(datetime_class) = datetime_module.getattr("datetime") {
-                            if let Ok(timezone_class) = datetime_module.getattr("timezone") {
-                                if let Ok(timedelta_class) = datetime_module.getattr("timedelta") {
-                                    // Calculate ordinal: SqlDateTime2.days is 0-based from 0001-01-01
-                                    // Python's fromordinal is 1-based (date(1,1,1) = ordinal 1)
-                                    // So we need to add 1
-                                    let ordinal = dto.datetime2.days + 1;
+                if let Ok(datetime_module) = PyModule::import(py, "datetime")
+                    && let Ok(date_class) = datetime_module.getattr("date")
+                    && let Ok(datetime_class) = datetime_module.getattr("datetime")
+                    && let Ok(timezone_class) = datetime_module.getattr("timezone")
+                    && let Ok(timedelta_class) = datetime_module.getattr("timedelta")
+                {
+                    // Calculate ordinal: SqlDateTime2.days is 0-based from 0001-01-01
+                    // Python's fromordinal is 1-based (date(1,1,1) = ordinal 1)
+                    // So we need to add 1
+                    let ordinal = dto.datetime2.days + 1;
 
-                                    // Get the date from ordinal
-                                    if let Ok(date_obj) =
-                                        date_class.call_method1("fromordinal", (ordinal,))
-                                    {
-                                        // Extract year, month, day from the date
-                                        if let (Ok(year), Ok(month), Ok(day)) = (
-                                            date_obj
-                                                .getattr("year")
-                                                .and_then(|v| v.extract::<i32>()),
-                                            date_obj
-                                                .getattr("month")
-                                                .and_then(|v| v.extract::<u8>()),
-                                            date_obj.getattr("day").and_then(|v| v.extract::<u8>()),
-                                        ) {
-                                            // Convert time from 100-nanosecond units to time components
-                                            let time_100ns = dto.datetime2.time.time_nanoseconds;
+                    // Get the date from ordinal
+                    if let Ok(date_obj) = date_class.call_method1("fromordinal", (ordinal,)) {
+                        // Extract year, month, day from the date
+                        if let (Ok(year), Ok(month), Ok(day)) = (
+                            date_obj.getattr("year").and_then(|v| v.extract::<i32>()),
+                            date_obj.getattr("month").and_then(|v| v.extract::<u8>()),
+                            date_obj.getattr("day").and_then(|v| v.extract::<u8>()),
+                        ) {
+                            // Convert time from 100-nanosecond units to time components
+                            let time_100ns = dto.datetime2.time.time_nanoseconds;
 
-                                            let hour = (time_100ns / 36_000_000_000) as u8;
-                                            let remainder = time_100ns % 36_000_000_000;
+                            let hour = (time_100ns / 36_000_000_000) as u8;
+                            let remainder = time_100ns % 36_000_000_000;
 
-                                            let minute = (remainder / 600_000_000) as u8;
-                                            let remainder = remainder % 600_000_000;
+                            let minute = (remainder / 600_000_000) as u8;
+                            let remainder = remainder % 600_000_000;
 
-                                            let second = (remainder / 10_000_000) as u8;
-                                            let remainder = remainder % 10_000_000;
+                            let second = (remainder / 10_000_000) as u8;
+                            let remainder = remainder % 10_000_000;
 
-                                            let microsecond = (remainder / 10) as u32;
+                            let microsecond = (remainder / 10) as u32;
 
-                                            // Create timezone from offset (minutes from UTC)
-                                            // Python's timezone expects a timedelta object
-                                            if let Ok(td_obj) = timedelta_class.call1((
-                                                0,
-                                                dto.offset as i32 * 60,
-                                                0,
-                                            )) {
-                                                // timedelta(days, seconds, microseconds)
-                                                if let Ok(tz_obj) = timezone_class.call1((td_obj,))
-                                                {
-                                                    if let Ok(datetime_obj) =
-                                                        datetime_class.call1((
-                                                            year,
-                                                            month,
-                                                            day,
-                                                            hour,
-                                                            minute,
-                                                            second,
-                                                            microsecond,
-                                                            tz_obj,
-                                                        ))
-                                                    {
-                                                        return datetime_obj.into_any();
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                            // Create timezone from offset (minutes from UTC)
+                            // Python's timezone expects a timedelta object
+                            // timedelta(days, seconds, microseconds)
+                            if let Ok(td_obj) =
+                                timedelta_class.call1((0, dto.offset as i32 * 60, 0))
+                                && let Ok(tz_obj) = timezone_class.call1((td_obj,))
+                                && let Ok(datetime_obj) = datetime_class.call1((
+                                    year,
+                                    month,
+                                    day,
+                                    hour,
+                                    minute,
+                                    second,
+                                    microsecond,
+                                    tz_obj,
+                                ))
+                            {
+                                return datetime_obj.into_any();
                             }
                         }
                     }
