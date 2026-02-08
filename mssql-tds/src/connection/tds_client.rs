@@ -49,7 +49,7 @@ pub struct TdsClient {
 
     // pub(crate) batch_result: Option<BatchResult<'static>>,
     pub(crate) current_metadata: Option<ColMetadataToken>,
-    count_map: HashMap<CurrentCommand, usize>,
+    count_map: HashMap<CurrentCommand, u64>,
 
     return_values: Vec<ReturnValue>,
     current_result_set_has_been_read_till_end: bool,
@@ -828,7 +828,7 @@ impl TdsClient {
 
                     let count = self.count_map.entry(done.cur_cmd).or_insert(0);
                     // Use saturating_add to prevent integer overflow from malicious/corrupted TDS responses
-                    *count = count.saturating_add(done.row_count as usize);
+                    *count = count.saturating_add(done.row_count);
                     self.current_result_set_has_been_read_till_end = true;
 
                     if !done.has_more() {
@@ -934,7 +934,8 @@ impl TdsClient {
                     info!("done while get_next_row: {:?}", done);
 
                     let count = self.count_map.entry(done.cur_cmd).or_insert(0);
-                    *count += done.row_count as usize;
+                    // Use saturating_add to prevent integer overflow from malicious/corrupted TDS responses
+                    *count = count.saturating_add(done.row_count);
 
                     self.current_result_set_has_been_read_till_end = true;
                     if !done.has_more() {
@@ -1219,7 +1220,8 @@ impl TdsClient {
                     info!("done while consume_transaction_response: {:?}", done);
 
                     let count = self.count_map.entry(done.cur_cmd).or_insert(0);
-                    *count += done.row_count as usize;
+                    // Use saturating_add to prevent integer overflow from malicious/corrupted TDS responses
+                    *count = count.saturating_add(done.row_count);
 
                     if !done.has_more() {
                         // Token stream is terminated. Save this information.
