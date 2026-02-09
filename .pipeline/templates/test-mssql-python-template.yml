@@ -108,7 +108,7 @@ steps:
     # Format matches mssql-python's pr-validation-pipeline.yml: Uid/Pwd (not User Id/Password)
     DB_CONN_STR="Server=sql1;Database=master;Uid=sa;Pwd=$(SQL_PASSWORD);TrustServerCertificate=yes"
     
-    docker run --rm \
+    bash .pipeline/scripts/docker-cargo-run.sh --rm \
       --network testnet \
       -v $PWD:/workspace \
       -v $PWD/../mssql-python:/mssql-python \
@@ -149,6 +149,8 @@ steps:
   displayName: Build bindings and run mssql-python tests
   env:
     SQL_PASSWORD: $(SQL_PASSWORD)
+    CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+    CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
   continueOnError: true
 
 # Build wheel artifact (reuse already-built .so files from test step)

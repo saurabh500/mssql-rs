@@ -103,7 +103,7 @@ steps:
     mkdir -p $HOME/.cargo/git
     
     # Run build container with access to workspace and SQL network
-    docker run --rm \
+    bash .pipeline/scripts/docker-cargo-run.sh --rm \
       --network testnet \
       -v $PWD:/workspace \
       -v $HOME/.cargo/registry:/root/.cargo/registry \
@@ -122,11 +122,13 @@ steps:
   displayName: Build in Container
   env:
     SQL_PASSWORD: $(SQL_PASSWORD)
+    CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+    CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
 
 - script: |
     BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
-    docker run --rm \
+    bash .pipeline/scripts/docker-cargo-run.sh --rm \
       -v $PWD:/workspace \
       -v $HOME/.cargo/registry:/root/.cargo/registry \
       -v $HOME/.cargo/git:/root/.cargo/git \
@@ -135,11 +137,14 @@ steps:
       /workspace/.pipeline/scripts/containerized-clippy.sh
   displayName: Run Clippy
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+  env:
+    CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+    CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
 
 - script: |
     BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
-    docker run --rm \
+    bash .pipeline/scripts/docker-cargo-run.sh --rm \
       -v $PWD:/workspace \
       -v $HOME/.cargo/registry:/root/.cargo/registry \
       -v $HOME/.cargo/git:/root/.cargo/git \
@@ -148,11 +153,14 @@ steps:
       /workspace/.pipeline/scripts/containerized-format.sh
   displayName: Check Format
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+  env:
+    CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+    CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
 
 - script: |
     BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
-    docker run --rm \
+    bash .pipeline/scripts/docker-cargo-run.sh --rm \
       --network testnet \
       -v $PWD:/workspace \
       -v $HOME/.cargo/registry:/root/.cargo/registry \
@@ -169,6 +177,8 @@ steps:
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
   env:
     SQL_PASSWORD: $(SQL_PASSWORD)
+    CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+    CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
 
 - task: PublishTestResults@2
   condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
@@ -219,7 +229,7 @@ steps:
   - script: |
       BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
       
-      docker run --rm \
+      bash .pipeline/scripts/docker-cargo-run.sh --rm \
         -v $PWD:/workspace \
         -v $HOME/.cargo/registry:/root/.cargo/registry \
         -v $HOME/.cargo/git:/root/.cargo/git \
@@ -228,12 +238,15 @@ steps:
         /workspace/.pipeline/scripts/containerized-js-build.sh
     displayName: Build JavaScript bindings
     condition: succeeded()
+    env:
+      CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+      CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
 
 - ${{ if eq(parameters.enableJsTest, true) }}:
   - script: |
       BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
       
-      docker run --rm \
+      bash .pipeline/scripts/docker-cargo-run.sh --rm \
         --network testnet \
         -v $PWD:/workspace \
         -v $PWD/ca.crt:/usr/local/share/ca-certificates/mssql-ca.crt:ro \
@@ -247,6 +260,8 @@ steps:
     condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
     env:
       SQL_PASSWORD: $(SQL_PASSWORD)
+      CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+      CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
 
   - task: PublishTestResults@2
     condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
@@ -259,7 +274,7 @@ steps:
 - script: |
     BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
     
-    docker run --rm \
+    bash .pipeline/scripts/docker-cargo-run.sh --rm \
       --network testnet \
       -v $PWD:/workspace \
       -v $PWD/ca.crt:/usr/local/share/ca-certificates/mssql-ca.crt:ro \
@@ -276,6 +291,8 @@ steps:
   condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
   env:
     SQL_PASSWORD: $(SQL_PASSWORD)
+    CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+    CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
 
 - task: PublishTestResults@2
   condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))

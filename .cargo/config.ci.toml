@@ -1,0 +1,22 @@
+[alias]
+bfmt = "fmt -- --check"
+bclippy = "clippy --workspace --frozen --all-features --all-targets -- -D warnings"
+btest = "llvm-cov nextest --workspace --frozen --no-report --all-targets --no-fail-fast --profile ci --success-output immediate"
+
+# CI Configuration: Uses authenticated Azure Artifacts feeds
+# This file is applied in CI pipelines before running cargo commands
+# Authentication tokens are provided by CargoAuthenticate@0 task via environment variables:
+#   - CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN
+#   - CARGO_REGISTRIES_MSSQL_RS_TOKEN
+
+[registries]
+# Authenticated URLs with ~force-auth to ensure token usage
+"mssql-rs_Public" = { index = "sparse+https://pkgs.dev.azure.com/sqlclientdrivers/public/_packaging/mssql-rs_Public~force-auth/Cargo/index/" }
+"mssql-rs" = { index = "sparse+https://pkgs.dev.azure.com/sqlclientdrivers/mssql-rs/_packaging/mssql-rs~force-auth/Cargo/index/" }
+
+# Replace crates.io with our Azure Artifacts feed (with crates.io as upstream)
+[source.crates-io]
+replace-with = "mssql-rs_Public"
+
+[registry]
+global-credential-providers = ["cargo:token", "cargo:macos-keychain", "cargo:wincred"]
