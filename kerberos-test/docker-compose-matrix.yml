@@ -1,0 +1,281 @@
+# Docker Compose for Kerberos testing with multiple Linux distros
+# 
+# Uses the same base images as the CI matrix tests from validation-pipeline.yml
+# Base images come from tdslibrs.azurecr.io/import/
+#
+# Usage: 
+#   docker compose -f docker-compose-matrix.yml --profile <distro> up -d
+#
+# Profiles (matching CI matrix):
+#   Alpine: alpine318, alpine319, alpine320, alpine321
+#   Debian: debian
+#   Ubuntu: ubuntu22, ubuntu24
+#   RHEL:   rhel9
+#   Oracle: oracle9
+#   All:    all
+#
+# Examples:
+#   docker compose -f docker-compose-matrix.yml --profile alpine318 up -d
+#   docker compose -f docker-compose-matrix.yml --profile ubuntu22 up -d
+#   docker compose -f docker-compose-matrix.yml --profile all up -d
+
+x-client-common: &client-common
+  build:
+    context: .
+    dockerfile: Dockerfile.client.matrix
+  domainname: example.local
+  volumes:
+    - ./scripts:/scripts:ro
+  dns:
+    - 172.20.0.10
+  extra_hosts:
+    - "dc.example.local:172.20.0.10"
+    - "sql.example.local:172.20.0.20"
+    - "example.local:172.20.0.10"
+  depends_on:
+    - mssql
+
+services:
+  # Samba AD Domain Controller (shared by all clients)
+  dc:
+    build:
+      context: .
+      dockerfile: Dockerfile.samba-dc
+    container_name: samba-dc
+    hostname: dc
+    domainname: example.local
+    # Specific capabilities instead of privileged: true
+    cap_add:
+      - SYS_ADMIN      # Samba AD operations, mount, namespaces
+      - NET_ADMIN      # Network configuration
+      - SETUID         # User management
+      - SETGID         # Group management
+      - CHOWN          # File ownership
+      - DAC_OVERRIDE   # Bypass file permission checks
+      - FOWNER         # Bypass ownership checks
+      - NET_RAW        # Raw sockets for DNS
+    environment:
+      - KERBEROS_ADMIN_PASSWORD=${KERBEROS_ADMIN_PASSWORD}
+    volumes:
+      - samba-data:/var/lib/samba
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.10
+    ports:
+      - "8053:53/tcp"
+      - "8053:53/udp"
+      - "8888:88/tcp"
+      - "8888:88/udp"
+      - "8389:389"
+      - "8636:636"
+    healthcheck:
+      test: ["CMD", "samba-tool", "domain", "info", "127.0.0.1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  # SQL Server on Linux with SSSD/AD integration (shared by all clients)
+  mssql:
+    build:
+      context: .
+      dockerfile: Dockerfile.mssql-ad
+    container_name: mssql-kerberos
+    hostname: sql
+    domainname: example.local
+    # Specific capabilities instead of privileged: true
+    cap_add:
+      - SYS_ADMIN      # SSSD requires for cgroups/namespaces
+      - SYS_PTRACE     # SQL Server diagnostics
+      - SETUID         # SSSD user switching
+      - SETGID         # SSSD group switching
+      - DAC_READ_SEARCH # SSSD reads user info
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${KERBEROS_SA_PASSWORD}
+      - MSSQL_PID=Developer
+      - KERBEROS_ADMIN_PASSWORD=${KERBEROS_ADMIN_PASSWORD}
+    volumes:
+      - mssql-data:/var/opt/mssql
+      - ./scripts:/scripts:ro
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.20
+    ports:
+      - "1433:1433"
+    dns:
+      - 172.20.0.10
+    extra_hosts:
+      - "dc.example.local:172.20.0.10"
+      - "example.local:172.20.0.10"
+    depends_on:
+      dc:
+        condition: service_healthy
+
+  #############################################################################
+  # Alpine clients (musl) - matches CI matrix Alpine3_18, Alpine3_19, etc.
+  #############################################################################
+  
+  client-alpine318:
+    <<: *client-common
+    build:
+      context: .
+      dockerfile: Dockerfile.client.matrix
+      args:
+        BASE_IMAGE: tdslibrs.azurecr.io/import/alpine:3.18
+        ENTRY_SCRIPT: alpine.sh
+    container_name: kerberos-client-alpine318
+    hostname: client-alpine318
+    profiles: [alpine318, alpine, all]
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.31
+
+  client-alpine319:
+    <<: *client-common
+    build:
+      context: .
+      dockerfile: Dockerfile.client.matrix
+      args:
+        BASE_IMAGE: tdslibrs.azurecr.io/import/alpine:3.19
+        ENTRY_SCRIPT: alpine.sh
+    container_name: kerberos-client-alpine319
+    hostname: client-alpine319
+    profiles: [alpine319, alpine, all]
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.32
+
+  client-alpine320:
+    <<: *client-common
+    build:
+      context: .
+      dockerfile: Dockerfile.client.matrix
+      args:
+        BASE_IMAGE: tdslibrs.azurecr.io/import/alpine:3.20
+        ENTRY_SCRIPT: alpine.sh
+    container_name: kerberos-client-alpine320
+    hostname: client-alpine320
+    profiles: [alpine320, alpine, all]
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.33
+
+  client-alpine321:
+    <<: *client-common
+    build:
+      context: .
+      dockerfile: Dockerfile.client.matrix
+      args:
+        BASE_IMAGE: tdslibrs.azurecr.io/import/alpine:3.21
+        ENTRY_SCRIPT: alpine.sh
+    container_name: kerberos-client-alpine321
+    hostname: client-alpine321
+    profiles: [alpine321, alpine, all]
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.34
+
+  #############################################################################
+  # Debian clients (glibc)
+  #############################################################################
+
+  client-debian:
+    <<: *client-common
+    build:
+      context: .
+      dockerfile: Dockerfile.client.matrix
+      args:
+        BASE_IMAGE: tdslibrs.azurecr.io/import/debian:bookworm
+        ENTRY_SCRIPT: deb-bookworm.sh
+    container_name: kerberos-client-debian
+    hostname: client-debian
+    profiles: [debian, all]
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.40
+
+  #############################################################################
+  # Ubuntu clients (glibc)
+  #############################################################################
+
+  client-ubuntu22:
+    <<: *client-common
+    build:
+      context: .
+      dockerfile: Dockerfile.client.matrix
+      args:
+        BASE_IMAGE: tdslibrs.azurecr.io/import/ubuntu:22.04
+        ENTRY_SCRIPT: deb-bookworm.sh
+    container_name: kerberos-client-ubuntu22
+    hostname: client-ubuntu22
+    profiles: [ubuntu22, ubuntu, all]
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.50
+
+  client-ubuntu24:
+    <<: *client-common
+    build:
+      context: .
+      dockerfile: Dockerfile.client.matrix
+      args:
+        BASE_IMAGE: tdslibrs.azurecr.io/import/ubuntu:24.04
+        ENTRY_SCRIPT: deb-bookworm.sh
+    container_name: kerberos-client-ubuntu24
+    hostname: client-ubuntu24
+    profiles: [ubuntu24, ubuntu, all]
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.51
+
+  #############################################################################
+  # RHEL clients (glibc)
+  #############################################################################
+
+  client-rhel9:
+    <<: *client-common
+    build:
+      context: .
+      dockerfile: Dockerfile.client.matrix
+      args:
+        BASE_IMAGE: tdslibrs.azurecr.io/import/redhat/ubi9:latest
+        ENTRY_SCRIPT: rhel.sh
+    container_name: kerberos-client-rhel9
+    hostname: client-rhel9
+    profiles: [rhel9, rhel, all]
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.60
+
+  #############################################################################
+  # Oracle Linux clients (glibc)
+  #############################################################################
+
+  client-oracle9:
+    <<: *client-common
+    build:
+      context: .
+      dockerfile: Dockerfile.client.matrix
+      args:
+        BASE_IMAGE: tdslibrs.azurecr.io/import/oraclelinux:9
+        ENTRY_SCRIPT: rhel.sh
+    container_name: kerberos-client-oracle9
+    hostname: client-oracle9
+    profiles: [oracle9, oracle, all]
+    networks:
+      kerberos-net:
+        ipv4_address: 172.20.0.70
+
+networks:
+  kerberos-net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/24
+          gateway: 172.20.0.1
+
+volumes:
+  samba-data:
+  mssql-data:

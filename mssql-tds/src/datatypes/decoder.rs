@@ -339,13 +339,36 @@ impl GenericDecoder {
     where
         T: TdsPacketReader + Send + Sync,
     {
-        let nanoseconds = match byte_len {
+        let scaled_value = match byte_len {
             3 => reader.read_uint24().await? as u64,
             4 => reader.read_uint32().await? as u64,
             _ => reader.read_uint40().await?,
         };
+
+        // The value from SQL Server is in scaled units based on the scale:
+        // Scale 0: seconds (need to multiply by 10^7)
+        // Scale 1: tenths of seconds (multiply by 10^6)
+        // Scale 2: hundredths (multiply by 10^5)
+        // Scale 3: milliseconds (multiply by 10^4)
+        // Scale 4: ten-thousandths (multiply by 10^3)
+        // Scale 5: hundred-thousandths (multiply by 10^2)
+        // Scale 6: microseconds (multiply by 10^1)
+        // Scale 7: 100-nanoseconds (multiply by 10^0 = no scaling)
+        // We need to convert to 100-nanosecond units for consistency
+        let time_nanoseconds = match scale {
+            0 => scaled_value * 10_000_000, // Seconds to 100ns
+            1 => scaled_value * 1_000_000,  // Tenths to 100ns
+            2 => scaled_value * 100_000,    // Hundredths to 100ns
+            3 => scaled_value * 10_000,     // Milliseconds to 100ns
+            4 => scaled_value * 1_000,      // Ten-thousandths to 100ns
+            5 => scaled_value * 100,        // Hundred-thousandths to 100ns
+            6 => scaled_value * 10,         // Microseconds to 100ns
+            7 => scaled_value,              // Already in 100ns
+            _ => scaled_value,              // Fallback
+        };
+
         Ok(SqlTime {
-            time_nanoseconds: nanoseconds,
+            time_nanoseconds,
             scale,
         })
     }
@@ -477,6 +500,111 @@ impl GenericDecoder {
         } else {
             Ok(ColumnValues::Null)
         }
+    }
+
+    async fn decode_vector<T>(
+        &self,
+        reader: &mut T,
+        metadata: &ColumnMetadata,
+    ) -> TdsResult<ColumnValues>
+    where
+        T: TdsPacketReader + Send + Sync,
+    {
+        use crate::datatypes::sql_vector::SqlVector;
+        use crate::datatypes::sqldatatypes::{
+            VECTOR_HEADER_SIZE, VECTOR_MAX_SIZE, VectorBaseType, VectorLayoutFormat,
+            VectorLayoutVersion,
+        };
+
+        // Read length prefix (USHORTLEN format)
+        let length_prefix_value = reader.read_uint16().await? as usize;
+
+        // Handle NULL (length = 0xFFFF)
+        if length_prefix_value == 0xFFFF {
+            return Ok(ColumnValues::Null);
+        }
+
+        // Validate length
+        if length_prefix_value > VECTOR_MAX_SIZE {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Vector length {} exceeds maximum of {} bytes",
+                length_prefix_value, VECTOR_MAX_SIZE
+            )));
+        }
+
+        // Must have at least header
+        if length_prefix_value < VECTOR_HEADER_SIZE {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Vector length {} is less than minimum header size of {} bytes",
+                length_prefix_value, VECTOR_HEADER_SIZE
+            )));
+        }
+
+        // Read 8-byte header
+        let layout_format_byte = reader.read_byte().await?;
+        let layout_version_byte = reader.read_byte().await?;
+        let dimension_count = reader.read_uint16().await?;
+        let base_type_byte = reader.read_byte().await?;
+        let _reserved1 = reader.read_byte().await?; // Reserved
+        let _reserved2 = reader.read_byte().await?; // Reserved
+        let _reserved3 = reader.read_byte().await?; // Reserved
+
+        // Validate header using enum conversions
+        let _layout_format = VectorLayoutFormat::try_from(layout_format_byte)?;
+        let _layout_version = VectorLayoutVersion::try_from(layout_version_byte)?;
+
+        // Get base type from metadata's TypeInfoVariant scale field
+        let base_type_in_metadata = match &metadata.type_info.type_info_variant {
+            TypeInfoVariant::VarLenScale(_, scale) => *scale,
+            _ => {
+                return Err(crate::error::Error::ProtocolError(
+                    "Vector metadata missing scale (base type)".to_string(),
+                ));
+            }
+        };
+
+        if base_type_byte != base_type_in_metadata {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Vector base type mismatch: metadata has 0x{:02X}, vector header has 0x{:02X}",
+                base_type_in_metadata, base_type_byte
+            )));
+        }
+
+        // Validate base type using enum conversion
+        let base_type = VectorBaseType::try_from(base_type_byte)?;
+
+        let length_in_metadata = metadata.type_info.length;
+        // Calculate data length based on vector header info
+        let element_size = base_type.element_size_bytes();
+        let length_from_vector_header =
+            VECTOR_HEADER_SIZE + (dimension_count as usize * element_size);
+        if length_prefix_value != length_from_vector_header
+            || length_prefix_value != length_in_metadata
+        {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "Vector length mismatch: length in prefix {} bytes, length from vector header {} bytes, length in metadata {} bytes, for {} dimensions (element size: {} bytes)",
+                length_prefix_value,
+                length_from_vector_header,
+                length_in_metadata,
+                dimension_count,
+                element_size
+            )));
+        }
+
+        // Read raw element bytes (let SqlVector parse based on base_type)
+        let element_bytes = length_prefix_value - VECTOR_HEADER_SIZE;
+        let mut raw_bytes = vec![0u8; element_bytes];
+        reader.read_bytes(&mut raw_bytes).await?;
+
+        // Create SqlVector - try_from_raw validates header, parses bytes by type, and validates dimensions
+        let vector = SqlVector::try_from_raw(
+            layout_format_byte,
+            layout_version_byte,
+            base_type_byte,
+            raw_bytes,
+        )?;
+
+        Ok(ColumnValues::Vector(vector))
     }
 
     async fn read_plp_bytes<T>(reader: &mut T) -> TdsResult<Option<Vec<u8>>>
@@ -709,6 +837,7 @@ impl SqlTypeDecode for GenericDecoder {
                     None => ColumnValues::Null,
                 }
             }
+            TdsDataType::Vector => self.decode_vector(reader, metadata).await?,
             TdsDataType::BitN => {
                 let byte_len = reader.read_byte().await?;
                 if byte_len > 0 {
@@ -891,7 +1020,31 @@ impl SqlTypeDecode for StringDecoder {
                 None => Ok(ColumnValues::Null),
             }
         } else if Self::is_long_len_type(metadata.data_type) {
-            // If it is a long length type (NText, Text), read the length as uint16.
+            // Legacy LOB types (TEXT/NTEXT/IMAGE) reading implementation
+            //
+            // WIRE FORMAT (from .NET TdsParser.cs:6517-6600):
+            // 1. textptr_len (1 byte): Length of text pointer
+            //    - 0x00 = NULL value
+            //    - 0x10 (16) = Valid pointer (typical)
+            // 2. textptr (textptr_len bytes): Text pointer (usually 16 bytes)
+            //    - Server-managed pointer, client treats as opaque
+            // 3. timestamp (8 bytes): Row timestamp
+            //    - Used for optimistic concurrency
+            // 4. data_length (4 bytes, uint32): Actual data length in bytes
+            //    - For NTEXT: byte count (divide by 2 for char count)
+            //    - For TEXT: byte count in the collation's encoding
+            // 5. data (data_length bytes): The actual string data
+            //    - For NTEXT: UTF-16LE encoded
+            //    - For TEXT: encoded per collation (LCID-based)
+            //
+            // CURRENT IMPLEMENTATION STATUS:
+            // Reads textptr_len (1 byte)
+            // Skips textptr (16 bytes) and timestamp (8 bytes)
+            // Reads data_length (4 bytes, uint32)
+            // Allocates buffer and reads data
+            // Creates SqlString with appropriate encoding type
+            // NULL handling works (textptr_len = 0)
+            // LCID-based decoding implemented (see sql_string.rs)
             let text_ptr_len = reader.read_byte().await? as usize;
 
             let length = if text_ptr_len > 0 {
@@ -900,22 +1053,26 @@ impl SqlTypeDecode for StringDecoder {
                 reader.skip_bytes(TIMESTAMP_BYTE_COUNT).await?;
                 reader.read_uint32().await? as usize
             } else {
-                0
+                // text_ptr_len == 0 means NULL value
+                return Ok(ColumnValues::Null);
             };
 
-            if length == 0 {
-                return Ok(ColumnValues::Null);
+            // Empty string (length == 0 but textptr_len > 0) is valid - return empty string, not NULL
+            if length > MAX_ALLOC_SIZE {
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "Text data length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+                )));
+            }
+
+            let sql_string = if length == 0 {
+                // Create empty SqlString with appropriate encoding
+                SqlString::new(Vec::new(), encoding_type)
             } else {
-                if length > MAX_ALLOC_SIZE {
-                    return Err(crate::error::Error::ProtocolError(format!(
-                        "Text data length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
-                    )));
-                }
                 let mut buffer = vec![0u8; length];
                 reader.read_bytes(&mut buffer).await?;
-                let sql_string = SqlString::new(buffer, encoding_type);
-                Ok(ColumnValues::String(sql_string))
-            }
+                SqlString::new(buffer, encoding_type)
+            };
+            Ok(ColumnValues::String(sql_string))
         } else {
             let length = reader.read_uint16().await? as usize;
             if length == 0xFFFF {
@@ -941,15 +1098,196 @@ pub struct DecimalParts {
     pub int_parts: Vec<i32>,
 }
 
+impl fmt::Display for DecimalParts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_decimal_string())
+    }
+}
+
 impl DecimalParts {
+    /// Create a DecimalParts from a decimal string using BigDecimal.
+    ///
+    /// Supports SQL Server's full 38-digit precision using arbitrary-precision arithmetic.
+    /// More efficient and robust than manual parsing.
+    ///
+    /// # Arguments
+    /// * `s` - String like "123.45", "-0.01", "99999999999999999999999999999999999999"
+    /// * `precision` - Total number of digits (1-38 for SQL Server)
+    /// * `scale` - Number of digits after decimal point (0-precision)
+    ///
+    /// # Returns
+    /// DecimalParts or Error if parsing fails or precision/scale validation fails
+    pub fn from_string(s: &str, precision: u8, scale: u8) -> TdsResult<Self> {
+        use bigdecimal::num_bigint::{BigInt, Sign};
+        use bigdecimal::{BigDecimal, Zero};
+        use std::str::FromStr;
+
+        let trimmed = s.trim();
+
+        // Check for negative zero in the original string before parsing
+        // BigDecimal normalizes -0 to 0, so we need to detect it early
+        let has_negative_sign = trimmed.starts_with('-');
+
+        // Parse the string into a BigDecimal
+        let decimal = BigDecimal::from_str(trimmed).map_err(|e| {
+            crate::error::Error::TypeConversionError(format!(
+                "Invalid decimal string '{}': {}",
+                s, e
+            ))
+        })?;
+
+        // Check if input has more fractional digits than target scale
+        // Get the scale of the input decimal
+        let input_scale = decimal.fractional_digit_count();
+        if input_scale > scale as i64 {
+            return Err(crate::error::Error::TypeConversionError(format!(
+                "Input decimal scale {} exceeds target scale {}",
+                input_scale, scale
+            )));
+        }
+
+        // Handle zero case (but preserve sign from original string)
+        if decimal.is_zero() {
+            return Ok(DecimalParts {
+                is_positive: !has_negative_sign,
+                scale,
+                precision,
+                int_parts: vec![0],
+            });
+        }
+
+        // Extract sign for non-zero values
+        let is_positive = decimal.sign() != Sign::Minus;
+        let abs_decimal = decimal.abs();
+
+        // Scale the decimal: multiply by 10^scale to shift to integer representation
+        let scale_factor = BigDecimal::from(10u64).powi(scale as i64);
+        let scaled = abs_decimal * scale_factor;
+
+        // Round to nearest integer
+        let rounded = scaled.round(0);
+
+        // Extract as BigInt, handling any remaining exponent
+        let (bigint, exponent) = rounded.into_bigint_and_exponent();
+        let final_bigint = if exponent > 0 {
+            bigint * BigInt::from(10u64).pow(exponent as u32)
+        } else if exponent < 0 {
+            bigint / BigInt::from(10u64).pow((-exponent) as u32)
+        } else {
+            bigint
+        };
+
+        // Validate precision
+        let digits_str = final_bigint.to_string();
+        if digits_str.len() > precision as usize {
+            return Err(crate::error::Error::TypeConversionError(format!(
+                "Decimal value has {} digits, exceeds target precision {}",
+                digits_str.len(),
+                precision
+            )));
+        }
+
+        // Convert BigInt to Vec<i32> for TDS wire format (little-endian 32-bit chunks)
+        let bytes = final_bigint.to_signed_bytes_le();
+        let mut int_parts = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            let mut part: i32 = 0;
+            for j in 0..4 {
+                if i + j < bytes.len() {
+                    part |= (bytes[i + j] as i32) << (j * 8);
+                }
+            }
+            int_parts.push(part);
+            i += 4;
+        }
+
+        if int_parts.is_empty() {
+            int_parts.push(0);
+        }
+
+        Ok(DecimalParts {
+            is_positive,
+            scale,
+            precision,
+            int_parts,
+        })
+    }
+
+    /// Create a DecimalParts from an i64 value.
+    pub fn from_i64(value: i64, precision: u8, scale: u8) -> TdsResult<Self> {
+        let is_positive = value >= 0;
+        let abs_value = value.unsigned_abs();
+
+        // Scale the value by multiplying by 10^scale
+        let scaled_value = abs_value as u128 * 10u128.pow(scale as u32);
+
+        // Convert to int_parts
+        let mut int_parts = Vec::new();
+        let mut remaining = scaled_value;
+        while remaining > 0 || int_parts.is_empty() {
+            int_parts.push((remaining & 0xFFFFFFFF) as i32);
+            remaining >>= 32;
+        }
+
+        Ok(DecimalParts {
+            is_positive,
+            scale,
+            precision,
+            int_parts,
+        })
+    }
+
+    /// Create a DecimalParts from an f64 value.
+    pub fn from_f64(value: f64, precision: u8, scale: u8) -> TdsResult<Self> {
+        // Convert f64 to string with appropriate precision
+        let s = format!("{:.prec$}", value, prec = scale as usize);
+        Self::from_string(&s, precision, scale)
+    }
+
+    /// Convert DecimalParts to a string representation suitable for Python Decimal.
+    /// Returns a string like "123.45", "-0.01", etc.
+    fn to_decimal_string(&self) -> String {
+        // Convert int_parts to u128
+        // int_parts[0] is the least significant, int_parts[n-1] is most significant
+        let u128_value = self
+            .int_parts
+            .iter()
+            .enumerate()
+            .fold(0u128, |acc, (i, &part)| {
+                acc + ((part as u32 as u128) << (i * 32))
+            });
+
+        let value_str = u128_value.to_string();
+
+        // Insert decimal point at the correct position
+        let result = if self.scale == 0 {
+            value_str
+        } else {
+            let scale_pos = self.scale as usize;
+            if value_str.len() <= scale_pos {
+                // Need to pad with leading zeros
+                format!("0.{}{}", "0".repeat(scale_pos - value_str.len()), value_str)
+            } else {
+                let split_pos = value_str.len() - scale_pos;
+                format!("{}.{}", &value_str[..split_pos], &value_str[split_pos..])
+            }
+        };
+
+        if self.is_positive {
+            result
+        } else {
+            format!("-{}", result)
+        }
+    }
+
     fn to_f64(&self) -> f64 {
         let u128_value = self
             .int_parts
             .iter()
-            .rev()
             .enumerate()
             .fold(0u128, |acc, (i, &part)| {
-                (acc << (i * 32)) + (part as u32 as u128)
+                acc + ((part as u32 as u128) << (i * 32))
             });
 
         let mut d_ret: f64 = u128_value as f64;
@@ -1665,5 +2003,381 @@ mod test {
         let debug_str = format!("{parts:?}");
         assert!(debug_str.contains("0"));
         assert!(debug_str.contains("F64 value: 0"));
+    }
+
+    // Tests for DecimalParts::from_string
+    #[test]
+    fn test_from_string_positive_decimal() {
+        let result = DecimalParts::from_string("123.45", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert!(parts.is_positive);
+        assert_eq!(parts.scale, 2);
+        assert_eq!(parts.precision, 10);
+        assert_eq!(parts.to_decimal_string(), "123.45");
+    }
+
+    #[test]
+    fn test_from_string_negative_decimal() {
+        let result = DecimalParts::from_string("-123.45", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert!(!parts.is_positive);
+        assert_eq!(parts.scale, 2);
+        assert_eq!(parts.precision, 10);
+        assert_eq!(parts.to_decimal_string(), "-123.45");
+    }
+
+    #[test]
+    fn test_from_string_integer_no_decimal_point() {
+        let result = DecimalParts::from_string("12345", 10, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert!(parts.is_positive);
+        assert_eq!(parts.scale, 0);
+        assert_eq!(parts.to_decimal_string(), "12345");
+    }
+
+    #[test]
+    fn test_from_string_with_leading_zeros() {
+        let result = DecimalParts::from_string("00123.45", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "123.45");
+    }
+
+    #[test]
+    fn test_from_string_small_fractional_value() {
+        let result = DecimalParts::from_string("0.01", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "0.01");
+    }
+
+    #[test]
+    fn test_from_string_zero() {
+        let result = DecimalParts::from_string("0", 10, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "0");
+    }
+
+    #[test]
+    fn test_from_string_zero_with_scale() {
+        let result = DecimalParts::from_string("0.00", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "0.00");
+    }
+
+    #[test]
+    fn test_from_string_fractional_padding() {
+        // "1.5" with scale 3 should be treated as "1.500"
+        let result = DecimalParts::from_string("1.5", 10, 3);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "1.500");
+    }
+
+    #[test]
+    fn test_from_string_max_precision_38_digits() {
+        let value = "12345678901234567890123456789012345678";
+        let result = DecimalParts::from_string(value, 38, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), value);
+    }
+
+    #[test]
+    fn test_from_string_high_scale() {
+        let result = DecimalParts::from_string("123.456789", 10, 6);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "123.456789");
+    }
+
+    #[test]
+    fn test_from_string_leading_zeros_precision_check() {
+        // "00001.00" should have precision of 3 (1 significant digit + 2 scale)
+        let result = DecimalParts::from_string("00001.00", 5, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "1.00");
+    }
+
+    #[test]
+    fn test_from_string_with_positive_sign() {
+        let result = DecimalParts::from_string("+123.45", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert!(parts.is_positive);
+        assert_eq!(parts.to_decimal_string(), "123.45");
+    }
+
+    // Error cases
+    #[test]
+    fn test_from_string_invalid_characters() {
+        let result = DecimalParts::from_string("not_a_number", 10, 2);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("invalid digit"));
+    }
+
+    #[test]
+    fn test_from_string_multiple_decimal_points() {
+        let result = DecimalParts::from_string("123.45.67", 10, 2);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("Invalid decimal string"));
+    }
+
+    #[test]
+    fn test_from_string_scale_exceeded() {
+        // Trying to parse "123.456" with scale 2 should fail
+        let result = DecimalParts::from_string("123.456", 10, 2);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("scale") && error_msg.contains("exceeds"));
+    }
+
+    #[test]
+    fn test_from_string_precision_exceeded() {
+        // "12345" has 5 significant digits, should fail with precision 4
+        let result = DecimalParts::from_string("12345", 4, 0);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("precision") && error_msg.contains("exceeds"));
+    }
+
+    #[test]
+    fn test_from_string_precision_exceeded_with_decimal() {
+        // "123.45" has 5 significant digits total, should fail with precision 4
+        let result = DecimalParts::from_string("123.45", 4, 2);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("precision") && error_msg.contains("exceeds"));
+    }
+
+    #[test]
+    fn test_from_string_invalid_digit_in_integer_part() {
+        let result = DecimalParts::from_string("12a34", 10, 0);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("invalid digit"));
+    }
+
+    #[test]
+    fn test_from_string_invalid_digit_in_fractional_part() {
+        let result = DecimalParts::from_string("123.4x5", 10, 2);
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("invalid digit"));
+    }
+
+    #[test]
+    fn test_from_string_leading_zeros_not_counted_in_precision() {
+        // "0000123" should be treated as precision 3, not 7
+        let result = DecimalParts::from_string("0000123", 3, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "123");
+    }
+
+    #[test]
+    fn test_from_string_whitespace_trimmed() {
+        let result = DecimalParts::from_string("  123.45  ", 10, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "123.45");
+    }
+
+    #[test]
+    fn test_from_string_negative_zero() {
+        let result = DecimalParts::from_string("-0", 10, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert!(!parts.is_positive);
+        assert_eq!(parts.to_decimal_string(), "-0");
+    }
+
+    #[test]
+    fn test_from_string_only_zeros_with_decimal() {
+        let result = DecimalParts::from_string("0.0", 10, 1);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "0.0");
+    }
+
+    #[test]
+    fn test_from_string_exact_precision_match() {
+        // Test when actual precision exactly matches target precision
+        let result = DecimalParts::from_string("12345", 5, 0);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "12345");
+    }
+
+    #[test]
+    fn test_from_string_exact_scale_match() {
+        // Test when fractional digits exactly match scale
+        let result = DecimalParts::from_string("123.45", 5, 2);
+        assert!(result.is_ok());
+        let parts = result.unwrap();
+        assert_eq!(parts.to_decimal_string(), "123.45");
+    }
+
+    // Vector deserialization tests
+    mod vector_tests {
+        use super::*;
+        use crate::datatypes::{
+            sql_vector::SqlVector,
+            sqldatatypes::{
+                VECTOR_MAX_DIMENSIONS, VectorBaseType, VectorLayoutFormat, VectorLayoutVersion,
+            },
+        };
+
+        #[test]
+        fn test_vector_creation_and_validation() {
+            // Test that SqlVector::try_from_f32 creates valid vectors
+            let dimensions = vec![1.0, 2.0, 3.0];
+            let vector = SqlVector::try_from_f32(dimensions.clone()).unwrap();
+
+            // Only check semantic data - TDS header fields are not stored
+            assert_eq!(vector.as_f32(), Some(dimensions.as_slice()));
+            assert_eq!(vector.dimension_count(), 3);
+        }
+
+        #[test]
+        fn test_vector_single_dimension() {
+            let vector = SqlVector::try_from_f32(vec![42.5]).unwrap();
+            assert_eq!(vector.as_f32(), Some(&[42.5][..]));
+            assert_eq!(vector.dimension_count(), 1);
+        }
+
+        #[test]
+        fn test_vector_max_dimensions() {
+            let dimensions: Vec<f32> = (0..VECTOR_MAX_DIMENSIONS).map(|i| i as f32).collect();
+            let vector = SqlVector::try_from_f32(dimensions).unwrap();
+            assert_eq!(vector.dimension_count(), VECTOR_MAX_DIMENSIONS);
+        }
+
+        #[test]
+        fn test_vector_from_raw_valid() {
+            let values = vec![1.0_f32, 2.0, 3.0];
+            // Convert f32 values to raw bytes
+            let mut raw_bytes = Vec::new();
+            for val in &values {
+                raw_bytes.extend_from_slice(&val.to_le_bytes());
+            }
+
+            let vector = SqlVector::try_from_raw(
+                VectorLayoutFormat::V1 as u8,
+                VectorLayoutVersion::V1 as u8,
+                VectorBaseType::Float32 as u8,
+                raw_bytes,
+            );
+
+            // try_from_raw validates during construction
+            assert!(vector.is_ok());
+            let vector = vector.unwrap();
+            assert_eq!(vector.as_f32(), Some(values.as_slice()));
+        }
+
+        #[test]
+        fn test_vector_from_raw_invalid_layout_format() {
+            let values = vec![1.0_f32, 2.0];
+            let mut raw_bytes = Vec::new();
+            for val in &values {
+                raw_bytes.extend_from_slice(&val.to_le_bytes());
+            }
+
+            let result = SqlVector::try_from_raw(
+                0x00, // Invalid format
+                VectorLayoutVersion::V1 as u8,
+                VectorBaseType::Float32 as u8,
+                raw_bytes,
+            );
+
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("layout format"));
+        }
+
+        #[test]
+        fn test_vector_from_raw_invalid_layout_version() {
+            let values = vec![1.0_f32, 2.0];
+            let mut raw_bytes = Vec::new();
+            for val in &values {
+                raw_bytes.extend_from_slice(&val.to_le_bytes());
+            }
+
+            let result = SqlVector::try_from_raw(
+                VectorLayoutFormat::V1 as u8,
+                0x99, // Invalid version
+                VectorBaseType::Float32 as u8,
+                raw_bytes,
+            );
+
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("layout version"));
+        }
+
+        #[test]
+        fn test_vector_from_raw_invalid_base_type() {
+            let values = vec![1.0_f32, 2.0];
+            let mut raw_bytes = Vec::new();
+            for val in &values {
+                raw_bytes.extend_from_slice(&val.to_le_bytes());
+            }
+
+            let result = SqlVector::try_from_raw(
+                VectorLayoutFormat::V1 as u8,
+                VectorLayoutVersion::V1 as u8,
+                0x99, // Invalid base type
+                raw_bytes,
+            );
+
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("base type"));
+        }
+
+        #[test]
+        fn test_vector_empty_dimensions() {
+            let result = SqlVector::try_from_f32(vec![]);
+            assert!(result.is_err());
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("at least one dimension")
+            );
+        }
+
+        #[test]
+        fn test_vector_too_many_dimensions() {
+            let dimensions: Vec<f32> = (0..(VECTOR_MAX_DIMENSIONS + 1)).map(|i| i as f32).collect();
+            let result = SqlVector::try_from_f32(dimensions);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
+        }
+
+        #[test]
+        fn test_vector_total_size() {
+            let vector = SqlVector::try_from_f32(vec![1.0, 2.0, 3.0]).unwrap();
+            assert_eq!(vector.total_size(), 8 + 3 * 4); // 8 byte header + 3 floats * 4 bytes
+        }
+
+        #[test]
+        fn test_column_values_vector_variant() {
+            let vector = SqlVector::try_from_f32(vec![1.0, 2.0, 3.0]).unwrap();
+            let col_val = ColumnValues::Vector(vector);
+
+            match col_val {
+                ColumnValues::Vector(v) => {
+                    assert_eq!(v.dimension_count(), 3);
+                    assert_eq!(v.as_f32(), Some(&[1.0, 2.0, 3.0][..]));
+                }
+                _ => panic!("Expected Vector variant"),
+            }
+        }
     }
 }

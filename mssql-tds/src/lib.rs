@@ -11,6 +11,9 @@ pub mod handler;
 pub mod io;
 pub mod message;
 pub mod query;
+pub mod security;
+pub mod sql_identifier;
+pub mod ssrp;
 pub mod token;
 
 // Expose internal APIs for fuzzing
@@ -214,6 +217,14 @@ pub mod fuzz_support {
         async fn close_transport(&mut self) -> TdsResult<()> {
             // No-op for mock transport
             Ok(())
+        }
+
+        async fn send_attention_with_timeout(
+            &mut self,
+            _timeout: std::time::Duration,
+        ) -> TdsResult<bool> {
+            // For mock transport, just return success (ACK received)
+            Ok(true)
         }
     }
 

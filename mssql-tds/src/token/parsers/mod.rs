@@ -61,6 +61,7 @@ pub(crate) mod order_parser;
 pub(crate) mod returnstatus_parser;
 pub(crate) mod returnvalue_parser;
 pub(crate) mod row_parser;
+pub(crate) mod sspi_parser;
 
 // Re-export TokenParser trait
 pub(crate) use common::TokenParser;
@@ -79,6 +80,7 @@ pub(crate) use order_parser::OrderTokenParser;
 pub(crate) use returnstatus_parser::ReturnStatusTokenParser;
 pub(crate) use returnvalue_parser::ReturnValueTokenParser;
 pub(crate) use row_parser::RowTokenParser;
+pub(crate) use sspi_parser::SspiTokenParser;
 
 // Fuzzing exports
 #[cfg(fuzzing)]

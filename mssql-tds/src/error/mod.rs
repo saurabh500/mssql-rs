@@ -1,6 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub mod bulk_copy_errors;
+
+pub use bulk_copy_errors::{BulkCopyAttentionTimeoutError, BulkCopyError, BulkCopyTimeoutError};
+
+use crate::security::SecurityError;
 use thiserror::Error;
 use tokio::time::error::Elapsed;
 
@@ -21,11 +26,23 @@ pub enum Error {
     #[error("Server redirected the connection: {host}:{port} times")]
     Redirection { host: String, port: u16 },
 
+    #[error("Connection Error: {0}")]
+    ConnectionError(String),
+
     #[error("Protocol Error: {0}")]
     ProtocolError(String),
 
     #[error("TLS Error: {0}")]
     TlsError(#[from] native_tls::Error),
+
+    #[error(
+        "TLS handshake failed while connecting to '{expected_host}': {source}. Certificate SANs: {cert_sans}"
+    )]
+    TlsHandshakeError {
+        source: native_tls::Error,
+        expected_host: String,
+        cert_sans: String,
+    },
 
     #[error("Timeout Error: {0}")]
     TimeoutError(TimeoutErrorType),
@@ -53,6 +70,51 @@ pub enum Error {
 
     #[error("Unimplemented Feature: {feature} - {context}")]
     UnimplementedFeature { feature: String, context: String },
+
+    #[error("Type Conversion Error: {0}")]
+    TypeConversionError(String),
+
+    #[error("Connection closed: {0}")]
+    ConnectionClosed(String),
+
+    #[error(
+        "Unsupported Encoding: LCID {lcid} (0x{lcid:04X}). Consider using NVARCHAR instead of VARCHAR/TEXT for better compatibility."
+    )]
+    UnsupportedEncoding { lcid: u32 },
+
+    #[error(
+        "Certificate file not found: {path}. Verify the ServerCertificate path is correct and the file exists."
+    )]
+    CertificateNotFound { path: String },
+
+    #[error(
+        "Invalid certificate format in file: {path}. Ensure the file contains a valid DER or PEM encoded X.509 certificate."
+    )]
+    InvalidCertificateFormat { path: String },
+
+    #[error(
+        "Server certificate has expired. The server's certificate is no longer valid. Contact your administrator."
+    )]
+    CertificateExpired,
+
+    #[error(
+        "Server certificate validation failed: Certificate mismatch. The server presented a different certificate than expected. Verify you are connecting to the correct server."
+    )]
+    CertificateMismatch,
+
+    #[error(
+        "Failed to read certificate file: {path}. Error: {error}. Check file permissions and ensure the file is not locked by another process."
+    )]
+    CertificateFileIoError { path: String, error: String },
+
+    #[error("No server certificate available during TLS handshake.")]
+    NoServerCertificate,
+
+    #[error("Bulk Copy Error: {0}")]
+    BulkCopyError(#[from] BulkCopyError),
+
+    #[error("Security error: {0}")]
+    Security(#[from] SecurityError),
 }
 
 #[cfg(test)]
@@ -180,6 +242,15 @@ mod tests {
         let err_str = error.to_string();
         assert!(err_str.contains("Always Encrypted"));
         assert!(err_str.contains("Column encryption not supported"));
+    }
+
+    #[test]
+    fn test_type_conversion_error() {
+        let error = Error::TypeConversionError("Cannot convert VARCHAR to INT".to_string());
+        assert_eq!(
+            error.to_string(),
+            "Type Conversion Error: Cannot convert VARCHAR to INT"
+        );
     }
 
     #[test]

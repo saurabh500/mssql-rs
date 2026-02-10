@@ -5,7 +5,7 @@
 mod common;
 
 mod client_based_iterators {
-    use crate::common::{create_context, init_tracing};
+    use crate::common::{build_tcp_datasource, create_context, init_tracing};
     use futures::lock::Mutex;
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
@@ -23,7 +23,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let query = "SELECT TOP(2) * FROM sys.databases; SELECT 1";
 
         client.execute(query.to_string(), None, None).await?;
@@ -50,7 +52,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let query = "SELECT TOP 1 
             name, 
             database_id, 
@@ -82,7 +86,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let query = "SELECT TOP(2) * FROM sys.databases; SELECT 1";
 
         client.execute(query.to_string(), None, None).await?;
@@ -123,7 +129,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let query = "bad bad query";
 
         let err = client.execute(query.to_string(), None, None).await;
@@ -153,7 +161,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let create_database_query = "IF DB_ID('TestDB') IS NULL CREATE DATABASE TestDB";
 
         client
@@ -172,7 +182,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let client = provider.create_client(context, None).await?;
+        let client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
         let client = Arc::new(Mutex::new(client));
 
         // Create a stored procedure with an output parameter
@@ -243,7 +255,9 @@ mod client_based_iterators {
         let context = create_context();
 
         let provider = TdsConnectionProvider {};
-        let mut client = provider.create_client(context, None).await?;
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
 
         // Query that returns various date/time types with explicit scales
         let query = r#"
@@ -351,6 +365,141 @@ mod client_based_iterators {
             mssql_tds::datatypes::column_values::ColumnValues::DateTimeOffset(_) => {}
             _ => panic!("Expected DateTimeOffset value"),
         }
+
+        Ok(())
+    }
+
+    /// Test that verifies packet size negotiation works correctly.
+    ///
+    /// This test reproduces the bug where `notify_session_setting_change` only updated
+    /// `self.packet_size` but NOT `self.tds_read_buffer.max_packet_size`. This caused
+    /// the validation check to reject valid packets that exceeded the initial 4096-byte
+    /// limit but were within the negotiated size (e.g., 8000 bytes).
+    ///
+    /// The test executes a query that returns enough data to require the negotiated
+    /// packet size, which would fail with "TDS packet length 8000 exceeds negotiated
+    /// max packet size 4096" if the buffer's max_packet_size wasn't properly updated.
+    #[tokio::test]
+    async fn test_query_with_negotiated_packet_size() -> Result<(), Box<dyn std::error::Error>> {
+        let context = create_context();
+
+        let provider = TdsConnectionProvider {};
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
+
+        // Query that returns a large result set to trigger the negotiated packet size.
+        // The REPLICATE function creates a string large enough to potentially span
+        // multiple TDS packets at the negotiated size (typically 8000 bytes).
+        // This would fail with "TDS packet length 8000 exceeds negotiated max packet size 4096"
+        // if the read buffer's max_packet_size wasn't updated after login negotiation.
+        let query = "SELECT REPLICATE('X', 5000) AS LargeColumn, 
+                            REPLICATE('Y', 5000) AS AnotherLargeColumn,
+                            1 AS SmallColumn";
+
+        client.execute(query.to_string(), None, None).await?;
+
+        let mut row_count = 0;
+        while let Some(row) = client.next_row().await? {
+            row_count += 1;
+
+            // Verify we got the expected data
+            match &row[0] {
+                mssql_tds::datatypes::column_values::ColumnValues::String(s) => {
+                    assert_eq!(s.to_utf8_string().len(), 5000, "Expected 5000 X characters");
+                }
+                _ => panic!("Expected String value for LargeColumn"),
+            }
+
+            match &row[1] {
+                mssql_tds::datatypes::column_values::ColumnValues::String(s) => {
+                    assert_eq!(s.to_utf8_string().len(), 5000, "Expected 5000 Y characters");
+                }
+                _ => panic!("Expected String value for AnotherLargeColumn"),
+            }
+
+            match &row[2] {
+                mssql_tds::datatypes::column_values::ColumnValues::Int(v) => {
+                    assert_eq!(*v, 1, "Expected SmallColumn to be 1");
+                }
+                _ => panic!("Expected Int value for SmallColumn"),
+            }
+        }
+
+        assert_eq!(row_count, 1, "Expected exactly 1 row");
+
+        client.close_query().await?;
+        Ok(())
+    }
+
+    /// Test that verifies multiple queries work after packet size negotiation.
+    /// This ensures the buffer state remains consistent across multiple query executions.
+    #[tokio::test]
+    async fn test_multiple_queries_with_negotiated_packet_size()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let context = create_context();
+
+        let provider = TdsConnectionProvider {};
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
+
+        // First query: large data
+        let query1 = "SELECT REPLICATE('A', 6000) AS Col1";
+        client.execute(query1.to_string(), None, None).await?;
+
+        let mut count = 0;
+        while let Some(row) = client.next_row().await? {
+            count += 1;
+            match &row[0] {
+                mssql_tds::datatypes::column_values::ColumnValues::String(s) => {
+                    assert_eq!(s.to_utf8_string().len(), 6000);
+                }
+                _ => panic!("Expected String value"),
+            }
+        }
+        assert_eq!(count, 1);
+        client.close_query().await?;
+
+        // Second query: even larger data
+        let query2 = "SELECT REPLICATE('B', 7000) AS Col1, REPLICATE('C', 7000) AS Col2";
+        client.execute(query2.to_string(), None, None).await?;
+
+        count = 0;
+        while let Some(row) = client.next_row().await? {
+            count += 1;
+            match &row[0] {
+                mssql_tds::datatypes::column_values::ColumnValues::String(s) => {
+                    assert_eq!(s.to_utf8_string().len(), 7000);
+                }
+                _ => panic!("Expected String value"),
+            }
+            match &row[1] {
+                mssql_tds::datatypes::column_values::ColumnValues::String(s) => {
+                    assert_eq!(s.to_utf8_string().len(), 7000);
+                }
+                _ => panic!("Expected String value"),
+            }
+        }
+        assert_eq!(count, 1);
+        client.close_query().await?;
+
+        // Third query: small data (verifies buffer works correctly after large data)
+        let query3 = "SELECT 42 AS SmallValue";
+        client.execute(query3.to_string(), None, None).await?;
+
+        count = 0;
+        while let Some(row) = client.next_row().await? {
+            count += 1;
+            match &row[0] {
+                mssql_tds::datatypes::column_values::ColumnValues::Int(v) => {
+                    assert_eq!(*v, 42);
+                }
+                _ => panic!("Expected Int value"),
+            }
+        }
+        assert_eq!(count, 1);
+        client.close_query().await?;
 
         Ok(())
     }

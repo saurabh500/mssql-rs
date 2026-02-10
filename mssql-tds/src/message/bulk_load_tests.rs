@@ -6,9 +6,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::connection::bulk_copy::BulkCopyOptions;
+
     use crate::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType, TypeLength};
-    use crate::message::bulk_load::BulkLoadMessage;
     use crate::token::tokens::SqlCollation;
 
     // Helper function to create a simple int column
@@ -27,196 +26,13 @@ mod tests {
     }
 
     // Helper function to create an nvarchar column
-    fn create_nvarchar_column(name: &str, length: i32) -> BulkCopyColumnMetadata {
+    // Note: length parameter is in CHARACTERS, but internally stored as BYTES (length * 2)
+    fn create_nvarchar_column(name: &str, char_length: i32) -> BulkCopyColumnMetadata {
+        let byte_length = char_length * 2; // NVARCHAR uses 2 bytes per character
         BulkCopyColumnMetadata::new(name, SqlDbType::NVarChar, 0xE7)
             .with_nullable(true)
-            .with_length(length, TypeLength::Variable(length))
+            .with_length(byte_length, TypeLength::Variable(byte_length))
             .with_collation(SqlCollation::default())
-    }
-
-    #[test]
-    fn test_build_insert_bulk_command_with_all_options() {
-        let metadata = vec![create_int_column("ID")];
-
-        let options = BulkCopyOptions {
-            keep_nulls: true,
-            table_lock: true,
-            check_constraints: true,
-            fire_triggers: true,
-            keep_identity: true,
-            ..Default::default()
-        };
-
-        let message = BulkLoadMessage::new("TestTable".to_string(), metadata, vec![], options);
-        let command = message.build_insert_bulk_command();
-
-        assert!(command.contains("WITH ("));
-        assert!(command.contains("KEEP_NULLS"));
-        assert!(command.contains("TABLOCK"));
-        assert!(command.contains("CHECK_CONSTRAINTS"));
-        assert!(command.contains("FIRE_TRIGGERS"));
-        assert!(command.contains("KEEP_IDENTITY"));
-    }
-
-    #[test]
-    fn test_build_insert_bulk_command_with_partial_options() {
-        let metadata = vec![create_int_column("ID")];
-
-        let options = BulkCopyOptions {
-            table_lock: true,
-            fire_triggers: true,
-            ..Default::default()
-        };
-
-        let message = BulkLoadMessage::new("PartialTable".to_string(), metadata, vec![], options);
-        let command = message.build_insert_bulk_command();
-
-        assert!(command.contains("WITH ("));
-        assert!(command.contains("TABLOCK"));
-        assert!(command.contains("FIRE_TRIGGERS"));
-        assert!(!command.contains("KEEP_NULLS"));
-        assert!(!command.contains("CHECK_CONSTRAINTS"));
-        assert!(!command.contains("KEEP_IDENTITY"));
-    }
-
-    #[test]
-    fn test_build_insert_bulk_command_no_options() {
-        let metadata = vec![create_int_column("ID")];
-        let options = BulkCopyOptions::default();
-
-        let message = BulkLoadMessage::new("NoOptionsTable".to_string(), metadata, vec![], options);
-        let command = message.build_insert_bulk_command();
-
-        // Should not contain WITH clause when no options are set
-        assert!(!command.contains("WITH ("));
-    }
-
-    #[test]
-    fn test_build_insert_bulk_command_multiple_columns() {
-        let metadata = vec![
-            create_int_column("Col1"),
-            create_nvarchar_column("Col2", 50),
-            create_int_column("Col3"),
-        ];
-
-        let options = BulkCopyOptions::default();
-        let message = BulkLoadMessage::new("MultiColTable".to_string(), metadata, vec![], options);
-        let command = message.build_insert_bulk_command();
-
-        assert!(command.contains("[Col1] int"));
-        assert!(command.contains("[Col2] nvarchar(50)"));
-        assert!(command.contains("[Col3] int"));
-        // Verify commas between columns
-        assert!(command.contains(", [Col2]"));
-        assert!(command.contains(", [Col3]"));
-    }
-
-    #[test]
-    fn test_build_insert_bulk_command_varchar_max() {
-        let meta_varchar_max = BulkCopyColumnMetadata::new("LargeText", SqlDbType::VarChar, 0xA7)
-            .with_nullable(true)
-            .with_length(-1, TypeLength::Plp) // -1 indicates MAX
-            .with_collation(SqlCollation::default());
-
-        let metadata = vec![meta_varchar_max];
-        let options = BulkCopyOptions::default();
-        let message = BulkLoadMessage::new("MaxTable".to_string(), metadata, vec![], options);
-        let command = message.build_insert_bulk_command();
-
-        assert!(command.contains("[LargeText] varchar(max)"));
-    }
-
-    #[test]
-    fn test_build_insert_bulk_command_nvarchar_max() {
-        let meta_nvarchar_max =
-            BulkCopyColumnMetadata::new("LargeNText", SqlDbType::NVarChar, 0xE7)
-                .with_nullable(true)
-                .with_length(-1, TypeLength::Plp)
-                .with_collation(SqlCollation::default());
-
-        let metadata = vec![meta_nvarchar_max];
-        let options = BulkCopyOptions::default();
-        let message = BulkLoadMessage::new("NMaxTable".to_string(), metadata, vec![], options);
-        let command = message.build_insert_bulk_command();
-
-        assert!(command.contains("[LargeNText] nvarchar(max)"));
-    }
-
-    #[test]
-    fn test_build_insert_bulk_command_with_identity() {
-        let id_meta = BulkCopyColumnMetadata::new("ID", SqlDbType::Int, 0x26)
-            .with_nullable(false)
-            .with_identity(true)
-            .with_length(4, TypeLength::Fixed(4));
-
-        let metadata = vec![id_meta, create_nvarchar_column("Name", 50)];
-
-        let options = BulkCopyOptions {
-            keep_identity: true,
-            ..Default::default()
-        };
-
-        let message = BulkLoadMessage::new("IdentityTable".to_string(), metadata, vec![], options);
-        let command = message.build_insert_bulk_command();
-
-        assert!(command.contains("[ID] int"));
-        assert!(command.contains("KEEP_IDENTITY"));
-    }
-
-    #[test]
-    fn test_build_insert_bulk_command_decimal_with_precision() {
-        let dec_meta = BulkCopyColumnMetadata::new("Price", SqlDbType::Decimal, 0x6A)
-            .with_nullable(true)
-            .with_precision_scale(18, 2);
-
-        let metadata = vec![dec_meta];
-        let options = BulkCopyOptions::default();
-        let message = BulkLoadMessage::new("DecimalTable".to_string(), metadata, vec![], options);
-        let command = message.build_insert_bulk_command();
-
-        assert!(command.contains("[Price] decimal(18, 2)"));
-    }
-
-    #[test]
-    fn test_build_insert_bulk_command_datetime2_with_scale() {
-        let dt2_meta = BulkCopyColumnMetadata::new("Timestamp", SqlDbType::DateTime2, 0x2A)
-            .with_nullable(true)
-            .with_scale(7);
-
-        let metadata = vec![dt2_meta];
-        let options = BulkCopyOptions::default();
-        let message = BulkLoadMessage::new("TimeTable".to_string(), metadata, vec![], options);
-        let command = message.build_insert_bulk_command();
-
-        assert!(command.contains("[Timestamp] datetime2(7)"));
-    }
-
-    #[test]
-    fn test_build_insert_bulk_command_binary_types() {
-        let bin_meta = BulkCopyColumnMetadata::new("Data", SqlDbType::VarBinary, 0xA5)
-            .with_nullable(true)
-            .with_length(50, TypeLength::Variable(50));
-
-        let metadata = vec![bin_meta];
-        let options = BulkCopyOptions::default();
-        let message = BulkLoadMessage::new("BinaryTable".to_string(), metadata, vec![], options);
-        let command = message.build_insert_bulk_command();
-
-        assert!(command.contains("[Data] varbinary(50)"));
-    }
-
-    #[test]
-    fn test_build_insert_bulk_command_uniqueidentifier() {
-        let guid_meta = BulkCopyColumnMetadata::new("ID", SqlDbType::UniqueIdentifier, 0x24)
-            .with_nullable(false)
-            .with_length(16, TypeLength::Fixed(16));
-
-        let metadata = vec![guid_meta];
-        let options = BulkCopyOptions::default();
-        let message = BulkLoadMessage::new("GuidTable".to_string(), metadata, vec![], options);
-        let command = message.build_insert_bulk_command();
-
-        assert!(command.contains("[ID] uniqueidentifier"));
     }
 
     #[test]
@@ -253,6 +69,7 @@ mod tests {
         assert_eq!(SqlDbType::Json.to_tds_type(), 0xF4);
         assert_eq!(SqlDbType::Variant.to_tds_type(), 0x62);
         assert_eq!(SqlDbType::Udt.to_tds_type(), 0xF0);
+        assert_eq!(SqlDbType::Vector.to_tds_type(), 0xF5);
     }
 
     #[test]
@@ -274,6 +91,232 @@ mod tests {
         assert_eq!(
             SqlDbType::NVarChar.to_tds_type_fixed(),
             SqlDbType::NVarChar.to_tds_type()
+        );
+    }
+
+    #[test]
+    fn test_bulk_copy_tds_type_mapping() {
+        // Test that most types return the same TDS type for bulk copy
+        assert_eq!(
+            SqlDbType::Int.to_bulk_copy_tds_type(),
+            SqlDbType::Int.to_tds_type()
+        );
+        assert_eq!(
+            SqlDbType::VarChar.to_bulk_copy_tds_type(),
+            SqlDbType::VarChar.to_tds_type()
+        );
+        assert_eq!(
+            SqlDbType::NVarChar.to_bulk_copy_tds_type(),
+            SqlDbType::NVarChar.to_tds_type()
+        );
+        assert_eq!(
+            SqlDbType::DateTime.to_bulk_copy_tds_type(),
+            SqlDbType::DateTime.to_tds_type()
+        );
+        assert_eq!(
+            SqlDbType::Vector.to_bulk_copy_tds_type(),
+            SqlDbType::Vector.to_tds_type()
+        );
+
+        // Test that JSON is properly identified as 0xF4
+        assert_eq!(
+            SqlDbType::Json.to_tds_type(),
+            0xF4,
+            "JSON should return 0xF4 (TdsDataType::Json) from to_tds_type()"
+        );
+
+        // Test that JSON returns NVARCHAR for bulk copy
+        assert_eq!(
+            SqlDbType::Json.to_bulk_copy_tds_type(),
+            0xE7,
+            "JSON should return 0xE7 (TdsDataType::NVarChar) from to_bulk_copy_tds_type() for bulk copy operations"
+        );
+
+        // Verify JSON is treated differently than NVARCHAR
+        assert_ne!(
+            SqlDbType::Json.to_tds_type(),
+            SqlDbType::NVarChar.to_tds_type(),
+            "JSON type identifier (0xF4) should differ from NVARCHAR (0xE7)"
+        );
+
+        // Verify JSON uses NVARCHAR for bulk copy
+        assert_eq!(
+            SqlDbType::Json.to_bulk_copy_tds_type(),
+            SqlDbType::NVarChar.to_tds_type(),
+            "JSON should use NVARCHAR encoding (0xE7) for bulk copy"
+        );
+
+        // Test that XML is properly identified as 0xF1
+        assert_eq!(
+            SqlDbType::Xml.to_tds_type(),
+            0xF1,
+            "XML should return 0xF1 (TdsDataType::Xml) from to_tds_type()"
+        );
+
+        // Test that XML returns NVARCHAR for bulk copy
+        assert_eq!(
+            SqlDbType::Xml.to_bulk_copy_tds_type(),
+            0xE7,
+            "XML should return 0xE7 (TdsDataType::NVarChar) from to_bulk_copy_tds_type() for bulk copy operations"
+        );
+
+        // Verify XML is treated differently than NVARCHAR
+        assert_ne!(
+            SqlDbType::Xml.to_tds_type(),
+            SqlDbType::NVarChar.to_tds_type(),
+            "XML type identifier (0xF1) should differ from NVARCHAR (0xE7)"
+        );
+
+        // Verify XML uses NVARCHAR for bulk copy
+        assert_eq!(
+            SqlDbType::Xml.to_bulk_copy_tds_type(),
+            SqlDbType::NVarChar.to_tds_type(),
+            "XML should use NVARCHAR encoding (0xE7) for bulk copy"
+        );
+    }
+
+    #[test]
+    fn test_insert_bulk_with_collation() {
+        use crate::connection::bulk_copy::BulkCopyOptions;
+        use crate::message::bulk_load::build_insert_bulk_command;
+
+        // Create metadata with collation names
+        let col1 = create_int_column("Id");
+        let mut col2 = create_nvarchar_column("Name", 100);
+        col2.collation_name = Some("SQL_Latin1_General_CP1_CI_AS".to_string());
+        let mut col3 = create_varchar_column("Description", 255);
+        col3.collation_name = Some("Latin1_General_BIN".to_string());
+
+        let metadata = vec![col1, col2, col3];
+        let options = BulkCopyOptions::default();
+
+        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options);
+
+        // Verify COLLATE is included for character types
+        assert!(
+            command.contains("COLLATE SQL_Latin1_General_CP1_CI_AS"),
+            "Expected COLLATE clause for nvarchar column, got: {}",
+            command
+        );
+        assert!(
+            command.contains("COLLATE Latin1_General_BIN"),
+            "Expected COLLATE clause for varchar column, got: {}",
+            command
+        );
+
+        // Verify COLLATE is NOT included for int column
+        let int_section = &command[..command.find("Name").unwrap()];
+        assert!(
+            !int_section.contains("COLLATE"),
+            "Int column should not have COLLATE clause, got: {}",
+            command
+        );
+    }
+
+    #[test]
+    fn test_insert_bulk_without_collation() {
+        use crate::connection::bulk_copy::BulkCopyOptions;
+        use crate::message::bulk_load::build_insert_bulk_command;
+
+        // Create metadata without collation names
+        let col1 = create_int_column("Id");
+        let col2 = create_nvarchar_column("Name", 100);
+        let col3 = create_varchar_column("Description", 255);
+
+        let metadata = vec![col1, col2, col3];
+        let options = BulkCopyOptions::default();
+
+        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options);
+
+        // Verify no COLLATE clauses are present
+        assert!(
+            !command.contains("COLLATE"),
+            "Should not have COLLATE clause when collation_name is None, got: {}",
+            command
+        );
+
+        // Verify basic structure is correct
+        assert!(command.starts_with("INSERT BULK dbo.TestTable ("));
+        assert!(command.contains("[Id] int"));
+        assert!(command.contains("[Name] nvarchar(100)"));
+        assert!(command.contains("[Description] varchar(255)"));
+    }
+
+    #[test]
+    fn test_insert_bulk_mixed_collation() {
+        use crate::connection::bulk_copy::BulkCopyOptions;
+        use crate::message::bulk_load::build_insert_bulk_command;
+
+        // Create metadata with some columns having collation and some not
+        let mut col1 = create_nvarchar_column("Name", 50);
+        col1.collation_name = Some("SQL_Latin1_General_CP1_CI_AS".to_string());
+
+        let col2 = create_nvarchar_column("Description", 200); // No collation
+
+        let mut col3 = create_varchar_column("Code", 10);
+        col3.collation_name = Some("Latin1_General_BIN".to_string());
+
+        let metadata = vec![col1, col2, col3];
+        let options = BulkCopyOptions::default();
+
+        let command = build_insert_bulk_command("dbo.MixedTable", &metadata, &options);
+
+        // Verify first column has COLLATE
+        assert!(
+            command.contains("[Name] nvarchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS"),
+            "First column should have COLLATE, got: {}",
+            command
+        );
+
+        // Verify second column does NOT have COLLATE
+        let desc_pos = command.find("Description").unwrap();
+        let next_comma_pos = command[desc_pos..]
+            .find(',')
+            .unwrap_or(command.len() - desc_pos);
+        let desc_section = &command[desc_pos..desc_pos + next_comma_pos];
+        assert!(
+            !desc_section.contains("COLLATE"),
+            "Description column should not have COLLATE, got: {}",
+            desc_section
+        );
+
+        // Verify third column has COLLATE
+        assert!(
+            command.contains("[Code] varchar(10) COLLATE Latin1_General_BIN"),
+            "Third column should have COLLATE, got: {}",
+            command
+        );
+    }
+
+    #[test]
+    fn test_insert_bulk_collation_with_options() {
+        use crate::connection::bulk_copy::BulkCopyOptions;
+        use crate::message::bulk_load::build_insert_bulk_command;
+
+        let mut col1 = create_nvarchar_column("Name", 100);
+        col1.collation_name = Some("SQL_Latin1_General_CP1_CI_AS".to_string());
+
+        let metadata = vec![col1];
+        let options = BulkCopyOptions {
+            keep_nulls: true,
+            table_lock: true,
+            ..BulkCopyOptions::default()
+        };
+
+        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options);
+
+        // Verify COLLATE clause is present
+        assert!(
+            command.contains("COLLATE SQL_Latin1_General_CP1_CI_AS"),
+            "Expected COLLATE clause, got: {}",
+            command
+        );
+
+        // Verify WITH clause is present with options
+        assert!(
+            command.contains("WITH (KEEP_NULLS, TABLOCK)"),
+            "Expected WITH clause with options, got: {}",
+            command
         );
     }
 }

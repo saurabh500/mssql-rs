@@ -1,7 +1,7 @@
 #!/bin/bash
 
 tdnf upgrade -y
-tdnf install ca-certificates curl pkg-config build-essential -y
+tdnf install ca-certificates curl pkg-config build-essential krb5-devel -y
 
 
 curl https://sh.rustup.rs -sSf | sh -s -- -y

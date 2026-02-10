@@ -9,12 +9,16 @@ use crate::datatypes::column_values::{
     SqlSmallDateTime, SqlSmallMoney, SqlTime, SqlXml,
 };
 use crate::datatypes::sql_json::SqlJson;
+use crate::datatypes::sql_vector::SqlVector;
 use crate::{
     core::TdsResult,
     datatypes::{
         decoder::DecimalParts,
         sql_string::SqlString,
-        sqldatatypes::{FixedLengthTypes, TdsDataType},
+        sqldatatypes::{
+            FixedLengthTypes, TdsDataType, VECTOR_HEADER_SIZE, VECTOR_MAX_DIMENSIONS,
+            VectorBaseType, VectorLayoutFormat, VectorLayoutVersion,
+        },
     },
     error::Error,
     io::packet_writer::{PacketWriter, TdsPacketWriter},
@@ -65,6 +69,11 @@ pub enum SqlType {
 
     Xml(Option<SqlXml>),
     Uuid(Option<Uuid>),
+
+    /// Parameters: (data, dimensions, base_type)
+    /// Although SqlVector has dimension & base type information, we also pass it separately so
+    /// that we can serialize NULL vector parameters (where SqlVector=None) with correct metadata.
+    Vector(Option<SqlVector>, u16, VectorBaseType),
     // To be added in future
     // Variant
     // TVP
@@ -129,6 +138,7 @@ impl SqlType {
             SqlType::Uuid(_) => TdsDataType::Guid,
             SqlType::Money(_) => TdsDataType::MoneyN,
             SqlType::SmallMoney(_) => TdsDataType::MoneyN,
+            SqlType::Vector(_, _, _) => TdsDataType::Vector,
         }
     }
 
@@ -215,6 +225,10 @@ impl SqlType {
             }
             SqlType::Xml(sql_xml) => self.serialize_xml(packet_writer, sql_xml).await?,
             SqlType::Uuid(uuid) => self.serialize_uuid(packet_writer, uuid).await?,
+            SqlType::Vector(sql_vector, dimensions, base_type) => {
+                self.serialize_vector(packet_writer, sql_vector, *dimensions, *base_type)
+                    .await?
+            }
         }
         Ok(())
     }
@@ -353,22 +367,23 @@ impl SqlType {
             Some(v) => {
                 packet_writer.write_byte_async(v.precision).await?;
                 packet_writer.write_byte_async(v.scale).await?;
-                // Send the actual data size.
+
+                // For TDS 7.0 and above, there are always 17 bytes of data
+                // This matches .NET SqlClient behavior
                 packet_writer.write_byte_async(DECIMAL_FIXED_SIZE).await?;
+
                 if v.is_positive {
                     packet_writer.write_byte_async(0x01).await?;
                 } else {
                     packet_writer.write_byte_async(0x00).await?;
                 }
 
-                // Write up to 3 int_parts, pad with zeros if fewer, ignore extras.
-                // Always write 4 i32 values.
-                for i in 0..3 {
+                // Always write 4 i32 values (16 bytes) regardless of precision
+                // Pad with zeros if fewer int_parts are needed
+                for i in 0..4 {
                     let part = v.int_parts.get(i).copied().unwrap_or(0);
                     packet_writer.write_i32_async(part).await?;
                 }
-                // The fourth part is always 0.
-                packet_writer.write_i32_async(0).await?;
             }
             None => {
                 packet_writer.write_byte_async(1).await?;
@@ -503,8 +518,11 @@ impl SqlType {
                 }
             }
             None => {
-                // Write the NULL length.
-                packet_writer.write_u64_async(PLP_NULL).await?;
+                match param_len {
+                    // For max length, we send a PLP NULL, for all other values, we send a NULL length which is u16::MAX.
+                    u16::MAX => packet_writer.write_u64_async(PLP_NULL).await?,
+                    _ => packet_writer.write_u16_async(u16::MAX).await?,
+                };
             }
         }
         Ok(())
@@ -745,6 +763,121 @@ impl SqlType {
         Ok(())
     }
 
+    async fn serialize_vector(
+        &self,
+        packet_writer: &mut PacketWriter<'_>,
+        sql_vector: &Option<SqlVector>,
+        dimensions: u16,
+        declared_base_type: VectorBaseType,
+    ) -> TdsResult<()> {
+        let nullable_type: NullableTdsType = self.get_nullable_type();
+
+        // Write TDS type byte (0xF5)
+        packet_writer.write_byte_async(nullable_type as u8).await?;
+
+        // Validate dimensions are within server limits
+        if dimensions > VECTOR_MAX_DIMENSIONS {
+            return Err(Error::UsageError(format!(
+                "Vector dimensions {} exceeds maximum supported dimensions {}",
+                dimensions, VECTOR_MAX_DIMENSIONS
+            )));
+        }
+
+        // Validate that the vector's base type matches the declared type
+        if let Some(vector) = sql_vector {
+            let actual_base_type = vector.base_type();
+            if actual_base_type != declared_base_type {
+                return Err(Error::TypeConversionError(format!(
+                    "Vector base type mismatch: declared {:?}, but vector has {:?}",
+                    declared_base_type, actual_base_type
+                )));
+            }
+
+            // Validate that the vector's dimensions match the declared dimensions
+            let actual_dimensions = vector.dimension_count();
+            if actual_dimensions != dimensions {
+                return Err(Error::TypeConversionError(format!(
+                    "Vector dimension mismatch: declared {}, but vector has {}",
+                    dimensions, actual_dimensions
+                )));
+            }
+        }
+
+        // Calculate exact size from dimensions: header (8 bytes) + dimensions * element_size
+        let element_size = declared_base_type.element_size_bytes() as u16;
+        let exact_size = (VECTOR_HEADER_SIZE as u16) + (dimensions * element_size);
+
+        // Write USHORTLEN (u16) for exact length (TypeInfo)
+        packet_writer.write_u16_async(exact_size).await?;
+
+        // Write SCALE byte (base type)
+        packet_writer
+            .write_byte_async(declared_base_type as u8)
+            .await?;
+
+        match sql_vector {
+            Some(vector) => {
+                let dimension_count = vector.dimension_count();
+                let element_size = vector.base_type().element_size_bytes();
+                let data_length =
+                    (VECTOR_HEADER_SIZE + (dimension_count as usize * element_size)) as u16;
+
+                // Write length prefix (u16)
+                packet_writer.write_u16_async(data_length).await?;
+
+                // Write 8-byte header
+                Self::encode_vector_header(packet_writer, dimension_count, vector.base_type())
+                    .await?;
+
+                // Write vector values based on base type
+                match vector.base_type() {
+                    VectorBaseType::Float32 => {
+                        let values = vector.as_f32().ok_or_else(|| {
+                            Error::TypeConversionError("Vector is not Float32 type".into())
+                        })?;
+                        for &value in values {
+                            let bytes = value.to_le_bytes();
+                            packet_writer.write_async(&bytes).await?;
+                        }
+                    }
+                }
+            }
+            None => {
+                // Write 0xFFFF for NULL
+                packet_writer.write_u16_async(u16::MAX).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Encodes the 8-byte vector header according to TDS protocol specification.
+    ///
+    /// The header format is:
+    /// - Byte 0: Layout format (0xA9 for V1)
+    /// - Byte 1: Layout version (0x01 for V1)
+    /// - Bytes 2-3: Dimension count (u16, little-endian)
+    /// - Byte 4: Base type (0x00 for Float32)
+    /// - Bytes 5-7: Reserved (0x00)
+    pub(crate) async fn encode_vector_header(
+        packet_writer: &mut PacketWriter<'_>,
+        dimension_count: u16,
+        base_type: VectorBaseType,
+    ) -> TdsResult<()> {
+        packet_writer
+            .write_byte_async(VectorLayoutFormat::V1 as u8)
+            .await?;
+        packet_writer
+            .write_byte_async(VectorLayoutVersion::V1 as u8)
+            .await?;
+        packet_writer.write_u16_async(dimension_count).await?;
+        packet_writer.write_byte_async(base_type as u8).await?;
+        packet_writer.write_byte_async(0x00).await?; // reserved
+        packet_writer.write_byte_async(0x00).await?; // reserved
+        packet_writer.write_byte_async(0x00).await?; // reserved
+        Ok(())
+    }
+
     async fn serialize_datetime2(
         &self,
         packet_writer: &mut PacketWriter<'_>,
@@ -769,9 +902,12 @@ impl SqlType {
 
                 packet_writer.write_byte_async(length).await?;
 
-                // Write the time in nanoseconds.
+                // Scale the time value before writing
+                let scaled_value = scale_time_value_for_serialization(t.time_nanoseconds, scale);
+
+                // Write the scaled time value
                 packet_writer
-                    .write_partial_u64_async(t.time_nanoseconds, byte_count_for_time)
+                    .write_partial_u64_async(scaled_value, byte_count_for_time)
                     .await?;
 
                 // Write the day count.
@@ -811,9 +947,12 @@ impl SqlType {
 
                 packet_writer.write_byte_async(length).await?;
 
-                // Write the time in nanoseconds.
+                // Scale the time value before writing
+                let scaled_value = scale_time_value_for_serialization(t.time_nanoseconds, scale);
+
+                // Write the scaled time value
                 packet_writer
-                    .write_partial_u64_async(t.time_nanoseconds, byte_count_for_time)
+                    .write_partial_u64_async(scaled_value, byte_count_for_time)
                     .await?;
                 // Write the day count.
                 packet_writer
@@ -855,9 +994,12 @@ impl SqlType {
                     .write_byte_async(scale_based_byte_length)
                     .await?;
 
-                // Write the time in nanoseconds.
+                // Scale the time value before writing
+                let scaled_value = scale_time_value_for_serialization(t.time_nanoseconds, scale);
+
+                // Write the scaled time value
                 packet_writer
-                    .write_partial_u64_async(t.time_nanoseconds, scale_based_byte_length)
+                    .write_partial_u64_async(scaled_value, scale_based_byte_length)
                     .await?;
             }
             None => {
@@ -1014,6 +1156,31 @@ pub(crate) fn get_time_length_from_scale(scale: u8) -> TdsResult<u8> {
     }
 }
 
+/// Scale the time value for serialization based on the scale.
+/// The time_nanoseconds field is always in 100-nanosecond units internally,
+/// but SQL Server expects values in units appropriate for the scale:
+/// - Scale 0: seconds (divide by 10^7)
+/// - Scale 1: tenths of seconds (divide by 10^6)
+/// - Scale 2: hundredths of seconds (divide by 10^5)
+/// - Scale 3: milliseconds (divide by 10^4)
+/// - Scale 4: ten-thousandths (divide by 10^3)
+/// - Scale 5: hundred-thousandths (divide by 10^2)
+/// - Scale 6: microseconds (divide by 10^1)
+/// - Scale 7: 100-nanoseconds (no scaling)
+pub(crate) fn scale_time_value_for_serialization(time_nanoseconds: u64, scale: u8) -> u64 {
+    match scale {
+        0 => time_nanoseconds / 10_000_000, // Seconds
+        1 => time_nanoseconds / 1_000_000,  // Tenths
+        2 => time_nanoseconds / 100_000,    // Hundredths
+        3 => time_nanoseconds / 10_000,     // Milliseconds
+        4 => time_nanoseconds / 1_000,      // Ten-thousandths
+        5 => time_nanoseconds / 100,        // Hundred-thousandths
+        6 => time_nanoseconds / 10,         // Microseconds
+        7 => time_nanoseconds,              // 100-nanoseconds (no scaling)
+        _ => time_nanoseconds,              // Fallback
+    }
+}
+
 // We are taking the map from the protocol documentation that defines the scale.
 // However the scale essentially defines the precision of the time and
 // the length of bytes can be computed from the scale. But since
@@ -1065,7 +1232,9 @@ mod datetime_tests {
                 SqlSmallDateTime, SqlTime,
             },
             sqldatatypes::TdsDataType,
-            sqltypes::{NULL_LENGTH, SqlType, get_scale_based_length},
+            sqltypes::{
+                NULL_LENGTH, SqlType, get_scale_based_length, scale_time_value_for_serialization,
+            },
         },
         io::{
             packet_reader::tests::MockNetworkReaderWriter,
@@ -1304,7 +1473,8 @@ mod datetime_tests {
         packet_writer.finalize().await.unwrap();
         let byte_len = get_scale_based_length(&time).unwrap() + 3;
         let mut written_bytes = vec![0u8; byte_len as usize];
-        let test_time_bytes = get_partial_bytes(time.time_nanoseconds, byte_len - 3);
+        let scaled_time = scale_time_value_for_serialization(time.time_nanoseconds, time.scale);
+        let test_time_bytes = get_partial_bytes(scaled_time, byte_len - 3);
         let test_days_bytes = get_partial_bytes(datetime2.days as u64, 3);
         let payload = mock_reader_writer.get_written_data();
 
@@ -1383,7 +1553,8 @@ mod datetime_tests {
         packet_writer.finalize().await.unwrap();
         let byte_len = get_scale_based_length(&time).unwrap() + 3 + 2;
         let mut written_bytes = vec![0u8; (byte_len - 2) as usize];
-        let test_time_bytes = get_partial_bytes(time.time_nanoseconds, byte_len - 5);
+        let scaled_time = scale_time_value_for_serialization(time.time_nanoseconds, time.scale);
+        let test_time_bytes = get_partial_bytes(scaled_time, byte_len - 5);
         let test_days_bytes = get_partial_bytes(datetime2.days as u64, 3);
         let payload = mock_reader_writer.get_written_data();
 
@@ -1457,7 +1628,8 @@ mod datetime_tests {
         packet_writer.finalize().await.unwrap();
         let byte_len = get_scale_based_length(&time).unwrap();
         let mut written_bytes = vec![0u8; byte_len as usize];
-        let test_bytes = get_partial_bytes(time.time_nanoseconds, byte_len);
+        let scaled_time = scale_time_value_for_serialization(time.time_nanoseconds, time.scale);
+        let test_bytes = get_partial_bytes(scaled_time, byte_len);
 
         let payload = mock_reader_writer.get_written_data();
 
@@ -1819,6 +1991,40 @@ mod nvarchar_tests {
         let _ignore_collation_sortid = test_cursor.get_u8();
         assert_eq!(test_cursor.get_u64_le(), PLP_NULL);
     }
+
+    #[tokio::test]
+    async fn test_write_null_nvarchar_non_plp_via_serialize_nvarchar() {
+        // Use a non-MAX declared length to trigger non-PLP NULL path
+        let declared_len_chars: u16 = 100; // characters
+        let bit = SqlType::NVarchar(None, declared_len_chars);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+        let collation = SqlCollation::default();
+
+        // Call serialize_nvarchar directly to exercise the NVARCHAR-specific path
+        bit.serialize_nvarchar(&mut packet_writer, &collation, &None, declared_len_chars)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut test_cursor = Cursor::new(payload);
+        test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+        assert_eq!(test_cursor.get_u8(), TdsDataType::NVarChar as u8); // TDS type
+        // NVARCHAR metadata length is bytes, so chars*2
+        assert_eq!(test_cursor.get_u16_le(), declared_len_chars * 2);
+        let _ignore_collation_info = test_cursor.get_u32();
+        let _ignore_collation_sortid = test_cursor.get_u8();
+        // Non-PLP NULL must write u16::MAX as the data length
+        assert_eq!(test_cursor.get_u16_le(), u16::MAX);
+    }
 }
 
 #[cfg(test)]
@@ -2090,17 +2296,17 @@ mod decimalparts_tests {
         let payload = mock_reader_writer.get_written_data();
         let mut test_cursor = Cursor::new(payload);
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
-        assert_eq!(test_cursor.get_u8(), TdsDataType::NumericN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), TdsDataType::NumericN as u8); // Validate tds type
         assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // type length data
-        assert_eq!(test_cursor.get_u8(), precision); // type length data
-        assert_eq!(test_cursor.get_u8(), scale); // type length data
-        assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // size of the data
+        assert_eq!(test_cursor.get_u8(), precision); // precision
+        assert_eq!(test_cursor.get_u8(), scale); // scale
+        assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // size of the data (always 17 for TDS 7.0+)
         assert_eq!(test_cursor.get_u8(), 0x01); // Positive value
         let mut parts: Vec<i32> = Vec::new();
         for _ in 0..3 {
             parts.push(test_cursor.get_i32_le());
         }
-        assert_eq!(int_parts.clone(), parts); // size for Some Data
+        assert_eq!(int_parts.clone(), parts); // verify written data
     }
 
     #[tokio::test]
@@ -2140,17 +2346,17 @@ mod decimalparts_tests {
         let payload = mock_reader_writer.get_written_data();
         let mut test_cursor = Cursor::new(payload);
         test_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
-        assert_eq!(test_cursor.get_u8(), TdsDataType::NumericN as u8); // Valdate tds type
+        assert_eq!(test_cursor.get_u8(), TdsDataType::NumericN as u8); // Validate tds type
         assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // type length data
-        assert_eq!(test_cursor.get_u8(), precision); // type length data
-        assert_eq!(test_cursor.get_u8(), scale); // type length data
-        assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // size of the data
+        assert_eq!(test_cursor.get_u8(), precision); // precision
+        assert_eq!(test_cursor.get_u8(), scale); // scale
+        assert_eq!(test_cursor.get_u8(), DECIMAL_FIXED_SIZE); // size of the data (always 17 for TDS 7.0+)
         assert_eq!(test_cursor.get_u8(), 0x00); // Negative value
         let mut parts: Vec<i32> = Vec::new();
         for _ in 0..3 {
             parts.push(test_cursor.get_i32_le());
         }
-        assert_eq!(int_parts.clone(), parts); // size for Some Data
+        assert_eq!(int_parts.clone(), parts); // verify written data
     }
 
     #[tokio::test]
@@ -2749,6 +2955,299 @@ mod uuid_tests {
         assert_eq!(test_cursor.get_u8(), 16); // size of the type
         assert_eq!(test_cursor.get_u8(), NULL_LENGTH); // size for Some Data
         assert!(!test_cursor.has_remaining()); // Ensure that the cursor has no remaining data
+    }
+}
+
+#[cfg(test)]
+mod vector_tests {
+    use crate::{
+        datatypes::{
+            sql_vector::SqlVector,
+            sqldatatypes::{
+                TdsDataType, VECTOR_HEADER_SIZE, VectorBaseType, VectorLayoutFormat,
+                VectorLayoutVersion,
+            },
+            sqltypes::SqlType,
+        },
+        error::Error,
+        io::{
+            packet_reader::tests::MockNetworkReaderWriter,
+            packet_writer::{PacketWriter, TdsPacketWriter},
+        },
+        message::messages::PacketType,
+    };
+    use bytes::Buf;
+    use std::io::Cursor;
+
+    #[tokio::test]
+    async fn test_write_vector_3d() {
+        let values = vec![1.0f32, 2.0f32, 3.0f32];
+        let vector = SqlVector::try_from_f32(values.clone()).unwrap();
+        let sql_type = SqlType::Vector(Some(vector.clone()), 3, VectorBaseType::Float32);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        sql_type
+            .serialize_vector(
+                &mut packet_writer,
+                &Some(vector),
+                3,
+                VectorBaseType::Float32,
+            )
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut cursor = Cursor::new(payload);
+        cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+
+        // Validate TDS type byte (0xF5)
+        assert_eq!(cursor.get_u8(), TdsDataType::Vector as u8);
+
+        // Validate USHORTLEN (max size)
+        let max_size = (VECTOR_HEADER_SIZE as u16) + (3 * 4); // 3 dimensions * 4 bytes
+        assert_eq!(cursor.get_u16_le(), max_size);
+
+        // Validate SCALE (base type: 0x00 for Float32)
+        assert_eq!(cursor.get_u8(), VectorBaseType::Float32 as u8);
+
+        // Validate length prefix
+        let data_length = (VECTOR_HEADER_SIZE as u16) + (3 * 4);
+        assert_eq!(cursor.get_u16_le(), data_length);
+
+        // Validate 8-byte header
+        assert_eq!(cursor.get_u8(), VectorLayoutFormat::V1 as u8); // layout_format
+        assert_eq!(cursor.get_u8(), VectorLayoutVersion::V1 as u8); // layout_version
+        assert_eq!(cursor.get_u16_le(), 3); // dimension_count
+        assert_eq!(cursor.get_u8(), VectorBaseType::Float32 as u8); // base_type
+        assert_eq!(cursor.get_u8(), 0x00); // reserved
+        assert_eq!(cursor.get_u8(), 0x00); // reserved
+        assert_eq!(cursor.get_u8(), 0x00); // reserved
+
+        // Validate element values (little-endian floats)
+        assert_eq!(cursor.get_f32_le(), 1.0f32);
+        assert_eq!(cursor.get_f32_le(), 2.0f32);
+        assert_eq!(cursor.get_f32_le(), 3.0f32);
+
+        assert!(!cursor.has_remaining());
+    }
+
+    #[tokio::test]
+    async fn test_write_null_vector() {
+        let sql_type = SqlType::Vector(None, 10, VectorBaseType::Float32);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        sql_type
+            .serialize_vector(&mut packet_writer, &None, 10, VectorBaseType::Float32)
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut cursor = Cursor::new(payload);
+        cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+
+        // Validate TDS type byte
+        assert_eq!(cursor.get_u8(), TdsDataType::Vector as u8);
+
+        // Validate USHORTLEN
+        let max_size = (VECTOR_HEADER_SIZE as u16) + (10 * 4);
+        assert_eq!(cursor.get_u16_le(), max_size);
+
+        // Validate SCALE
+        assert_eq!(cursor.get_u8(), VectorBaseType::Float32 as u8);
+
+        // Validate NULL length (0xFFFF)
+        assert_eq!(cursor.get_u16_le(), 0xFFFF);
+
+        assert!(!cursor.has_remaining());
+    }
+
+    #[tokio::test]
+    async fn test_write_single_dimension_vector() {
+        let values = vec![42.5f32];
+        let vector = SqlVector::try_from_f32(values).unwrap();
+        let sql_type = SqlType::Vector(Some(vector.clone()), 1, VectorBaseType::Float32);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        sql_type
+            .serialize_vector(
+                &mut packet_writer,
+                &Some(vector),
+                1,
+                VectorBaseType::Float32,
+            )
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut cursor = Cursor::new(payload);
+        cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+
+        assert_eq!(cursor.get_u8(), TdsDataType::Vector as u8);
+        let max_size = (VECTOR_HEADER_SIZE as u16) + 4;
+        assert_eq!(cursor.get_u16_le(), max_size);
+        assert_eq!(cursor.get_u8(), VectorBaseType::Float32 as u8);
+
+        let data_length = (VECTOR_HEADER_SIZE as u16) + 4;
+        assert_eq!(cursor.get_u16_le(), data_length);
+
+        // Skip header validation (already tested above)
+        cursor.advance(8);
+
+        assert_eq!(cursor.get_f32_le(), 42.5f32);
+        assert!(!cursor.has_remaining());
+    }
+
+    #[tokio::test]
+    async fn test_write_large_dimension_vector() {
+        // Test with 100 dimensions
+        let values: Vec<f32> = (0..100).map(|i| i as f32 * 0.5).collect();
+        let vector = SqlVector::try_from_f32(values.clone()).unwrap();
+        let sql_type = SqlType::Vector(Some(vector.clone()), 100, VectorBaseType::Float32);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        sql_type
+            .serialize_vector(
+                &mut packet_writer,
+                &Some(vector),
+                100,
+                VectorBaseType::Float32,
+            )
+            .await
+            .unwrap();
+        packet_writer.finalize().await.unwrap();
+
+        let payload = mock_reader_writer.get_written_data();
+        let mut cursor = Cursor::new(payload);
+        cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
+
+        assert_eq!(cursor.get_u8(), TdsDataType::Vector as u8);
+        let max_size = (VECTOR_HEADER_SIZE as u16) + (100 * 4);
+        assert_eq!(cursor.get_u16_le(), max_size);
+        assert_eq!(cursor.get_u8(), VectorBaseType::Float32 as u8);
+
+        let data_length = (VECTOR_HEADER_SIZE as u16) + (100 * 4);
+        assert_eq!(cursor.get_u16_le(), data_length);
+
+        // Validate header
+        assert_eq!(cursor.get_u8(), VectorLayoutFormat::V1 as u8);
+        assert_eq!(cursor.get_u8(), VectorLayoutVersion::V1 as u8);
+        assert_eq!(cursor.get_u16_le(), 100);
+        cursor.advance(4); // Skip base_type + reserved bytes
+
+        // Validate all dimension values
+        for i in 0..100 {
+            assert_eq!(cursor.get_f32_le(), i as f32 * 0.5);
+        }
+
+        assert!(!cursor.has_remaining());
+    }
+
+    #[tokio::test]
+    async fn test_vector_dimensions_exceeds_max() {
+        // Test with dimensions exceeding VECTOR_MAX_DIMENSIONS (1998)
+        let values: Vec<f32> = vec![1.0, 2.0, 3.0];
+        let vector = SqlVector::try_from_f32(values).unwrap();
+        let sql_type = SqlType::Vector(Some(vector.clone()), 2000, VectorBaseType::Float32);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let result = sql_type
+            .serialize_vector(
+                &mut packet_writer,
+                &Some(vector),
+                2000,
+                VectorBaseType::Float32,
+            )
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(Error::UsageError(msg)) => {
+                assert!(msg.contains("Vector dimensions 2000 exceeds maximum"));
+                assert!(msg.contains("1998"));
+            }
+            _ => panic!("Expected UsageError for exceeding max dimensions"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vector_dimension_mismatch() {
+        // Test with declared dimensions not matching actual vector dimensions
+        let values: Vec<f32> = vec![1.0, 2.0, 3.0];
+        let vector = SqlVector::try_from_f32(values).unwrap();
+        // Declare 5 dimensions but vector only has 3
+        let sql_type = SqlType::Vector(Some(vector.clone()), 5, VectorBaseType::Float32);
+
+        let mut mock_reader_writer = MockNetworkReaderWriter::default();
+        let mut packet_writer = PacketWriter::new(
+            PacketType::TabularResult,
+            &mut mock_reader_writer,
+            None,
+            None,
+        );
+
+        let result = sql_type
+            .serialize_vector(
+                &mut packet_writer,
+                &Some(vector),
+                5,
+                VectorBaseType::Float32,
+            )
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(Error::TypeConversionError(msg)) => {
+                assert!(msg.contains("Vector dimension mismatch"));
+                assert!(msg.contains("declared 5"));
+                assert!(msg.contains("but vector has 3"));
+            }
+            _ => panic!("Expected TypeConversionError for dimension mismatch"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_nullable_type() {
+        let sql_type = SqlType::Vector(None, 10, VectorBaseType::Float32);
+        let nullable_type = sql_type.get_nullable_type();
+        assert_eq!(nullable_type, TdsDataType::Vector);
     }
 }
 

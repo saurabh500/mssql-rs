@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::connection::transport::certificate_validator;
 use crate::connection::transport::network_transport::Stream;
 use crate::io::packet_writer::PacketWriter;
 use crate::message::messages::PacketType;
@@ -11,10 +12,10 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_native_tls::TlsStream;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::network_transport::PRE_NEGOTIATED_PACKET_SIZE;
-use crate::core::{EncryptionOptions, TdsResult};
+use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
 #[cfg(target_os = "macos")]
 use std::io::{ErrorKind, Write};
 
@@ -31,12 +32,47 @@ impl SslHandler {
     ) -> TdsResult<Box<dyn Stream>> {
         base_stream.tls_handshake_starting();
 
+        // Check if ServerCertificate and TrustServerCertificate are both specified
+        if self.encryption_options.server_certificate.is_some()
+            && self.encryption_options.trust_server_certificate
+        {
+            warn!(
+                "Both ServerCertificate and TrustServerCertificate are specified. ServerCertificate takes precedence."
+            );
+        }
+
+        // Check if ServerCertificate and HostnameInCertificate are both specified
+        if self.encryption_options.server_certificate.is_some()
+            && self.encryption_options.host_name_in_cert.is_some()
+        {
+            return Err(crate::error::Error::UsageError(
+                "ServerCertificate and HostnameInCertificate are mutually exclusive. Use only one."
+                    .to_string(),
+            ));
+        }
+
         // Build the native TlsConnector directly because tokio-native-tls's version
         // is missing some functionality.
         let mut builder = NativeTlsConnector::builder();
-        if self.encryption_options.trust_server_certificate {
+
+        // When ServerCertificate is specified, we bypass CA validation
+        // and perform custom certificate pinning instead
+        if self.encryption_options.server_certificate.is_some() {
+            info!("ServerCertificate specified, enabling certificate pinning mode");
             builder.danger_accept_invalid_certs(true);
+            builder.danger_accept_invalid_hostnames(true);
+        } else if self.encryption_options.trust_server_certificate {
+            // For Strict encryption mode (TDS 8.0), TrustServerCertificate is ignored.
+            // Certificate validation must always be enforced for Strict mode.
+            if self.encryption_options.mode == EncryptionSetting::Strict {
+                warn!(
+                    "TrustServerCertificate is ignored for Strict encryption mode. Certificate validation will be enforced."
+                );
+            } else {
+                builder.danger_accept_invalid_certs(true);
+            }
         }
+
         let host_name = self
             .encryption_options
             .host_name_in_cert
@@ -64,6 +100,30 @@ impl SslHandler {
 
         match encrypted_stream {
             Ok(mut stream) => {
+                // If ServerCertificate is specified, perform certificate validation
+                if let Some(cert_path) = &self.encryption_options.server_certificate {
+                    info!("Validating server certificate using: {}", cert_path);
+
+                    // Get the server's certificate from the TLS stream
+                    let peer_cert = stream
+                        .get_ref()
+                        .peer_certificate()
+                        .map_err(crate::error::Error::TlsError)?
+                        .ok_or(crate::error::Error::NoServerCertificate)?;
+
+                    // Get the DER-encoded certificate data
+                    let server_cert_der =
+                        peer_cert.to_der().map_err(crate::error::Error::TlsError)?;
+
+                    // Validate the certificate
+                    certificate_validator::validate_server_certificate(
+                        cert_path,
+                        &server_cert_der,
+                    )?;
+
+                    info!("Server certificate validation successful");
+                }
+
                 // Call tls_handshake_completed on the underlying stream through the TlsStream wrapper
                 stream
                     .get_mut()
@@ -72,7 +132,18 @@ impl SslHandler {
                     .tls_handshake_completed();
                 Ok(Box::new(stream))
             }
-            Err(e) => Err(crate::error::Error::TlsError(e)),
+            Err(e) => {
+                // Always provide context about the hostname we were trying to match
+                // Note: We can't retrieve the certificate SANs from a failed handshake
+                // because the connection is terminated before we can access the peer cert
+                Err(crate::error::Error::TlsHandshakeError {
+                    source: e,
+                    expected_host: host_name.to_string(),
+                    cert_sans:
+                        "(unavailable - handshake failed before certificate could be retrieved)"
+                            .to_string(),
+                })
+            }
         }
     }
 }
@@ -238,7 +309,6 @@ impl<S: Stream> AsyncRead for TlsOverTdsStream<S> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        debug!("poll_read() called");
         if self.has_completed_tls_handshake {
             AsyncRead::poll_read(Pin::new(&mut self.wrapped_stream), cx, buf)
         } else if self.remaining_read_packet_payload_length > 0 {
@@ -264,11 +334,14 @@ impl<S: Stream> AsyncRead for TlsOverTdsStream<S> {
 
                 match header_read_result {
                     Poll::Ready(Err(e)) => {
-                        error!("Read error {:?}", e.kind());
+                        error!(
+                            "Read error on wrapped_stream (named pipe): {:?}, full error: {:?}",
+                            e.kind(),
+                            e
+                        );
                         break Poll::Ready(Err(e));
                     }
                     Poll::Pending => {
-                        debug!("Read pending");
                         break Poll::Pending;
                     }
                     Poll::Ready(Ok(())) => {
@@ -394,11 +467,27 @@ impl<S: Stream> AsyncWrite for TlsOverTdsStream<S> {
                     }
                 }
 
-                let internal_result = AsyncWrite::poll_write_vectored(
-                    Pin::new(&mut self.wrapped_stream),
-                    cx,
-                    &slices,
-                );
+                // For named pipes in Message mode, vectored I/O may write header and body separately,
+                // causing the 8-byte TDS header to be treated as a complete message, which makes
+                // SQL Server close the pipe. Solution: Always flatten multiple slices into a single
+                // buffer during TLS handshake to ensure atomic writes.
+                let internal_result = if slices.len() > 1 {
+                    // Flatten all slices into a single buffer for atomic write
+                    let total_len: usize = slices.iter().map(|s| s.len()).sum();
+                    let mut flattened = Vec::with_capacity(total_len);
+                    for slice in &slices {
+                        flattened.extend_from_slice(slice);
+                    }
+                    debug!(
+                        "Flattening {} slices into single buffer of {} bytes for atomic write",
+                        slices.len(),
+                        total_len
+                    );
+                    // Write the flattened buffer as a single atomic write
+                    AsyncWrite::poll_write(Pin::new(&mut self.wrapped_stream), cx, &flattened)
+                } else {
+                    AsyncWrite::poll_write_vectored(Pin::new(&mut self.wrapped_stream), cx, &slices)
+                };
 
                 match internal_result {
                     Poll::Pending => {
@@ -411,6 +500,11 @@ impl<S: Stream> AsyncWrite for TlsOverTdsStream<S> {
                     }
                     Poll::Ready(Ok(bytes_written)) => {
                         debug!("Bytes written {:?}", bytes_written);
+                        // Log first few bytes for debugging TLS handshake
+                        if !slices.is_empty() && !slices[0].is_empty() {
+                            let preview = &slices[0][..std::cmp::min(16, slices[0].len())];
+                            debug!("Write data preview (first 16 bytes): {:02X?}", preview);
+                        }
                         if bytes_written == 0 {
                             // Notify EOF to caller.
                             error!("EOF on write.");
@@ -437,36 +531,41 @@ impl<S: Stream> AsyncWrite for TlsOverTdsStream<S> {
     }
 
     fn is_write_vectored(&self) -> bool {
-        // If our client changes to call write_vectored(), then it would make sense to have this
-        // return true and write an efficient override of poll_write_vectored.
+        // Check if the underlying stream supports vectored writes
+        // For named pipes on Windows, vectored writes may not work correctly
+        // with TLS handshake, so delegate to the wrapped stream's capability
         debug!("is_write_vectored called");
-        true
+        self.wrapped_stream.is_write_vectored()
     }
 }
 
 impl<S: Stream> Stream for TlsOverTdsStream<S> {
     fn tls_handshake_starting(&mut self) {
         self.has_completed_tls_handshake = false;
+        self.wrapped_stream.tls_handshake_starting();
     }
 
     fn tls_handshake_completed(&mut self) {
         self.has_completed_tls_handshake = true;
+        self.wrapped_stream.tls_handshake_completed();
     }
 }
 
 #[cfg(target_os = "macos")]
 impl Stream for BufferedTdsStream {
     fn tls_handshake_starting(&mut self) {
+        self.is_executing_tls_handshake = true;
         self.tls_over_tds_stream.tls_handshake_starting();
     }
 
     fn tls_handshake_completed(&mut self) {
+        self.is_executing_tls_handshake = false;
         self.tls_over_tds_stream.tls_handshake_completed();
     }
 }
 
 #[cfg(target_os = "macos")]
-struct BufferedTdsStream {
+pub(crate) struct BufferedTdsStream {
     buffer: Option<Vec<u8>>,
     tls_over_tds_stream: TlsOverTdsStream<Box<dyn Stream>>,
     is_executing_tls_handshake: bool,
@@ -475,7 +574,7 @@ struct BufferedTdsStream {
 
 #[cfg(target_os = "macos")]
 impl BufferedTdsStream {
-    fn new(tls_over_tds_stream: TlsOverTdsStream<Box<dyn Stream>>) -> Self {
+    pub(crate) fn new(tls_over_tds_stream: TlsOverTdsStream<Box<dyn Stream>>) -> Self {
         BufferedTdsStream {
             buffer: Some(Vec::with_capacity(
                 ActiveWriteState::MAX_PACKET_SIZE_WITHOUT_HEADER,

@@ -1,0 +1,30 @@
+# Samba Active Directory Domain Controller
+# Use ACR-imported image to avoid Docker Hub rate limits
+FROM tdslibrs.azurecr.io/import/debian:bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Samba AD DC packages
+RUN apt-get update && apt-get install -y \
+    samba \
+    samba-dsdb-modules \
+    samba-vfs-modules \
+    winbind \
+    libpam-winbind \
+    libnss-winbind \
+    krb5-kdc \
+    krb5-user \
+    dnsutils \
+    procps \
+    expect \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy initialization script
+COPY scripts/init-samba-dc.sh /init-samba-dc.sh
+RUN chmod +x /init-samba-dc.sh
+
+EXPOSE 53 88 135 139 389 445 464 636 3268 3269
+
+VOLUME /var/lib/samba
+
+CMD ["/init-samba-dc.sh"]

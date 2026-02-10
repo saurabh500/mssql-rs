@@ -6,8 +6,8 @@ mod common;
 
 mod timeout_and_cancel_tests {
     use crate::common::{
-        ExpectedQueryResultType, begin_connection, create_context, run_query_and_check_results,
-        trust_server_certificate,
+        ExpectedQueryResultType, begin_connection, build_tcp_datasource,
+        run_query_and_check_results, trust_server_certificate,
     };
     use mssql_tds::connection::client_context::ClientContext;
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
@@ -25,8 +25,7 @@ mod timeout_and_cancel_tests {
 
     #[tokio::test]
     pub async fn query_timeout_e2e() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         let start_time = Instant::now();
         let execute_result = connection
@@ -49,30 +48,26 @@ mod timeout_and_cancel_tests {
 
         // Spawn a local TCP server with a random port
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // Use 127.0.0.1 directly to match the listener binding - localhost resolves to hostname
+        let datasource = format!("tcp:127.0.0.1,{}", port);
 
         // Create a client context with a two-second timeout that points to localhost:1433.
-        let mut client_context = ClientContext {
-            transport_context: mssql_tds::connection::client_context::TransportContext::Tcp {
-                host: "localhost".to_string(),
-                port: listener.local_addr().unwrap().port(),
-            },
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: trust_server_certificate(),
-                ..Default::default()
-            },
-            ..Default::default()
+        let mut client_context = ClientContext::default();
+        client_context.database = "master".to_string();
+        client_context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: trust_server_certificate(),
+            host_name_in_cert: None,
+            server_certificate: None,
         };
-
-        client_context.encryption_options.mode = EncryptionSetting::PreferOff;
 
         let provider = TdsConnectionProvider {};
         let join_handle = tokio::spawn(async move {
             // Start a timer.
             let start_time = Instant::now();
             let result = provider
-                .create_client(client_context, Some(&child_handle))
+                .create_client(client_context, &datasource, Some(&child_handle))
                 .await;
             verify_duration(result, start_time, 1000, 2500);
         });
@@ -93,8 +88,7 @@ mod timeout_and_cancel_tests {
         let (tx, rx) = oneshot::channel();
 
         let join_handle = tokio::spawn(async move {
-            let context = create_context();
-            let mut connection = begin_connection(context).await;
+            let mut connection = begin_connection(&build_tcp_datasource()).await;
             tx.send(true).unwrap();
 
             let start_time = Instant::now();
@@ -152,32 +146,30 @@ mod timeout_and_cancel_tests {
     async fn timeout_test_with_retries(retry_count: u8) {
         // Spawn a local TCP server with a random port
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // Use 127.0.0.1 directly to match the listener binding - localhost resolves to hostname
+        let datasource = format!("tcp:127.0.0.1,{}", port);
 
         // Create a client context with a two-second timeout that points to localhost:1433.
-        let mut client_context = ClientContext {
-            transport_context: mssql_tds::connection::client_context::TransportContext::Tcp {
-                host: "localhost".to_string(),
-                port: listener.local_addr().unwrap().port(),
-            },
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: EncryptionSetting::PreferOff,
-                trust_server_certificate: false,
-                ..Default::default()
-            },
-            connect_timeout: 2,
-            connect_retry_count: retry_count as u32,
-            ..Default::default()
+        let mut client_context = ClientContext::default();
+        client_context.database = "master".to_string();
+        client_context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: false,
+            host_name_in_cert: None,
+            server_certificate: None,
         };
-
-        client_context.encryption_options.mode = EncryptionSetting::PreferOff;
+        client_context.connect_timeout = 2;
+        client_context.connect_retry_count = retry_count as u32;
 
         // Try to connect.
         let provider = TdsConnectionProvider {};
 
         // Start a timer.
         let start_time = Instant::now();
-        let connection_result = provider.create_client(client_context, None).await;
+        let connection_result = provider
+            .create_client(client_context, &datasource, None)
+            .await;
         verify_duration(
             connection_result,
             start_time,

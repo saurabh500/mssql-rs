@@ -11,6 +11,11 @@ parameters:
   displayName: Install dependencies parameters
   type: string
   default: ''
+
+- name: enableJsDeps
+  displayName: Enable JS/Yarn dependencies installation
+  type: boolean
+  default: true
  
 steps:
 - ${{ if eq(parameters.osType, 'Linux') }}:
@@ -51,6 +56,13 @@ steps:
       if ! command -v python &> /dev/null; then
         brew install python
       fi
+
+      # Install Kerberos (krb5) for GSSAPI support
+      brew install krb5
+      echo "##vso[task.setvariable variable=PATH]$(brew --prefix krb5)/bin:$PATH"
+      echo "##vso[task.setvariable variable=LDFLAGS]-L$(brew --prefix krb5)/lib"
+      echo "##vso[task.setvariable variable=CPPFLAGS]-I$(brew --prefix krb5)/include"
+      echo "##vso[task.setvariable variable=PKG_CONFIG_PATH]$(brew --prefix krb5)/lib/pkgconfig"
 
       # Install Rustup
       .pipeline/scripts/install-rustup.sh
@@ -95,18 +107,19 @@ steps:
       targetType: 'filePath'
       filePath: '.pipeline/scripts/InstallRustup.ps1'
 
-  - task: PowerShell@2
-    displayName: 'Install Yarn'
-    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
-    inputs:
-      targetType: 'filePath'
-      filePath: '.pipeline/scripts/InstallYarn.ps1'
+  - ${{ if eq(parameters.enableJsDeps, true) }}:
+    - task: PowerShell@2
+      displayName: 'Install Yarn'
+      condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+      inputs:
+        targetType: 'filePath'
+        filePath: '.pipeline/scripts/InstallYarn.ps1'
 
-  - task: PowerShell@2
-    displayName: 'Verify Yarn installation'
-    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
-    inputs:
-      targetType: 'inline'
-      script: |
-        $yarnVersion = yarn -v
-        Write-Host "Yarn version: $yarnVersion"
+    - task: PowerShell@2
+      displayName: 'Verify Yarn installation'
+      condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+      inputs:
+        targetType: 'inline'
+        script: |
+          $yarnVersion = yarn -v
+          Write-Host "Yarn version: $yarnVersion"

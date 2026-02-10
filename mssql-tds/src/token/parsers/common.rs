@@ -212,7 +212,12 @@ pub(crate) mod test_utils {
             Ok(to_read)
         }
         async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
-            unimplemented!()
+            let len = self.read_byte().await? as usize;
+            let mut bytes = vec![0u8; len];
+            for byte in bytes.iter_mut() {
+                *byte = self.read_byte().await?;
+            }
+            Ok(bytes)
         }
         async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
             unimplemented!()

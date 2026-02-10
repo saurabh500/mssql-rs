@@ -1,0 +1,138 @@
+# Template for running long-haul Python tests
+# Runs tests marked with @pytest.mark.longhaul for extended stress testing
+
+parameters:
+- name: durationSeconds
+  displayName: Test Duration (seconds)
+  type: number
+  default: 1800  # 30 minutes
+
+- name: batchSize
+  displayName: Batch Size (rows per batch)
+  type: number
+  default: 1000
+
+steps:
+- task: DockerInstaller@0
+  inputs:
+    dockerVersion: '29.0.0'
+  displayName: Install Docker
+
+- template: install-ubuntu-dependency.yaml
+  parameters:
+    installAzCli: false
+    installDocker: true
+
+- template: azure-cli-login-template.yml
+
+- task: AzureCLI@2
+  displayName: Login to ACR and pull build image
+  inputs:
+    azureSubscription: 'Magnitude Test'
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      az acr login --name tdslibrs
+      docker pull tdslibrs.azurecr.io/build/ubuntu:22.04
+
+- script: |
+    set -euo pipefail
+    # Generate Certificate for SQL Server
+    bash scripts/generate_cert.sh    
+    sudo chown 10001:0 mssql.*
+
+    # Create docker network
+    docker network create testnet
+
+    # Start SQL Server
+    docker run -e "ACCEPT_EULA=Y" \
+      -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" \
+      -p 1433:1433 \
+      --hostname sql1 \
+      --network testnet \
+      --name sqlserver \
+      -v $PWD/conf/mssql.conf:/var/opt/mssql/mssql.conf \
+      -v $PWD/mssql.pem:/etc/ssl/certs/mssql.pem \
+      -v $PWD/mssql.key:/etc/ssl/private/mssql.key \
+      -u 0:0 \
+      -d mcr.microsoft.com/mssql/server:2025-latest
+
+    # Wait for SQL Server to start
+    echo "Waiting for SQL Server to start..."
+    sleep 10
+  displayName: Setup SQL Server in Docker
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+
+- script: |
+    BUILD_IMAGE="tdslibrs.azurecr.io/build/ubuntu:22.04"
+    
+    docker run --rm \
+      --network testnet \
+      -v $PWD:/workspace \
+      -v $HOME/.cargo/registry:/root/.cargo/registry \
+      -v $HOME/.cargo/git:/root/.cargo/git \
+      -v $PWD/ca.crt:/usr/local/share/ca-certificates/mssql-ca.crt:ro \
+      -e SQL_PASSWORD="$(SQL_PASSWORD)" \
+      -e DB_HOST="sql1" \
+      -e DB_USERNAME="sa" \
+      -e SQL_SERVER="sql1" \
+      -e SQL_DATABASE="master" \
+      -e TRUST_SERVER_CERTIFICATE="true" \
+      -e LONGHAUL_DURATION_SECONDS="${{ parameters.durationSeconds }}" \
+      -e LONGHAUL_BATCH_SIZE="${{ parameters.batchSize }}" \
+      -w /workspace \
+      $BUILD_IMAGE \
+      bash -c '
+        set -e
+        update-ca-certificates
+        source ~/.cargo/env
+        export PATH="/usr/local/bin:$PATH"
+        
+        echo "=================================="
+        echo "Running long-haul BCP test"
+        echo "Duration: ${{ parameters.durationSeconds }} seconds ($((${{ parameters.durationSeconds }} / 60)) minutes)"
+        echo "Batch size: ${{ parameters.batchSize }} rows"
+        echo "=================================="
+        
+        # Build mssql-py-core (need to compile the Rust bindings)
+        cd /workspace/mssql-py-core
+        
+        # Create virtual environment
+        python3 -m venv /tmp/longhaul-venv
+        source /tmp/longhaul-venv/bin/activate
+        
+        # Install dependencies
+        pip install --upgrade pip -q
+        pip install maturin pytest pytest-asyncio python-dotenv patchelf -q
+        
+        # Build and install mssql-py-core
+        echo "Building mssql-py-core..."
+        maturin develop
+        
+        # Run only longhaul tests
+        echo "Starting longhaul test..."
+        pytest tests/ -v -m "longhaul" --ignore=tests/mssql_python --junitxml=pytest-longhaul-results.xml
+        
+        echo "=================================="
+        echo "Long-haul test completed!"
+        echo "=================================="
+      '
+  displayName: Run Long-Haul BCP Test
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+
+- task: PublishTestResults@2
+  condition: succeededOrFailed()
+  displayName: Publish long-haul test results
+  inputs:
+    testResultsFormat: JUnit
+    testResultsFiles: $(Build.SourcesDirectory)/mssql-py-core/pytest-longhaul-results.xml
+    testRunTitle: LongHaul-BCP-Test
+
+- script: |
+    docker stop sqlserver || true
+    docker rm sqlserver || true
+    docker network rm testnet || true
+  displayName: Cleanup Docker resources
+  condition: always()

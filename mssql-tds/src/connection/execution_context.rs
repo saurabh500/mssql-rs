@@ -32,6 +32,15 @@ impl ExecutionContext {
         self.transaction_descriptor
     }
 
+    /// Returns true if a transaction is currently active.
+    ///
+    /// A transaction is considered active when the transaction_descriptor
+    /// is non-zero, which occurs after a BEGIN TRANSACTION and before
+    /// COMMIT or ROLLBACK.
+    pub(crate) fn has_active_transaction(&self) -> bool {
+        self.transaction_descriptor != 0
+    }
+
     pub(crate) fn get_outstanding_requests(&self) -> u32 {
         self.outstanding_requests
     }
@@ -194,6 +203,39 @@ mod tests {
         assert_eq!(ctx.get_outstanding_requests(), 1);
         assert!(!ctx.has_open_batch());
         assert!(!ctx.has_open_result_set());
+        assert!(!ctx.has_active_transaction());
+    }
+
+    #[test]
+    fn test_has_active_transaction() {
+        let mut ctx = ExecutionContext::new();
+
+        // Initially no active transaction
+        assert!(!ctx.has_active_transaction());
+        assert_eq!(ctx.get_transaction_descriptor(), 0);
+
+        // Simulate BEGIN TRANSACTION by setting a non-zero descriptor
+        // (In practice this happens via ENVCHANGE token processing)
+        let begin_txn_token = EnvChangeToken {
+            sub_type: EnvChangeTokenSubType::BeginTransaction,
+            change_type: (0u64, 12345678u64).into(),
+        };
+        ctx.capture_change_property(&begin_txn_token).unwrap();
+
+        // Now transaction is active
+        assert!(ctx.has_active_transaction());
+        assert_eq!(ctx.get_transaction_descriptor(), 12345678);
+
+        // Simulate COMMIT TRANSACTION by setting descriptor back to 0
+        let commit_txn_token = EnvChangeToken {
+            sub_type: EnvChangeTokenSubType::CommitTransaction,
+            change_type: (12345678u64, 0u64).into(),
+        };
+        ctx.capture_change_property(&commit_txn_token).unwrap();
+
+        // Transaction is no longer active
+        assert!(!ctx.has_active_transaction());
+        assert_eq!(ctx.get_transaction_descriptor(), 0);
     }
 
     #[test]

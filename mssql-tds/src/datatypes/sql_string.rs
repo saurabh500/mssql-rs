@@ -4,8 +4,12 @@
 use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 use core::fmt;
 use std::{fmt::Debug, fmt::Display};
+use tracing::warn;
 
-use super::sqldatatypes::{TypeInfoVariant, is_unicode_type};
+use super::{
+    lcid_encoding::lcid_to_encoding,
+    sqldatatypes::{TypeInfoVariant, is_unicode_type},
+};
 
 #[derive(PartialEq, Clone)]
 pub enum EncodingType {
@@ -45,16 +49,39 @@ impl SqlString {
             // UTF16 decode works better.
             EncodingType::Utf8 => String::from_utf8(self.bytes.clone()).unwrap(),
             EncodingType::Utf16 => {
-                let mut u16_buffer = Vec::with_capacity(self.bytes.len() / 2);
-                self.bytes
-                    .chunks(2)
-                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-                    .for_each(|item| u16_buffer.push(item));
-
-                String::from_utf16(&u16_buffer).unwrap()
+                // Use encoding_rs for efficient UTF-16LE decoding without intermediate Vec<u16> allocation
+                let (decoded, _, _) = encoding_rs::UTF_16LE.decode(&self.bytes);
+                decoded.into_owned()
             }
-            EncodingType::LcidBased(_) => {
-                unimplemented!("LCID based encoding conversion to UTF8 not implemented");
+            EncodingType::LcidBased(collation) => {
+                // Extract LCID from the lower 20 bits of collation.info
+                let lcid = collation.info & 0x000F_FFFF;
+
+                // Map LCID to encoding
+                let encoding = match lcid_to_encoding(lcid) {
+                    Ok(enc) => enc,
+                    Err(e) => {
+                        warn!(
+                            "Unsupported LCID 0x{:04X} ({}), falling back to Windows-1252. Error: {}",
+                            lcid, lcid, e
+                        );
+                        // Fall back to Windows-1252 for unsupported LCIDs
+                        encoding_rs::WINDOWS_1252
+                    }
+                };
+
+                // Decode bytes using the determined encoding
+                let (decoded, _used_encoding, had_errors) = encoding.decode(&self.bytes);
+
+                if had_errors {
+                    warn!(
+                        "Encountered decoding errors while converting LCID 0x{:04X} ({}) encoded data. \
+                         Some characters may have been replaced with U+FFFD.",
+                        lcid, lcid
+                    );
+                }
+
+                decoded.into_owned()
             }
             EncodingType::DelayedSet => {
                 // DelayedSet encoding is not defined, so we return the bytes as a UTF-8 string.
@@ -221,5 +248,104 @@ mod tests {
         let bytes = vec![1, 2, 3, 4];
         let sql_str = SqlString::new(bytes.clone(), EncodingType::DelayedSet);
         assert_eq!(sql_str.bytes, bytes);
+    }
+
+    // ========================================================================
+    // LCID Encoding Tests
+    // ========================================================================
+
+    #[test]
+    fn test_lcid_based_encoding_us_english() {
+        // Test US English (Windows-1252) encoding
+        // "Hello, World!" in Windows-1252
+        let text = b"Hello, World!";
+        let collation = SqlCollation {
+            info: 0x0409, // US English LCID
+            lcid_language_id: 0,
+            col_flags: 0,
+            sort_id: 0,
+        };
+        let sql_str = SqlString::new(text.to_vec(), EncodingType::LcidBased(collation));
+        assert_eq!(sql_str.to_utf8_string(), "Hello, World!");
+    }
+
+    #[test]
+    fn test_lcid_based_encoding_special_chars_windows1252() {
+        // Test special characters in Windows-1252
+        // "Café résumé naïve" with special chars
+        let text = b"Caf\xe9 r\xe9sum\xe9 na\xefve"; // é = 0xE9, ï = 0xEF in Windows-1252
+        let collation = SqlCollation {
+            info: 0x0409, // US English LCID
+            lcid_language_id: 0,
+            col_flags: 0,
+            sort_id: 0,
+        };
+        let sql_str = SqlString::new(text.to_vec(), EncodingType::LcidBased(collation));
+        assert_eq!(sql_str.to_utf8_string(), "Café résumé naïve");
+    }
+
+    #[test]
+    fn test_lcid_based_encoding_japanese() {
+        // Test Japanese Shift_JIS encoding
+        // "こんにちは" (Konnichiwa) in Shift_JIS: 82B1 82F1 82C9 82BF 82CD
+        let text = vec![0x82, 0xB1, 0x82, 0xF1, 0x82, 0xC9, 0x82, 0xBF, 0x82, 0xCD];
+        let collation = SqlCollation {
+            info: 0x0411, // Japanese LCID
+            lcid_language_id: 0,
+            col_flags: 0,
+            sort_id: 0,
+        };
+        let sql_str = SqlString::new(text, EncodingType::LcidBased(collation));
+        assert_eq!(sql_str.to_utf8_string(), "こんにちは");
+    }
+
+    #[test]
+    fn test_lcid_based_encoding_with_flags() {
+        // Test LCID extraction with flags set in upper bits
+        // US English LCID (0x0409) with flags (0x00D00409)
+        let text = b"Test";
+        let collation = SqlCollation {
+            info: 0x00D0_0409, // LCID with comparison flags
+            lcid_language_id: 0,
+            col_flags: 0,
+            sort_id: 0,
+        };
+        let sql_str = SqlString::new(text.to_vec(), EncodingType::LcidBased(collation));
+        // Should still decode as US English (lower 20 bits = 0x0409)
+        assert_eq!(sql_str.to_utf8_string(), "Test");
+    }
+
+    #[test]
+    fn test_lcid_based_encoding_empty_string() {
+        // Test empty string
+        let text = vec![];
+        let collation = SqlCollation {
+            info: 0x0409, // US English LCID
+            lcid_language_id: 0,
+            col_flags: 0,
+            sort_id: 0,
+        };
+        let sql_str = SqlString::new(text, EncodingType::LcidBased(collation));
+        assert_eq!(sql_str.to_utf8_string(), "");
+    }
+
+    #[test]
+    fn test_is_utf16() {
+        let utf16_str = SqlString::from_utf8_string("test".to_string());
+        assert!(utf16_str.is_utf16());
+
+        let utf8_str = SqlString::new(b"test".to_vec(), EncodingType::Utf8);
+        assert!(!utf8_str.is_utf16());
+    }
+
+    #[test]
+    fn test_as_utf16_bytes() {
+        let utf16_str = SqlString::from_utf8_string("Hi".to_string());
+        let bytes = utf16_str.as_utf16_bytes();
+        assert!(bytes.is_some());
+        assert_eq!(bytes.unwrap(), &[72, 0, 105, 0]); // "Hi" in UTF-16LE
+
+        let utf8_str = SqlString::new(b"test".to_vec(), EncodingType::Utf8);
+        assert!(utf8_str.as_utf16_bytes().is_none());
     }
 }

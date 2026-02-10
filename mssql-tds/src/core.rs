@@ -117,6 +117,10 @@ pub struct EncryptionOptions {
     pub mode: EncryptionSetting,
     pub trust_server_certificate: bool,
     pub host_name_in_cert: Option<String>,
+    /// Path to a DER or PEM encoded X.509 certificate file for certificate pinning.
+    /// When specified, the driver performs an exact binary match between the provided
+    /// certificate and the server's certificate, bypassing standard CA chain validation.
+    pub server_certificate: Option<String>,
 }
 
 impl EncryptionOptions {
@@ -125,6 +129,7 @@ impl EncryptionOptions {
             mode: EncryptionSetting::Strict,
             trust_server_certificate: false,
             host_name_in_cert: None,
+            server_certificate: None,
         }
     }
 }

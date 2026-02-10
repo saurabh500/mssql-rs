@@ -10,7 +10,7 @@ use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
     EnvChangeTokenParser, ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser,
     InfoTokenParser, LoginAckTokenParser, NbcRowTokenParser, OrderTokenParser,
-    ReturnStatusTokenParser, ReturnValueTokenParser, RowTokenParser, TokenParser,
+    ReturnStatusTokenParser, ReturnValueTokenParser, RowTokenParser, SspiTokenParser, TokenParser,
 };
 use crate::token::tokens::{ColMetadataToken, DoneStatus, TokenType, Tokens};
 use async_trait::async_trait;
@@ -161,6 +161,7 @@ where
             TokenParsers::ReturnValue(parser) => {
                 parser.parse(&mut self.packet_reader, context).await
             }
+            TokenParsers::Sspi(parser) => parser.parse(&mut self.packet_reader, context).await,
         }
     }
 
@@ -172,12 +173,12 @@ where
         // This method is intended to be called from receive_token(). We enforce only one level
         // of recursion by preventing timeout and cancellation on the internal receive_token() call.
         while let Ok(token) = self.receive_token_internal(&dummy_context).await {
-            if let Tokens::Done(done_token) = token {
-                if done_token.status.contains(DoneStatus::ATTN) {
-                    break;
-                }
-                // Discard any other token.
+            if let Tokens::Done(done_token) = token
+                && done_token.status.contains(DoneStatus::ATTN)
+            {
+                break;
             }
+            // Discard any other token.
         }
         Ok(())
     }
@@ -295,6 +296,7 @@ impl Default for GenericTokenParserRegistry {
             TokenType::ReturnValue,
             TokenParsers::from(ReturnValueTokenParser::default()),
         );
+        internal_registry.insert(TokenType::SSPI, TokenParsers::from(SspiTokenParser));
         Self {
             parsers: internal_registry,
         }
@@ -329,6 +331,7 @@ pub enum TokenParsers {
     ReturnStatus(ReturnStatusTokenParser),
     NbcRow(NbcRowTokenParser<GenericDecoder>),
     ReturnValue(ReturnValueTokenParser<GenericDecoder>),
+    Sspi(SspiTokenParser),
 }
 
 macro_rules! impl_from_token_parser {
@@ -358,7 +361,8 @@ impl_from_token_parser!(
     OrderTokenParser => Order,
     ReturnStatusTokenParser => ReturnStatus,
     NbcRowTokenParser<GenericDecoder> => NbcRow,
-    ReturnValueTokenParser<GenericDecoder> => ReturnValue
+    ReturnValueTokenParser<GenericDecoder> => ReturnValue,
+    SspiTokenParser => Sspi
 );
 
 #[cfg(test)]
@@ -414,7 +418,7 @@ mod tests {
 
         // Test with an unsupported token type (using a type that's not registered)
         // This tests the negative case
-        let unsupported_type = TokenType::SSPI; // This token type is not registered in the default registry
+        let unsupported_type = TokenType::TabName; // This token type is not registered in the default registry
         assert!(!registry.has_parser(&unsupported_type));
         assert!(registry.get_parser(&unsupported_type).is_none());
     }

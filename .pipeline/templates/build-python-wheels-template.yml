@@ -6,6 +6,7 @@ parameters:
   - Linux
   - MacOS
   - Alpine
+  - Windows
 - name: architecture
   default: x64
   type: string
@@ -41,7 +42,7 @@ steps:
       
       mkdir -p "$(Build.ArtifactStagingDirectory)/wheels"
       
-      docker run --rm \
+      bash .pipeline/scripts/docker-cargo-run.sh --rm \
         -v "$(Build.SourcesDirectory):/workspace" \
         -v "$(Build.ArtifactStagingDirectory)/wheels:/workspace/target/wheels" \
         -e "WORKSPACE_DIR=/workspace" \
@@ -55,9 +56,12 @@ steps:
       echo "✅ Wheels built successfully!"
       ls -lh "$(Build.ArtifactStagingDirectory)/wheels"
     displayName: 'Build Python wheels in manylinux container (${{ parameters.architecture }})'
+    env:
+      CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+      CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
 
 # Native builds for MacOS (no Windows support)
-# Native builds for MacOS (no Windows support)
+# Native builds for MacOS (universal2 = x86_64 + ARM64 in single binary)
 - ${{ if eq(parameters.osType, 'MacOS') }}:
   - script: |
       echo "Installing maturin via pipx..."
@@ -65,24 +69,27 @@ steps:
       python3 -m pipx ensurepath
       export PATH="$HOME/.local/bin:$PATH"
       pipx install maturin
-    displayName: Install maturin
+      
+      echo "Installing Rust targets for universal2 build..."
+      rustup target add x86_64-apple-darwin
+      rustup target add aarch64-apple-darwin
+    displayName: Install maturin and Rust targets
 
   - ${{ each pythonVersion in parameters.pythonVersions }}:
     - task: UsePythonVersion@0
       displayName: 'Use Python ${{ pythonVersion }}'
       inputs:
         versionSpec: '${{ pythonVersion }}'
-        architecture: '${{ parameters.architecture }}'
         addToPath: true
     
     - script: |
-        echo "Building Python wheel for Python ${{ pythonVersion }}..."
+        echo "Building universal2 Python wheel for Python ${{ pythonVersion }}..."
         export PATH="$HOME/.local/bin:$PATH"
         python${{ pythonVersion }} --version
         cd mssql-py-core
-        maturin build --release --interpreter python${{ pythonVersion }} --out $(Build.ArtifactStagingDirectory)/wheels
-        echo "Wheel built successfully for Python ${{ pythonVersion }}"
-      displayName: 'Build wheel for Python ${{ pythonVersion }} (MacOS)'
+        maturin build --release --target universal2-apple-darwin --interpreter python${{ pythonVersion }} --out $(Build.ArtifactStagingDirectory)/wheels
+        echo "Universal2 wheel built successfully for Python ${{ pythonVersion }}"
+      displayName: 'Build universal2 wheel for Python ${{ pythonVersion }} (MacOS)'
   
   - script: |
       echo "All wheels built:"
@@ -110,7 +117,7 @@ steps:
       
       mkdir -p "$(Build.ArtifactStagingDirectory)/wheels"
       
-      docker run --rm \
+      bash .pipeline/scripts/docker-cargo-run.sh --rm \
         -v "$(Build.SourcesDirectory):/workspace" \
         -v "$(Build.ArtifactStagingDirectory)/wheels:/workspace/target/wheels" \
         -e "WORKSPACE_DIR=/workspace" \
@@ -124,6 +131,43 @@ steps:
       echo "✅ Wheels built successfully!"
       ls -lh "$(Build.ArtifactStagingDirectory)/wheels"
     displayName: 'Build Python wheels in musllinux container (${{ parameters.architecture }})'
+    env:
+      CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+      CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
+
+# Native builds for Windows
+- ${{ if eq(parameters.osType, 'Windows') }}:
+  - ${{ each pythonVersion in parameters.pythonVersions }}:
+    - task: UsePythonVersion@0
+      displayName: 'Use Python ${{ pythonVersion }}'
+      inputs:
+        versionSpec: '${{ pythonVersion }}'
+        architecture: '${{ parameters.architecture }}'
+        addToPath: true
+    
+    - pwsh: |
+        $ErrorActionPreference = 'Stop'
+        
+        Write-Host "Building Python wheel for Python ${{ pythonVersion }}..."
+        python --version
+        
+        # Install maturin for this Python version
+        pip install maturin
+        
+        # Create wheels output directory
+        New-Item -ItemType Directory -Force -Path "$(Build.ArtifactStagingDirectory)\wheels"
+        
+        # Build the wheel
+        cd mssql-py-core
+        maturin build --release --interpreter python --out "$(Build.ArtifactStagingDirectory)\wheels"
+        
+        Write-Host "Wheel built successfully for Python ${{ pythonVersion }}"
+      displayName: 'Build wheel for Python ${{ pythonVersion }} (Windows ${{ parameters.architecture }})'
+  
+  - pwsh: |
+      Write-Host "All wheels built:"
+      Get-ChildItem "$(Build.ArtifactStagingDirectory)\wheels" | Format-Table Name, Length
+    displayName: List all wheels
 
 - task: PublishBuildArtifacts@1
   displayName: 'Publish Python Wheels'

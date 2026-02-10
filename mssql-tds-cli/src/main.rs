@@ -148,7 +148,7 @@ impl Session {
 
 pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
     use mssql_tds::{
-        connection::client_context::{ClientContext, TransportContext},
+        connection::client_context::ClientContext,
         connection_provider::tds_connection_provider::TdsConnectionProvider,
     };
     let config = Config::builder()
@@ -159,26 +159,22 @@ pub async fn main_cli() -> Result<(), Box<dyn std::error::Error>> {
     let helper = MyHelper {};
     rl.set_helper(Some(helper));
 
-    let context = ClientContext {
-        transport_context: TransportContext::Tcp {
-            host: "localhost".to_string(),
-            port: 1433,
-        },
-        user_name: "sa".to_string(),
-        password: std::fs::read_to_string("/tmp/password")
-            .expect("Failed to read password file")
-            .trim()
-            .to_string(),
-        database: "master".to_string(),
-        encryption_options: EncryptionOptions {
-            mode: EncryptionSetting::On,
-            trust_server_certificate: true,
-            host_name_in_cert: None,
-        },
-        ..Default::default()
+    let mut context = ClientContext::default();
+    context.user_name = "sa".to_string();
+    context.password = std::fs::read_to_string("/tmp/password")
+        .expect("Failed to read password file")
+        .trim()
+        .to_string();
+    context.database = "master".to_string();
+    context.encryption_options = EncryptionOptions {
+        mode: EncryptionSetting::On,
+        trust_server_certificate: true,
+        host_name_in_cert: None,
+        server_certificate: None,
     };
     let provider = TdsConnectionProvider {};
-    let connection_result = provider.create_client(context, None).await;
+    let datasource = "tcp:localhost,1433";
+    let connection_result = provider.create_client(context, datasource, None).await;
     let mut session = match connection_result {
         Ok(_connection) => {
             println!("Successfully connected");

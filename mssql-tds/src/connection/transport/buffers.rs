@@ -15,6 +15,11 @@ pub(crate) struct TdsReadBuffer {
     pub(crate) buffer_length: usize,
     pub(crate) max_packet_size: usize,
     pub(crate) working_buffer: Vec<u8>,
+    /// Bytes that have been read from the network but are beyond the current packet.
+    /// This happens when a single read returns data for multiple TDS packets.
+    pub(crate) pending_bytes: usize,
+    /// The offset where pending bytes are located in working_buffer.
+    pub(crate) pending_bytes_offset: usize,
 }
 
 impl TdsReadBuffer {
@@ -25,6 +30,8 @@ impl TdsReadBuffer {
             buffer_length: 0,
             max_packet_size: packet_size,
             working_buffer: vec![0; packet_storage],
+            pending_bytes: 0,
+            pending_bytes_offset: 0,
         }
     }
 
@@ -34,6 +41,8 @@ impl TdsReadBuffer {
             self.working_buffer.resize(packet_size as usize * 2, 0);
             self.buffer_position = 0;
             self.buffer_length = 0;
+            self.pending_bytes = 0;
+            self.pending_bytes_offset = 0;
         }
     }
 
@@ -66,6 +75,18 @@ impl TdsReadBuffer {
 
     pub(crate) fn shift_data_to_front(&mut self) {
         let remaining = self.get_remaining_byte_count();
+
+        // Move pending bytes right after where remaining data will be
+        if self.pending_bytes > 0 {
+            let pending_src_start = self.pending_bytes_offset;
+            let pending_src_end = self.pending_bytes_offset + self.pending_bytes;
+            let pending_dest = remaining;
+            self.working_buffer
+                .copy_within(pending_src_start..pending_src_end, pending_dest);
+            self.pending_bytes_offset = remaining;
+        }
+
+        // Now move the remaining data to front
         self.working_buffer
             .copy_within(self.buffer_position..self.buffer_length, 0);
         self.buffer_position = 0;
@@ -169,5 +190,95 @@ impl TdsWriteBuffer {
 
     pub(crate) fn set_packet_type(&mut self, packet_type: PacketType) {
         self.packet_type = packet_type;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that demonstrates the buffer overflow bug when reset_reader() doesn't call
+    /// change_packet_size() after packet size negotiation.
+    ///
+    /// Scenario:
+    /// 1. Pre-login: packet_size = 4096, buffer = 8192 bytes (4096 × 2)
+    /// 2. Login completes: server negotiates packet_size = 8000
+    /// 3. BUG: If reset_reader() only calls reset_to_length(0) without change_packet_size(),
+    ///    the buffer remains at 8192 bytes
+    /// 4. Server sends 8000-byte packet → code tries to read beyond buffer → panic
+    ///
+    /// FIX: reset_reader() must call change_packet_size() to resize buffer to 16000 bytes
+    #[test]
+    fn test_buffer_resize_after_packet_size_change() {
+        // Initial state: pre-login packet size of 4096
+        let initial_packet_size: usize = 4096;
+        let mut buffer = TdsReadBuffer::new(initial_packet_size);
+
+        // Verify initial buffer size: 4096 * 2 = 8192
+        assert_eq!(buffer.working_buffer.len(), 8192);
+        assert_eq!(buffer.max_packet_size, 4096);
+
+        // Simulate packet size negotiation to 8000 (like after login)
+        let negotiated_packet_size: u32 = 8000;
+
+        // BUG SIMULATION: Only reset_to_length without change_packet_size
+        // This is what the buggy TdsTransport::reset_reader() was doing
+        buffer.reset_to_length(0);
+
+        // Buffer is still 8192 - NOT enough for 8000 * 2 = 16000
+        assert_eq!(buffer.working_buffer.len(), 8192);
+        assert_eq!(buffer.max_packet_size, 4096); // Still old value!
+
+        // This would cause a panic when trying to read a packet larger than 8192/2 = 4096
+        // because read_tds_packet reads into base_offset + max_packet_size slice
+
+        // FIX: Call change_packet_size BEFORE reset_to_length
+        buffer.change_packet_size(negotiated_packet_size);
+
+        // Now buffer is properly sized: 8000 * 2 = 16000
+        assert_eq!(buffer.working_buffer.len(), 16000);
+        assert_eq!(buffer.max_packet_size, 8000);
+
+        // Safe to read 8000-byte packets now
+        assert!(buffer.working_buffer.len() >= negotiated_packet_size as usize * 2);
+    }
+
+    /// Test that change_packet_size is idempotent when called with the same size
+    #[test]
+    fn test_change_packet_size_same_size_is_noop() {
+        let packet_size: usize = 4096;
+        let mut buffer = TdsReadBuffer::new(packet_size);
+
+        // Set some state
+        buffer.buffer_position = 100;
+        buffer.buffer_length = 500;
+
+        // Call with same size - should be no-op (preserves state)
+        buffer.change_packet_size(packet_size as u32);
+
+        // State should be preserved since size didn't change
+        assert_eq!(buffer.buffer_position, 100);
+        assert_eq!(buffer.buffer_length, 500);
+        assert_eq!(buffer.working_buffer.len(), 8192);
+    }
+
+    /// Test that change_packet_size resets buffer state when size changes
+    #[test]
+    fn test_change_packet_size_resets_state_on_size_change() {
+        let initial_size: usize = 4096;
+        let mut buffer = TdsReadBuffer::new(initial_size);
+
+        // Set some state
+        buffer.buffer_position = 100;
+        buffer.buffer_length = 500;
+
+        // Change to different size - should reset state
+        buffer.change_packet_size(8000);
+
+        // State should be reset
+        assert_eq!(buffer.buffer_position, 0);
+        assert_eq!(buffer.buffer_length, 0);
+        assert_eq!(buffer.working_buffer.len(), 16000);
+        assert_eq!(buffer.max_packet_size, 8000);
     }
 }

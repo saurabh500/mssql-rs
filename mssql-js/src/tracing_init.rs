@@ -65,15 +65,15 @@ fn get_trace_log_path() -> Option<PathBuf> {
             eprintln!("[mssql-js] WARNING: Proceeding with logging to the specified directory...");
         }
 
-        if !path.exists() {
-            if let Err(e) = create_dir_all(&path) {
-                eprintln!(
-                    "[mssql-js] ERROR: Could not create log directory '{}': {}",
-                    path.display(),
-                    e
-                );
-                return None;
-            }
+        if !path.exists()
+            && let Err(e) = create_dir_all(&path)
+        {
+            eprintln!(
+                "[mssql-js] ERROR: Could not create log directory '{}': {}",
+                path.display(),
+                e
+            );
+            return None;
         }
         return Some(path.join(TRACE_LOG_FILENAME));
     }
@@ -166,18 +166,20 @@ pub fn init_tracing() {
 
             let filter_layer = get_trace_filter();
             let registry = Registry::default().with(filter_layer);
-            if file_layer.is_some() && console_enabled {
-                let registry_with_file_and_console = registry
-                    .with(file_layer.unwrap())
-                    .with(tracing_subscriber::fmt::layer()
-                        .with_writer(std::io::stdout)
-                        .with_ansi(true));
-                tracing::subscriber::set_global_default(registry_with_file_and_console)
-                .expect("Setting default subscriber failed");
-            } else if file_layer.is_some() {
-                let registry_with_file = registry.with(file_layer.unwrap());
-                tracing::subscriber::set_global_default(registry_with_file)
-                .expect("Setting default subscriber failed");
+            if let Some(file_layer) = file_layer {
+                if console_enabled {
+                    let registry_with_file_and_console = registry
+                        .with(file_layer)
+                        .with(tracing_subscriber::fmt::layer()
+                            .with_writer(std::io::stdout)
+                            .with_ansi(true));
+                    tracing::subscriber::set_global_default(registry_with_file_and_console)
+                    .expect("Setting default subscriber failed");
+                } else {
+                    let registry_with_file = registry.with(file_layer);
+                    tracing::subscriber::set_global_default(registry_with_file)
+                    .expect("Setting default subscriber failed");
+                }
             } else if console_enabled {
                 let registry_with_console = registry.with(tracing_subscriber::fmt::layer()
                         .with_writer(std::io::stdout)

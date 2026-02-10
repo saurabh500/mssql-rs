@@ -1,7 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::connection::client_context::{ClientContext, TdsAuthenticationMethod, TransportContext};
+use crate::connection::client_context::{
+    ClientContext, TdsAuthenticationMethod, TransportContext, VectorVersion,
+};
 use crate::message::features::jsonfeature::JsonFeature;
 use crate::message::login_options::{
     OptionFlags1, OptionFlags2, OptionFlags3, OptionsValue, TdsVersion, TypeFlags,
@@ -9,7 +11,7 @@ use crate::message::login_options::{
 use crate::message::messages::{PacketType, Request, TdsError};
 
 use crate::io::packet_writer::{PacketWriter, TdsPacketWriter};
-use crate::token::fed_auth_info::FedAuthInfoToken;
+use crate::token::fed_auth_info::{FedAuthInfoToken, SspiToken};
 use crate::token::login_ack::LoginAckToken;
 use crate::token::tokens::{
     EnvChangeContainer, EnvChangeToken, EnvChangeTokenSubType, SqlCollation, Token, Tokens,
@@ -20,6 +22,7 @@ use std::fmt::Debug;
 
 use super::features::fedauth::FedAuthFeature;
 use super::features::utf8::Utf8Feature;
+use super::features::vectorfeature::VectorFeature;
 use crate::core::TdsResult;
 use crate::io::token_stream::{ParserContext, TdsTokenStreamReader};
 use tracing::{Level, debug, event, info, trace};
@@ -54,6 +57,7 @@ pub(crate) enum FeatureExtension {
     Utf8Support,
     SqlDnsCaching,
     Json,
+    Vector,
     Terminator,
     Unknown(u8),
 }
@@ -70,6 +74,7 @@ impl FeatureExtension {
             FeatureExtension::Utf8Support => 0x0A,
             FeatureExtension::SqlDnsCaching => 0x0B,
             FeatureExtension::Json => 0x0D,
+            FeatureExtension::Vector => 0x0E,
             FeatureExtension::Terminator => 0xFF,
             FeatureExtension::Unknown(value) => value,
         }
@@ -88,6 +93,7 @@ impl From<u8> for FeatureExtension {
             0x0A => FeatureExtension::Utf8Support,
             0x0B => FeatureExtension::SqlDnsCaching,
             0x0D => FeatureExtension::Json,
+            0x0E => FeatureExtension::Vector,
             0xFF => FeatureExtension::Terminator,
             _ => FeatureExtension::Unknown(value),
         }
@@ -100,7 +106,7 @@ pub(crate) trait Feature: Send + Sync + Debug {
     fn is_requested(&self) -> bool;
     fn data_length(&self) -> i32;
     async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()>;
-    fn deserialize(&self, data: &[u8]) -> TdsResult<()>;
+    fn deserialize(&mut self, data: &[u8]) -> TdsResult<()>;
     fn is_acknowledged(&self) -> bool;
     fn set_acknowledged(&mut self, _acknowledged: bool);
     fn clone_box(&self) -> Box<dyn Feature>;
@@ -131,6 +137,7 @@ impl FeaturesRequest {
         authentication_options: TdsAuthenticationMethod,
         access_token: Option<String>,
         prelogin_fedauth_response: bool,
+        vector_version: VectorVersion,
     ) -> Self {
         let mut features: HashMap<FeatureExtension, Box<dyn Feature>> = HashMap::new();
         features.insert(
@@ -139,6 +146,10 @@ impl FeaturesRequest {
         );
 
         features.insert(FeatureExtension::Json, Box::new(JsonFeature::default()));
+
+        if let Some(vector_feature) = Option::<VectorFeature>::from(vector_version) {
+            features.insert(FeatureExtension::Vector, Box::new(vector_feature));
+        }
 
         if authentication_options != TdsAuthenticationMethod::SSPI
             && authentication_options != TdsAuthenticationMethod::Password
@@ -230,6 +241,7 @@ impl From<(&ClientContext, bool)> for FeaturesRequest {
             context.tds_authentication_method.clone(),
             context.access_token.clone(),
             context_and_prelogin_fedauth_flag.1,
+            context.vector_version,
         )
     }
 }
@@ -256,6 +268,10 @@ pub(crate) struct LoginRequestModel<'context> {
     pub client_time_zone_deprecated: i32,
     pub client_lcid_deprecated: i32,
     pub client_id: PhysicalAddress,
+    /// SSPI token data for integrated authentication.
+    /// Contains the initial security token (e.g., NTLM Type 1 or Kerberos AP_REQ).
+    /// None for password authentication.
+    pub sspi_token: Option<Vec<u8>>,
 }
 
 impl LoginRequestModel<'_> {
@@ -282,7 +298,23 @@ impl LoginRequestModel<'_> {
             client_time_zone_deprecated: 0,
             client_lcid_deprecated: 0,
             client_id: PhysicalAddress::default(),
+            sspi_token: None, // Set by caller for SSPI authentication
         }
+    }
+
+    /// Creates a LoginRequestModel with an SSPI token for integrated authentication.
+    pub(crate) fn from_context_with_sspi<'a, 'b>(
+        context: &'a ClientContext,
+        pre_login_fedauth_response: bool,
+        transport_context: &'b TransportContext,
+        sspi_token: Vec<u8>,
+    ) -> LoginRequestModel<'b>
+    where
+        'a: 'b,
+    {
+        let mut model = Self::from_context(context, pre_login_fedauth_response, transport_context);
+        model.sspi_token = Some(sspi_token);
+        model
     }
 }
 
@@ -292,6 +324,8 @@ pub(crate) struct LoginResponseModel {
     pub tds_error: Option<TdsError>,
     pub success_token: Option<LoginAckToken>,
     pub fed_auth_info: Option<FedAuthInfoToken>,
+    /// SSPI challenge token from server for integrated authentication
+    pub sspi_token: Option<SspiToken>,
 }
 
 #[repr(u8)]
@@ -302,6 +336,8 @@ pub(crate) enum LoginResponseStatus {
     Error = 0x02,
     WaitingForFedAuth = 0x03,
     Rerouting = 0x04,
+    /// Server sent SSPI challenge token, waiting for client to respond
+    WaitingForSspi = 0x05,
 }
 
 impl LoginResponseModel {
@@ -312,6 +348,7 @@ impl LoginResponseModel {
             tds_error: None,
             success_token: None,
             fed_auth_info: None,
+            sspi_token: None,
         }
     }
 
@@ -407,6 +444,10 @@ impl LoginResponseModel {
             return LoginResponseStatus::WaitingForFedAuth;
         }
 
+        if self.sspi_token.is_some() {
+            return LoginResponseStatus::WaitingForSspi;
+        }
+
         LoginResponseStatus::Error
     }
 }
@@ -450,6 +491,32 @@ impl Request for FedAuthTokenRequest {
             .write_u32_async(self.access_token_bytes.len() as u32)
             .await?;
         writer.write_async(&self.access_token_bytes).await?;
+        writer.finalize().await?;
+        Ok(())
+    }
+}
+
+/// SSPI continuation message for multi-round authentication.
+///
+/// This is sent as packet type 0x11 (SSPI) when responding to
+/// server SSPI challenges during integrated authentication.
+pub(crate) struct SspiRequest {
+    /// The SSPI token data to send to the server
+    pub token_data: Vec<u8>,
+}
+
+#[async_trait]
+impl Request for SspiRequest {
+    fn packet_type(&self) -> PacketType {
+        PacketType::SSPI
+    }
+
+    async fn serialize<'a, 'b>(&'a self, writer: &'a mut PacketWriter<'b>) -> TdsResult<()>
+    where
+        'b: 'a,
+    {
+        // SSPI message is just the raw token data
+        writer.write_async(&self.token_data).await?;
         writer.finalize().await?;
         Ok(())
     }
@@ -535,14 +602,14 @@ impl LoginResponse {
                                 token_type
                             );
                         }
-                        Tokens::Sspi(_t) => {
+                        Tokens::Sspi(sspi_token) => {
                             event!(
-                                Level::ERROR,
-                                "SSPI authentication token received but not yet implemented"
+                                Level::DEBUG,
+                                "SSPI authentication challenge received from server"
                             );
-                            return Err(crate::error::Error::ProtocolError(
-                                "SSPI authentication is not yet implemented".to_string(),
-                            ));
+                            response_model.sspi_token = Some(sspi_token);
+                            // Break to allow caller to process the SSPI challenge
+                            break;
                         }
                         _ => {
                             event!(
@@ -600,6 +667,11 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
         login_record_length += self.model.user_input.len_bytes();
         login_record_length += self.model.transport_context.len_bytes();
         login_record_length += 4; // Feature extension offset size.
+
+        // Add SSPI token length if present
+        if let Some(sspi_token) = &self.model.sspi_token {
+            login_record_length += sspi_token.len() as i32;
+        }
 
         // We write the feature extension at the end of the login record. This is not necessary, but makes reading
         // packets easier. Hence we add the length of the feature extensions data at the end, and save the offset,
@@ -746,13 +818,9 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
                         .await?;
                 }
                 LoginDeferredPayload::ServerName => {
-                    let server_name = self.model.transport_context.get_server_name();
-                    // let server_name = self
-                    //     .model
-                    //     .user_input
-                    //     .transport
-                    //     .get_servername()
-                    //     .to_string();
+                    let server_name = self.model.transport_context.get_login_server_name();
+                    // Use get_login_server_name() to get DataSource format (host,port)
+                    // This matches SqlClient behavior for redirected connections
                     info!("Login Server name: {}", server_name);
                     self.payload_writer
                         .write_string_unicode_async(server_name.as_str())
@@ -795,6 +863,12 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
                     self.payload_writer
                         .write_async(&password_utf16_bytes)
                         .await?;
+                }
+                LoginDeferredPayload::Sspi => {
+                    // Write raw SSPI token bytes
+                    if let Some(sspi_data) = &self.model.sspi_token {
+                        self.payload_writer.write_async(sspi_data).await?;
+                    }
                 }
             }
         }
@@ -879,9 +953,10 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
     }
 
     /// Writes the value of the target sql server to the login packet.
+    /// Uses get_login_server_name() to get DataSource format (host,port) for TCP connections.
     async fn write_server_name(&mut self) -> TdsResult<()> {
         if self
-            .write_metadata(self.model.transport_context.get_server_name().len() as i16)
+            .write_metadata(self.model.transport_context.get_login_server_name().len() as i16)
             .await?
         {
             self.deferred_actions_indicator
@@ -952,7 +1027,38 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
     }
 
     async fn write_sspi_short(&mut self) -> TdsResult<()> {
-        let _ = self.write_metadata(0).await?;
+        // SSPI uses byte length, not character length
+        // For tokens <= 65535 bytes, we use the 2-byte length field
+        // For tokens > 65535 bytes, we set this to 0xFFFF and use cbSSPILong
+        let sspi_len = self.model.sspi_token.as_ref().map_or(0, |t| t.len());
+
+        if sspi_len == 0 {
+            // No SSPI token - write offset and zero length
+            self.payload_writer
+                .write_i16_async(self.content_next_offset as i16)
+                .await?;
+            self.payload_writer.write_i16_async(0).await?;
+            return Ok(());
+        }
+
+        // Write offset
+        self.payload_writer
+            .write_i16_async(self.content_next_offset as i16)
+            .await?;
+
+        if sspi_len <= 0xFFFF {
+            // Short SSPI token - use 2-byte length
+            self.payload_writer.write_u16_async(sspi_len as u16).await?;
+        } else {
+            // Long SSPI token - use 0xFFFF marker and cbSSPILong
+            self.payload_writer.write_u16_async(0xFFFF).await?;
+        }
+
+        // Update offset for the SSPI data
+        self.content_next_offset += sspi_len as i32;
+        self.deferred_actions_indicator
+            .push(LoginDeferredPayload::Sspi);
+
         Ok(())
     }
 
@@ -979,7 +1085,16 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
     }
 
     async fn write_cb_sspi_long(&mut self) -> TdsResult<()> {
-        self.payload_writer.write_i32_async(0).await?;
+        // cbSSPILong is used for SSPI tokens > 65535 bytes
+        // When ibSSPI_length is 0xFFFF, this field contains the actual length
+        let sspi_len = self.model.sspi_token.as_ref().map_or(0, |t| t.len());
+
+        if sspi_len > 0xFFFF {
+            self.payload_writer.write_u32_async(sspi_len as u32).await?;
+        } else {
+            // Not using long format
+            self.payload_writer.write_i32_async(0).await?;
+        }
         Ok(())
     }
 
@@ -1025,6 +1140,8 @@ enum LoginDeferredPayload {
     Database,
     AttachDbFile,
     ChangePassword,
+    /// SSPI token data for integrated authentication
+    Sspi,
 }
 
 /// Trait to calculate the size of the fields for the login records in bytes.
@@ -1034,7 +1151,9 @@ trait SizedLoginItem {
 
 impl SizedLoginItem for TransportContext {
     fn len_bytes(&self) -> i32 {
-        self.get_server_name().len_bytes()
+        // Must match what get_login_server_name() returns for consistency
+        // with write_server_name() which serializes get_login_server_name()
+        self.get_login_server_name().len_bytes()
     }
 }
 
@@ -1077,7 +1196,8 @@ impl SizedLoginItem for ClientContext {
 impl ClientContext {
     /// Calculate the length of the fields to be persisted for the authentication data.
     /// This would involve the length of the username and password for [TdsAuthenticationMethod::Password].
-    /// For TdsAuthenticationMethod::SSPI, we need to add the length of the SSPI information to be sent to the server.
+    /// For TdsAuthenticationMethod::SSPI, the username and password are not sent (they're empty),
+    /// and the SSPI token length is calculated separately in LoginRequestModel.
     /// FedAuth or AccessToken authentication is accounted for, in the Feature extension data.
     fn calculate_byte_length_for_authentication(&self) -> i32 {
         let mut length = 0;
@@ -1087,14 +1207,9 @@ impl ClientContext {
         ) {
             length += self.password.len_bytes();
             length += self.user_name.len_bytes();
-        } else if matches!(
-            self.tds_authentication_method,
-            TdsAuthenticationMethod::SSPI
-        ) {
-            todo!(
-                "SSPI authentication not implemented yet. Add logic to compute the length of the SSPI information to be sent to the server."
-            );
         }
+        // For SSPI/GSSAPI authentication, username and password fields are empty.
+        // The SSPI token is handled separately in LoginRequestModel::calculate_login_record_length().
         length
     }
 }

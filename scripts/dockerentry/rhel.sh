@@ -13,7 +13,8 @@ dnf install -y \
     gcc-c++ \
     make \
     pkgconfig \
-    openssl-devel
+    openssl-devel \
+    krb5-devel
 
 # Install Rust
 curl https://sh.rustup.rs -sSf | sh -s -- -y

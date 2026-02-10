@@ -7,8 +7,8 @@
 //! column information during bulk copy operations, matching the .NET SqlBulkCopy
 //! implementation's metadata handling.
 
-use crate::token::tokens::SqlCollation;
-use tracing::{trace, warn};
+use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
+use tracing::warn;
 
 /// Newtype wrapper for SQL Server's system_type_id values.
 ///
@@ -83,10 +83,9 @@ pub enum SqlDbType {
     Variant,
     Udt,
 
-    // SQL Server 2019+ types
     Json,
 
-    // SQL Server 2025+ types (future)
+    // SQL Server 2025+ types
     Vector,
 }
 
@@ -143,7 +142,34 @@ impl SqlDbType {
             SqlDbType::Json => 0xF4,             // TdsDataType::Json
             SqlDbType::Variant => 0x62,          // TdsDataType::SsVariant
             SqlDbType::Udt => 0xF0,              // TdsDataType::Udt
-            SqlDbType::Vector => 0x00,           // Future type, placeholder
+            SqlDbType::Vector => 0xF5,           // TdsDataType::Vector
+        }
+    }
+
+    /// Map SqlDbType to TDS protocol type byte for bulk copy operations.
+    ///
+    /// This method returns the TDS type that should actually be used when sending
+    /// data via bulk copy. For most types, this is the same as `to_tds_type()`,
+    /// but some types require special handling:
+    ///
+    /// - XML: Returns 0xE7 (NVarChar) because the TDS spec requires XML data to be
+    ///   sent as NVARCHAR(MAX) in bulk copy operations. XML data must be sent as
+    ///   NVARCHAR(MAX) with UTF-16LE encoding. Sending as XMLTYPE (0xF1) causes
+    ///   "Invalid column type from bcp client" errors.
+    /// - JSON: Returns 0xE7 (NVarChar) because SQL Server doesn't support sending
+    ///   JSON type directly in bulk copy operations. JSON data must be sent as
+    ///   NVARCHAR(MAX) with UTF-16LE encoding.
+    ///
+    /// This makes the intention explicit in code: XML/JSON are their respective types,
+    /// but for bulk copy purposes we transmit them as NVARCHAR.
+    pub fn to_bulk_copy_tds_type(&self) -> u8 {
+        match self {
+            // XML must be sent as NVARCHAR(MAX) in bulk copy
+            SqlDbType::Xml => 0xE7, // TdsDataType::NVarChar - TDS spec requirement
+            // JSON must be sent as NVARCHAR(MAX) in bulk copy
+            SqlDbType::Json => 0xE7, // TdsDataType::NVarChar - bulk copy workaround
+            // All other types use their standard TDS type
+            _ => self.to_tds_type(),
         }
     }
 
@@ -407,6 +433,11 @@ pub struct BulkCopyColumnMetadata {
     /// Collation information (for character types)
     pub collation: Option<SqlCollation>,
 
+    /// Collation name (e.g., "SQL_Latin1_General_CP1_CI_AS")
+    /// This is the collation name retrieved from sp_tablecollations_100
+    /// and used in the INSERT BULK SQL command.
+    pub collation_name: Option<String>,
+
     /// Character encoding (for character types)
     pub encoding: Option<EncodingType>,
 
@@ -435,6 +466,7 @@ impl BulkCopyColumnMetadata {
             precision: 0,
             scale: 0,
             collation: None,
+            collation_name: None,
             encoding: None,
             is_nullable: true,
             is_identity: false,
@@ -466,6 +498,13 @@ impl BulkCopyColumnMetadata {
     /// Set collation (for character types).
     pub fn with_collation(mut self, collation: SqlCollation) -> Self {
         self.collation = Some(collation);
+        self
+    }
+
+    /// Set collation name (for character types).
+    /// This is used in the INSERT BULK SQL command.
+    pub fn with_collation_name(mut self, collation_name: impl Into<String>) -> Self {
+        self.collation_name = Some(collation_name.into());
         self
     }
 
@@ -563,10 +602,16 @@ impl BulkCopyColumnMetadata {
                 if self.is_plp() {
                     "nvarchar(max)".to_string()
                 } else {
-                    format!("nvarchar({})", self.length)
+                    // CRITICAL: self.length is in BYTES for NVARCHAR
+                    // T-SQL requires CHARACTER count, so divide by 2
+                    format!("nvarchar({})", self.length / 2)
                 }
             }
-            SqlDbType::NChar => format!("nchar({})", self.length),
+            SqlDbType::NChar => {
+                // CRITICAL: self.length is in BYTES for NCHAR
+                // T-SQL requires CHARACTER count, so divide by 2
+                format!("nchar({})", self.length / 2)
+            }
             SqlDbType::VarChar => {
                 if self.is_plp() {
                     "varchar(max)".to_string()
@@ -593,12 +638,58 @@ impl BulkCopyColumnMetadata {
             SqlDbType::Text => "text".to_string(),
             SqlDbType::NText => "ntext".to_string(),
             SqlDbType::Image => "image".to_string(),
+            // XML must be sent as NVARCHAR(MAX) in bulk copy, but we report it as XML type
+            // in INSERT BULK statement. This is similar to ODBC bulk copy behavior.
             SqlDbType::Xml => "xml".to_string(),
             SqlDbType::Udt => format!("varbinary({})", self.length),
             SqlDbType::Variant => "sql_variant".to_string(),
             SqlDbType::Json => "nvarchar(max)".to_string(),
-            SqlDbType::Vector => format!("vector({})", self.length),
+            SqlDbType::Vector => {
+                let dims = self.vector_dimensions().unwrap_or_else(|e| {
+                    panic!(
+                        "Invalid VECTOR metadata for column '{}': {}",
+                        self.column_name, e
+                    )
+                });
+                format!("vector({})", dims)
+            }
         }
+    }
+
+    /// Compute VECTOR dimensions from total `length` and base type encoded in `scale`.
+    ///
+    /// Returns an error if the column is not a VECTOR, if `length` is smaller
+    /// than the header size, or if the payload is not divisible by the element size.
+    pub fn vector_dimensions(&self) -> crate::core::TdsResult<usize> {
+        use crate::datatypes::sqldatatypes::{VECTOR_HEADER_SIZE, VectorBaseType};
+
+        if self.sql_type != SqlDbType::Vector {
+            return Err(crate::error::Error::UsageError(format!(
+                "Column '{}' is not a VECTOR type",
+                self.column_name
+            )));
+        }
+
+        let base_type = VectorBaseType::try_from(self.scale)?;
+        let elem_size = base_type.element_size_bytes();
+        let length = self.length as usize;
+
+        if length < VECTOR_HEADER_SIZE {
+            return Err(crate::error::Error::UsageError(format!(
+                "Invalid VECTOR metadata length ({}). Must be >= header size {}.",
+                length, VECTOR_HEADER_SIZE
+            )));
+        }
+
+        let payload_bytes = length - VECTOR_HEADER_SIZE;
+        if !payload_bytes.is_multiple_of(elem_size) {
+            return Err(crate::error::Error::UsageError(format!(
+                "Invalid VECTOR metadata length: payload {} not divisible by element size {}",
+                payload_bytes, elem_size
+            )));
+        }
+
+        Ok(payload_bytes / elem_size)
     }
 }
 
@@ -613,6 +704,7 @@ impl Default for BulkCopyColumnMetadata {
             precision: 0,
             scale: 0,
             collation: None,
+            collation_name: None,
             encoding: None,
             is_nullable: true,
             is_identity: false,
@@ -626,13 +718,10 @@ impl Default for BulkCopyColumnMetadata {
 ///
 /// This function extracts the TDS type and other metadata directly from the server's
 /// COLMETADATA response, ensuring we use the exact types that SQL Server expects.
-impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
+impl From<&ColumnMetadata> for BulkCopyColumnMetadata {
     fn from(col: &crate::query::metadata::ColumnMetadata) -> Self {
         use crate::datatypes::sqldatatypes::TdsDataType;
         use crate::datatypes::sqldatatypes::TypeInfoVariant;
-
-        // Extract TDS type byte
-        let tds_type = col.data_type as u8;
 
         // Map TDS type to SqlDbType
         let sql_type = match col.data_type {
@@ -712,6 +801,7 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
             TdsDataType::Json => SqlDbType::Json,
             TdsDataType::Udt => SqlDbType::Udt,
             TdsDataType::SsVariant => SqlDbType::Variant,
+            TdsDataType::Vector => SqlDbType::Vector,
             _ => SqlDbType::VarChar, // Default fallback
         };
 
@@ -725,11 +815,8 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
                 (*len as i32, TypeLength::Variable(*len as i32), 0, 0)
             }
             TypeInfoVariant::VarLenString(_len, max_len, _collation) => {
-                trace!(
-                    "VarLenString - max_len={}, col_name={}",
-                    max_len, col.column_name
-                );
-                if *max_len == 0xFFFF {
+                // Check for MAX types: 0xFFFF (65535) indicates unlimited size
+                if *max_len == 65535 {
                     (-1, TypeLength::Plp, 0, 0)
                 } else {
                     // Use max_len for both length and type_length (column definition size)
@@ -754,14 +841,21 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
                 _chunk_size,
                 _plp_null,
             ) => {
-                // PLP types
-                if unknown_len.is_none() {
+                // PLP types (BLOB/CLOB types)
+                // For MAX types (VARCHAR(MAX), NVARCHAR(MAX), VARBINARY(MAX), etc.),
+                // SQL Server sends 0xFFFF (65535) which should be treated as -1 (unlimited)
+                if unknown_len.is_none() || *unknown_len == Some(65535) {
                     (-1, TypeLength::Plp, 0, 0)
                 } else {
                     (unknown_len.unwrap() as i32, TypeLength::Plp, 0, 0)
                 }
             }
         };
+
+        // Get the correct TDS type for bulk copy (may differ from server's type)
+        // For example, JSON (0xF4) & XML (0xF1) must be sent as NVarChar(MAX) (0xE7)
+        // for bulk copy
+        let tds_type = sql_type.to_bulk_copy_tds_type();
 
         let mut metadata = BulkCopyColumnMetadata::new(&col.column_name, sql_type, tds_type)
             .with_length(length, type_length)
@@ -773,6 +867,17 @@ impl From<&crate::query::metadata::ColumnMetadata> for BulkCopyColumnMetadata {
 
         if let Some(collation) = col.get_collation() {
             metadata = metadata.with_collation(collation);
+        } else if sql_type == SqlDbType::Json {
+            // JSON columns don't have collation in server metadata, but we need it
+            // when sending as VARCHAR(MAX) (0xA7) for bulk copy workaround.
+            // Use all-zero collation like .NET SqlBulkCopy does for JSON columns.
+
+            metadata = metadata.with_collation(crate::token::tokens::SqlCollation {
+                info: 0x00000000, // All zeros for JSON (UTF-8 encoding)
+                lcid_language_id: 0,
+                col_flags: 0,
+                sort_id: 0,
+            });
         }
 
         if col.is_identity() {

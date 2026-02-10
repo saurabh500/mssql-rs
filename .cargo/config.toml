@@ -2,3 +2,9 @@
 bfmt = "fmt -- --check"
 bclippy = "clippy --workspace --frozen --all-features --all-targets -- -D warnings"
 btest = "llvm-cov nextest --workspace --frozen --no-report --all-targets --no-fail-fast --profile ci --success-output immediate"
+
+[registries]
+"mssql-rs_Public" = { index = "sparse+https://pkgs.dev.azure.com/sqlclientdrivers/public/_packaging/mssql-rs_Public/Cargo/index/" }
+
+[source.crates-io]
+replace-with = "mssql-rs_Public"

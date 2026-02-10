@@ -4,19 +4,20 @@
 use crate::connection::client_context::{ClientContext, TransportContext};
 use crate::core::{EncryptionSetting, NegotiatedEncryptionSetting, TdsResult};
 use crate::error::Error;
+use crate::handler::sspi_handler::SspiAuthHandler;
 use crate::io::packet_reader::TdsPacketReader;
 use crate::io::reader_writer::NetworkReaderWriter;
 use crate::io::token_stream::TdsTokenStreamReader;
 use crate::message::login::{
     EnvChangeProperties, Feature, FeaturesRequest, FedAuthTokenRequest, LoginRequest,
-    LoginRequestModel, LoginResponse, LoginResponseModel, LoginResponseStatus,
+    LoginRequestModel, LoginResponse, LoginResponseModel, LoginResponseStatus, SspiRequest,
 };
 use crate::message::messages::Request;
 use crate::message::prelogin::{
     EncryptionType, PreloginRequest, PreloginRequestModel, PreloginResponse,
 };
 use crate::token::tokens::SqlCollation;
-use tracing::warn;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 pub(crate) struct HandlerFactory {
@@ -234,8 +235,13 @@ impl<'a, 'b> SessionHandler<'a, 'b> {
         Ok(())
     }
 
-    fn validate_login_result(&self, _result: &LoginResult) -> TdsResult<()> {
-        // No validation currently.
+    fn validate_login_result(&self, result: &LoginResult) -> TdsResult<()> {
+        // Check if login succeeded
+        if result.status == LoginResponseStatus::Error {
+            return Err(Error::ProtocolError(
+                "Login failed: Server did not send login acknowledgement".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -412,13 +418,67 @@ impl LoginHandler<'_> {
             reader_writer.enable_ssl().await?;
         }
 
-        let request_model = self
+        let (request_model, mut sspi_handler) = self
             .send_login7_request(reader_writer, transport_context)
             .await?;
         let requested_features = request_model.features_request;
         let mut login_response = self
             .get_login_response(reader_writer, requested_features.clone())
             .await?;
+
+        // Handle SSPI challenge-response loop for integrated authentication
+        while login_response.get_status() == LoginResponseStatus::WaitingForSspi {
+            let sspi_challenge = login_response.sspi_token.as_ref().ok_or_else(|| {
+                Error::ProtocolError(
+                    "Login response status is WaitingForSspi but no sspi_token present".to_string(),
+                )
+            })?;
+
+            let handler = sspi_handler.as_mut().ok_or_else(|| {
+                Error::ProtocolError(
+                    "Received SSPI challenge but no SSPI handler available".to_string(),
+                )
+            })?;
+
+            debug!(
+                "Processing SSPI challenge ({} bytes)",
+                sspi_challenge.data.len()
+            );
+
+            // Process the challenge and generate response
+            let response_opt = handler.process_challenge(&sspi_challenge.data)?;
+            match response_opt {
+                Some(response_token) => {
+                    debug!("Sending SSPI response ({} bytes)", response_token.len());
+
+                    // Send SSPI response as packet type 0x11
+                    let sspi_request = SspiRequest {
+                        token_data: response_token,
+                    };
+                    let mut packet_writer =
+                        sspi_request.create_packet_writer(reader_writer, None, None);
+                    sspi_request.serialize(&mut packet_writer).await?;
+
+                    // Get next response from server after sending our response
+                    login_response = self
+                        .get_login_response(reader_writer, requested_features.clone())
+                        .await?;
+                }
+                None => {
+                    // No response token needed from GSSAPI, but we still need to read
+                    // the server's final response (LoginAck or next challenge)
+                    debug!(
+                        "SSPI authentication complete, no response needed - reading final server response"
+                    );
+
+                    // Read the final response from server
+                    login_response = self
+                        .get_login_response(reader_writer, requested_features.clone())
+                        .await?;
+                    // The final response was read - the while loop will now exit since status is no longer WaitingForSspi
+                }
+            }
+        }
 
         // Handle the case where federated authentication was requested, and now we have to respond.
         login_response = if login_response.get_status() == LoginResponseStatus::WaitingForFedAuth {
@@ -469,26 +529,58 @@ impl LoginHandler<'_> {
         &'a self,
         reader_writer: &mut impl NetworkReaderWriter,
         transport_context: &'b TransportContext,
-    ) -> TdsResult<LoginRequestModel<'a>>
+    ) -> TdsResult<(LoginRequestModel<'a>, Option<SspiAuthHandler>)>
     where
         'b: 'a,
     {
-        let request = self
-            .factory
-            .create_login_request(self.prelogin_fedauth_supported, transport_context);
-        let request_model: &LoginRequestModel = &request.model;
+        let context = &self.factory.context;
+        let is_integrated_security = context.integrated_security();
 
-        if request_model.user_input.integrated_security() {
-            return Err(Error::UnimplementedFeature {
-                feature: "Integrated security".to_string(),
-                context: "Integrated security authentication is not supported yet".to_string(),
-            });
-        }
+        // If using integrated security, create SSPI handler and get initial token
+        let (sspi_token, sspi_handler) = if is_integrated_security {
+            let config = context.integrated_auth_config();
+            let server = transport_context.get_server_name();
+            let port = transport_context.get_port();
+
+            debug!(
+                "Creating SSPI handler for integrated authentication to {}:{}",
+                server, port
+            );
+
+            let mut handler = SspiAuthHandler::new(&config, &server, port)?;
+            let initial_token = handler.get_initial_token()?;
+
+            debug!(
+                "Generated initial SSPI token ({} bytes) using {}",
+                initial_token.len(),
+                handler.package_name()
+            );
+
+            (Some(initial_token), Some(handler))
+        } else {
+            (None, None)
+        };
+
+        // Create the login request, optionally with SSPI token
+        let request = if let Some(token) = sspi_token {
+            LoginRequest {
+                model: LoginRequestModel::from_context_with_sspi(
+                    context,
+                    self.prelogin_fedauth_supported,
+                    transport_context,
+                    token,
+                ),
+            }
+        } else {
+            self.factory
+                .create_login_request(self.prelogin_fedauth_supported, transport_context)
+        };
 
         // Note that the login process uses a timeout at a higher level than the request.
         let mut packet_writer = request.create_packet_writer(reader_writer, None, None);
         request.serialize(&mut packet_writer).await?;
-        Ok(request.model)
+
+        Ok((request.model, sspi_handler))
     }
 
     async fn get_login_response<T: TdsTokenStreamReader>(

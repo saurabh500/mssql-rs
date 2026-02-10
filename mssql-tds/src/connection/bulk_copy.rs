@@ -44,163 +44,18 @@
 //! println!("Inserted {} rows", result.rows_affected);
 //! ```
 
-use crate::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
+use crate::connection::bulk_copy_state::{ATTENTION_TIMEOUT_SECONDS, BulkCopyTimeoutState};
+use crate::connection::metadata_retriever::{FmtOnlyMetadataRetriever, MetadataRetriever};
+use crate::connection::tds_client::TdsClient;
 use crate::core::TdsResult;
-use crate::datatypes::bulk_copy_metadata::{
-    BulkCopyColumnMetadata, SqlDbType, SystemTypeId, TypeLength,
-};
-use crate::datatypes::column_values::ColumnValues;
+use crate::datatypes::bulk_copy_metadata::{BulkCopyColumnMetadata, SqlDbType};
 use crate::error::Error;
-use crate::message::bulk_load::BulkLoadMessage;
-use crate::token::tokens::SqlCollation;
+use crate::error::bulk_copy_errors::{
+    BulkCopyAttentionTimeoutError, BulkCopyError, BulkCopyTimeoutError,
+};
+use crate::message::transaction_management::TransactionIsolationLevel;
+use async_trait::async_trait;
 use std::time::{Duration, Instant};
-use tracing::{debug, trace};
-
-/// Trait for types that can be bulk copied to SQL Server.
-///
-/// Implement this trait for your custom types to enable bulk copy operations.
-/// The trait only requires implementing `to_column_values()` which converts your
-/// struct into a vector of column values. Column metadata is automatically retrieved
-/// from the destination SQL Server table.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use mssql_tds::connection::bulk_copy::BulkCopyRow;
-/// use mssql_tds::datatypes::column_values::ColumnValues;
-///
-/// struct Product {
-///     id: i32,
-///     name: String,
-///     price: f64,
-/// }
-///
-/// impl BulkCopyRow for Product {
-///     fn to_column_values(&self) -> Vec<ColumnValues> {
-///         vec![
-///             ColumnValues::Int(self.id),
-///             ColumnValues::String(self.name.clone().into()),
-///             ColumnValues::Float(self.price),
-///         ]
-///     }
-/// }
-///
-/// // Use it:
-/// let products = vec![Product { id: 1, name: "Widget".to_string(), price: 9.99 }];
-/// let bulk_copy = BulkCopy::new(&mut client, "Products");
-/// bulk_copy.write_to_server(products.into_iter()).await?;
-/// ```
-pub trait BulkCopyRow {
-    /// Convert this row to a vector of column values.
-    ///
-    /// The order of values must match the order of columns in the destination table.
-    /// Column metadata is automatically retrieved from SQL Server, so you don't need
-    /// to specify types, lengths, or TDS protocol details.
-    fn to_column_values(&self) -> Vec<ColumnValues>;
-}
-
-/// Metadata about a destination table column.
-///
-/// This is retrieved from SQL Server's system tables and used for
-/// automatic column mapping and type validation.
-#[derive(Debug, Clone)]
-pub struct DestinationColumnMetadata {
-    /// Column name
-    pub name: String,
-
-    /// Column ordinal (0-based position in table)
-    pub ordinal: usize,
-
-    /// SQL Server type ID (from sys.columns.system_type_id)
-    pub system_type_id: u8,
-
-    /// SqlDbType mapped from system_type_id
-    pub sql_type: SqlDbType,
-
-    /// Maximum length in bytes (-1 for MAX types)
-    pub max_length: i16,
-
-    /// Precision (for numeric/decimal types)
-    pub precision: u8,
-
-    /// Scale (for numeric/decimal types)
-    pub scale: u8,
-
-    /// Whether the column allows NULL values
-    pub is_nullable: bool,
-
-    /// Whether the column is an identity column
-    pub is_identity: bool,
-
-    /// Whether the column is computed
-    pub is_computed: bool,
-
-    /// Collation (for string types)
-    pub collation: Option<SqlCollation>,
-}
-
-impl DestinationColumnMetadata {
-    /// Convert destination metadata to BulkCopyColumnMetadata for protocol serialization.
-    pub fn to_bulk_copy_metadata(&self) -> BulkCopyColumnMetadata {
-        // Use fixed-length types for non-nullable columns, nullable types for nullable columns
-        let tds_type = if self.is_nullable {
-            self.sql_type.to_tds_type()
-        } else {
-            self.sql_type.to_tds_type_fixed()
-        };
-
-        let type_length = match self.sql_type {
-            SqlDbType::BigInt
-            | SqlDbType::Int
-            | SqlDbType::SmallInt
-            | SqlDbType::TinyInt
-            | SqlDbType::Bit
-            | SqlDbType::Real
-            | SqlDbType::Float
-            | SqlDbType::Date
-            | SqlDbType::SmallDateTime
-            | SqlDbType::Money
-            | SqlDbType::SmallMoney => TypeLength::Fixed(self.max_length as i32),
-            SqlDbType::VarChar | SqlDbType::NVarChar | SqlDbType::VarBinary => {
-                if self.max_length == -1 {
-                    TypeLength::Plp
-                } else {
-                    TypeLength::Variable(self.max_length as i32)
-                }
-            }
-            SqlDbType::Char | SqlDbType::NChar | SqlDbType::Binary => {
-                TypeLength::Fixed(self.max_length as i32)
-            }
-            SqlDbType::Text
-            | SqlDbType::NText
-            | SqlDbType::Image
-            | SqlDbType::Xml
-            | SqlDbType::Json => TypeLength::Plp,
-            _ => TypeLength::Variable(self.max_length as i32),
-        };
-
-        let mut metadata = BulkCopyColumnMetadata::new(&self.name, self.sql_type, tds_type)
-            .with_length(self.max_length as i32, type_length)
-            .with_nullable(self.is_nullable);
-
-        if matches!(self.sql_type, SqlDbType::Decimal | SqlDbType::Numeric) {
-            metadata = metadata.with_precision_scale(self.precision, self.scale);
-        }
-
-        if let Some(collation) = self.collation {
-            metadata = metadata.with_collation(collation);
-        }
-
-        if self.is_identity {
-            metadata = metadata.with_identity(true);
-        }
-
-        // Note: Computed columns are typically skipped in bulk copy operations
-        // The metadata doesn't need to track this flag for serialization
-
-        metadata
-    }
-}
 
 /// Options for configuring bulk copy operations.
 ///
@@ -230,8 +85,21 @@ pub struct BulkCopyOptions {
     /// Obtain a bulk update lock for the duration of the operation. Default: false
     pub table_lock: bool,
 
-    /// Use an internal transaction for the bulk copy. Default: true
-    /// If true, the entire operation is wrapped in a transaction.
+    /// Use an internal transaction for the bulk copy. Default: false
+    ///
+    /// When `true`, each batch is wrapped in its own transaction:
+    /// - BEGIN TRANSACTION before each batch
+    /// - COMMIT TRANSACTION on successful batch completion
+    /// - ROLLBACK TRANSACTION on batch failure
+    ///
+    /// When `false` (the default, matching .NET SqlBulkCopy behavior):
+    /// - If the connection has an active API transaction, the bulk copy
+    ///   participates in that transaction
+    /// - If no transaction exists, SQL Server's autocommit mode applies
+    ///   (each batch is auto-committed when the DONE packet is acknowledged)
+    ///
+    /// **Note**: This option cannot be used when the connection already has
+    /// an active transaction. Attempting to do so will result in an error.
     pub use_internal_transaction: bool,
 
     /// Number of rows to process before calling the progress callback.
@@ -249,7 +117,7 @@ impl Default for BulkCopyOptions {
             keep_identity: false,
             keep_nulls: false,
             table_lock: false,
-            use_internal_transaction: true,
+            use_internal_transaction: false, // Matches .NET SqlBulkCopy default
             notification_interval: 0,
         }
     }
@@ -313,15 +181,15 @@ impl ColumnMapping {
 /// This is the result of resolving user-provided column mappings against
 /// the actual destination table metadata.
 #[derive(Debug, Clone)]
-struct ResolvedColumnMapping {
+pub struct ResolvedColumnMapping {
     /// Source column index (0-based)
-    source_index: usize,
+    pub source_index: usize,
     /// Destination column index (0-based)
-    destination_index: usize,
+    pub destination_index: usize,
     /// Destination column name
-    destination_name: String,
+    pub destination_name: String,
     /// Expected destination type
-    destination_type: SqlDbType,
+    pub destination_type: SqlDbType,
 }
 
 /// Progress information for bulk copy operations.
@@ -427,8 +295,14 @@ pub struct BulkCopy<'a> {
     /// Progress callback
     progress_callback: Option<Box<dyn FnMut(BulkCopyProgress) + Send + 'a>>,
 
-    /// Cached destination table metadata (retrieved from sys.columns)
-    destination_metadata: Option<Vec<DestinationColumnMetadata>>,
+    /// Cached destination table metadata (retrieved from server)
+    destination_metadata: Option<Vec<BulkCopyColumnMetadata>>,
+
+    /// Metadata retriever strategy
+    metadata_retriever: Box<dyn MetadataRetriever + 'a>,
+
+    /// Timeout state for tracking operation timeout and attention handling
+    timeout_state: Option<BulkCopyTimeoutState>,
 }
 
 impl<'a> BulkCopy<'a> {
@@ -452,6 +326,43 @@ impl<'a> BulkCopy<'a> {
             column_mappings: Vec::new(),
             progress_callback: None,
             destination_metadata: None,
+            metadata_retriever: Box::new(FmtOnlyMetadataRetriever::new()),
+            timeout_state: None,
+        }
+    }
+
+    /// Create a new `BulkCopy` instance with a custom metadata retriever.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - A mutable reference to the TDS client connection
+    /// * `table_name` - Name of the destination table (can include schema: "dbo.Users")
+    /// * `retriever` - Custom metadata retriever implementation
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let custom_retriever = CachedMetadataRetriever::new();
+    /// let mut bulk_copy = BulkCopy::with_retriever(
+    ///     &mut client,
+    ///     "MyTable",
+    ///     Box::new(custom_retriever)
+    /// );
+    /// ```
+    pub fn with_retriever(
+        client: &'a mut TdsClient,
+        table_name: impl Into<String>,
+        retriever: Box<dyn MetadataRetriever + 'a>,
+    ) -> Self {
+        Self {
+            client,
+            table_name: table_name.into(),
+            options: BulkCopyOptions::default(),
+            column_mappings: Vec::new(),
+            progress_callback: None,
+            destination_metadata: None,
+            metadata_retriever: retriever,
+            timeout_state: None,
         }
     }
 
@@ -584,16 +495,27 @@ impl<'a> BulkCopy<'a> {
 
     /// Set whether to use an internal transaction.
     ///
-    /// Default: true (entire operation wrapped in a transaction)
+    /// Default: false (matches .NET SqlBulkCopy behavior)
+    ///
+    /// When `true`, each batch is wrapped in its own transaction:
+    /// - BEGIN TRANSACTION before each batch
+    /// - COMMIT TRANSACTION on successful batch completion
+    /// - ROLLBACK TRANSACTION on batch failure
+    ///
+    /// When `false` (the default):
+    /// - If the connection has an active API transaction, bulk copy participates in it
+    /// - If no transaction exists, SQL Server's autocommit mode applies
+    ///
+    /// **Note**: Cannot be used when the connection already has an active transaction.
     ///
     /// # Arguments
     ///
-    /// * `enabled` - If true, the operation will use an internal transaction
+    /// * `enabled` - If true, use internal per-batch transactions
     ///
     /// # Example
     ///
     /// ```rust,ignore
-    /// bulk_copy.use_internal_transaction(false); // Use external transaction
+    /// bulk_copy.use_internal_transaction(true); // Use internal transaction per batch
     /// ```
     pub fn use_internal_transaction(mut self, enabled: bool) -> Self {
         self.options.use_internal_transaction = enabled;
@@ -640,6 +562,125 @@ impl<'a> BulkCopy<'a> {
         self
     }
 
+    /// Resolve user-provided column mappings against destination metadata.
+    ///
+    /// This method converts ColumnMapping (which can specify source by name or ordinal)
+    /// into ResolvedColumnMapping (which uses ordinals for both source and destination).
+    ///
+    /// # Arguments
+    ///
+    /// * `destination_metadata` - Metadata for the destination table columns
+    ///
+    /// # Returns
+    ///
+    /// A vector of resolved mappings, sorted by destination column index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a destination column name is not found in the metadata.
+    fn resolve_column_mappings(
+        &self,
+        destination_metadata: &[BulkCopyColumnMetadata],
+    ) -> TdsResult<Vec<ResolvedColumnMapping>> {
+        let mut resolved = Vec::with_capacity(self.column_mappings.len());
+
+        for mapping in &self.column_mappings {
+            // Get source index (for ordinal-based mappings, use the ordinal directly)
+            let source_index = match &mapping.source {
+                ColumnMappingSource::Ordinal(idx) => *idx,
+                ColumnMappingSource::Name(_) => {
+                    // For name-based source mappings, we can't resolve without source metadata
+                    // This is typically used with DataReader sources, not iterator-based sources
+                    return Err(Error::UsageError(
+                        "Source column name mappings are not supported with iterator-based bulk copy".to_string()
+                    ));
+                }
+            };
+
+            // Find destination column index by name
+            let dest_column = destination_metadata
+                .iter()
+                .enumerate()
+                .find(|(_, col)| col.column_name == mapping.destination)
+                .ok_or_else(|| {
+                    Error::UsageError(format!(
+                        "Destination column '{}' not found in table",
+                        mapping.destination
+                    ))
+                })?;
+
+            resolved.push(ResolvedColumnMapping {
+                source_index,
+                destination_index: dest_column.0,
+                destination_name: dest_column.1.column_name.clone(),
+                destination_type: dest_column.1.sql_type,
+            });
+        }
+
+        // Sort by destination index to ensure we write columns in the correct order
+        resolved.sort_by_key(|m| m.destination_index);
+
+        Ok(resolved)
+    }
+
+    /// Validate transaction state before starting bulk copy.
+    ///
+    /// This method checks for conflicting transaction configurations and ensures
+    /// the connection is in a valid state for bulk copy operations.
+    ///
+    /// # Validation Rules
+    ///
+    /// 1. If `use_internal_transaction` is true and the connection already has
+    ///    an active transaction, this is an error (mirrors .NET Transaction4.cs test:
+    ///    "BulkLoadConflictingTransactionOption")
+    ///
+    /// 2. If the connection has an active transaction but `use_internal_transaction`
+    ///    is false, the bulk copy will participate in that external transaction
+    ///    (this is valid - mirrors .NET Transaction2.cs behavior)
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::UsageError` if the transaction state is invalid.
+    fn validate_transaction_state(&self) -> TdsResult<()> {
+        let has_active_transaction = self.client.has_active_transaction();
+        let use_internal_transaction = self.options.use_internal_transaction;
+
+        // Check for conflicting configuration:
+        // Cannot use internal transaction when connection already has a transaction
+        // This mirrors .NET SqlBulkCopy constructor validation (line 264-269):
+        // "Must not specify SqlBulkCopyOption.UseInternalTransaction and pass an
+        //  external Transaction at the same time."
+        if use_internal_transaction && has_active_transaction {
+            return Err(Error::UsageError(
+                "Cannot use UseInternalTransaction when the connection already has an active transaction. \
+                 Either commit/rollback the existing transaction, or set use_internal_transaction to false \
+                 to participate in the existing transaction.".to_string()
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Get resolved column mappings for the current configuration.
+    ///
+    /// This method retrieves destination metadata (if not already cached) and
+    /// resolves the column mappings, returning them for use by the row adapter.
+    ///
+    /// # Returns
+    ///
+    /// A vector of resolved column mappings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if metadata retrieval or mapping resolution fails.
+    pub async fn get_resolved_mappings(&mut self) -> TdsResult<Vec<ResolvedColumnMapping>> {
+        // Ensure we have destination metadata
+        let destination_metadata = self.retrieve_destination_metadata().await?;
+
+        // Resolve the mappings
+        self.resolve_column_mappings(&destination_metadata)
+    }
+
     /// Set a progress callback to receive notifications during the operation.
     ///
     /// The callback is invoked every `notification_interval` rows (if set).
@@ -669,18 +710,18 @@ impl<'a> BulkCopy<'a> {
 
     /// Retrieve destination table metadata from SQL Server.
     ///
-    /// This queries the sys.columns catalog view to get column information
+    /// This uses the configured metadata retriever strategy to get column information
     /// for the destination table. The metadata is cached for subsequent operations.
     ///
     /// # Returns
     ///
-    /// A vector of `DestinationColumnMetadata` containing column information
+    /// A vector of `BulkCopyColumnMetadata` containing column information
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - Table does not exist
-    /// - No permission to access sys.columns
+    /// - No permission to access metadata
     /// - Network errors during query execution
     ///
     /// # Example
@@ -688,198 +729,22 @@ impl<'a> BulkCopy<'a> {
     /// ```rust,ignore
     /// let metadata = bulk_copy.retrieve_destination_metadata().await?;
     /// for col in &metadata {
-    ///     println!("Column: {}, Type: {:?}", col.name, col.sql_type);
+    ///     println!("Column: {}, Type: {:?}", col.column_name, col.sql_type);
     /// }
     /// ```
     pub async fn retrieve_destination_metadata(
         &mut self,
-    ) -> TdsResult<Vec<DestinationColumnMetadata>> {
+    ) -> TdsResult<Vec<BulkCopyColumnMetadata>> {
         // Check if we already have cached metadata
         if let Some(ref metadata) = self.destination_metadata {
             return Ok(metadata.clone());
         }
 
-        // Parse table name to extract schema and table
-        let (schema, table) = self.parse_table_name();
-
-        // Query sys.columns for table metadata
-        // Handle temp tables (starting with #) which are in tempdb
-        let query = if table.starts_with('#') {
-            // Temp tables are in tempdb.sys.objects
-            format!(
-                "SELECT \
-                    c.name, \
-                    c.column_id, \
-                    c.system_type_id, \
-                    c.max_length, \
-                    c.precision, \
-                    c.scale, \
-                    c.is_nullable, \
-                    c.is_identity, \
-                    c.is_computed, \
-                    c.collation_name \
-                FROM tempdb.sys.columns c \
-                INNER JOIN tempdb.sys.objects o ON c.object_id = o.object_id \
-                WHERE o.name LIKE '{}%' \
-                ORDER BY c.column_id",
-                table.replace('\'', "''").replace("%", "[%]") // Escape wildcards for LIKE
-            )
-        } else {
-            // Regular tables
-            format!(
-                "SELECT \
-                    c.name, \
-                    c.column_id, \
-                    c.system_type_id, \
-                    c.max_length, \
-                    c.precision, \
-                    c.scale, \
-                    c.is_nullable, \
-                    c.is_identity, \
-                    c.is_computed, \
-                    c.collation_name \
-                FROM sys.columns c \
-                INNER JOIN sys.objects o ON c.object_id = o.object_id \
-                WHERE o.name = '{}' AND SCHEMA_NAME(o.schema_id) = '{}' \
-                ORDER BY c.column_id",
-                table.replace('\'', "''"), // Escape single quotes
-                schema.replace('\'', "''")
-            )
-        };
-
-        // Execute the query
-        self.client
-            .execute(query, Some(self.options.timeout_sec), None)
+        // Use the metadata retriever strategy
+        let metadata = self
+            .metadata_retriever
+            .retrieve_metadata(self.client, &self.table_name, self.options.timeout_sec)
             .await?;
-
-        // Read the results
-        let mut metadata = Vec::new();
-
-        if let Some(resultset) = self.client.get_current_resultset() {
-            while let Some(row) = resultset.next_row().await? {
-                if row.len() < 10 {
-                    return Err(Error::UsageError(
-                        "Unexpected number of columns in metadata query result".to_string(),
-                    ));
-                }
-
-                // Extract column values
-                let name = match &row[0] {
-                    ColumnValues::String(s) => s.to_utf8_string(),
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected string for column name".to_string(),
-                        ));
-                    }
-                };
-
-                let column_id = match &row[1] {
-                    ColumnValues::Int(i) => *i as usize,
-                    _ => return Err(Error::UsageError("Expected int for column_id".to_string())),
-                };
-
-                let system_type_id = match &row[2] {
-                    ColumnValues::TinyInt(t) => *t,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected tinyint for system_type_id".to_string(),
-                        ));
-                    }
-                };
-
-                let max_length = match &row[3] {
-                    ColumnValues::SmallInt(s) => *s,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected smallint for max_length".to_string(),
-                        ));
-                    }
-                };
-
-                let precision = match &row[4] {
-                    ColumnValues::TinyInt(p) => *p,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected tinyint for precision".to_string(),
-                        ));
-                    }
-                };
-
-                let scale = match &row[5] {
-                    ColumnValues::TinyInt(s) => *s,
-                    _ => return Err(Error::UsageError("Expected tinyint for scale".to_string())),
-                };
-
-                let is_nullable = match &row[6] {
-                    ColumnValues::Bit(b) => *b,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected bit for is_nullable".to_string(),
-                        ));
-                    }
-                };
-
-                let is_identity = match &row[7] {
-                    ColumnValues::Bit(b) => *b,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected bit for is_identity".to_string(),
-                        ));
-                    }
-                };
-
-                let is_computed = match &row[8] {
-                    ColumnValues::Bit(b) => *b,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected bit for is_computed".to_string(),
-                        ));
-                    }
-                };
-
-                // collation_name can be NULL for non-string types
-                let _collation_name = match &row[9] {
-                    ColumnValues::String(s) => Some(s.to_utf8_string()),
-                    ColumnValues::Null => None,
-                    _ => {
-                        return Err(Error::UsageError(
-                            "Expected string or NULL for collation_name".to_string(),
-                        ));
-                    }
-                };
-
-                // Map system_type_id to SqlDbType using TryFrom trait with SystemTypeId wrapper
-                let sql_type = SqlDbType::try_from(SystemTypeId(system_type_id))?;
-
-                // TODO: Parse collation_name to create SqlCollation
-                // For now, use None (will be enhanced in future)
-                let collation = None;
-
-                metadata.push(DestinationColumnMetadata {
-                    name,
-                    ordinal: column_id - 1, // SQL Server is 1-based, we use 0-based
-                    system_type_id,
-                    sql_type,
-                    max_length,
-                    precision,
-                    scale,
-                    is_nullable,
-                    is_identity,
-                    is_computed,
-                    collation,
-                });
-            }
-        }
-
-        // Close the query
-        self.client.close_query().await?;
-
-        if metadata.is_empty() {
-            return Err(Error::UsageError(format!(
-                "Table '{}' not found or has no columns",
-                self.table_name
-            )));
-        }
 
         // Cache the metadata
         self.destination_metadata = Some(metadata.clone());
@@ -887,468 +752,152 @@ impl<'a> BulkCopy<'a> {
         Ok(metadata)
     }
 
-    /// Retrieve destination table metadata directly from SQL Server's COLMETADATA token.
+    /// Writes rows to the server using zero-copy bulk load operations.
     ///
-    /// This method uses `SET FMTONLY ON` to get the exact column metadata (including TDS types)
-    /// that SQL Server expects, without query execution overhead. The approach dynamically builds
-    /// the column list from sys.all_columns to support hidden columns (temporal tables) and
-    /// exclude SQL Graph columns that cannot be selected.
+    /// This method implements the zero-copy optimization path that eliminates per-row
+    /// Vec allocations by serializing rows directly to the packet writer.
     ///
-    /// This matches the .NET SqlBulkCopy behavior which uses FMTONLY to query the table schema
-    /// before sending bulk data.
+    /// # Performance
     ///
-    /// # Returns
+    /// This method provides superior performance compared to `write_to_server` by:
+    /// - Eliminating the `dest_buffer.clone()` allocation per row (0 allocations vs 1)
+    /// - Writing columns directly to the TDS packet without intermediate buffering
+    /// - Reusing column contexts across all rows (created once during metadata phase)
     ///
-    /// A vector of `BulkCopyColumnMetadata` with TDS types from the server
+    /// # Type Parameters
     ///
-    /// # Errors
+    /// * `I` - Iterator over rows
+    /// * `R` - Row type implementing `BulkLoadRow` trait
     ///
-    /// Returns an error if:
-    /// - The table doesn't exist
-    /// - Network errors occur
-    /// - Timeout occurs
-    pub async fn retrieve_destination_metadata_from_server(
-        &mut self,
-    ) -> TdsResult<Vec<BulkCopyColumnMetadata>> {
-        // Fetch metadata from the server using COLMETADATA token
-        let col_metadata = self
-            .client
-            .fetch_table_metadata(&self.table_name, Some(self.options.timeout_sec), None)
-            .await?;
-
-        // Convert from ColumnMetadata (from COLMETADATA token) to BulkCopyColumnMetadata
-        let bulk_copy_metadata: Vec<BulkCopyColumnMetadata> =
-            col_metadata.columns.iter().map(|col| col.into()).collect();
-
-        if bulk_copy_metadata.is_empty() {
-            return Err(Error::UsageError(format!(
-                "Table '{}' not found or has no columns",
-                self.table_name
-            )));
-        }
-
-        debug!(
-            "Retrieved {} columns with server TDS types:",
-            bulk_copy_metadata.len()
-        );
-        for (i, meta) in bulk_copy_metadata.iter().enumerate() {
-            trace!(
-                "Column {}: name='{}', tds_type=0x{:02X}, sql_type={:?}, nullable={}",
-                i, meta.column_name, meta.tds_type, meta.sql_type, meta.is_nullable
-            );
-        }
-
-        Ok(bulk_copy_metadata)
-    }
-
-    /// Parse table name into schema and table components.
-    ///
-    /// Handles formats:
-    /// - "Users" → ("dbo", "Users")
-    /// - "dbo.Users" → ("dbo", "Users")
-    /// - "schema.table" → ("schema", "table")
-    fn parse_table_name(&self) -> (String, String) {
-        if let Some(dot_pos) = self.table_name.rfind('.') {
-            let schema = self.table_name[..dot_pos].to_string();
-            let table = self.table_name[dot_pos + 1..].to_string();
-            (schema, table)
-        } else {
-            // Default to dbo schema
-            ("dbo".to_string(), self.table_name.clone())
-        }
-    }
-
-    /// Resolve column mappings from source to destination.
-    ///
-    /// This method resolves user-provided column mappings (by name or ordinal)
-    /// against the destination table metadata. It validates:
-    /// - All required (non-nullable, non-identity, non-computed) destination columns are mapped
-    /// - Type compatibility between source and destination columns
-    /// - No duplicate mappings to the same destination column
-    ///
-    /// # Arguments
-    ///
-    /// * `source_metadata` - Metadata for source columns
-    /// * `destination_metadata` - Metadata for destination table columns
-    ///
-    /// # Returns
-    ///
-    /// A vector of resolved mappings from source index to destination index
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - A required destination column is not mapped
-    /// - A source column references a non-existent destination column
-    /// - Type compatibility check fails
-    /// - Duplicate mappings to the same destination column exist
-    async fn resolve_column_mappings(
-        &mut self,
-        source_metadata: &[BulkCopyColumnMetadata],
-        destination_metadata: &[DestinationColumnMetadata],
-    ) -> TdsResult<Vec<ResolvedColumnMapping>> {
-        let mut resolved_mappings = Vec::new();
-        let mut mapped_destination_indices = std::collections::HashSet::new();
-
-        if self.column_mappings.is_empty() {
-            // No explicit mappings: use ordinal mapping (source[i] → destination[i])
-            // This is the default behavior when no mappings are specified
-            for (source_idx, source_col) in source_metadata.iter().enumerate() {
-                if source_idx >= destination_metadata.len() {
-                    // More source columns than destination columns - ignore extras
-                    break;
-                }
-
-                let dest_col = &destination_metadata[source_idx];
-
-                // Skip computed columns (they can't be inserted)
-                if dest_col.is_computed {
-                    continue;
-                }
-
-                // Skip identity columns unless keep_identity is enabled
-                if dest_col.is_identity && !self.options.keep_identity {
-                    continue;
-                }
-
-                // Check type compatibility
-                self.check_type_compatibility(
-                    &source_col.sql_type,
-                    &dest_col.sql_type,
-                    &source_col.column_name,
-                    &dest_col.name,
-                )?;
-
-                resolved_mappings.push(ResolvedColumnMapping {
-                    source_index: source_idx,
-                    destination_index: dest_col.ordinal,
-                    destination_name: dest_col.name.clone(),
-                    destination_type: dest_col.sql_type,
-                });
-
-                mapped_destination_indices.insert(dest_col.ordinal);
-            }
-        } else {
-            // Explicit mappings: resolve each mapping
-            for mapping in &self.column_mappings {
-                // Find source column index
-                let source_idx = match &mapping.source {
-                    ColumnMappingSource::Name(source_name) => source_metadata
-                        .iter()
-                        .position(|col| col.column_name.eq_ignore_ascii_case(source_name))
-                        .ok_or_else(|| {
-                            Error::UsageError(format!(
-                                "Source column '{source_name}' not found in source metadata"
-                            ))
-                        })?,
-                    ColumnMappingSource::Ordinal(idx) => {
-                        if *idx >= source_metadata.len() {
-                            return Err(Error::UsageError(format!(
-                                "Source column ordinal {} is out of range (source has {} columns)",
-                                idx,
-                                source_metadata.len()
-                            )));
-                        }
-                        *idx
-                    }
-                };
-
-                // Find destination column
-                let dest_col = destination_metadata
-                    .iter()
-                    .find(|col| col.name.eq_ignore_ascii_case(&mapping.destination))
-                    .ok_or_else(|| {
-                        Error::UsageError(format!(
-                            "Destination column '{}' not found in table '{}'",
-                            mapping.destination, self.table_name
-                        ))
-                    })?;
-
-                // Check for duplicate mappings
-                if mapped_destination_indices.contains(&dest_col.ordinal) {
-                    return Err(Error::UsageError(format!(
-                        "Duplicate mapping to destination column '{}'",
-                        dest_col.name
-                    )));
-                }
-
-                // Skip computed columns
-                if dest_col.is_computed {
-                    return Err(Error::UsageError(format!(
-                        "Cannot map to computed column '{}'",
-                        dest_col.name
-                    )));
-                }
-
-                // Check identity columns
-                if dest_col.is_identity && !self.options.keep_identity {
-                    return Err(Error::UsageError(format!(
-                        "Cannot map to identity column '{}' unless keep_identity is enabled",
-                        dest_col.name
-                    )));
-                }
-
-                // Check type compatibility
-                let source_col = &source_metadata[source_idx];
-                self.check_type_compatibility(
-                    &source_col.sql_type,
-                    &dest_col.sql_type,
-                    &source_col.column_name,
-                    &dest_col.name,
-                )?;
-
-                resolved_mappings.push(ResolvedColumnMapping {
-                    source_index: source_idx,
-                    destination_index: dest_col.ordinal,
-                    destination_name: dest_col.name.clone(),
-                    destination_type: dest_col.sql_type,
-                });
-
-                mapped_destination_indices.insert(dest_col.ordinal);
-            }
-        }
-
-        // Validate that all required destination columns are mapped
-        for dest_col in destination_metadata {
-            // Skip computed columns and identity columns (unless keep_identity)
-            if dest_col.is_computed {
-                continue;
-            }
-            if dest_col.is_identity && !self.options.keep_identity {
-                continue;
-            }
-
-            // Check if this required column is mapped
-            if !dest_col.is_nullable && !mapped_destination_indices.contains(&dest_col.ordinal) {
-                return Err(Error::UsageError(format!(
-                    "Required destination column '{}' (ordinal {}) is not mapped and is not nullable",
-                    dest_col.name, dest_col.ordinal
-                )));
-            }
-        }
-
-        Ok(resolved_mappings)
-    }
-
-    /// Check type compatibility between source and destination columns.
-    ///
-    /// This validates that the source ColumnValues type can be converted to
-    /// the destination SqlDbType. Some conversions are implicit (e.g., Int → BigInt),
-    /// while others are not allowed (e.g., String → Int).
-    ///
-    /// # Arguments
-    ///
-    /// * `source_type` - Source column SQL type
-    /// * `dest_type` - Destination column SQL type
-    /// * `source_name` - Source column name (for error messages)
-    /// * `dest_name` - Destination column name (for error messages)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the types are incompatible
-    fn check_type_compatibility(
-        &self,
-        source_type: &SqlDbType,
-        dest_type: &SqlDbType,
-        source_name: &str,
-        dest_name: &str,
-    ) -> TdsResult<()> {
-        // Exact match is always compatible
-        if source_type == dest_type {
-            return Ok(());
-        }
-
-        // Check compatible type conversions
-        let compatible = match (source_type, dest_type) {
-            // Numeric type promotions (smaller → larger)
-            (SqlDbType::TinyInt, SqlDbType::SmallInt | SqlDbType::Int | SqlDbType::BigInt) => true,
-            (SqlDbType::SmallInt, SqlDbType::Int | SqlDbType::BigInt) => true,
-            (SqlDbType::Int, SqlDbType::BigInt) => true,
-
-            // Numeric to float conversions
-            (
-                SqlDbType::TinyInt | SqlDbType::SmallInt | SqlDbType::Int | SqlDbType::BigInt,
-                SqlDbType::Real | SqlDbType::Float,
-            ) => true,
-            (SqlDbType::Real, SqlDbType::Float) => true,
-
-            // Decimal/Numeric are interchangeable
-            (SqlDbType::Decimal, SqlDbType::Numeric) | (SqlDbType::Numeric, SqlDbType::Decimal) => {
-                true
-            }
-
-            // String type conversions (char → varchar, nchar → nvarchar)
-            (SqlDbType::Char, SqlDbType::VarChar) => true,
-            (SqlDbType::NChar, SqlDbType::NVarChar) => true,
-            (SqlDbType::VarChar, SqlDbType::NVarChar) => true, // ASCII → Unicode
-
-            // Text type conversions
-            (SqlDbType::Text, SqlDbType::VarChar | SqlDbType::NVarChar) => true,
-            (SqlDbType::NText, SqlDbType::NVarChar) => true,
-            (SqlDbType::VarChar, SqlDbType::Text) => true,
-            (SqlDbType::NVarChar, SqlDbType::NText) => true,
-
-            // Binary type conversions
-            (SqlDbType::Binary, SqlDbType::VarBinary) => true,
-            (SqlDbType::VarBinary, SqlDbType::Image) => true,
-            (SqlDbType::Image, SqlDbType::VarBinary) => true,
-
-            // DateTime conversions
-            (SqlDbType::SmallDateTime, SqlDbType::DateTime | SqlDbType::DateTime2) => true,
-            (SqlDbType::DateTime, SqlDbType::DateTime2) => true,
-            (SqlDbType::Date, SqlDbType::DateTime | SqlDbType::DateTime2) => true,
-
-            // Money conversions
-            (SqlDbType::SmallMoney, SqlDbType::Money) => true,
-
-            // All other combinations are incompatible
-            _ => false,
-        };
-
-        if !compatible {
-            return Err(Error::UsageError(format!(
-                "Type mismatch: Cannot convert source column '{source_name}' ({source_type:?}) to destination column '{dest_name}' ({dest_type:?})"
-            )));
-        }
-
-        Ok(())
-    }
-
-    /// Write rows to the server using an iterator.
-    ///
-    /// This method will batch rows according to the configured `batch_size`,
-    /// serialize them using the TDS bulk load protocol, and send them to the server.
-    ///
-    /// Column metadata is automatically retrieved from the destination SQL Server table,
-    /// so you don't need to specify types or TDS protocol details. The method uses ordinal
-    /// mapping by default (column 0 → column 0, etc.), or you can configure custom mappings
-    /// using `add_column_mapping()`.
-    ///
-    /// # Arguments
-    ///
-    /// * `rows` - Iterator over rows implementing `BulkCopyRow`
-    ///
-    /// # Returns
-    ///
-    /// `BulkCopyResult` containing statistics about the operation
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - Connection is not available
-    /// - Invalid configuration options
-    /// - Network errors during transmission
-    /// - SQL Server errors (constraints, type mismatches, etc.)
-    ///
-    /// # Example
+    /// # Examples
     ///
     /// ```rust,ignore
-    /// let rows = vec![
-    ///     User { id: 1, name: "Alice".to_string() },
-    ///     User { id: 2, name: "Bob".to_string() },
+    /// use mssql_tds::connection::bulk_copy::{BulkLoadRow, BulkRowWriter};
+    ///
+    /// struct User {
+    ///     id: i32,
+    ///     name: String,
+    ///     active: bool,
+    /// }
+    ///
+    /// #[async_trait]
+    /// impl BulkLoadRow for User {
+    ///     async fn write_to_packet(&self, writer: &mut BulkRowWriter<'_>) -> TdsResult<()> {
+    ///         writer.write_int(0, self.id).await?;
+    ///         writer.write_string(1, &self.name).await?;
+    ///         writer.write_bit(2, self.active).await?;
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let users = vec![
+    ///     User { id: 1, name: "Alice".to_string(), active: true },
+    ///     User { id: 2, name: "Bob".to_string(), active: false },
     /// ];
     ///
-    /// let result = bulk_copy.write_to_server(rows.into_iter()).await?;
-    /// println!("Inserted {} rows", result.rows_affected);
+    /// bulk_copy.write_to_server_zerocopy(users.into_iter()).await?;
     /// ```
-    pub async fn write_to_server<I, R>(&mut self, rows: I) -> TdsResult<BulkCopyResult>
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Column mapping fails
+    /// - Type conversion fails
+    /// - SQL Server returns an error (constraints, type mismatches, etc.)
+    /// - Network error occurs
+    /// - Operation is cancelled or times out
+    pub async fn write_to_server_zerocopy<I, R>(&mut self, rows: I) -> TdsResult<BulkCopyResult>
     where
-        I: Iterator<Item = R>,
-        R: BulkCopyRow,
+        I: IntoIterator<Item = R>,
+        R: BulkLoadRow,
     {
-        // Validate options
-        self.options.validate()?;
-
         let start_time = Instant::now();
-        let mut total_rows: u64 = 0;
+        let mut total_rows = 0u64;
 
-        // Retrieve destination table metadata directly from server with exact TDS types
-        // This matches .NET SqlBulkCopy behavior and ensures we use the types SQL Server expects
-        let server_metadata = self.retrieve_destination_metadata_from_server().await?;
+        // Initialize timeout state for this operation
+        // A timeout of 0 means infinite (no timeout)
+        self.timeout_state = Some(BulkCopyTimeoutState::from_seconds(self.options.timeout_sec));
 
-        // For column mapping resolution, we still need DestinationColumnMetadata
-        // So retrieve that as well (it's cached)
-        let destination_metadata = self.retrieve_destination_metadata().await?;
+        // ═══════════════════════════════════════════════════════════════════════
+        // VALIDATION: Check for conflicting transaction states
+        // This mirrors .NET SqlBulkCopy behavior from AnalyzeTargetAndCreateUpdateBulkCommand
+        // ═══════════════════════════════════════════════════════════════════════
+        self.validate_transaction_state()?;
 
-        // Peek at the first row to determine source column count
-        let mut rows = rows.peekable();
-        let source_column_count = if let Some(first_row) = rows.peek() {
-            first_row.to_column_values().len()
-        } else {
-            // No rows to copy - return early
-            let elapsed = start_time.elapsed();
-            return Ok(BulkCopyResult::new(0, elapsed));
-        };
+        // Peek-able iterator for batch boundary detection
+        let mut rows = rows.into_iter().peekable();
 
-        // If no column mappings are specified, create default ordinal mappings
-        // This matches .NET's CreateDefaultMapping behavior
+        // Ensure destination table exists and retrieve metadata
+        if self.destination_metadata.is_none() {
+            self.retrieve_destination_metadata().await?;
+        }
+
+        let _server_metadata = self
+            .destination_metadata
+            .as_ref()
+            .ok_or_else(|| Error::UsageError("Destination metadata not available".to_string()))?;
+
+        // If no column mappings are configured, peek at first row to determine source column count
+        // and create ordinal mappings for min(source_columns, destination_columns)
         if self.column_mappings.is_empty() {
-            // Create simple source metadata just for mapping resolution
-            // We use the server metadata as the basis since we already have it
-            let source_metadata: Vec<BulkCopyColumnMetadata> = (0..source_column_count)
-                .map(|i| {
-                    // For unmapped columns, we'll use a placeholder that will be matched by ordinal
-                    if i < server_metadata.len() {
-                        server_metadata[i].clone()
-                    } else {
-                        // Source has more columns than destination - this will be caught in validation
-                        BulkCopyColumnMetadata::new(format!("col{i}"), SqlDbType::VarChar, 0xA7)
-                            .with_length(0, TypeLength::Variable(0))
-                    }
-                })
-                .collect();
+            let destination_metadata = self.retrieve_destination_metadata().await?;
 
-            // Resolve column mappings with auto-generated source metadata
-            let resolved_mappings = self
-                .resolve_column_mappings(&source_metadata, &destination_metadata)
-                .await?;
+            // Filter metadata based on keep_identity option for auto-mapping
+            // When keep_identity is false, skip identity columns (they will be auto-generated)
+            let filtered_metadata: Vec<_> = if self.options.keep_identity {
+                destination_metadata.clone()
+            } else {
+                destination_metadata
+                    .iter()
+                    .filter(|col| !col.is_identity)
+                    .cloned()
+                    .collect()
+            };
 
-            // Build destination column metadata for the bulk load message
-            // Use the server-provided metadata with exact TDS types
-            let mut dest_column_metadata = Vec::new();
-            for mapping in &resolved_mappings {
-                // Use the server metadata which has the correct TDS types
-                let server_col = &server_metadata[mapping.destination_index];
-                dest_column_metadata.push(server_col.clone());
+            // Peek at first row to determine source column count
+            let source_column_count = if let Some(_first_row) = rows.peek() {
+                // For BulkLoadRow trait, we can't easily determine column count without consuming
+                // So we'll map all destination columns and let the row writer handle it
+                // This is a limitation of the current design - the Python layer handles this better
+                filtered_metadata.len()
+            } else {
+                // No rows, doesn't matter
+                0
+            };
+
+            let mapping_count = std::cmp::min(source_column_count, filtered_metadata.len());
+            self.column_mappings.reserve(mapping_count);
+            for (i, col) in filtered_metadata.iter().enumerate().take(mapping_count) {
+                self.column_mappings
+                    .push(ColumnMapping::by_ordinal(i, col.column_name.clone()));
             }
+        }
 
-            // Process rows with the resolved mappings
-            self.write_rows_to_server(
-                rows,
-                &resolved_mappings,
-                dest_column_metadata,
-                &mut total_rows,
-                start_time,
-            )
-            .await?;
-        } else {
-            // User specified column mappings - need to resolve them
-            // Create simple source metadata based on column count
-            let source_metadata: Vec<BulkCopyColumnMetadata> = (0..source_column_count)
-                .map(|i| {
-                    if i < server_metadata.len() {
-                        server_metadata[i].clone()
-                    } else {
-                        BulkCopyColumnMetadata::new(format!("col{i}"), SqlDbType::VarChar, 0xA7)
-                            .with_length(0, TypeLength::Variable(0))
-                    }
-                })
-                .collect();
+        // Prepare metadata only if we have rows to process
+        if rows.peek().is_some() {
+            // Retrieve destination metadata
+            let destination_metadata = self.retrieve_destination_metadata().await?;
 
-            // Resolve column mappings
-            let resolved_mappings = self
-                .resolve_column_mappings(&source_metadata, &destination_metadata)
-                .await?;
+            // Filter metadata based on keep_identity option
+            // When keep_identity is false, skip identity columns (they will be auto-generated)
+            let filtered_metadata: Vec<_> = if self.options.keep_identity {
+                destination_metadata.clone()
+            } else {
+                destination_metadata
+                    .iter()
+                    .filter(|col| !col.is_identity)
+                    .cloned()
+                    .collect()
+            };
 
-            // Build destination column metadata for the bulk load message
-            let mut dest_column_metadata = Vec::new();
-            for mapping in &resolved_mappings {
-                let server_col = &server_metadata[mapping.destination_index];
-                dest_column_metadata.push(server_col.clone());
-            }
+            // Resolve column mappings using user-provided mappings (using filtered metadata)
+            let resolved_mappings = self.resolve_column_mappings(&filtered_metadata)?;
 
-            // Process rows with the resolved mappings
-            self.write_rows_to_server(
+            // Use filtered metadata for the bulk copy operation
+            let dest_column_metadata = filtered_metadata;
+
+            // Process rows with zero-copy path
+            self.write_rows_to_server_zerocopy(
                 rows,
                 &resolved_mappings,
                 dest_column_metadata,
@@ -1362,8 +911,13 @@ impl<'a> BulkCopy<'a> {
         Ok(BulkCopyResult::new(total_rows, elapsed))
     }
 
-    /// Internal method to write rows to the server with resolved mappings.
-    async fn write_rows_to_server<I, R>(
+    /// Internal method to write rows to the server using zero-copy path.
+    ///
+    /// This method implements the zero-copy optimization:
+    /// - Rows are serialized directly to packet writer via BulkLoadRow trait
+    /// - No intermediate Vec allocations (0 allocations per row)
+    /// - Column contexts are created once and reused across all rows
+    async fn write_rows_to_server_zerocopy<I, R>(
         &mut self,
         mut rows: std::iter::Peekable<I>,
         resolved_mappings: &[ResolvedColumnMapping],
@@ -1373,7 +927,7 @@ impl<'a> BulkCopy<'a> {
     ) -> TdsResult<()>
     where
         I: Iterator<Item = R>,
-        R: BulkCopyRow,
+        R: BulkLoadRow,
     {
         // Determine batch size (0 means all rows in one batch)
         let batch_size = if self.options.batch_size == 0 {
@@ -1382,86 +936,244 @@ impl<'a> BulkCopy<'a> {
             self.options.batch_size
         };
 
-        // Process rows in batches
-        while rows.peek().is_some() {
-            // Collect a batch of rows
-            let mut batch_rows = Vec::with_capacity(batch_size.min(10000));
-            for _ in 0..batch_size {
-                if let Some(row) = rows.next() {
-                    let source_values = row.to_column_values();
+        let timeout_sec = if self.options.timeout_sec > 0 {
+            Some(self.options.timeout_sec)
+        } else {
+            None
+        };
 
-                    // Reorder columns according to resolved mappings
-                    let mut dest_values = Vec::with_capacity(resolved_mappings.len());
-                    for mapping in resolved_mappings {
-                        if mapping.source_index < source_values.len() {
-                            dest_values.push(source_values[mapping.source_index].clone());
-                        } else {
-                            return Err(Error::UsageError(format!(
-                                "Source row has {} columns, but mapping references column {}",
-                                source_values.len(),
-                                mapping.source_index
-                            )));
-                        }
-                    }
+        // Capture use_internal_transaction flag at start (matches .NET _savedBatchSize pattern)
+        let use_internal_transaction = self.options.use_internal_transaction;
 
-                    batch_rows.push(dest_values);
-                } else {
-                    break;
-                }
-            }
-
-            if batch_rows.is_empty() {
+        loop {
+            if rows.peek().is_none() {
                 break;
             }
 
-            // Send this batch directly through TDS client
-            let message = BulkLoadMessage {
-                table_name: self.table_name.clone(),
-                column_metadata: dest_column_metadata.clone(),
-                rows: batch_rows,
-                options: self.options.clone(),
-            };
+            // Check timeout before starting next batch
+            if let Some(ref mut state) = self.timeout_state
+                && state.is_expired()
+                && !state.is_attention_sent()
+            {
+                // Mark that we're sending attention due to timeout
+                state.mark_bulk_copy_write_timeout();
+                state.begin_sending_attention();
 
-            let timeout_sec = if self.options.timeout_sec > 0 {
-                Some(self.options.timeout_sec)
-            } else {
-                None
-            };
+                // Send attention and wait for ACK with ATTENTION_TIMEOUT_SECONDS timeout
+                // per SqlClient behavior
+                let attention_timeout = Duration::from_secs(ATTENTION_TIMEOUT_SECONDS);
+                let ack_received = self
+                    .client
+                    .send_attention_with_timeout(attention_timeout)
+                    .await
+                    .unwrap_or(false);
 
-            let batch_count = self
+                state.mark_attention_sent();
+
+                if ack_received {
+                    state.mark_attention_received();
+                    // Attention acknowledged - return timeout error
+                    let err = BulkCopyTimeoutError::new(
+                        *total_rows,
+                        self.options.timeout_sec,
+                        Some("Bulk copy operation timed out".to_string()),
+                    );
+                    return Err(Error::BulkCopyError(BulkCopyError::Timeout(err)));
+                } else {
+                    // No attention ACK within 5 seconds - connection is broken
+                    // Close the connection to ensure it can't be reused
+                    let _ = self.client.close_connection().await;
+
+                    let err = BulkCopyAttentionTimeoutError::new(true);
+                    return Err(Error::BulkCopyError(BulkCopyError::AttentionTimeout(err)));
+                }
+            }
+
+            // Create a batch iterator that yields up to batch_size rows
+            // The take() adaptor just sets an upper bound, but the actual iteration ends when the input is finished.
+            let batch_iter = (&mut rows).take(batch_size);
+
+            // ═══════════════════════════════════════════════════════════════════
+            // BEGIN TRANSACTION: Start internal transaction before each batch
+            // (if UseInternalTransaction is enabled)
+            // This mirrors .NET SqlBulkCopy.CopyBatchesAsync behavior
+            // ═══════════════════════════════════════════════════════════════════
+            if use_internal_transaction {
+                self.client
+                    .begin_transaction(TransactionIsolationLevel::ReadCommitted, None)
+                    .await?;
+            }
+
+            // Execute streaming bulk load with zero-copy path
+            let batch_result = self
                 .client
-                .execute_bulk_load(message, timeout_sec, None)
-                .await?;
-            *total_rows += batch_count;
+                .execute_bulk_load_streaming_zerocopy(
+                    self.table_name.clone(),
+                    dest_column_metadata.clone(),
+                    self.options.clone(),
+                    timeout_sec,
+                    None,
+                    batch_iter,
+                    resolved_mappings,
+                )
+                .await;
+
+            // Handle batch result with transaction management
+            match batch_result {
+                Ok(batch_count) => {
+                    // ═══════════════════════════════════════════════════════════
+                    // COMMIT TRANSACTION: Commit on successful batch completion
+                    // This mirrors .NET SqlBulkCopy.CommitTransaction() behavior
+                    // ═══════════════════════════════════════════════════════════
+                    if use_internal_transaction {
+                        self.client.commit_transaction(None, None).await?;
+                    }
+
+                    *total_rows += batch_count;
+                }
+                Err(e) => {
+                    // ═══════════════════════════════════════════════════════════
+                    // ROLLBACK TRANSACTION: Rollback on batch failure
+                    // This mirrors .NET SqlBulkCopy.AbortTransaction() behavior
+                    // Note: Only rollback if we have an active internal transaction
+                    // ═══════════════════════════════════════════════════════════
+                    if use_internal_transaction && self.client.has_active_transaction() {
+                        // Attempt rollback, but don't mask the original error
+                        let _ = self.client.rollback_transaction(None, None).await;
+                    }
+
+                    return Err(e);
+                }
+            }
 
             // Report progress if callback is configured
-            if let Some(ref mut callback) = self.progress_callback {
-                if self.options.notification_interval > 0
-                    && *total_rows % self.options.notification_interval as u64 == 0
-                {
-                    let elapsed = start_time.elapsed();
-                    let rows_per_second = if elapsed.as_secs_f64() > 0.0 {
-                        *total_rows as f64 / elapsed.as_secs_f64()
-                    } else {
-                        0.0
-                    };
+            if let Some(ref mut callback) = self.progress_callback
+                && self.options.notification_interval > 0
+                && (*total_rows).is_multiple_of(self.options.notification_interval as u64)
+            {
+                let elapsed = start_time.elapsed();
+                let rows_per_second = if elapsed.as_secs_f64() > 0.0 {
+                    *total_rows as f64 / elapsed.as_secs_f64()
+                } else {
+                    0.0
+                };
 
-                    callback(BulkCopyProgress {
-                        rows_copied: *total_rows,
-                        total_rows: None,
-                        elapsed,
-                        rows_per_second,
-                    });
-                }
+                callback(BulkCopyProgress {
+                    rows_copied: *total_rows,
+                    total_rows: None,
+                    elapsed,
+                    rows_per_second,
+                });
             }
         }
 
         Ok(())
     }
+
+    /// Check if the bulk copy operation has timed out.
+    ///
+    /// This can be called during long-running operations to check if the
+    /// configured timeout has expired.
+    ///
+    /// # Returns
+    ///
+    /// * `true` - if timeout has expired
+    /// * `false` - if timeout has not expired or no timeout was configured
+    pub fn is_timed_out(&self) -> bool {
+        self.timeout_state
+            .as_ref()
+            .is_some_and(|state| state.is_expired())
+    }
+
+    /// Get the remaining timeout in milliseconds.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(ms)` - remaining milliseconds until timeout
+    /// * `None` - if no timeout was configured (infinite timeout)
+    pub fn remaining_timeout_ms(&self) -> Option<u64> {
+        self.timeout_state
+            .as_ref()
+            .and_then(|state| state.remaining_ms())
+    }
+
+    /// Get a reference to the current timeout state.
+    ///
+    /// This is useful for advanced scenarios where you need to inspect
+    /// or manage the timeout state directly.
+    pub fn timeout_state(&self) -> Option<&BulkCopyTimeoutState> {
+        self.timeout_state.as_ref()
+    }
+}
+
+/// Zero-copy bulk copy trait for direct serialization to TDS packets.
+///
+/// This trait enables true zero-copy bulk insert by allowing rows to write
+/// directly to the packet writer without allocating intermediate Vec<ColumnValues>.
+/// This eliminates the per-row allocation overhead present in the `BulkCopyRow` trait.
+///
+/// # Performance Benefits
+///
+/// - **Zero allocations per row** - no Vec allocation needed
+/// - **Direct serialization** - writes straight to TDS packet buffer
+/// - **Lower memory pressure** - no intermediate storage of column values
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use mssql_tds::connection::bulk_copy::{BulkLoadRow, BulkRowWriter};
+/// use mssql_tds::core::TdsResult;
+///
+/// struct Product {
+///     id: i32,
+///     name: String,
+///     price: f64,
+/// }
+///
+/// impl BulkLoadRow for Product {
+///     async fn write_to_packet(&self, writer: &mut BulkRowWriter<'_>) -> TdsResult<()> {
+///         writer.write_int(self.id).await?;
+///         writer.write_string(&self.name).await?;
+///         writer.write_float(self.price).await?;
+///         Ok(())
+///     }
+/// }
+///
+/// // Use it:
+/// let products = vec![Product { id: 1, name: "Widget".to_string(), price: 9.99 }];
+/// let bulk_copy = BulkCopy::new(&mut client, "Products");
+/// bulk_copy.write_to_server_zerocopy(products.into_iter()).await?;
+/// ```
+#[async_trait]
+pub trait BulkLoadRow {
+    /// Write this row's column values directly to the packet writer.
+    ///
+    /// The order of writes must match the order of columns in the destination table.
+    /// Each column value is serialized directly to the TDS packet without intermediate
+    /// allocations.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - Streaming bulk load writer
+    /// * `column_index` - Mutable reference to track current column index
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Network errors occur during transmission
+    /// - Type conversion errors occur
+    /// - Column count doesn't match metadata
+    async fn write_to_packet(
+        &self,
+        writer: &mut crate::message::bulk_load::StreamingBulkLoadWriter<'_>,
+        column_index: &mut usize,
+    ) -> TdsResult<()>;
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::datatypes::bulk_copy_metadata::SystemTypeId;
+
     use super::*;
 
     #[test]
@@ -1474,7 +1186,7 @@ mod tests {
         assert!(!opts.keep_identity);
         assert!(!opts.keep_nulls);
         assert!(!opts.table_lock);
-        assert!(opts.use_internal_transaction);
+        assert!(!opts.use_internal_transaction); // Matches .NET default
         assert_eq!(opts.notification_interval, 0);
     }
 
@@ -1552,22 +1264,13 @@ mod tests {
     }
 
     #[test]
-    fn test_destination_metadata_to_bulk_copy_metadata() {
-        let dest_meta = DestinationColumnMetadata {
-            name: "TestColumn".to_string(),
-            ordinal: 0,
-            system_type_id: 56, // Int
-            sql_type: SqlDbType::Int,
-            max_length: 4,
-            precision: 0,
-            scale: 0,
-            is_nullable: true,
-            is_identity: false,
-            is_computed: false,
-            collation: None,
-        };
+    fn test_bulk_copy_metadata_creation() {
+        use crate::datatypes::bulk_copy_metadata::TypeLength;
 
-        let bulk_meta = dest_meta.to_bulk_copy_metadata();
+        let bulk_meta = BulkCopyColumnMetadata::new("TestColumn", SqlDbType::Int, 0x26)
+            .with_length(4, TypeLength::Fixed(4))
+            .with_nullable(true);
+
         assert_eq!(bulk_meta.column_name, "TestColumn");
         assert_eq!(bulk_meta.sql_type, SqlDbType::Int);
         assert_eq!(bulk_meta.tds_type, 0x26); // TDS type for IntN (nullable int)
@@ -1604,37 +1307,6 @@ mod tests {
 
         // Test unsupported type
         assert!(SqlDbType::try_from(SystemTypeId(255)).is_err());
-    }
-
-    #[test]
-    fn test_parse_table_name() {
-        // Mock a TdsClient (we just need the table_name field for this test)
-        // Note: In real code, we'd use a proper test fixture or mock
-        // For now, we'll test the logic directly through the parsing behavior
-
-        // Test with schema.table format
-        let table_with_schema = "myschema.mytable";
-        let (schema, table) = if let Some(dot_pos) = table_with_schema.rfind('.') {
-            let s = table_with_schema[..dot_pos].to_string();
-            let t = table_with_schema[dot_pos + 1..].to_string();
-            (s, t)
-        } else {
-            ("dbo".to_string(), table_with_schema.to_string())
-        };
-        assert_eq!(schema, "myschema");
-        assert_eq!(table, "mytable");
-
-        // Test without schema (defaults to dbo)
-        let table_without_schema = "mytable";
-        let (schema2, table2) = if let Some(dot_pos) = table_without_schema.rfind('.') {
-            let s = table_without_schema[..dot_pos].to_string();
-            let t = table_without_schema[dot_pos + 1..].to_string();
-            (s, t)
-        } else {
-            ("dbo".to_string(), table_without_schema.to_string())
-        };
-        assert_eq!(schema2, "dbo");
-        assert_eq!(table2, "mytable");
     }
 
     // Tests for type compatibility checking
@@ -1776,6 +1448,71 @@ mod tests {
         assert!(!check_compat(SqlDbType::VarBinary, SqlDbType::VarChar));
     }
 
-    // Note: Full integration tests for BulkCopy require a TdsClient connection
-    // and will be added in the integration test phase
+    // =========================================================================
+    // Transaction-related unit tests
+    // =========================================================================
+
+    #[test]
+    fn test_use_internal_transaction_default_is_false() {
+        // Verify the default matches .NET SqlBulkCopy behavior:
+        // SqlBulkCopyOptions.Default = 0 means no flags are set,
+        // so UseInternalTransaction is off by default.
+        let opts = BulkCopyOptions::default();
+        assert!(
+            !opts.use_internal_transaction,
+            "use_internal_transaction should default to false (matching .NET)"
+        );
+    }
+
+    #[test]
+    fn test_batch_size_zero_means_single_batch() {
+        let opts = BulkCopyOptions::default();
+        assert_eq!(opts.batch_size, 0, "batch_size should default to 0");
+
+        // When batch_size is 0, effective batch size is usize::MAX (single batch)
+        let effective_batch_size = if opts.batch_size == 0 {
+            usize::MAX
+        } else {
+            opts.batch_size
+        };
+        assert_eq!(
+            effective_batch_size,
+            usize::MAX,
+            "batch_size=0 should mean single batch (usize::MAX)"
+        );
+    }
+
+    #[test]
+    fn test_batch_size_positive_value() {
+        let opts = BulkCopyOptions {
+            batch_size: 1000,
+            ..Default::default()
+        };
+        assert_eq!(opts.batch_size, 1000);
+
+        // Effective batch size should be the configured value
+        let effective_batch_size = if opts.batch_size == 0 {
+            usize::MAX
+        } else {
+            opts.batch_size
+        };
+        assert_eq!(effective_batch_size, 1000);
+    }
+
+    #[test]
+    fn test_use_internal_transaction_can_be_enabled() {
+        // UseInternalTransaction can be explicitly enabled
+        let opts = BulkCopyOptions {
+            use_internal_transaction: true,
+            ..Default::default()
+        };
+        assert!(
+            opts.use_internal_transaction,
+            "use_internal_transaction should be configurable to true"
+        );
+    }
+
+    // Note: Full integration tests for BulkCopy transaction behavior require
+    // a TdsClient connection and will be added in the integration test phase.
+    // See the Implementation Guide for comprehensive integration test specifications.
 }

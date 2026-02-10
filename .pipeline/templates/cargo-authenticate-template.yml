@@ -1,0 +1,26 @@
+# Template: cargo-authenticate-template.yml
+# Applies CI cargo configuration and authenticates cargo registries.
+# Use this template anywhere cargo authentication is needed.
+
+parameters:
+- name: osType
+  type: string
+  default: Linux
+  values:
+  - Windows
+  - Linux
+  - MacOS
+
+steps:
+- ${{ if eq(parameters.osType, 'Windows') }}:
+  - pwsh: .pipeline/scripts/apply-ci-cargo-config.ps1
+    displayName: Apply CI cargo configuration
+
+- ${{ if ne(parameters.osType, 'Windows') }}:
+  - script: bash .pipeline/scripts/apply-ci-cargo-config.sh
+    displayName: Apply CI cargo configuration
+
+- task: CargoAuthenticate@0
+  inputs:
+    configFile: '.cargo/config.toml'
+  displayName: Authenticate cargo registries

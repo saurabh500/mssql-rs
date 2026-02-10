@@ -107,6 +107,19 @@ The repo is configured to use Azure Artifacts as a package source.
 There is an artifact feed RustTools in the project that is used to store the cargo crates.
 The configuration is done in the `.cargo/config.toml` file.
 
+### Developer Upstream (Unauthenticated Feed)
+By default, the upstream crate source (`crates-io`) is replaced with the **ADO unauthenticated public feed** (`mssql-rs_Public`). This means day-to-day development—building and running tests—does **not** require any authentication or PAT setup.
+
+However, if a dependency is added or an existing dependency version is changed, the new crate version must first be available in the feed. **Only an authenticated individual** with the appropriate permissions can import new crate versions into the feed. If you update dependencies and the build fails to resolve a crate, contact a team member with feed write access to import the required package.
+
+> **Tip — testing with a new dependency locally:**
+> To temporarily pull crates directly from crates.io before the new version is available in the upstream feed, remove (or comment out) the `replace-with` line in `.cargo/config.toml`:
+> ```toml
+> [source.crates-io]
+> # replace-with = "mssql-rs_Public"   ← delete or comment out this line
+> ```
+> This lets Cargo resolve the updated dependency from crates.io so you can build and test locally. **Do not commit this change** — once the crate has been imported into the ADO feed, restore the `replace-with` line before submitting your PR.
+
 
 # Next test goodness
 I want to build the tests in one place, and run the binaries on a different machine/OS

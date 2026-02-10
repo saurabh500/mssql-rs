@@ -35,6 +35,113 @@ steps:
       SQL_PASSWORD: $(SQL_PASSWORD)
 
   - task: PowerShell@2
+    displayName: 'Setup LocalDB with Integrated Authentication'
+    inputs:
+      targetType: 'inline'
+      script: |
+        echo "Checking if LocalDB runtime is installed..."
+        
+        # First check if sqluserinstance.dll exists (LocalDB runtime library)
+        $sqlServerRoot = "C:\Program Files\Microsoft SQL Server"
+        $userInstanceDll = $null
+        
+        if (Test-Path $sqlServerRoot) {
+          $userInstanceDll = Get-ChildItem -Path $sqlServerRoot -Recurse -Filter "sqluserinstance.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+        
+        if ($userInstanceDll) {
+          echo "LocalDB runtime (sqluserinstance.dll) found at: $($userInstanceDll.FullName)"
+          echo "LocalDB API is available - verifying with integrated authentication"
+          
+          # Set ErrorActionPreference to Continue to prevent script exit on stderr
+          $ErrorActionPreference = 'Continue'
+          
+          # Verify LocalDB connection with integrated authentication (retry loop for startup)
+          $maxAttempts = 4
+          $success = $false
+          
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            echo "Verifying LocalDB with integrated authentication (attempt $attempt/$maxAttempts)..."
+            
+            if ($attempt -eq 1) {
+              # First attempt - suppress all output as it typically fails during startup
+              $null = sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "SELECT @@VERSION" 2>&1
+            } else {
+              # Subsequent attempts - capture output to check for errors
+              $output = sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "SELECT @@VERSION" 2>&1 | Out-String
+              echo $output
+              
+              # Check if output contains error messages
+              if ($output -notmatch "Msg \d+" -and $output -notmatch "Error:" -and $output -notmatch "failed") {
+                $success = $true
+                echo "LocalDB verified successfully with integrated authentication"
+                break
+              } else {
+                echo "LocalDB verification had errors, will retry..."
+              }
+            }
+            
+            if ($attempt -lt $maxAttempts) {
+              echo "Waiting for LocalDB to initialize..."
+              Start-Sleep -Seconds 5
+            }
+          }
+          
+          if (-not $success) {
+            echo "Failed to verify LocalDB after $maxAttempts attempts"
+            exit 1
+          }
+          
+          echo "LocalDB setup complete using integrated authentication"
+        } else {
+          echo "sqluserinstance.dll not found. Checking for SqlLocalDB.exe..."
+          
+          $localDbPath = Get-Command SqlLocalDB -ErrorAction SilentlyContinue
+          
+          if (-not $localDbPath) {
+            echo "SqlLocalDB not found on PATH. Searching in Program Files..."
+            
+            if (Test-Path $sqlServerRoot) {
+              $sqlLocalDbExe = Get-ChildItem -Path $sqlServerRoot -Recurse -Filter "SqlLocalDB.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+              
+              if ($sqlLocalDbExe) {
+                $localDbPath = $sqlLocalDbExe.FullName
+                echo "SqlLocalDB found at: $localDbPath"
+                
+                # Add to PATH for this session
+                $env:PATH = "$($sqlLocalDbExe.DirectoryName);$env:PATH"
+              } else {
+                Write-Error "Neither sqluserinstance.dll nor SqlLocalDB.exe found. LocalDB is required for running tests."
+                exit 1
+              }
+            } else {
+              Write-Error "SQL Server directory not found. LocalDB is required for running tests."
+              exit 1
+            }
+          } else {
+            echo "SqlLocalDB found at: $($localDbPath.Source)"
+          }
+          
+          # Create MSSQLLocalDB instance if it doesn't exist
+          echo "Creating MSSQLLocalDB instance..."
+          SqlLocalDB create "MSSQLLocalDB" 2>&1 | Out-Null
+          
+          # Start the instance
+          echo "Starting MSSQLLocalDB instance..."
+          SqlLocalDB start "MSSQLLocalDB"
+          
+          # Get instance info
+          echo "LocalDB instance info:"
+          SqlLocalDB info "MSSQLLocalDB"
+          
+          # Verify connection with integrated authentication
+          echo "Verifying integrated authentication..."
+          sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "SELECT @@VERSION"
+          
+          echo "LocalDB setup complete using integrated authentication"
+        }
+
+  - task: PowerShell@2
     displayName: 'Enable SQL Browser service'
     inputs:
       targetType: 'filePath'
@@ -51,7 +158,7 @@ steps:
 - ${{ if eq(parameters.buildTarget, 'Linux') }}:
   - task: DockerInstaller@0
     inputs:
-      dockerVersion: '17.09.0-ce'
+      dockerVersion: '29.0.0'
 
   - script: |
       set -euo pipefail

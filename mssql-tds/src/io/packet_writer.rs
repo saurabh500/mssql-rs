@@ -17,6 +17,9 @@ use tracing::event;
 /// Optimized batch write operations with manual overflow control.
 /// Use this for performance-critical code paths where you can batch multiple writes.
 pub(crate) trait TdsPacketWriterUnchecked {
+    /// Writes an i16 without checking overflow (caller must ensure space)
+    fn write_i16_unchecked(&mut self, value: i16);
+
     /// Writes a byte without checking overflow (caller must ensure space)
     fn write_byte_unchecked(&mut self, value: u8);
 
@@ -452,17 +455,26 @@ impl TdsPacketWriter for PacketWriter<'_> {
     }
 
     async fn write_async(&mut self, content: &[u8]) -> TdsResult<()> {
-        // Write in chunks of packet size.
-        let packet_space_left = self.max_payload_size - self.position() as usize;
-        if packet_space_left < content.len() {
-            let chunk = &content[..packet_space_left];
-            let _ = std::io::Write::write_all(&mut self.payload_cursor, chunk);
-            self.populate_header_and_send(false, false).await?;
-            self.payload_cursor
-                .set_position(Self::PACKET_HEADER_SIZE as u64);
-            Box::pin(self.write_async(&content[packet_space_left..])).await?;
-        } else {
-            let _ = std::io::Write::write_all(&mut self.payload_cursor, content);
+        // Write in chunks of packet size using an iterative approach
+        // to avoid stack overflow with large data.
+        let mut remaining = content;
+
+        while !remaining.is_empty() {
+            let packet_space_left = self.max_payload_size - self.position() as usize;
+
+            if packet_space_left < remaining.len() {
+                // Fill the current packet and flush
+                let chunk = &remaining[..packet_space_left];
+                let _ = std::io::Write::write_all(&mut self.payload_cursor, chunk);
+                self.populate_header_and_send(false, false).await?;
+                self.payload_cursor
+                    .set_position(Self::PACKET_HEADER_SIZE as u64);
+                remaining = &remaining[packet_space_left..];
+            } else {
+                // All remaining data fits in current packet
+                let _ = std::io::Write::write_all(&mut self.payload_cursor, remaining);
+                break;
+            }
         }
         Ok(())
     }
@@ -491,6 +503,11 @@ impl TdsPacketWriterUnchecked for PacketWriter<'_> {
     fn write_u16_unchecked(&mut self, value: u16) {
         let _ =
             WriteBytesExt::write_u16::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
+    }
+
+    fn write_i16_unchecked(&mut self, value: i16) {
+        let _ =
+            WriteBytesExt::write_i16::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
     }
 
     fn write_i64_unchecked(&mut self, value: i64) {
@@ -694,7 +711,7 @@ pub(crate) mod tests {
         let mut string_vec: Vec<u8> = Vec::new();
         let data = mock.data;
         let mut chunks = data.len() / packet_size;
-        if data.len() % packet_size != 0 {
+        if !data.len().is_multiple_of(packet_size) {
             chunks += 1;
         }
         for i in 0..chunks {
@@ -995,5 +1012,92 @@ pub(crate) mod tests {
             first_packet_payload_len, 21,
             "Should use all 21 bytes including the odd byte"
         );
+    }
+
+    /// Test that write_async handles very large data without stack overflow.
+    /// This test reproduces issue #41685 where a 50MB+ string caused a segfault
+    /// due to deep recursion in write_async (943+ recursive calls).
+    ///
+    /// The fix converts write_async from a recursive approach to an iterative one.
+    #[test]
+    fn test_write_async_large_data_no_stack_overflow() {
+        // Use a realistic packet size (4096 bytes, so 4088 bytes payload)
+        let packet_size: usize = 4096;
+        let mut mock = MockNetworkWriter::new(packet_size as u32);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        // Create a large byte array that would require many packets
+        // 10MB = 10485760 bytes, with 4088 byte payload = ~2565 packets/recursive calls
+        // With the OLD recursive approach, this causes stack overflow
+        // With the NEW iterative approach, this works fine
+        let data_size = 50 * 1024 * 1024; // 10MB - definitely causes stack overflow with recursion
+        let large_data: Vec<u8> = (0..data_size).map(|i| (i % 256) as u8).collect();
+
+        block_on(writer.write_async(&large_data)).unwrap();
+        block_on(writer.finalize()).unwrap();
+
+        // Reconstruct data from packets
+        let mut reconstructed: Vec<u8> = Vec::new();
+        let data = &mock.data;
+        let mut offset = 0;
+
+        while offset < data.len() {
+            if offset + 4 > data.len() {
+                break;
+            }
+            let packet_len = u16::from_be_bytes([data[offset + 2], data[offset + 3]]) as usize;
+            if offset + packet_len > data.len() {
+                break;
+            }
+            // Extract payload (skip 8-byte header)
+            reconstructed.extend_from_slice(&data[offset + 8..offset + packet_len]);
+            offset += packet_len;
+        }
+
+        assert_eq!(reconstructed.len(), large_data.len());
+        assert_eq!(reconstructed, large_data);
+    }
+
+    /// Test write_async with data that spans exactly the packet boundary
+    #[test]
+    fn test_write_async_exact_packet_boundary() {
+        let packet_size: usize = 16; // 8 bytes payload
+        let mut mock = MockNetworkWriter::new(packet_size as u32);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        // Write exactly 8 bytes (fills one packet payload)
+        let data = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        block_on(writer.write_async(&data)).unwrap();
+        block_on(writer.finalize()).unwrap();
+
+        // Should have sent one complete packet
+        assert_eq!(mock.data.len(), packet_size);
+        assert_eq!(&mock.data[8..16], &data);
+    }
+
+    /// Test write_async with data spanning multiple packets
+    #[test]
+    fn test_write_async_multiple_packets() {
+        let packet_size: usize = 16; // 8 bytes payload
+        let mut mock = MockNetworkWriter::new(packet_size as u32);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        // Write 24 bytes (needs 3 packets with 8-byte payload each)
+        let data: Vec<u8> = (0..24).collect();
+        block_on(writer.write_async(&data)).unwrap();
+        block_on(writer.finalize()).unwrap();
+
+        // Reconstruct and verify
+        let mut reconstructed: Vec<u8> = Vec::new();
+        let sent = &mock.data;
+        let mut offset = 0;
+
+        while offset < sent.len() {
+            let packet_len = u16::from_be_bytes([sent[offset + 2], sent[offset + 3]]) as usize;
+            reconstructed.extend_from_slice(&sent[offset + 8..offset + packet_len]);
+            offset += packet_len;
+        }
+
+        assert_eq!(reconstructed, data);
     }
 }

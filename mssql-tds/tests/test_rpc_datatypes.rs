@@ -8,7 +8,7 @@ mod rpc_datatypes {
     use std::str::FromStr;
 
     use crate::common::{
-        begin_connection, create_client, create_context, get_first_row, init_tracing,
+        begin_connection, build_tcp_datasource, create_client, get_first_row, init_tracing,
     };
     use mssql_tds::core::TdsResult;
     use mssql_tds::datatypes::column_values::{
@@ -16,6 +16,8 @@ mod rpc_datatypes {
     };
     use mssql_tds::datatypes::decoder::DecimalParts;
     use mssql_tds::datatypes::sql_string::SqlString;
+    use mssql_tds::datatypes::sql_vector::SqlVector;
+    use mssql_tds::datatypes::sqldatatypes::VectorBaseType;
     use mssql_tds::{
         datatypes::{column_values::ColumnValues, sqltypes::SqlType},
         message::parameters::rpc_parameters::{RpcParameter, StatusFlags},
@@ -128,8 +130,7 @@ mod rpc_datatypes {
             named_parameters.push(param);
         }
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
@@ -211,6 +212,7 @@ mod rpc_datatypes {
     async fn test_sp_execute_null_for_data_types() {
         let columns = vec![
             ("nvarchar", SqlType::NVarchar(None, 100)),
+            ("nvarcharmax", SqlType::NVarcharMax(None)),
             ("varbinary", SqlType::VarBinary(None, 100)),
             ("varbinarymax", SqlType::VarBinaryMax(None)),
             ("int", SqlType::Int(None)),
@@ -220,7 +222,8 @@ mod rpc_datatypes {
             ("float", SqlType::Float(None)),
             ("real", SqlType::Real(None)),
             ("xml", SqlType::Xml(None)),
-            ("varchar", SqlType::VarcharMax(None)),
+            ("varchar", SqlType::Varchar(None, 100)),
+            ("varcharmax", SqlType::VarcharMax(None)),
             ("date", SqlType::Date(None)),
             ("datetime", SqlType::DateTime(None)),
             ("datetime2", SqlType::DateTime2(None)),
@@ -241,8 +244,7 @@ mod rpc_datatypes {
             named_parameters.push(param);
         }
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
@@ -270,7 +272,14 @@ mod rpc_datatypes {
     #[tokio::test]
     async fn test_sp_execute_new_data_types() {
         let json_value = "[\"abc\",\"ghi\",\"def\"]".to_string();
-        let columns = vec![("json", SqlType::Json(Some(json_value.clone().into())))];
+        let vector_value = SqlVector::try_from_f32(vec![1.0, 2.5, 3.2, -0.5]).unwrap();
+        let columns = vec![
+            ("json", SqlType::Json(Some(json_value.clone().into()))),
+            (
+                "vector",
+                SqlType::Vector(Some(vector_value.clone()), 4, VectorBaseType::Float32),
+            ),
+        ];
 
         let col_count = columns.len();
         let query = generate_select_statement(&columns);
@@ -282,8 +291,7 @@ mod rpc_datatypes {
             named_parameters.push(param);
         }
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         connection
             .execute_sp_executesql(query.to_string(), named_parameters, None, None)
@@ -298,6 +306,9 @@ mod rpc_datatypes {
                 ColumnValues::Json(value) => {
                     assert_eq!(*value, json_value.clone().into());
                 }
+                ColumnValues::Vector(value) => {
+                    assert_eq!(value, &vector_value);
+                }
                 _ => {}
             }
         }
@@ -305,8 +316,7 @@ mod rpc_datatypes {
 
     #[tokio::test]
     async fn test_bad_sql_statement_with_trailing_comma() -> TdsResult<()> {
-        let context = create_context();
-        let mut client = create_client(context).await?;
+        let mut client = create_client(&build_tcp_datasource()).await?;
 
         let query = "SELECT @bit AS bit,;".to_string();
 
@@ -338,5 +348,83 @@ mod rpc_datatypes {
             }
         }
         select_statement
+    }
+
+    /// Test that verifies packet size negotiation works correctly with sp_executesql.
+    ///
+    /// This test reproduces a bug where `notify_session_setting_change` only updated
+    /// `self.packet_size` but NOT `self.tds_read_buffer.max_packet_size`. Since
+    /// `execute_sp_executesql` doesn't call `reset_reader()` before executing, the
+    /// validation check would reject valid packets that exceeded the initial 4096-byte
+    /// limit but were within the negotiated size (e.g., 8000 bytes).
+    ///
+    /// The test executes a parameterized query returning large data that requires
+    /// packets at the negotiated size.
+    #[tokio::test]
+    async fn test_sp_executesql_with_negotiated_packet_size() -> TdsResult<()> {
+        let mut client = create_client(&build_tcp_datasource()).await?;
+
+        // Create a large string value that will require negotiated packet size
+        let large_string = "X".repeat(6000);
+        let large_string2 = "Y".repeat(6000);
+
+        let query =
+            "SELECT @large1 AS LargeColumn1, @large2 AS LargeColumn2, @small AS SmallColumn"
+                .to_string();
+
+        let named_parameters = vec![
+            RpcParameter::new(
+                Some("@large1".to_string()),
+                StatusFlags::NONE,
+                SqlType::NVarcharMax(Some(SqlString::from_utf8_string(large_string.clone()))),
+            ),
+            RpcParameter::new(
+                Some("@large2".to_string()),
+                StatusFlags::NONE,
+                SqlType::NVarcharMax(Some(SqlString::from_utf8_string(large_string2.clone()))),
+            ),
+            RpcParameter::new(
+                Some("@small".to_string()),
+                StatusFlags::NONE,
+                SqlType::Int(Some(42)),
+            ),
+        ];
+
+        // This would fail with "TDS packet length 8000 exceeds negotiated max packet size 4096"
+        // if the buffer's max_packet_size wasn't updated in notify_session_setting_change
+        client
+            .execute_sp_executesql(query, named_parameters, None, None)
+            .await?;
+
+        let (metadata, first_row) = get_first_row(&mut client).await?;
+
+        assert_eq!(metadata.len(), 3, "Expected 3 columns");
+        assert_eq!(first_row.len(), 3, "Expected 3 column values");
+
+        // Verify LargeColumn1
+        match &first_row[0] {
+            ColumnValues::String(s) => {
+                assert_eq!(s.to_utf8_string().len(), 6000, "Expected 6000 X characters");
+            }
+            _ => panic!("Expected String value for LargeColumn1"),
+        }
+
+        // Verify LargeColumn2
+        match &first_row[1] {
+            ColumnValues::String(s) => {
+                assert_eq!(s.to_utf8_string().len(), 6000, "Expected 6000 Y characters");
+            }
+            _ => panic!("Expected String value for LargeColumn2"),
+        }
+
+        // Verify SmallColumn
+        match &first_row[2] {
+            ColumnValues::Int(v) => {
+                assert_eq!(*v, 42, "Expected SmallColumn to be 42");
+            }
+            _ => panic!("Expected Int value for SmallColumn"),
+        }
+
+        Ok(())
     }
 }

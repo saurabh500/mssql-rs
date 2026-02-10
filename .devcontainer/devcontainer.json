@@ -12,18 +12,21 @@
 		"ghcr.io/devcontainers/features/github-cli:1": {},
 		"ghcr.io/devcontainers/features/sshd:1": {},
 		"ghcr.io/devcontainers/features/node:1": {},
-		"ghcr.io/devcontainers/features/docker-in-docker:2": {}
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
+		"ghcr.io/devcontainers/features/python:1": {
+			"version": "3.12"
+		}
 	},
 
 	"customizations": {
-		// Configure properties specific to VS Code.
 		"vscode": {
 			"settings": {},
 			"extensions": [
 				"rust-lang.rust-analyzer",
 				"vadimcn.vscode-lldb",
 				"ms-vscode.cpptools",
-				"ms-mssql.mssql"
+				"ms-mssql.mssql",
+				"ms-python.python"
 			]
 		}
 	},

@@ -6,12 +6,8 @@
 //! This module provides Windows-specific functionality for connecting to SQL Server
 //! via Named Pipes, including retry logic for busy pipe instances.
 
-use crate::connection::client_context::TransportContext;
-use crate::connection::transport::network_transport::{
-    NetworkTransport, PRE_NEGOTIATED_PACKET_SIZE, Stream,
-};
-use crate::connection::transport::ssl_handler::SslHandler;
-use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
+use crate::connection::transport::network_transport::Stream;
+use std::os::windows::io::AsRawHandle;
 use std::time::Duration;
 use tokio::net::windows::named_pipe::NamedPipeClient;
 use tracing::{debug, info, warn};
@@ -19,6 +15,8 @@ use tracing::{debug, info, warn};
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use winapi::shared::winerror::ERROR_PIPE_BUSY;
+use winapi::um::namedpipeapi::SetNamedPipeHandleState;
+use winapi::um::winbase::{PIPE_READMODE_BYTE, PIPE_WAIT};
 
 /// Timeout for Named Pipe connection attempts (matching ODBC's NP_OPEN_TIMEOUT)
 pub(crate) const NAMED_PIPE_OPEN_TIMEOUT_MS: u32 = 5000;
@@ -146,47 +144,38 @@ fn wait_for_named_pipe(pipe_path: &str, timeout_ms: u32) -> std::io::Result<()> 
     Ok(())
 }
 
-/// Creates a NetworkTransport for Named Pipe connections.
-///
-/// Named Pipes support TLS encryption, and this function sets up the transport
-/// with appropriate SSL handling. Uses the transport context to extract the
-/// server name for TLS certificate validation.
-pub(crate) async fn create_named_pipe_transport(
-    pipe_client: NamedPipeClient,
-    transport_context: &TransportContext,
-    encryption_options: EncryptionOptions,
-    encryption_mode: EncryptionSetting,
-) -> TdsResult<Box<NetworkTransport>> {
-    // Named Pipes support TLS encryption
-    let base_stream: Box<dyn Stream> = Box::new(pipe_client);
-
-    // Extract server name from the transport context
-    // This handles both local (\\.\\...) and remote (\\\\server\\...) pipe paths
-    let server_host_name = transport_context.get_server_name();
-    info!(
-        server_host_name,
-        ?encryption_mode,
-        "Creating named pipe transport"
-    );
-
-    Ok(Box::new(NetworkTransport::new(
-        base_stream,
-        SslHandler {
-            server_host_name,
-            encryption_options,
-        },
-        PRE_NEGOTIATED_PACKET_SIZE,
-        encryption_mode,
-    )))
-}
-
 /// Implementation of Stream trait for NamedPipeClient
 impl Stream for NamedPipeClient {
     fn tls_handshake_starting(&mut self) {
-        // No-op for named pipe streams
+        // Named Pipe is already in Message mode for atomic TLS writes
+        debug!("TLS handshake starting on Named Pipe (Message mode)");
     }
 
     fn tls_handshake_completed(&mut self) {
-        // No-op for named pipe streams
+        // Switch from Message mode to Byte mode for streaming reads.
+        // Message mode is needed during TLS handshake for atomic writes,
+        // but causes issues when reading multi-packet TDS responses because
+        // each read() returns one message and then 0 bytes.
+        // Byte mode treats the pipe as a stream, allowing proper TDS framing.
+        debug!("TLS handshake completed, switching Named Pipe to Byte mode");
+
+        let handle = self.as_raw_handle();
+        let mut mode: u32 = PIPE_READMODE_BYTE | PIPE_WAIT;
+
+        let result = unsafe {
+            SetNamedPipeHandleState(
+                handle as *mut _,
+                &mut mode as *mut u32 as *mut _,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+
+        if result == 0 {
+            let error = std::io::Error::last_os_error();
+            warn!("Failed to switch Named Pipe to Byte mode: {}", error);
+        } else {
+            info!("Named Pipe switched to Byte mode for streaming reads");
+        }
     }
 }

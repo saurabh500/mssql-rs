@@ -5,7 +5,7 @@
 mod common;
 
 mod rpc_results {
-    use crate::common::{begin_connection, create_context, get_scalar_value, init_tracing};
+    use crate::common::{begin_connection, build_tcp_datasource, get_scalar_value, init_tracing};
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient};
     use mssql_tds::datatypes::column_values::ColumnValues;
     use mssql_tds::datatypes::sqltypes::SqlType;
@@ -22,8 +22,7 @@ mod rpc_results {
 
     #[tokio::test]
     async fn test_stored_proc() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Create a query to setup the stored procedure. This will be a Sql Batch execution.
         let stored_procedure_setup_query = "CREATE PROCEDURE #TempScrollProc
@@ -78,8 +77,7 @@ mod rpc_results {
 
     #[tokio::test]
     async fn test_stored_proc_stream_results() {
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         // Create a query to setup the stored procedure. This will be a Sql Batch execution.
         let stored_procedure_setup_query = "CREATE PROCEDURE #TempScrollProc
@@ -157,8 +155,7 @@ mod rpc_results {
             SqlType::Int(Some(100)),
         );
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         let named_parameters = vec![database_id_param, compat_level_param];
 
@@ -185,8 +182,7 @@ mod rpc_results {
             SqlType::Int(Some(1)),
         );
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         let named_parameters = vec![database_id_param];
 
@@ -219,8 +215,7 @@ mod rpc_results {
             SqlType::Int(Some(100)),
         );
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         let named_parameters = vec![database_id_param, compat_level_param];
 
@@ -251,8 +246,7 @@ mod rpc_results {
             SqlType::Int(Some(100)),
         );
 
-        let context = create_context();
-        let mut connection = begin_connection(context).await;
+        let mut connection = begin_connection(&build_tcp_datasource()).await;
 
         let named_parameters = vec![database_id_param, compat_level_param];
 

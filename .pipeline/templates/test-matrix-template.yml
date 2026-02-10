@@ -14,7 +14,7 @@ jobs:
     steps:
       - task: DockerInstaller@0
         inputs:
-          dockerVersion: '17.09.0-ce'
+          dockerVersion: '29.0.0'
       - template: install-ubuntu-dependency.yaml
         parameters:
           installAzCli: true
@@ -32,6 +32,7 @@ jobs:
           echo $container
 
           scripts/generate_cert.sh
+          scripts/generate_mock_tds_server_certs.sh
           
           sudo chown 10001:0 mssql.*
 
@@ -43,13 +44,15 @@ jobs:
             
             docker run -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" -p 1433:1433 --hostname sql1 --network testnet -v $PWD/conf/mssql.conf:/var/opt/mssql/mssql.conf -v $PWD/mssql.pem:/etc/ssl/certs/mssql.pem -v $PWD/mssql.key:/etc/ssl/private/mssql.key -u 0:0 -d mcr.microsoft.com/mssql/server:2025-latest
             
-            docker run --entrypoint bash -v "$PWD:/workspace" -e "DB_USERNAME=sa" -e "DB_HOST=sql1" -e "DB_PORT=1433" -e "SQL_PASSWORD=$(SQL_PASSWORD)" -e "ARCHIVE_NAME=tdslib-nextest.tar.zst" --network testnet $(container) /workspace/scripts/dockerentry/$(entry)
+            bash .pipeline/scripts/docker-cargo-run.sh --entrypoint bash -v "$PWD:/workspace" -e "DB_USERNAME=sa" -e "DB_HOST=sql1" -e "DB_PORT=1433" -e "SQL_PASSWORD=$(SQL_PASSWORD)" -e "ARCHIVE_NAME=tdslib-nextest.tar.zst" --network testnet $(container) /workspace/scripts/dockerentry/$(entry)
           fi
         workingDirectory: "$(Build.SourcesDirectory)"
         displayName: Run docker test
         condition: succeeded()
         env :
           SQL_PASSWORD: $(SQL_PASSWORD)
+          CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+          CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
       - task: PublishTestResults@2
         condition: succeededOrFailed()
         displayName: "Publish test results"

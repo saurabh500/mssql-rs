@@ -8,6 +8,7 @@ use crate::core::TdsResult;
 use crate::io::reader_writer::NetworkWriter;
 use crate::io::token_stream::TdsTokenStreamReader;
 use async_trait::async_trait;
+use std::time::Duration;
 
 /// TdsTransport abstracts the transport layer for TDS communication.
 /// It combines token stream reading capabilities with writer access and reader management.
@@ -31,4 +32,22 @@ pub(crate) trait TdsTransport: TdsTokenStreamReader + Send + Sync + std::fmt::De
     /// Close the transport connection.
     /// This should cleanly shut down any underlying network connections.
     async fn close_transport(&mut self) -> TdsResult<()>;
+
+    /// Send an attention packet and wait for acknowledgment with a timeout.
+    ///
+    /// This method implements the attention sending flow:
+    /// 1. Send MT_ATTN (0x06) packet to the server
+    /// 2. Wait for DONE token with ATTN (0x0020) status flag
+    /// 3. If no acknowledgment within timeout, return error
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout` - Maximum time to wait for acknowledgment
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` - Attention acknowledged by server
+    /// * `Ok(false)` - Attention sent but timeout expired waiting for ACK
+    /// * `Err(_)` - Error sending attention or reading response
+    async fn send_attention_with_timeout(&mut self, timeout: Duration) -> TdsResult<bool>;
 }

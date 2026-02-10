@@ -47,6 +47,8 @@ Pipfile.lock
 *.key
 *.pem
 *.csr
+*.der
+*.pfx
 openssl.cnf
 
 node_modules/
@@ -59,3 +61,5 @@ crash-*
 
 # Generated PowerPoint presentations
 *.pptx
+
+.venv-pycore/

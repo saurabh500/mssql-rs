@@ -7,7 +7,9 @@ mod common;
 #[cfg(test)]
 mod transport_protocols {
     use dotenv::dotenv;
-    use mssql_tds::connection::client_context::{ClientContext, TransportContext};
+    use mssql_tds::connection::client_context::ClientContext;
+    #[cfg(windows)]
+    use mssql_tds::connection::client_context::TdsAuthenticationMethod;
     use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
     use mssql_tds::connection_provider::tds_connection_provider::TdsConnectionProvider;
     use mssql_tds::core::{EncryptionOptions, EncryptionSetting, TdsResult};
@@ -46,36 +48,55 @@ mod transport_protocols {
         env::var("CERT_HOST_NAME").ok()
     }
 
-    /// Create a client with the specified transport context
-    async fn create_client_with_transport(
-        transport_context: TransportContext,
-    ) -> TdsResult<TdsClient> {
-        create_client_with_transport_and_encryption(transport_context, EncryptionSetting::Strict)
-            .await
+    /// Create a client with the specified datasource string
+    async fn create_client_with_datasource(datasource: &str) -> TdsResult<TdsClient> {
+        create_client_with_datasource_and_encryption(datasource, EncryptionSetting::Strict).await
     }
 
-    /// Create a client with the specified transport context and encryption mode
-    async fn create_client_with_transport_and_encryption(
-        transport_context: TransportContext,
+    /// Create a client with the specified datasource string and encryption mode
+    async fn create_client_with_datasource_and_encryption(
+        datasource: &str,
         encryption_mode: EncryptionSetting,
     ) -> TdsResult<TdsClient> {
         let (username, password) = get_db_credentials();
 
-        let client_context = ClientContext {
-            transport_context,
-            user_name: username,
-            password,
-            database: "master".to_string(),
-            encryption_options: EncryptionOptions {
-                mode: encryption_mode,
-                trust_server_certificate: trust_server_certificate(),
-                host_name_in_cert: get_cert_hostname(),
-            },
-            ..Default::default()
+        let mut client_context = ClientContext::default();
+        client_context.user_name = username;
+        client_context.password = password;
+        client_context.database = "master".to_string();
+        client_context.encryption_options = EncryptionOptions {
+            mode: encryption_mode,
+            trust_server_certificate: trust_server_certificate(),
+            host_name_in_cert: get_cert_hostname(),
+            server_certificate: None,
         };
 
         let provider = TdsConnectionProvider {};
-        provider.create_client(client_context, None).await
+        provider
+            .create_client(client_context, datasource, None)
+            .await
+    }
+
+    /// Create a LocalDB client with integrated authentication (SSPI)
+    #[cfg(windows)]
+    async fn create_localdb_client_with_integrated_auth(
+        datasource: &str,
+        encryption_mode: EncryptionSetting,
+    ) -> TdsResult<TdsClient> {
+        let mut client_context = ClientContext::default();
+        client_context.database = "master".to_string();
+        client_context.tds_authentication_method = TdsAuthenticationMethod::SSPI;
+        client_context.encryption_options = EncryptionOptions {
+            mode: encryption_mode,
+            trust_server_certificate: trust_server_certificate(),
+            host_name_in_cert: get_cert_hostname(),
+            server_certificate: None,
+        };
+
+        let provider = TdsConnectionProvider {};
+        provider
+            .create_client(client_context, datasource, None)
+            .await
     }
 
     /// Execute a simple query and verify we get results
@@ -124,12 +145,10 @@ mod transport_protocols {
         let host = env::var("DB_HOST").expect("DB_HOST environment variable not set");
 
         // Test connecting to default instance using Named Pipe
-        // Format: \\server\pipe\sql\query
-        let pipe_name = format!(r"\\{host}\pipe\sql\query");
+        // Format: np:\\server\pipe\sql\query
+        let datasource = format!(r"np:\\{}\pipe\sql\query", host);
 
-        let transport_context = TransportContext::NamedPipe { pipe_name };
-
-        let mut client = create_client_with_transport(transport_context).await?;
+        let mut client = create_client_with_datasource(&datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -151,12 +170,10 @@ mod transport_protocols {
         }
 
         // Test connecting to local default instance using Named Pipe
-        // Format: \\.\pipe\sql\query (local machine shorthand)
-        let pipe_name = r"\\.\pipe\sql\query".to_string();
+        // Format: np:\\.\pipe\sql\query (local machine shorthand)
+        let datasource = r"np:\\.\pipe\sql\query";
 
-        let transport_context = TransportContext::NamedPipe { pipe_name };
-
-        let mut client = create_client_with_transport(transport_context).await?;
+        let mut client = create_client_with_datasource(datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -164,20 +181,20 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
-    #[ignore]
     async fn test_named_pipe_with_encryption_on() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
 
         // Test Named Pipe with Encryption=On (TDS 7.4, negotiated encryption)
-        // This should use TLS wrapping within TDS packets
-        let pipe_name = r"\\.\pipe\sql\query".to_string();
-
-        let transport_context = TransportContext::NamedPipe { pipe_name };
+        // This now works! The key was ensuring atomic writes to the Named Pipe during TLS handshake.
+        // Named Pipes in Message mode treat each write as a complete message. Vectored I/O was
+        // writing the TDS packet header (8 bytes) and TLS payload separately, causing SQL Server
+        // to see an invalid 8-byte message and close the pipe. The fix: flatten multiple buffers
+        // into a single buffer before writing during TLS handshake.
+        let datasource = r"np:\\.\pipe\sql\query";
 
         let mut client =
-            create_client_with_transport_and_encryption(transport_context, EncryptionSetting::On)
-                .await?;
+            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::On).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -204,11 +221,9 @@ mod transport_protocols {
 
         // Test connecting to default instance using Shared Memory (lpc:)
         // This uses the default instance name (empty string)
-        let transport_context = TransportContext::SharedMemory {
-            instance_name: String::new(),
-        };
+        let datasource = "lpc:.";
 
-        let mut client = create_client_with_transport(transport_context).await?;
+        let mut client = create_client_with_datasource(datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -229,13 +244,12 @@ mod transport_protocols {
             return Ok(());
         }
 
-        // Test connecting using explicit MSSQLSERVER instance name
-        // (which is the default instance)
-        let transport_context = TransportContext::SharedMemory {
-            instance_name: "MSSQLSERVER".to_string(),
-        };
+        // Test connecting using explicit local server syntax
+        // lpc:. connects to the default instance via shared memory
+        // (MSSQLSERVER is reserved and maps to default instance automatically)
+        let datasource = "lpc:.";
 
-        let mut client = create_client_with_transport(transport_context).await?;
+        let mut client = create_client_with_datasource(datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -243,20 +257,19 @@ mod transport_protocols {
 
     #[tokio::test]
     #[cfg(windows)]
-    #[ignore]
     async fn test_shared_memory_with_encryption_on() -> TdsResult<()> {
         init_tracing();
         dotenv().ok();
 
         // Test Shared Memory with Encryption=On (TDS 7.4, negotiated encryption)
-        // This should use TLS wrapping within TDS packets
-        let transport_context = TransportContext::SharedMemory {
-            instance_name: "MSSQLSERVER".to_string(),
-        };
+        // This now works! The same atomic write fix that enabled Named Pipes encryption
+        // also works for Shared Memory, since both transports have message-boundary semantics
+        // that require complete messages to be written atomically.
+        // lpc:. connects to default instance via shared memory
+        let datasource = "lpc:.";
 
         let mut client =
-            create_client_with_transport_and_encryption(transport_context, EncryptionSetting::On)
-                .await?;
+            create_client_with_datasource_and_encryption(datasource, EncryptionSetting::On).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -286,9 +299,9 @@ mod transport_protocols {
             .map(|v| v.parse::<u16>().expect("DB_PORT must be a valid u16"))
             .unwrap_or(1433);
 
-        let transport_context = TransportContext::Tcp { host, port };
+        let datasource = format!("tcp:{},{}", host, port);
 
-        let mut client = create_client_with_transport(transport_context).await?;
+        let mut client = create_client_with_datasource(&datasource).await?;
         test_simple_query(&mut client).await?;
 
         Ok(())
@@ -309,10 +322,10 @@ mod transport_protocols {
             .map(|v| v.parse::<u16>().expect("DB_PORT must be a valid u16"))
             .unwrap_or(1433);
 
-        let transport_context = TransportContext::Tcp { host, port };
+        let datasource = format!("tcp:{},{}", host, port);
 
         let mut client =
-            create_client_with_transport_and_encryption(transport_context, EncryptionSetting::On)
+            create_client_with_datasource_and_encryption(&datasource, EncryptionSetting::On)
                 .await?;
         test_simple_query(&mut client).await?;
 
@@ -340,18 +353,14 @@ mod transport_protocols {
 
         // Test opening 10 Named Pipe connections simultaneously
         // This verifies that our retry mechanism handles concurrent access correctly
-        let pipe_name = r"\\.\pipe\sql\query".to_string();
+        let datasource = r"np:\\.\pipe\sql\query";
 
         let mut handles = Vec::new();
 
         for i in 0..10 {
-            let pipe_name_clone = pipe_name.clone();
+            let datasource_clone = datasource;
             let handle = tokio::spawn(async move {
-                let transport_context = TransportContext::NamedPipe {
-                    pipe_name: pipe_name_clone,
-                };
-
-                let mut client = create_client_with_transport(transport_context)
+                let mut client = create_client_with_datasource(datasource_clone)
                     .await
                     .unwrap_or_else(|_| panic!("Failed to create client {i}"));
 
@@ -395,11 +404,10 @@ mod transport_protocols {
 
         for i in 0..10 {
             let handle = tokio::spawn(async move {
-                let transport_context = TransportContext::SharedMemory {
-                    instance_name: "MSSQLSERVER".to_string(),
-                };
+                // lpc:. connects to default instance via shared memory
+                let datasource = "lpc:.";
 
-                let mut client = create_client_with_transport(transport_context)
+                let mut client = create_client_with_datasource(datasource)
                     .await
                     .unwrap_or_else(|_| panic!("Failed to create client {i}"));
 
@@ -419,4 +427,78 @@ mod transport_protocols {
 
         Ok(())
     }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_localdb_connection() -> TdsResult<()> {
+        init_tracing();
+        dotenv().ok();
+
+        println!("Testing LocalDB connection with integrated authentication...");
+
+        // Connect to LocalDB using integrated authentication - test will fail if connection fails
+        // Use Strict encryption to verify that the connection provider automatically
+        // overrides it to PreferOff for LocalDB connections (matching ODBC behavior)
+        let datasource = "(localdb)\\MSSQLLocalDB";
+        let mut client =
+            create_localdb_client_with_integrated_auth(datasource, EncryptionSetting::Strict)
+                .await?;
+
+        println!("Connected to LocalDB successfully with integrated authentication!");
+
+        // Execute a simple query
+        test_simple_query(&mut client).await?;
+
+        println!("Query executed successfully on LocalDB");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn test_localdb_query_execution() -> TdsResult<()> {
+        init_tracing();
+        dotenv().ok();
+
+        println!("Testing LocalDB query execution with integrated authentication...");
+
+        // Connect to LocalDB using integrated authentication - test will fail if connection fails
+        // Use Required encryption to verify that the connection provider automatically
+        // overrides it to PreferOff for LocalDB connections (matching ODBC behavior)
+        let datasource = "(localdb)\\MSSQLLocalDB";
+        let mut client =
+            create_localdb_client_with_integrated_auth(datasource, EncryptionSetting::Required)
+                .await?;
+
+        // Execute multiple queries to test stability
+        let queries = vec![
+            "SELECT @@VERSION",
+            "SELECT DB_NAME()",
+            "SELECT GETDATE()",
+            "SELECT 1 AS test_value",
+        ];
+
+        for query in queries {
+            println!("Executing: {query}");
+            client.execute(query.to_string(), None, None).await?;
+
+            while let Some(resultset) = client.get_current_resultset() {
+                while let Some(_row) = resultset.next_row().await? {}
+            }
+
+            if client.move_to_next().await? {
+                // Process any additional result sets
+            }
+
+            client.close_query().await?;
+            println!("  ✓ Success");
+        }
+
+        println!("All queries executed successfully on LocalDB with integrated authentication");
+        Ok(())
+    }
+
+    // LocalDB parsing is now handled by datasource parser
+    // These tests have been moved to datasource parser tests
+
+    // LocalDB connection properties are now tested via datasource parser tests
 }
