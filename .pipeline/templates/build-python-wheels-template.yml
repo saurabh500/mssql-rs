@@ -85,6 +85,7 @@ steps:
     - script: |
         echo "Building universal2 Python wheel for Python ${{ pythonVersion }}..."
         export PATH="$HOME/.local/bin:$PATH"
+        export MACOSX_DEPLOYMENT_TARGET=15.0
         python${{ pythonVersion }} --version
         cd mssql-py-core
         maturin build --release --target universal2-apple-darwin --interpreter python${{ pythonVersion }} --out $(Build.ArtifactStagingDirectory)/wheels
@@ -92,9 +93,16 @@ steps:
       displayName: 'Build universal2 wheel for Python ${{ pythonVersion }} (MacOS)'
   
   - script: |
-      echo "All wheels built:"
+      echo "Re-tagging macOS wheels to use single universal2 platform tag..."
+      export PATH="$HOME/.local/bin:$PATH"
+      pip install wheel
+      for whl in $(Build.ArtifactStagingDirectory)/wheels/*.whl; do
+        echo "Re-tagging: $(basename $whl)"
+        wheel tags --platform-tag macosx_15_0_universal2 --remove "$whl"
+      done
+      echo "All wheels re-tagged:"
       ls -lh $(Build.ArtifactStagingDirectory)/wheels
-    displayName: List all wheels
+    displayName: 'Re-tag macOS wheels to uniform platform tag'
 
 # Container-based builds for Alpine (musl - musllinux)
 - ${{ if eq(parameters.osType, 'Alpine') }}:

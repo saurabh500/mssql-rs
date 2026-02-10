@@ -111,11 +111,11 @@ Each combination produces wheels for all 5 Python versions:
 | Platform | Architecture | C Library | Example Wheel |
 |----------|-------------|-----------|---------------|
 | Windows | x64 | MSVCRT | `cp310-cp310-win_amd64.whl` |
-| Linux | x64 | glibc | `cp310-cp310-manylinux_2_34_x86_64.whl` |
-| Linux | ARM64 | glibc | `cp310-cp310-manylinux_2_34_aarch64.whl` |
+| Linux | x64 | glibc | `cp310-cp310-manylinux_2_28_x86_64.whl` |
+| Linux | ARM64 | glibc | `cp310-cp310-manylinux_2_28_aarch64.whl` |
 | Alpine | x64 | musl | `cp310-cp310-musllinux_1_2_x86_64.whl` |
 | Alpine | ARM64 | musl | `cp310-cp310-musllinux_1_2_aarch64.whl` |
-| macOS | Universal | libc | `cp310-cp310-macosx_11_0_universal2.whl` |
+| macOS | Universal | libc | `cp310-cp310-macosx_15_0_universal2.whl` |
 
 **Total wheels per build**: ~30 wheels (6 platform/arch combinations × 5 Python versions)
 
@@ -134,7 +134,7 @@ Artifacts are published with platform and architecture in the name:
 **Linux (glibc - manylinux)**:
 - Built on Ubuntu with glibc
 - Compatible with most Linux distributions (Debian, Ubuntu, RHEL, Fedora, etc.)
-- Tagged as `manylinux_2_34` or similar
+- Tagged as `manylinux_2_28` or similar
 - Available for both x64 and ARM64
 
 **Alpine (musl - musllinux)**:
@@ -150,17 +150,17 @@ Artifacts are published with platform and architecture in the name:
 - Users don't need to choose architecture
 
 ### Naming Convention
-Example: `mssql_py_core-0.1.0-cp310-cp310-manylinux_2_34_x86_64.whl`
+Example: `mssql_py_core-0.1.0-cp310-cp310-manylinux_2_28_x86_64.whl`
 
 - `mssql_py_core` - Package name
 - `0.1.0` - Version from Cargo.toml
 - `cp310` - CPython 3.10
-- `manylinux_2_34` - Linux compatibility tag
+- `manylinux_2_28` - Linux compatibility tag
 - `x86_64` - Architecture
 
 ### Installation
 ```bash
-pip install mssql_py_core-0.1.0-cp310-cp310-manylinux_2_34_x86_64.whl
+pip install mssql_py_core-0.1.0-cp310-cp310-manylinux_2_28_x86_64.whl
 ```
 
 ### Usage in Python
