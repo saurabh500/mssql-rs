@@ -487,15 +487,15 @@ class TestPacketSizeParameter:
         conn.close()
         assert 15000 <= result[0] <= 17000
 
-    def test_packet_size_32767(self):
-        """Test setting packet_size to max value 32767.
+    def test_packet_size_32768(self):
+        """Test setting packet_size to max value 32768.
         
         Note: SQL Server may cap the packet size based on server configuration.
         The important thing is the packet size is larger than the 16384 test.
         """
         context = get_base_context()
         context["database"] = "master"
-        context["packet_size"] = 32767
+        context["packet_size"] = 32768
         conn = mssql_py_core.PyCoreConnection(context)
         cursor = conn.cursor()
         cursor.execute("SELECT net_packet_size FROM sys.dm_exec_connections WHERE session_id = @@SPID")
@@ -503,6 +503,56 @@ class TestPacketSizeParameter:
         conn.close()
         # SQL Server may cap packet size based on config, but should be at least 16000
         assert result[0] >= 16000
+
+    def test_packet_size_too_small(self):
+        """Test that packet_size below 512 defaults to 4096.
+        
+        Note: SQL Server may negotiate a slightly different size due to TDS overhead.
+        """
+        context = get_base_context()
+        context["database"] = "master"
+        context["packet_size"] = 511  # Below minimum
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT net_packet_size FROM sys.dm_exec_connections WHERE session_id = @@SPID")
+        result = cursor.fetchone()
+        conn.close()
+        # Should default to ~4096 when below minimum (allow variance for TDS negotiation)
+        assert 4000 <= result[0] <= 4500
+
+    def test_packet_size_too_large(self):
+        """Test that packet_size above 32768 defaults to 4096.
+        
+        Note: Invalid packet sizes silently default to 4096 rather than raising an error.
+        SQL Server may negotiate a slightly different size due to TDS overhead.
+        """
+        context = get_base_context()
+        context["database"] = "master"
+        context["packet_size"] = 32769  # Above maximum
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT net_packet_size FROM sys.dm_exec_connections WHERE session_id = @@SPID")
+        result = cursor.fetchone()
+        conn.close()
+        # Should default to ~4096 when above maximum (allow variance for TDS negotiation)
+        assert 4000 <= result[0] <= 4500
+
+    def test_packet_size_minimum_valid(self):
+        """Test that packet_size of 512 (minimum) is accepted.
+        
+        Note: SQL Server may negotiate a larger packet size than requested.
+        The TDS protocol header and other factors can increase the actual negotiated size.
+        """
+        context = get_base_context()
+        context["database"] = "master"
+        context["packet_size"] = 512
+        conn = mssql_py_core.PyCoreConnection(context)
+        cursor = conn.cursor()
+        cursor.execute("SELECT net_packet_size FROM sys.dm_exec_connections WHERE session_id = @@SPID")
+        result = cursor.fetchone()
+        conn.close()
+        # Allow variance for TDS negotiation - SQL Server may negotiate a larger size
+        assert 512 <= result[0] <= 1024
 
 
 @pytest.mark.integration

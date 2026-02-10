@@ -1569,7 +1569,7 @@ pub(crate) mod tests {
         let negotiated_packet_size: u32 = 8000;
 
         let context = ClientContext {
-            packet_size: initial_packet_size as i16,
+            packet_size: initial_packet_size as u16,
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: true,
@@ -1619,7 +1619,7 @@ pub(crate) mod tests {
         let packet_size: u32 = 4096;
 
         let context = ClientContext {
-            packet_size: packet_size as i16,
+            packet_size: packet_size as u16,
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: true,
@@ -1663,7 +1663,7 @@ pub(crate) mod tests {
         let packet_size: u32 = 512;
 
         let context = ClientContext {
-            packet_size: packet_size as i16,
+            packet_size: packet_size as u16,
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: true,
@@ -1785,7 +1785,7 @@ pub(crate) mod tests {
         let packet_size: u32 = 512;
 
         let context = ClientContext {
-            packet_size: packet_size as i16,
+            packet_size: packet_size as u16,
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: true,
@@ -1853,7 +1853,7 @@ pub(crate) mod tests {
         let packet_size: u32 = 512;
 
         let context = ClientContext {
-            packet_size: packet_size as i16,
+            packet_size: packet_size as u16,
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: true,
@@ -1985,7 +1985,7 @@ pub(crate) mod tests {
         let packet_size: u32 = 512;
 
         let context = ClientContext {
-            packet_size: packet_size as i16,
+            packet_size: packet_size as u16,
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: true,
@@ -2053,7 +2053,7 @@ pub(crate) mod tests {
         let packet_size: u32 = 512;
 
         let context = ClientContext {
-            packet_size: packet_size as i16,
+            packet_size: packet_size as u16,
             encryption_options: EncryptionOptions {
                 mode: EncryptionSetting::On,
                 trust_server_certificate: true,

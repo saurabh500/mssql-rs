@@ -252,7 +252,7 @@ impl FuzzClientContext {
         // Clamp numeric values to reasonable ranges
         context.connect_retry_count = self.connect_retry_count.min(3);
         context.connect_timeout = self.connect_timeout.min(30);
-        context.packet_size = self.packet_size.clamp(512, 32767);
+        context.packet_size = self.packet_size.clamp(512, 32768) as u16;
         
         context.tds_authentication_method = match self.auth_method {
             FuzzAuthMethod::Password => TdsAuthenticationMethod::Password,

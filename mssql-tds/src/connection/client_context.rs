@@ -5,6 +5,7 @@ use async_trait::async_trait;
 
 use crate::connection::datasource_parser::{ParsedDataSource, ProtocolType};
 use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
+use crate::error::Error;
 use crate::message::login_options::{ApplicationIntent, TdsVersion};
 use crate::security::{IntegratedAuthConfig, is_loopback_address};
 use hostname;
@@ -64,6 +65,34 @@ pub enum TdsAuthenticationMethod {
     AccessToken,
 }
 
+/// Trait for validating ClientContext before establishing a connection.
+/// This trait can be implemented by users to provide custom validation logic.
+pub trait ClientContextValidator {
+    /// Validates the ClientContext.
+    /// Returns Ok(()) if validation passes, or an Error if validation fails.
+    fn validate(&self, context: &ClientContext) -> TdsResult<()>;
+}
+
+/// Default validator that implements standard validation rules.
+pub struct DefaultClientContextValidator;
+
+impl ClientContextValidator for DefaultClientContextValidator {
+    fn validate(&self, context: &ClientContext) -> TdsResult<()> {
+        // Validate packet_size is within acceptable range (512 - 32768)
+        const MIN_PACKET_SIZE: u16 = 512;
+        const MAX_PACKET_SIZE: u16 = 32768;
+
+        if context.packet_size < MIN_PACKET_SIZE || context.packet_size > MAX_PACKET_SIZE {
+            return Err(Error::UsageError(format!(
+                "Invalid packet size: {}. Packet size must be between {} and {} bytes.",
+                context.packet_size, MIN_PACKET_SIZE, MAX_PACKET_SIZE
+            )));
+        }
+
+        Ok(())
+    }
+}
+
 use std::collections::HashMap;
 
 pub struct ClientContext {
@@ -100,7 +129,7 @@ pub struct ClientContext {
     pub mars_enabled: bool,
     pub multi_subnet_failover: bool,
     pub new_password: String,
-    pub packet_size: i16,
+    pub packet_size: u16,
     pub password: String,
     pub pooling: bool,
     pub replication: bool,
@@ -276,6 +305,27 @@ impl ClientContext {
             channel_bindings: None, // Set during TLS handshake
             is_loopback,
         }
+    }
+
+    /// Validates the ClientContext using the default validator.
+    /// This method can be called before opening a connection to ensure the context is valid.
+    ///
+    /// # Returns
+    /// Ok(()) if validation passes, or an Error if validation fails.
+    pub fn validate(&self) -> TdsResult<()> {
+        DefaultClientContextValidator.validate(self)
+    }
+
+    /// Validates the ClientContext using a custom validator.
+    /// This allows callers to provide their own validation logic.
+    ///
+    /// # Arguments
+    /// * `validator` - A custom validator implementing ClientContextValidator trait
+    ///
+    /// # Returns
+    /// Ok(()) if validation passes, or an Error if validation fails.
+    pub fn validate_with<V: ClientContextValidator>(&self, validator: &V) -> TdsResult<()> {
+        validator.validate(self)
     }
 }
 
@@ -1150,5 +1200,73 @@ mod tests {
 
         assert_eq!(ctx.keep_alive_in_ms, u32::MAX);
         assert_eq!(ctx.keep_alive_interval_in_ms, u32::MAX);
+    }
+
+    #[test]
+    fn test_packet_size_validation_valid_min() {
+        let mut ctx = ClientContext::new();
+        ctx.packet_size = 512; // Minimum valid packet size
+        assert!(ctx.validate().is_ok());
+    }
+
+    #[test]
+    fn test_packet_size_validation_valid_max() {
+        let mut ctx = ClientContext::new();
+        ctx.packet_size = 32768; // Maximum valid packet size
+        assert!(ctx.validate().is_ok());
+    }
+
+    #[test]
+    fn test_packet_size_validation_valid_default() {
+        let ctx = ClientContext::new();
+        // Default packet_size is 8000, which should be valid
+        assert!(ctx.validate().is_ok());
+    }
+
+    #[test]
+    fn test_packet_size_validation_invalid_too_small() {
+        let mut ctx = ClientContext::new();
+        ctx.packet_size = 511; // Below minimum
+        let result = ctx.validate();
+        assert!(result.is_err());
+        if let Err(Error::UsageError(msg)) = result {
+            assert!(msg.contains("Invalid packet size"));
+            assert!(msg.contains("511"));
+        } else {
+            panic!("Expected UsageError");
+        }
+    }
+
+    #[test]
+    fn test_packet_size_validation_invalid_too_large() {
+        let mut ctx = ClientContext::new();
+        ctx.packet_size = 32769; // Above maximum
+        let result = ctx.validate();
+        assert!(result.is_err());
+        if let Err(Error::UsageError(msg)) = result {
+            assert!(msg.contains("Invalid packet size"));
+            assert!(msg.contains("32769"));
+        } else {
+            panic!("Expected UsageError");
+        }
+    }
+
+    #[test]
+    fn test_custom_validator() {
+        struct CustomValidator;
+        impl ClientContextValidator for CustomValidator {
+            fn validate(&self, _context: &ClientContext) -> TdsResult<()> {
+                Err(Error::UsageError("Custom validation failed".to_string()))
+            }
+        }
+
+        let ctx = ClientContext::new();
+        let result = ctx.validate_with(&CustomValidator);
+        assert!(result.is_err());
+        if let Err(Error::UsageError(msg)) = result {
+            assert_eq!(msg, "Custom validation failed");
+        } else {
+            panic!("Expected UsageError");
+        }
     }
 }

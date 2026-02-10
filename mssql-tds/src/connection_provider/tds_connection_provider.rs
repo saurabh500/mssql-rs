@@ -89,6 +89,9 @@ impl TdsConnectionProvider {
         // Parse the datasource to get the action chain
         let parsed = context.parse_datasource(datasource)?;
 
+        // Validate the ClientContext before attempting connection
+        context.validate()?;
+
         // Validate MultiSubnetFailover constraints
         if context.multi_subnet_failover {
             // MultiSubnetFailover cannot be used with database mirroring (failover_partner)

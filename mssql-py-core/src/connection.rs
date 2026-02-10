@@ -146,9 +146,22 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<u32>().ok())
             .unwrap_or(15);
 
+        // Extract packet_size and validate it's within acceptable range
         let packet_size = dict
             .get_item("packet_size")?
-            .and_then(|v| v.extract::<i16>().ok())
+            .and_then(|v| {
+                // Accept both i32 (from Python int) and i64, then validate and convert to u16
+                v.extract::<i64>()
+                    .ok()
+                    .or_else(|| v.extract::<i32>().ok().map(|x| x as i64))
+                    .and_then(|size| {
+                        if (512..=32768).contains(&size) {
+                            Some(size as u16)
+                        } else {
+                            None
+                        }
+                    })
+            })
             .unwrap_or(4096);
 
         let mars_enabled = dict
