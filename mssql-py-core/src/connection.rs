@@ -364,6 +364,12 @@ impl PyCoreConnection {
         context.tds_authentication_method = authentication_method;
         context.access_token = access_token;
 
+        // Set library_name to "mssql-python" for Python driver
+        context.library_name = "mssql-python".to_string();
+
+        // Use the module-level driver version (set once by mssql-python at import time)
+        context.driver_version = crate::get_driver_version();
+
         Ok((context, datasource))
     }
 }

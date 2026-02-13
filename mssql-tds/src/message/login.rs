@@ -292,7 +292,7 @@ impl LoginRequestModel<'_> {
             features_request: (context, pre_login_fedauth_response).into(),
             user_input: context,
             transport_context,
-            client_prog_ver: 0,
+            client_prog_ver: context.encode_driver_version(),
             client_process_id: 0,
             connection_id_deprecated: 0,
             client_time_zone_deprecated: 0,
