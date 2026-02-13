@@ -291,8 +291,10 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<u32>().ok())
             .unwrap_or(1_000);
 
-        // Extract access token (if provided, use AccessToken authentication)
-        let access_token = dict
+        // Extract raw JWT access token (if provided by Python at bulk copy time).
+        // This is a fresh token acquired by mssql-python's Azure Identity SDK,
+        // NOT the ODBC struct format — just the plain JWT string.
+        let access_token: Option<String> = dict
             .get_item("access_token")?
             .and_then(|v| v.extract::<String>().ok());
 

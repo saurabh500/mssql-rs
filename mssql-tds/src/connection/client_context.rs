@@ -185,6 +185,7 @@ pub struct ClientContext {
     pub user_instance: bool,
     pub user_name: String,
     pub workstation_id: String,
+    /// Base64 encoded JWT access token for Azure AD authentication.
     pub access_token: Option<String>,
     /// Server Principal Name (SPN) for integrated authentication.
     /// If not provided, the SPN will be automatically generated from the server address.
