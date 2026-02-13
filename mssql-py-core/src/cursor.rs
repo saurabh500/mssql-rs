@@ -338,9 +338,15 @@ impl PyCoreCursor {
             let mut py_iter = data_source.into_iter();
             let first_row_result = py_iter.next();
 
+            // Capture first row's column count for row consistency validation
+            let first_row_col_count = match &first_row_result {
+                Some(Ok(first_tuple)) => first_tuple.cast::<PyTuple>().map(|t| t.len()).ok(),
+                _ => None,
+            };
+
             let column_mappings = if auto_generate_mappings {
-                if let Some(Ok(first_tuple)) = &first_row_result {
-                    let src_col_count = first_tuple.cast::<PyTuple>().map(|t| t.len()).unwrap_or(0);
+                if let Some(Ok(_first_tuple)) = &first_row_result {
+                    let src_col_count = first_row_col_count.unwrap_or(0);
 
                     info!(
                         "bulkcopy: First row has {} columns, destination has {} columns",
@@ -433,11 +439,12 @@ impl PyCoreCursor {
                 });
 
             // Convert to PythonRowAdapter for each row
-            let row_adapters = all_rows_iter.map(|row| {
+            let row_adapters = all_rows_iter.map(move |row| {
                 PythonRowAdapter::with_metadata(
                     row,
                     Arc::clone(&metadata_arc),
                     Some(Arc::clone(&resolved_mappings_arc)),
+                    first_row_col_count,
                 )
             });
 

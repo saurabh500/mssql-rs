@@ -112,6 +112,8 @@ pub struct PythonRowAdapter {
     destination_metadata: Option<Arc<Vec<BulkCopyColumnMetadata>>>,
     /// Optional resolved column mappings for reordering columns (wrapped in Arc for efficient sharing across rows)
     resolved_mappings: Option<Arc<Vec<ResolvedColumnMapping>>>,
+    /// Expected number of source columns (from first row), used to validate row consistency
+    expected_source_columns: Option<usize>,
 }
 
 impl PythonRowAdapter {
@@ -130,11 +132,13 @@ impl PythonRowAdapter {
         row: Py<PyAny>,
         destination_metadata: Arc<Vec<BulkCopyColumnMetadata>>,
         resolved_mappings: Option<Arc<Vec<ResolvedColumnMapping>>>,
+        expected_source_columns: Option<usize>,
     ) -> Self {
         Self {
             row,
             destination_metadata: Some(destination_metadata),
             resolved_mappings,
+            expected_source_columns,
         }
     }
 
@@ -1481,6 +1485,20 @@ impl PythonRowAdapter {
         Ok(ColumnValues::Real(real_value))
     }
 
+    /// Validates that the source tuple has the same number of columns as the first row.
+    fn validate_column_count(tuple_len: usize, expected: Option<usize>) -> TdsResult<()> {
+        if let Some(expected) = expected
+            && tuple_len != expected
+        {
+            return Err(Error::UsageError(format!(
+                "Row has {} columns, but expected {} columns based on the first row. \
+                 All rows must have the same number of columns.",
+                tuple_len, expected
+            )));
+        }
+        Ok(())
+    }
+
     /// Coerce a Python string to SQL Server JSON.
     ///
     /// Validates that the string contains valid JSON and converts to SqlJson.
@@ -1853,6 +1871,8 @@ impl BulkLoadRow for PythonRowAdapter {
 
             // If we have resolved mappings, use them to determine column order and indices
             if let Some(mappings) = &self.resolved_mappings {
+                Self::validate_column_count(tuple.len(), self.expected_source_columns)?;
+
                 // Use mappings to read columns in the correct order
                 let mut values = Vec::with_capacity(mappings.len());
                 let mut total_extract_time = Duration::ZERO;
