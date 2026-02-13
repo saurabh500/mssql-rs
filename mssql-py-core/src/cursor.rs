@@ -183,7 +183,10 @@ impl PyCoreCursor {
     ///
     /// * `table_name` - Name of the destination table (can include schema: "schema.table")
     /// * `data_source` - Python iterator yielding tuples of data to insert
-    /// * `batch_size` - Number of rows per batch (default: 0, meaning server decides)
+    /// * `batch_size` - Number of rows per batch. Default: 0.
+    ///   - When 0: All rows are sent in a single batch
+    ///   - When N > 0: Rows are sent in batches of N rows each
+    ///   - Each batch sends a DONE token to the server, enabling partial commit behavior
     /// * `timeout` - Timeout in seconds (default: 30)
     /// * `column_mappings` - Optional list for column mapping. Can be:
     ///   - List of column names: `['id', 'name', 'email']` - maps by ordinal position
@@ -194,7 +197,22 @@ impl PyCoreCursor {
     /// * `table_lock` - Obtain a bulk update lock for the duration of the bulk copy operation. When False, row locks are used.
     /// * `keep_nulls` - Preserve null values in the destination table regardless of the settings for default values.
     /// * `fire_triggers` - When True, cause the server to fire the insert triggers for the rows being inserted into the database.
-    /// * `use_internal_transaction` - When True, wraps the bulk copy in an internal transaction.
+    /// * `use_internal_transaction` - When True, wraps each batch in its own transaction. Default: False.
+    ///
+    ///   **When True:**
+    ///   - BEGIN TRANSACTION before each batch
+    ///   - COMMIT TRANSACTION after successful batch completion
+    ///   - ROLLBACK TRANSACTION on batch failure
+    ///   - Enables partial failure recovery: if batch 3 fails, batches 1-2 remain committed
+    ///
+    ///   **When False (default):**
+    ///   - SQL Server autocommit mode applies
+    ///   - Each batch is implicitly committed after DONE packet acknowledgment
+    ///   - Similar partial recovery, but server-controlled
+    ///
+    ///   **Note:** This setting only applies when detecting an active transaction on the same connection.
+    ///   In mssql-python, BulkCopy operations use a separate connection, so external transactions
+    ///   from the parent connection do not affect BulkCopy behavior.
     ///
     /// # Returns
     ///
@@ -202,17 +220,32 @@ impl PyCoreCursor {
     /// - `rows_copied` (int): Number of rows successfully copied
     /// - `batch_count` (int): Number of batches sent
     /// - `elapsed_time` (float): Time taken in seconds
+    /// - `rows_per_second` (float): Throughput in rows per second
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```python
     /// cursor = connection.cursor()
+    ///
+    /// # Basic usage - all rows in single batch
     /// data = [(1, 'Alice'), (2, 'Bob')]
-    /// # Simple usage with explicit params
-    /// result = cursor.bulkcopy('Users', iter(data), batch_size=1000, timeout=60)
-    /// # With column mappings as list of names
+    /// result = cursor.bulkcopy('Users', iter(data))
+    ///
+    /// # With batch size for large datasets
+    /// result = cursor.bulkcopy('Users', iter(large_data), batch_size=1000)
+    ///
+    /// # Partial failure recovery with internal transactions
+    /// # If error at row 2500: rows 1-2000 committed, 2001-2500 rolled back
+    /// result = cursor.bulkcopy(
+    ///     'Users',
+    ///     iter(large_data),
+    ///     batch_size=1000,
+    ///     use_internal_transaction=True
+    /// )
+    ///
+    /// # With column mappings
     /// result = cursor.bulkcopy('Users', iter(data), column_mappings=['id', 'name'])
-    /// print(f"Copied {result['rows_copied']} rows")
+    /// print(f"Copied {result['rows_copied']} rows in {result['batch_count']} batches")
     /// ```
     #[pyo3(signature = (table_name, data_source, batch_size=0, timeout=30, column_mappings=None, keep_identity=false, check_constraints=false, table_lock=false, keep_nulls=false, fire_triggers=false, use_internal_transaction=false))]
     #[allow(clippy::too_many_arguments)]
@@ -305,9 +338,15 @@ impl PyCoreCursor {
             let mut py_iter = data_source.into_iter();
             let first_row_result = py_iter.next();
 
+            // Capture first row's column count for row consistency validation
+            let first_row_col_count = match &first_row_result {
+                Some(Ok(first_tuple)) => first_tuple.cast::<PyTuple>().map(|t| t.len()).ok(),
+                _ => None,
+            };
+
             let column_mappings = if auto_generate_mappings {
-                if let Some(Ok(first_tuple)) = &first_row_result {
-                    let src_col_count = first_tuple.cast::<PyTuple>().map(|t| t.len()).unwrap_or(0);
+                if let Some(Ok(_first_tuple)) = &first_row_result {
+                    let src_col_count = first_row_col_count.unwrap_or(0);
 
                     info!(
                         "bulkcopy: First row has {} columns, destination has {} columns",
@@ -400,11 +439,12 @@ impl PyCoreCursor {
                 });
 
             // Convert to PythonRowAdapter for each row
-            let row_adapters = all_rows_iter.map(|row| {
+            let row_adapters = all_rows_iter.map(move |row| {
                 PythonRowAdapter::with_metadata(
                     row,
                     Arc::clone(&metadata_arc),
                     Some(Arc::clone(&resolved_mappings_arc)),
+                    first_row_col_count,
                 )
             });
 

@@ -5,6 +5,7 @@ use async_trait::async_trait;
 
 use crate::connection::datasource_parser::{ParsedDataSource, ProtocolType};
 use crate::core::{EncryptionOptions, EncryptionSetting, TdsResult};
+use crate::error::Error;
 use crate::message::login_options::{ApplicationIntent, TdsVersion};
 use crate::security::{IntegratedAuthConfig, is_loopback_address};
 use hostname;
@@ -14,6 +15,51 @@ pub enum IPAddressPreference {
     IPv4First = 0,
     IPv6First = 1,
     UsePlatformDefault = 2,
+}
+
+/// Represents a driver version with major, minor, and build components.
+/// Used to populate `client_prog_ver` in the TDS Login7 packet.
+///
+/// Encoding: `[major (8 bits)][minor (8 bits)][build (16 bits)]`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DriverVersion {
+    pub major: u8,
+    pub minor: u8,
+    pub build: u16,
+}
+
+impl DriverVersion {
+    /// Creates a new DriverVersion.
+    pub fn new(major: u8, minor: u8, build: u16) -> Self {
+        Self {
+            major,
+            minor,
+            build,
+        }
+    }
+
+    /// Creates a DriverVersion from the crate's Cargo.toml version at compile time.
+    /// Parses the `CARGO_PKG_VERSION` environment variable (e.g., "0.1.0").
+    pub fn from_cargo_version() -> Self {
+        let parts: Vec<&str> = env!("CARGO_PKG_VERSION").split('.').collect();
+        Self {
+            major: parts.first().and_then(|s| s.parse().ok()).unwrap_or(0),
+            minor: parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0),
+            build: parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0),
+        }
+    }
+
+    /// Encodes the version into a 32-bit integer for the TDS login packet.
+    /// Format: `[major][minor][build_high][build_low]`
+    pub fn encode(&self) -> i32 {
+        ((self.major as i32) << 24) | ((self.minor as i32) << 16) | (self.build as i32)
+    }
+}
+
+impl std::fmt::Display for DriverVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.build)
+    }
 }
 
 /// Specifies the Vector feature version support level.
@@ -64,6 +110,34 @@ pub enum TdsAuthenticationMethod {
     AccessToken,
 }
 
+/// Trait for validating ClientContext before establishing a connection.
+/// This trait can be implemented by users to provide custom validation logic.
+pub trait ClientContextValidator {
+    /// Validates the ClientContext.
+    /// Returns Ok(()) if validation passes, or an Error if validation fails.
+    fn validate(&self, context: &ClientContext) -> TdsResult<()>;
+}
+
+/// Default validator that implements standard validation rules.
+pub struct DefaultClientContextValidator;
+
+impl ClientContextValidator for DefaultClientContextValidator {
+    fn validate(&self, context: &ClientContext) -> TdsResult<()> {
+        // Validate packet_size is within acceptable range (512 - 32768)
+        const MIN_PACKET_SIZE: u16 = 512;
+        const MAX_PACKET_SIZE: u16 = 32768;
+
+        if context.packet_size < MIN_PACKET_SIZE || context.packet_size > MAX_PACKET_SIZE {
+            return Err(Error::UsageError(format!(
+                "Invalid packet size: {}. Packet size must be between {} and {} bytes.",
+                context.packet_size, MIN_PACKET_SIZE, MAX_PACKET_SIZE
+            )));
+        }
+
+        Ok(())
+    }
+}
+
 use std::collections::HashMap;
 
 pub struct ClientContext {
@@ -96,11 +170,14 @@ pub struct ClientContext {
     pub ipaddress_preference: IPAddressPreference,
     pub language: String,
     pub library_name: String,
+    /// Driver version used to populate `client_prog_ver` in the TDS Login7 packet.
+    /// Defaults to the crate version from Cargo.toml.
+    pub driver_version: DriverVersion,
     pub auth_method_map: HashMap<TdsAuthenticationMethod, Box<dyn CloneableEntraIdTokenFactory>>,
     pub mars_enabled: bool,
     pub multi_subnet_failover: bool,
     pub new_password: String,
-    pub packet_size: i16,
+    pub packet_size: u16,
     pub password: String,
     pub pooling: bool,
     pub replication: bool,
@@ -108,6 +185,7 @@ pub struct ClientContext {
     pub user_instance: bool,
     pub user_name: String,
     pub workstation_id: String,
+    /// Base64 encoded JWT access token for Azure AD authentication.
     pub access_token: Option<String>,
     /// Server Principal Name (SPN) for integrated authentication.
     /// If not provided, the SPN will be automatically generated from the server address.
@@ -147,7 +225,8 @@ impl ClientContext {
             failover_partner: "".to_string(),
             ipaddress_preference: IPAddressPreference::UsePlatformDefault,
             language: "us_english".to_string(),
-            library_name: "TdsX".to_string(),
+            library_name: "mssql-tds".to_string(),
+            driver_version: DriverVersion::from_cargo_version(),
             auth_method_map: HashMap::new(),
             mars_enabled: false,
             multi_subnet_failover: false,
@@ -199,7 +278,8 @@ impl ClientContext {
             failover_partner: "".to_string(),
             ipaddress_preference: IPAddressPreference::UsePlatformDefault,
             language: "us_english".to_string(),
-            library_name: "TdsX".to_string(),
+            library_name: "mssql-tds".to_string(),
+            driver_version: DriverVersion::from_cargo_version(),
             auth_method_map: HashMap::new(),
             mars_enabled: false,
             multi_subnet_failover: false,
@@ -236,6 +316,11 @@ impl ClientContext {
         } else {
             TdsVersion::V7_4
         }
+    }
+
+    /// Encodes the driver version into a 32-bit integer for the TDS login packet.
+    pub fn encode_driver_version(&self) -> i32 {
+        self.driver_version.encode()
     }
 
     fn clone_auth_method_map(
@@ -276,6 +361,27 @@ impl ClientContext {
             channel_bindings: None, // Set during TLS handshake
             is_loopback,
         }
+    }
+
+    /// Validates the ClientContext using the default validator.
+    /// This method can be called before opening a connection to ensure the context is valid.
+    ///
+    /// # Returns
+    /// Ok(()) if validation passes, or an Error if validation fails.
+    pub fn validate(&self) -> TdsResult<()> {
+        DefaultClientContextValidator.validate(self)
+    }
+
+    /// Validates the ClientContext using a custom validator.
+    /// This allows callers to provide their own validation logic.
+    ///
+    /// # Arguments
+    /// * `validator` - A custom validator implementing ClientContextValidator trait
+    ///
+    /// # Returns
+    /// Ok(()) if validation passes, or an Error if validation fails.
+    pub fn validate_with<V: ClientContextValidator>(&self, validator: &V) -> TdsResult<()> {
+        validator.validate(self)
     }
 }
 
@@ -391,6 +497,7 @@ impl Clone for ClientContext {
             ipaddress_preference: self.ipaddress_preference,
             language: self.language.clone(),
             library_name: self.library_name.clone(),
+            driver_version: self.driver_version,
             auth_method_map: self.clone_auth_method_map(),
             mars_enabled: self.mars_enabled,
             multi_subnet_failover: self.multi_subnet_failover,
@@ -1150,5 +1257,132 @@ mod tests {
 
         assert_eq!(ctx.keep_alive_in_ms, u32::MAX);
         assert_eq!(ctx.keep_alive_interval_in_ms, u32::MAX);
+    }
+
+    #[test]
+    fn test_packet_size_validation_valid_min() {
+        let mut ctx = ClientContext::new();
+        ctx.packet_size = 512; // Minimum valid packet size
+        assert!(ctx.validate().is_ok());
+    }
+
+    #[test]
+    fn test_packet_size_validation_valid_max() {
+        let mut ctx = ClientContext::new();
+        ctx.packet_size = 32768; // Maximum valid packet size
+        assert!(ctx.validate().is_ok());
+    }
+
+    #[test]
+    fn test_packet_size_validation_valid_default() {
+        let ctx = ClientContext::new();
+        // Default packet_size is 8000, which should be valid
+        assert!(ctx.validate().is_ok());
+    }
+
+    #[test]
+    fn test_packet_size_validation_invalid_too_small() {
+        let mut ctx = ClientContext::new();
+        ctx.packet_size = 511; // Below minimum
+        let result = ctx.validate();
+        assert!(result.is_err());
+        if let Err(Error::UsageError(msg)) = result {
+            assert!(msg.contains("Invalid packet size"));
+            assert!(msg.contains("511"));
+        } else {
+            panic!("Expected UsageError");
+        }
+    }
+
+    #[test]
+    fn test_packet_size_validation_invalid_too_large() {
+        let mut ctx = ClientContext::new();
+        ctx.packet_size = 32769; // Above maximum
+        let result = ctx.validate();
+        assert!(result.is_err());
+        if let Err(Error::UsageError(msg)) = result {
+            assert!(msg.contains("Invalid packet size"));
+            assert!(msg.contains("32769"));
+        } else {
+            panic!("Expected UsageError");
+        }
+    }
+
+    #[test]
+    fn test_custom_validator() {
+        struct CustomValidator;
+        impl ClientContextValidator for CustomValidator {
+            fn validate(&self, _context: &ClientContext) -> TdsResult<()> {
+                Err(Error::UsageError("Custom validation failed".to_string()))
+            }
+        }
+
+        let ctx = ClientContext::new();
+        let result = ctx.validate_with(&CustomValidator);
+        assert!(result.is_err());
+        if let Err(Error::UsageError(msg)) = result {
+            assert_eq!(msg, "Custom validation failed");
+        } else {
+            panic!("Expected UsageError");
+        }
+    }
+
+    #[test]
+    fn test_driver_version_encode() {
+        let v = DriverVersion::new(1, 2, 3);
+        // [major(1)][minor(2)][build(3)] = 0x01020003
+        assert_eq!(v.encode(), 0x01020003);
+    }
+
+    #[test]
+    fn test_driver_version_encode_max_values() {
+        let v = DriverVersion::new(255, 255, 65535);
+        // [255][255][65535] = 0xFFFFFFFF
+        assert_eq!(v.encode(), 0xFFFFFFFF_u32 as i32);
+    }
+
+    #[test]
+    fn test_driver_version_encode_zero() {
+        let v = DriverVersion::new(0, 0, 0);
+        assert_eq!(v.encode(), 0);
+    }
+
+    #[test]
+    fn test_driver_version_from_cargo() {
+        let v = DriverVersion::from_cargo_version();
+        // Should parse the crate version "0.1.0"
+        assert_eq!(v, DriverVersion::new(0, 1, 0));
+        assert_eq!(v.to_string(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn test_driver_version_default_in_context() {
+        let ctx = ClientContext::new();
+        assert_eq!(ctx.driver_version, DriverVersion::from_cargo_version());
+        assert_ne!(ctx.encode_driver_version(), 0);
+    }
+
+    #[test]
+    fn test_driver_version_custom_override() {
+        let mut ctx = ClientContext::new();
+        ctx.driver_version = DriverVersion::new(2, 5, 1234);
+        // [major(2)][minor(5)][build(1234)] = 0x020504D2
+        assert_eq!(ctx.encode_driver_version(), 0x020504D2);
+    }
+
+    #[test]
+    fn test_driver_version_display() {
+        assert_eq!(DriverVersion::new(1, 2, 3).to_string(), "1.2.3");
+        assert_eq!(DriverVersion::new(0, 0, 0).to_string(), "0.0.0");
+        assert_eq!(
+            DriverVersion::new(255, 255, 65535).to_string(),
+            "255.255.65535"
+        );
+    }
+
+    #[test]
+    fn test_default_library_name() {
+        let ctx = ClientContext::new();
+        assert_eq!(ctx.library_name, "mssql-tds");
     }
 }

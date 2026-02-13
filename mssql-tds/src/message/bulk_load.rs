@@ -39,7 +39,7 @@ const VARNULL: u16 = 0xFFFF;
 ///
 /// 1. Create writer with `new()`
 /// 2. Call `begin()` to write COLMETADATA token
-/// 3. Call `write_row()` for each row (streamed, not buffered)
+/// 3. Call `write_row_zerocopy()` for each row (streamed, not buffered)
 /// 4. Call `end()` to write DONE token and finalize
 pub struct StreamingBulkLoadWriter<'a> {
     /// Packet writer for TDS protocol
@@ -66,6 +66,10 @@ pub struct StreamingBulkLoadWriter<'a> {
     /// Pre-created type contexts for each column (initialized during begin())
     /// This avoids allocating contexts per column per row
     column_contexts: Vec<TdsTypeContext>,
+
+    /// Column count from the first row (None until first row is written)
+    /// This is used to validate that all subsequent rows have the same column count
+    first_row_column_count: Option<usize>,
 }
 
 impl<'a> StreamingBulkLoadWriter<'a> {
@@ -93,7 +97,8 @@ impl<'a> StreamingBulkLoadWriter<'a> {
             default_collation,
             metadata_written: false,
             rows_written: 0,
-            column_contexts: Vec::new(), // Will be populated in begin()
+            column_contexts: Vec::new(),  // Will be populated in begin()
+            first_row_column_count: None, // Will be set when first row is written
         }
     }
 
@@ -175,57 +180,6 @@ impl<'a> StreamingBulkLoadWriter<'a> {
         Ok(())
     }
 
-    /// Write a single row.
-    ///
-    /// Rows are written immediately to the TDS stream - no buffering occurs.
-    ///
-    /// # Arguments
-    ///
-    /// * `row` - Column values for this row
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - `begin()` has not been called yet
-    /// - Row has wrong number of columns
-    /// - Network errors occur during transmission
-    /// - Type conversion errors occur
-    pub async fn write_row(&mut self, row: &[ColumnValues]) -> TdsResult<()> {
-        if !self.metadata_written {
-            return Err(Error::ProtocolError(
-                "Must call begin() before write_row()".to_string(),
-            ));
-        }
-
-        // Validate row length
-        if row.len() != self.column_metadata.len() {
-            return Err(Error::ProtocolError(format!(
-                "Row column count ({}) does not match metadata count ({})",
-                row.len(),
-                self.column_metadata.len()
-            )));
-        }
-
-        // Write ROW token
-        self.packet_writer.write_byte_async(TOKEN_ROW).await?;
-
-        // Write each column value using pre-created contexts (zero allocations per row)
-        for (i, value) in row.iter().enumerate() {
-            let ctx = &self.column_contexts[i];
-            TdsValueSerializer::serialize_value(self.packet_writer, value, ctx).await?;
-        }
-
-        self.rows_written += 1;
-
-        trace!(
-            "StreamingBulkLoadWriter: Row {} written ({} columns)",
-            self.rows_written,
-            row.len()
-        );
-
-        Ok(())
-    }
-
     /// Write a single column value directly (for zero-copy bulk load).
     ///
     /// This is used by the `BulkLoadRow` trait to write columns one at a time
@@ -250,7 +204,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
         // Get the context for the specified column
         let ctx = self.column_contexts.get(column_index).ok_or_else(|| {
             Error::UsageError(format!(
-                "Column index {} out of bounds (max: {})",
+                "Column index {} out of bounds, expected {} columns based on table metadata. All rows must have the same number of columns as the first row.",
                 column_index,
                 self.column_contexts.len()
             ))
@@ -342,6 +296,7 @@ impl<'a> StreamingBulkLoadWriter<'a> {
     /// - `begin()` has not been called yet
     /// - Network errors occur during transmission
     /// - Type conversion errors occur
+    /// - Row has different column count than the first row
     pub async fn write_row_zerocopy<R>(&mut self, row: &R) -> TdsResult<()>
     where
         R: BulkLoadRow,
@@ -359,12 +314,33 @@ impl<'a> StreamingBulkLoadWriter<'a> {
         let mut column_index = 0usize;
         row.write_to_packet(self, &mut column_index).await?;
 
-        // Verify completeness
+        // First row: record its column count as authoritative
+        if self.first_row_column_count.is_none() {
+            self.first_row_column_count = Some(column_index);
+            trace!(
+                "StreamingBulkLoadWriter: First row establishes column count: {}",
+                column_index
+            );
+        } else {
+            // Subsequent rows: validate against first row's column count
+            let expected_count = self.first_row_column_count.unwrap();
+            if column_index != expected_count {
+                return Err(Error::UsageError(format!(
+                    "Row {} has {} columns, but first row had {} columns. All rows must have the same number of columns as the first row.",
+                    self.rows_written + 1,
+                    column_index,
+                    expected_count
+                )));
+            }
+        }
+
+        // Also verify against metadata for safety (this catches issues with column mappings)
         if column_index != self.column_metadata.len() {
             return Err(Error::UsageError(format!(
-                "Incomplete row: expected {} columns, wrote {}",
-                self.column_metadata.len(),
-                column_index
+                "Row {} wrote {} columns, but expected {} columns based on table metadata",
+                self.rows_written + 1,
+                column_index,
+                self.column_metadata.len()
             )));
         }
 

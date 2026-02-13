@@ -146,9 +146,22 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<u32>().ok())
             .unwrap_or(15);
 
+        // Extract packet_size and validate it's within acceptable range
         let packet_size = dict
             .get_item("packet_size")?
-            .and_then(|v| v.extract::<i16>().ok())
+            .and_then(|v| {
+                // Accept both i32 (from Python int) and i64, then validate and convert to u16
+                v.extract::<i64>()
+                    .ok()
+                    .or_else(|| v.extract::<i32>().ok().map(|x| x as i64))
+                    .and_then(|size| {
+                        if (512..=32768).contains(&size) {
+                            Some(size as u16)
+                        } else {
+                            None
+                        }
+                    })
+            })
             .unwrap_or(4096);
 
         let mars_enabled = dict
@@ -278,8 +291,10 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<u32>().ok())
             .unwrap_or(1_000);
 
-        // Extract access token (if provided, use AccessToken authentication)
-        let access_token = dict
+        // Extract raw JWT access token (if provided by Python at bulk copy time).
+        // This is a fresh token acquired by mssql-python's Azure Identity SDK,
+        // NOT the ODBC struct format — just the plain JWT string.
+        let access_token: Option<String> = dict
             .get_item("access_token")?
             .and_then(|v| v.extract::<String>().ok());
 
@@ -350,6 +365,12 @@ impl PyCoreConnection {
         context.keep_alive_interval_in_ms = keep_alive_interval_in_ms;
         context.tds_authentication_method = authentication_method;
         context.access_token = access_token;
+
+        // Set library_name to "mssql-python" for Python driver
+        context.library_name = "mssql-python".to_string();
+
+        // Use the module-level driver version (set once by mssql-python at import time)
+        context.driver_version = crate::get_driver_version();
 
         Ok((context, datasource))
     }

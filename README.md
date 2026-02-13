@@ -1,103 +1,64 @@
-[Rust in Microsoft]: https://aka.ms/rust
-[MSRustup from MS]: https://aka.ms/msrustup
-[Personal Access Tokens]: https://sqlclientdrivers.visualstudio.com/_usersSettings/tokens
-[Connect to feed]: https://sqlclientdrivers.visualstudio.com/SqlDevX/_artifacts/feed/RustTools/connect
-[Rust build pipeline]: https://dev.azure.com/SqlClientDrivers/SqlDevX/_build?definitionId=1869
+# mssql-rs
 
-# Rust prototype project
-The Rust prototype project is intended to be a starting and learning point for a new TDS library project.
-It allows to try, and explore features, components, and techniques for TDS implementation in Rust.
-The repo is not intended to be a production ready code, but rather a playground for learning and exploration.
+A Rust implementation of the [Tabular Data Stream (TDS)](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/) protocol used by Microsoft SQL Server. This library provides a foundational protocol layer to power SQL connectivity across multiple language bindings.
+
+## Overview
+
+The `mssql-tds` crate implements the TDS protocol from the ground up in Rust, providing a high-performance, memory-safe core that can be shared across driver ecosystems. The project is organized as a Cargo workspace:
+
+| Crate | Purpose |
+|---|---|
+| `mssql-tds` | Core TDS protocol library |
+| `mssql-js` | (Experimental) Node.js bindings via NAPI-RS |
+| `mssql-tds-cli` | Interactive CLI client tool |
+| `mssql-mock-tds` | Mock TDS server for testing |
 
 ## Getting Started
-Prototype projects are developed in Rust language; therefore, the dev environment will require IDE and Rust toolchain. More details on installation are available further in the document.
 
-[Rust in Microsoft] article is the great overview of guidelines and learning resources for any Rust developer. It is highly recommended as reading material.
+### Prerequisites
+
+- [Rust](https://rustup.rs/) (version specified in `rust-toolchain.toml`)
+- A C linker and OpenSSL development headers (e.g., `build-essential`, `libssl-dev` on Debian/Ubuntu)
+- [cargo-nextest](https://nexte.st/) for running tests: `cargo install cargo-nextest --locked`
+- Docker (optional, for running a local SQL Server instance)
+
+### Clone and Build
+
+```bash
+git clone <repo-url>
+cd mssql-rs
+cargo build
+```
 
 ### Git Hooks Setup
 
-To maintain code quality and consistency, this project includes git hooks. To set them up:
+Install pre-commit hooks that run formatting and lint checks automatically:
 
 ```bash
 ./dev/setup-hooks.sh
 ```
 
-This will install a pre-commit hook that automatically runs `cargo fmt` and `clippy` before commits. See `dev/hooks/README.md` for more details.
+## Local Build
 
-These checks are run in the pipelines as well, however it is often frustrating to see the pipelines fail due to these checks. Hence the pre-commit hook would catch the issue lot earlier in the development stage.
+Build the workspace:
 
-### Tools and Prerequisites
-These tools made the Rust development easier:
-- Visual Studio Code 
-- Extensions for Visual Studio Code
-  - rust-analyzer
-  - C/C++ - Visual Studio Marketplace
-  - CodeLLDB - Visual Studio Marketplace
-  
-  Alternatively go to the the command palette "Ctrl + P" and type "Extensions: Show Recommended Extensions." This will bring up the flyout with the above extensions as workspace recommended extensions.
- 
-- Download Rust MS internal setup (msrustup.exe) from [MSRustup from MS]
-
-#### Linux users
-
-There are some special scripts created and tested for Developers on Ubuntu 22.04. Look at the [README](./scripts/README.md) for details on how to install the dependencies and `msrustup` for Linux.
-
-#### MacOS development 
-
-Coming soon.
-
-#### Setting up the environment
-To get a development environment running, please do the following:
-1. Clone *RustPrototype* repo by running
-
-```powershell
-git clone https://sqlclientdrivers.visualstudio.com/SqlDevX/_git/RustPrototype
-```
-
-2. Navigate to the enlistment root directory and run the msrustup.exe command:
-```powershell
-msrustup.exe toolchain install
-```
-
-3. RustPrototype repo is configured to use Azure Artifacts as a package source and the build environment requires a login to the Azure Artifacts.
-Repo is already set up with proper path, but it is necessary to generate *Personal Access Token* which allows access to the mirror.
-To do that, navigate to [Personal Access Tokens] and create a new token which will include *Packaging read & write* scopes.
-Make sure to copy the PAT token because you will need it later.
-
-4. Open PowerShell at the root of the project folder and run:
-
-```powershell
-"Basic " + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("PAT:" + (Read-Host -MaskInput "Enter PAT"))) | cargo login --registry RustTools
-```
-This script will prompt for PAT, paste the token generated in the previous step and press Enter.
-In case to setup other environments, it is possible to find more instructions [Connect to feed],
-and select Cargo on that page.
-
-## Local build
-To build the project locally, run the following command in the project root directory:
-
-```
+```bash
 cargo build
 ```
 
-### Other checks
-Run clippy and check for formatting before sending a PR. 
+Before submitting changes, run the full check suite:
 
-## Build pipeline
-There is a build pipeline in the Azure DevOps that is configured to build the project.
-The pipeline can be triggered manually from this link:
+```bash
+cargo bfmt       # Format check
+cargo bclippy    # Lint (warnings are errors)
+cargo btest      # Test with cargo-nextest
+```
 
-[Rust build pipeline]
-
-## Test
-TODO: Describe and show how to run the tests for your software.
+These aliases are defined in `.cargo/config.toml`. The `mssql-py-core` crate is excluded from the workspace and requires separate fmt/clippy runs via the scripts in `scripts/`.
 
 ## Contribute
-Rust prototype repo is for experimenting and learning.
-There are Rust projects located in `prototype` directory.
-When creating a new prototype, please create a new directory in the `prototype` and add a README.md file with the description of the new prototype.
 
-Ensure builds are still successful prior to submitting the pull request.
+This project is not currently accepting public pull requests. The repository is under active development by the Microsoft SQL Server drivers team.
 
 # Central Feed Services (CFS) - Engineering Systems Standard Requirement
 The project uses Rust (Cargo) crates and CFS onboarding required configuring this project to only consume packages through Azure Artifacts.

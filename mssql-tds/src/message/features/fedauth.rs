@@ -12,14 +12,9 @@ use crate::message::login::{Feature, FeatureExtension};
 
 /// Represents the FedAuth feature in the TDS protocol.
 ///
-/// This structure holds information related to the Federated Authentication feature.
-///
-/// # Fields
-///
-/// * `acknowledged` - A boolean indicating whether the feature has been acknowledged.
-/// * `tds_authentication_method` - The method of TDS authentication being used.
-/// * `access_token_bytes` - An optional vector of bytes representing the access token.
-/// * `prelogin_has_fedauth_response` - A boolean indicating if the pre-login response includes federated authentication.
+/// Holds Federated Authentication state for the TDS login sequence.
+/// When an access token is provided (as a raw JWT string), it is encoded
+/// to UTF-16-LE bytes for the TDS wire format.
 #[derive(Clone, Debug)]
 pub(crate) struct FedAuthFeature {
     acknowledged: bool,
@@ -29,13 +24,20 @@ pub(crate) struct FedAuthFeature {
 }
 
 impl FedAuthFeature {
+    /// Creates a new FedAuthFeature.
+    ///
+    /// # Arguments
+    /// * `tds_authentication_method` - The authentication method being used
+    /// * `access_token_base64` - Base64 encoded JWT access token. Encoded to UTF-16-LE for the TDS wire format.
+    /// * `prelogin_fedauth_response` - Whether fedauth response was in prelogin
     pub fn new(
         tds_authentication_method: TdsAuthenticationMethod,
         access_token_base64: Option<String>,
         prelogin_fedauth_response: bool,
     ) -> Self {
-        let access_token_bytes = access_token_base64.map(|value| {
-            value
+        // Encode raw JWT to UTF-16-LE for TDS wire format.
+        let access_token_bytes = access_token_base64.map(|token| {
+            token
                 .encode_utf16()
                 .flat_map(|u| u.to_le_bytes())
                 .collect::<Vec<u8>>()
