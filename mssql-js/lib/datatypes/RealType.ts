@@ -1,0 +1,24 @@
+import { DataType } from './DataType';
+import { JsSqlDataTypes } from './enums';
+import type { Encoding } from '../codepages';
+
+export class RealType extends DataType {
+  constructor() {
+    super(JsSqlDataTypes.Real);
+  }
+  validate(value: bigint | number | string | Date | boolean | null): boolean {
+    return typeof value === 'number';
+  }
+  transformForNapiWrites(
+    value: bigint | number | string | Date | boolean | null,
+    encoding?: Encoding,
+  ): unknown {
+    if (value === null) return null;
+    if (typeof value === 'number') {
+      const buffer = Buffer.alloc(4);
+      buffer.writeFloatLE(value, 0);
+      return buffer;
+    }
+    throw new TypeError('Expected a number for Real types');
+  }
+}

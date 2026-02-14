@@ -1,0 +1,34 @@
+# Lightweight Kerberos test client for local validation
+# This Dockerfile ONLY validates Kerberos ticket acquisition (kinit/klist)
+# It does NOT install Rust or run the full test suite - that's for CI.
+#
+# Usage: docker build --build-arg BASE_IMAGE=tdslibrs.azurecr.io/import/alpine:3.18 \
+#                     -f Dockerfile.client.validation .
+
+ARG BASE_IMAGE=tdslibrs.azurecr.io/import/ubuntu:22.04
+FROM ${BASE_IMAGE}
+
+# Install only Kerberos client tools (no Rust, no build tools)
+RUN if [ -f /etc/alpine-release ]; then \
+        # Alpine (musl) \
+        apk update && apk add --no-cache \
+            ca-certificates krb5 bash; \
+    elif [ -f /etc/debian_version ]; then \
+        # Debian/Ubuntu (glibc) \
+        export DEBIAN_FRONTEND=noninteractive && \
+        apt-get update && apt-get install -y \
+            ca-certificates krb5-user \
+        && rm -rf /var/lib/apt/lists/*; \
+    elif [ -f /etc/redhat-release ] || [ -f /etc/oracle-release ]; then \
+        # RHEL/Oracle/CentOS (glibc) \
+        dnf update -y && dnf install -y --allowerasing \
+            ca-certificates krb5-workstation \
+        && dnf clean all; \
+    else \
+        echo "Unsupported OS" && exit 1; \
+    fi
+
+WORKDIR /workspace
+
+# Default command - keep container running
+CMD ["tail", "-f", "/dev/null"]

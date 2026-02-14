@@ -1,0 +1,125 @@
+parameters:
+- name: osType  # defaults for any parameters that aren't specified
+  default: Windows
+  type: string
+  values:
+  - Windows
+  - Linux
+  - MacOS
+
+- name: installdepsparams
+  displayName: Install dependencies parameters
+  type: string
+  default: ''
+
+- name: enableJsDeps
+  displayName: Enable JS/Yarn dependencies installation
+  type: boolean
+  default: true
+ 
+steps:
+- ${{ if eq(parameters.osType, 'Linux') }}:
+
+  - script: |
+      .pipeline/scripts/printinfo.sh
+    displayName: "Print Linux Agent info"
+
+  - script: |
+      # This causes unexpected failures in APT package installation.
+      sudo systemctl disable unattended-upgrades
+    displayName: "Disable unattended upgrades"
+
+  - script: |
+      scripts/install-deps.sh ${{ parameters.installdepsparams }}
+    displayName: "Install linux dependencies"
+
+  - script: |
+      .pipeline/scripts/install-rustup.sh
+    displayName: "Install Rustup"
+
+  - script: |
+      scripts/install-jsdeps.sh
+    displayName: "Install JS dependencies"
+
+  - script: |
+      docker ps
+    displayName: "Test Docker installation"
+
+- ${{ if eq(parameters.osType, 'MacOS') }}:
+  - script: |
+      python --version
+      pip --version && pip install pipenv
+      if [ -z "$PYTHON_HOME" ]; then
+        export PYTHON_HOME=$(python -c "import sys; print(sys.prefix)")
+      fi
+      echo $PYTHON_HOME
+      if ! command -v python &> /dev/null; then
+        brew install python
+      fi
+
+      # Install Kerberos (krb5) for GSSAPI support
+      brew install krb5
+      echo "##vso[task.setvariable variable=PATH]$(brew --prefix krb5)/bin:$PATH"
+      echo "##vso[task.setvariable variable=LDFLAGS]-L$(brew --prefix krb5)/lib"
+      echo "##vso[task.setvariable variable=CPPFLAGS]-I$(brew --prefix krb5)/include"
+      echo "##vso[task.setvariable variable=PKG_CONFIG_PATH]$(brew --prefix krb5)/lib/pkgconfig"
+
+      # Install Rustup
+      .pipeline/scripts/install-rustup.sh
+    displayName: "Install MacOS dependencies"
+
+  - script: |
+      # Install fnm (Fast Node Manager)
+      curl -fsSL https://fnm.vercel.app/install | bash
+      # This is a workaround for the fact that the PATH variable is not updated in the same shell.
+      echo "##vso[task.setvariable variable=PATH;isOutput=false]$HOME/.local/share/fnm:$PATH"
+      export FNM_PATH="$HOME/.local/share/fnm"
+      export PATH="$FNM_PATH:$PATH"
+      eval "`fnm env`"
+      # Install Node.js 20
+      fnm install 20
+      fnm use 20
+      # Install yarn globally
+      npm install --global yarn
+      # Enable corepack for yarn v4 support
+      corepack enable
+    displayName: "Install JS dependencies for MacOS"
+
+- ${{ if eq(parameters.osType, 'Windows') }}:
+  
+  - task: PowerShell@2
+    displayName: 'Print debug information about agent'
+    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+    inputs:
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/PrintAgentDebugInfo.ps1'
+
+  - task: PowerShell@2
+    displayName: 'Setup Python Paths'
+    inputs:
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/SetupPythonPaths.ps1'
+
+  - task: PowerShell@2
+    displayName: 'Install Rustup toolchain'
+    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+    inputs:
+      targetType: 'filePath'
+      filePath: '.pipeline/scripts/InstallRustup.ps1'
+
+  - ${{ if eq(parameters.enableJsDeps, true) }}:
+    - task: PowerShell@2
+      displayName: 'Install Yarn'
+      condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+      inputs:
+        targetType: 'filePath'
+        filePath: '.pipeline/scripts/InstallYarn.ps1'
+
+    - task: PowerShell@2
+      displayName: 'Verify Yarn installation'
+      condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+      inputs:
+        targetType: 'inline'
+        script: |
+          $yarnVersion = yarn -v
+          Write-Host "Yarn version: $yarnVersion"

@@ -1,0 +1,54 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug AVA Test",
+            "type": "node",
+            "request": "launch",
+            "program": "${workspaceFolder}/mssql-js/node_modules/.bin/ava",
+            "args": [
+                "${file}",
+                "--verbose",
+                "--timeout=0"
+            ],
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "env": {
+                "NODE_ENV": "test"
+            }
+        },
+        {
+            "name": "Debug Current AVA Test",
+            "type": "node",
+            "request": "launch",
+            "program": "${workspaceFolder}/mssql-js/node_modules/.bin/ava",
+            "args": [
+                "${relativeFile}",
+                "--verbose",
+                "--timeout=0"
+            ],
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Debug All AVA Tests",
+            "type": "node",
+            "request": "launch",
+            "program": "${workspaceFolder}/mssql-js/node_modules/.bin/ava",
+            "args": [
+                "--verbose",
+                "--timeout=0"
+            ],
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,67 @@
+[package]
+name = "mssql-tds-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mssql-tds = { path = ".." }
+tokio = { version = "1.45.1", features = ["full"] }
+arbitrary = { version = "1.3", features = ["derive"] }
+async-trait = "0.1"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_token_stream"
+path = "fuzz_targets/fuzz_token_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_tds_client"
+path = "fuzz_targets/fuzz_tds_client.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_connection_provider"
+path = "fuzz_targets/fuzz_connection_provider.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_inputs"
+path = "fuzz_targets/fuzz_api_inputs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parameter_encoding"
+path = "fuzz_targets/fuzz_parameter_encoding.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_connection_provider_network"
+path = "fuzz_targets/fuzz_connection_provider_network.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_connection_provider_context"
+path = "fuzz_targets/fuzz_connection_provider_context.rs"
+test = false
+doc = false
+bench = false

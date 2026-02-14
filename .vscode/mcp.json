@@ -1,0 +1,15 @@
+{
+	"servers": {
+		"ec-mini": {
+			"url": "https://ecmini.azurewebsites.net",
+			"type": "http",
+			"headers": {
+				"x-mcp-ec-organization": "sqlclientdrivers",
+				"x-mcp-ec-project": "mssql-rs",
+				"x-mcp-ec-repository": "mssql-tds",
+				"x-mcp-ec-branch": "development"
+			}
+		}
+	},
+	"inputs": []
+}

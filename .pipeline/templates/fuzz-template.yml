@@ -1,0 +1,138 @@
+parameters:
+- name: osType
+  default: Linux
+  type: string
+  values:
+  - Windows
+  - Linux
+  - MacOS
+
+- name: fuzzDurationSeconds
+  displayName: Duration for fuzz testing in seconds
+  type: number
+  default: 300
+
+- name: fuzzTarget
+  displayName: Name of the fuzz target
+  type: string
+  default: fuzz_token_stream
+
+steps:
+- bash: |
+    echo "Installing Rust nightly toolchain..."
+    rustup toolchain install nightly
+    echo "Installing cargo-fuzz..."
+    cargo +nightly install cargo-fuzz
+  displayName: Install Fuzz Dependencies
+  condition: succeeded()
+
+- bash: |
+    cd mssql-tds/fuzz
+    
+    # Extract corpus if it exists
+    CORPUS_ARCHIVE="corpus-${{ parameters.fuzzTarget }}.tar.gz"
+    CORPUS_DIR="corpus/${{ parameters.fuzzTarget }}"
+    
+    if [ -f "$CORPUS_ARCHIVE" ]; then
+      if [ ! -d "$CORPUS_DIR" ] || [ -z "$(ls -A $CORPUS_DIR 2>/dev/null)" ]; then
+        echo "Extracting corpus from archive..."
+        tar -xzf $CORPUS_ARCHIVE
+        FILE_COUNT=$(find $CORPUS_DIR -type f | wc -l)
+        echo "Extracted $FILE_COUNT corpus files"
+      else
+        echo "Corpus already exists"
+      fi
+    else
+      echo "Warning: Corpus archive not found, starting with empty corpus"
+    fi
+  displayName: Setup Fuzz Corpus
+  condition: succeeded()
+  workingDirectory: $(Build.SourcesDirectory)
+
+- bash: |
+    cd mssql-tds/fuzz
+    
+    echo "Running fuzzer for ${{ parameters.fuzzDurationSeconds }} seconds..."
+    echo "Target: ${{ parameters.fuzzTarget }}"
+    echo "Timeout per input: 10s"
+    
+    # Run fuzzer and capture exit code
+    set +e
+    RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz run ${{ parameters.fuzzTarget }} -- \
+      -max_total_time=${{ parameters.fuzzDurationSeconds }} \
+      -timeout=10 \
+      -fork=1 \
+      -ignore_crashes=1
+    
+    FUZZ_EXIT_CODE=$?
+    set -e
+    
+    # Check for crashes
+    CRASH_COUNT=0
+    if [ -d "artifacts/${{ parameters.fuzzTarget }}" ]; then
+      CRASH_COUNT=$(find artifacts/${{ parameters.fuzzTarget }} -type f -name "crash-*" 2>/dev/null | wc -l)
+      
+      if [ $CRASH_COUNT -gt 0 ]; then
+        echo "##vso[task.logissue type=error]Found $CRASH_COUNT crash(es) during fuzzing"
+        echo "Crashes found in artifacts/${{ parameters.fuzzTarget }}/"
+        
+        # List crash files
+        echo "Crash files:"
+        find artifacts/${{ parameters.fuzzTarget }} -type f -name "crash-*" -exec basename {} \;
+        
+        # Set variable to indicate crashes were found
+        echo "##vso[task.setvariable variable=FuzzCrashesFound]true"
+      else
+        echo "No crashes found"
+        echo "##vso[task.setvariable variable=FuzzCrashesFound]false"
+      fi
+    else
+      echo "No artifacts directory found"
+      echo "##vso[task.setvariable variable=FuzzCrashesFound]false"
+    fi
+    
+    # Show corpus statistics
+    if [ -d "corpus/${{ parameters.fuzzTarget }}" ]; then
+      CORPUS_COUNT=$(find corpus/${{ parameters.fuzzTarget }} -type f | wc -l)
+      CORPUS_SIZE=$(du -sh corpus/${{ parameters.fuzzTarget }} | cut -f1)
+      echo "Final corpus: $CORPUS_COUNT files ($CORPUS_SIZE)"
+    fi
+    
+    # Exit with error if crashes were found
+    if [ $CRASH_COUNT -gt 0 ]; then
+      exit 1
+    fi
+    
+    exit $FUZZ_EXIT_CODE
+  displayName: Run Fuzzer
+  condition: succeeded()
+  workingDirectory: $(Build.SourcesDirectory)
+  continueOnError: false
+
+- bash: |
+    cd mssql-tds/fuzz
+    
+    if [ -d "artifacts/${{ parameters.fuzzTarget }}" ]; then
+      CRASH_COUNT=$(find artifacts/${{ parameters.fuzzTarget }} -type f -name "crash-*" 2>/dev/null | wc -l)
+      
+      if [ $CRASH_COUNT -gt 0 ]; then
+        # Create artifact directory
+        mkdir -p $(Build.ArtifactStagingDirectory)/fuzz-crashes
+        
+        # Copy all crash artifacts
+        cp -r artifacts/${{ parameters.fuzzTarget }}/* $(Build.ArtifactStagingDirectory)/fuzz-crashes/
+        
+        echo "Copied $CRASH_COUNT crash file(s) to staging directory"
+      fi
+    fi
+  displayName: Prepare Crash Artifacts
+  condition: always()
+  workingDirectory: $(Build.SourcesDirectory)
+
+- task: PublishPipelineArtifact@1
+  displayName: Publish Fuzz Crash Artifacts
+  condition: eq(variables['FuzzCrashesFound'], 'true')
+  inputs:
+    targetPath: $(Build.ArtifactStagingDirectory)/fuzz-crashes
+    artifact: fuzz-crashes-${{ parameters.fuzzTarget }}-$(System.JobName)
+    publishLocation: pipeline

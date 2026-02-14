@@ -1,0 +1,24 @@
+[package]
+name = "mssql-py-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "mssql_py_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.27.2", features = ["extension-module"] }
+mssql-tds = { path = "../mssql-tds" }
+tokio = { version = "1", features = ["full", "rt-multi-thread"] }
+async-trait = "0.1"
+anyhow = "1.0"
+hostname = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rust_decimal = "1.36"
+serde_json = "1.0"
+uuid = "1.19"
+
+[build-dependencies]
+pyo3-build-config = "0.27.2"

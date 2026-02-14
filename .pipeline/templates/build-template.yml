@@ -1,0 +1,225 @@
+parameters:
+- name: osType  # defaults for any parameters that aren't specified
+  default: Windows
+  type: string
+  values:
+  - Windows
+  - Linux
+  - MacOS
+
+- name: buildType
+  displayName: Type of the build to produce
+  type: string
+  values:
+  - Both
+  - Debug
+  - Release
+  default: Both
+
+- name: testFilter
+  displayName: Optional Filter for tests
+  type: string
+  default: ''
+
+- name: enableJsBuild
+  displayName: Enable JS Build
+  type: boolean
+  default: false
+
+- name: enableJsTest
+  displayName: Enable JS Test
+  type: boolean
+  default: false
+
+steps:
+- script: cargo fetch
+  displayName: Fetch Crates
+
+- script: |
+    cargo build --frozen 2>&1
+  displayName: Rust Debug Build
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
+
+- script: |
+    cargo build --frozen --release 2>&1
+  displayName: Rust Release Build
+  condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
+
+- ${{ if eq(parameters.osType, 'Windows') }}:
+  - pwsh: ./scripts/bclippy.ps1
+    displayName: Rust Clippy Lint (workspace + mssql-py-core)
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
+
+- ${{ if ne(parameters.osType, 'Windows') }}:
+  - script: ./scripts/bclippy.sh
+    displayName: Rust Clippy Lint (workspace + mssql-py-core)
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
+
+- ${{ if eq(parameters.osType, 'Windows') }}:
+  - pwsh: ./scripts/bfmt.ps1
+    displayName: Check Format (workspace + mssql-py-core)
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
+
+- ${{ if ne(parameters.osType, 'Windows') }}:
+  - script: ./scripts/bfmt.sh
+    displayName: Check Format (workspace + mssql-py-core)
+    condition: and(succeeded(), or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')), eq(variables['Build.Reason'], 'PullRequest'))
+
+- ${{ if eq(parameters.osType, 'Linux') }}:
+  - bash: |
+      echo "Installing Rust nightly toolchain..."
+      rustup toolchain install nightly --profile minimal
+      echo "Installing cargo-fuzz..."
+      cargo +nightly install cargo-fuzz --locked
+    displayName: Install Fuzz Dependencies
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+
+  - bash: |
+      cd mssql-tds/fuzz
+      echo "Building all fuzz targets to verify they compile..."
+      RUSTFLAGS="--cfg fuzzing" cargo +nightly fuzz build
+      echo "Fuzz targets built successfully"
+    displayName: Build Fuzz Targets
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+
+- script: cargo install cargo-llvm-cov --version 0.6.16 --locked && cargo install cargo-nextest --version 0.9.99 --locked
+  displayName: Install llvm-cov and nextest 
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+
+# Generate test certificates for mock TDS server TLS tests
+- ${{ if eq(parameters.osType, 'Windows') }}:
+  - pwsh: ./scripts/generate_mock_tds_server_certs.ps1
+    displayName: Generate Test Certificates for Mock TDS Server
+
+- ${{ if ne(parameters.osType, 'Windows') }}:
+  - script: ./scripts/generate_mock_tds_server_certs.sh
+    displayName: Generate Test Certificates for Mock TDS Server
+
+- script: cargo llvm-cov clean --workspace
+  displayName: Clean up old coverage files
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+
+- ${{ if eq(parameters.osType, 'Linux') }}:
+  - script: |
+      echo "##vso[task.setvariable variable=ARCHIVE_NAME;isOutput=false]tdslib-nextest.tar.zst"   
+      cargo install cargo-nextest  --version 0.9.99 --locked
+      cd mssql-tds && cargo nextest archive --archive-file tdslib-nextest.tar.zst && cp tdslib-nextest.tar.zst $(Build.ArtifactStagingDirectory) && mv tdslib-nextest.tar.zst ../ 
+    displayName: Archive nextest results
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+ 
+- script: |
+      export CERT_HOST_NAME="sql1"
+      cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets --package mssql-tds --no-fail-fast --profile ci --success-output immediate
+  displayName: Run tests (mssql-tds package only)
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+    RUST_BACKTRACE: full
+
+- task: PublishTestResults@2
+  condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
+  displayName: "Publish test results"
+  inputs:
+    testResultsFormat: "JUnit"
+    testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
+    testRunTitle: $(System.PhaseName)
+
+- script: cargo llvm-cov report --package mssql-tds --lcov --output-path "$(Build.SourcesDirectory)/target/lcov.info"
+  condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
+  workingDirectory: "$(Build.SourcesDirectory)"
+  displayName: Save code coverage in lcov format (mssql-tds package only)
+
+- ${{ if eq(parameters.osType, 'Linux') }}:
+  - bash: |
+      echo "Running Python tests for mssql-py-core..."
+      ./dev/test-python.sh
+    displayName: Run Python Tests (mssql-py-core)
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)
+
+- ${{ if eq(parameters.osType, 'Windows') }}:
+  - task: PublishCodeCoverageResults@2
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+    displayName: "Publish coverage results"
+    inputs:
+      summaryFileLocation: "$(Build.SourcesDirectory)/target/lcov.info"
+      pathToSources: "$(Build.SourcesDirectory)"
+
+- task: CopyFiles@2
+  displayName: Copy Rust Debug Build
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'),  or(eq('${{parameters.buildType}}', 'Debug'), eq('${{parameters.buildType}}', 'Both')))
+  inputs:
+    SourceFolder: '$(CARGO_TARGET_DIR)/debug'
+    Contents: |
+      *
+      !.cargo-lock
+    TargetFolder: '$(Build.ArtifactStagingDirectory)/debug'
+
+- task: CopyFiles@2
+  displayName: Copy Rust Release Build
+  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'), or( eq('${{parameters.buildType}}', 'Release'), eq('${{parameters.buildType}}', 'Both')))
+  inputs:
+    SourceFolder: '$(CARGO_TARGET_DIR)/release'
+    Contents: |
+      *
+      !.cargo-lock
+    TargetFolder: '$(Build.ArtifactStagingDirectory)/release'
+
+- ${{ if eq(parameters.enableJsBuild, true) }}:
+  - bash: |
+      export DB_USER=sa
+      if [ -f "$HOME/.bashrc" ]; then
+        . $HOME/.bashrc
+      fi
+      export FNM_PATH="$HOME/.local/share/fnm"
+      export PATH="$FNM_PATH:$PATH"
+      eval "`fnm env`"
+      fnm use 20
+      cd mssql-js 
+      pwd
+      yarn install
+      yarn build
+      echo "Generated files:"
+      ls lib/generated
+      echo "Check for formatting"
+      yarn format:check
+      echo "Compiling Typescript files"
+      yarn buildapi 
+    displayName: Build JS Integration
+    env:
+      RUST_BACKTRACE: full
+
+- ${{ if eq(parameters.enableJsTest, true) }}:
+  - bash: |
+      export DB_USER=sa
+      if [ -f "$HOME/.bashrc" ]; then
+        . $HOME/.bashrc
+      fi
+      export FNM_PATH="$HOME/.local/share/fnm"
+      export PATH="$FNM_PATH:$PATH"
+      eval "`fnm env`"
+      fnm use 20
+      cd mssql-js 
+      echo "Run Tests"
+      yarn testci > junit.xml 
+    displayName: Test JS Integration
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)
+      RUST_BACKTRACE: full
+
+  - task: PublishTestResults@2
+    condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
+    displayName: "Publish JS test results"
+    inputs:
+      testResultsFormat: "JUnit"
+      testResultsFiles: $(Build.SourcesDirectory)/mssql-js/junit.xml
+      testRunTitle: $(System.PhaseName)-Js
+
+- task: PublishBuildArtifacts@1
+  displayName: Publish Build Drop
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+    ArtifactName: $(System.PhaseName)
+    publishLocation: Container

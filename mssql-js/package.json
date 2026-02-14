@@ -1,0 +1,59 @@
+{
+  "name": "mssql-js",
+  "version": "0.0.0",
+  "main": "lib/index.js",
+  "types": "lib/index.ts",
+  "napi": {
+    "name": "mssql-js",
+    "triples": {
+      "additional": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+        "aarch64-pc-windows-msvc",
+        "universal-apple-darwin"
+      ]
+    }
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@js-joda/core": "^5.6.5",
+    "iconv-lite": "^0.6.3"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4",
+    "@types/benchmark": "^2",
+    "@types/node": "^24.0.14",
+    "@typescript-eslint/eslint-plugin": "^8.37.0",
+    "@typescript-eslint/parser": "^8.37.0",
+    "ava": "^6.0.1",
+    "benchmark": "^2.1.4",
+    "eslint": "^9.31.0",
+    "eslint-config-prettier": "^10.1.5",
+    "eslint-plugin-prettier": "^5.5.1",
+    "prettier": "^3.6.2",
+    "tap-xunit": "^2.4.1",
+    "typescript": "^5.8.3"
+  },
+  "ava": {
+    "timeout": "3m"
+  },
+  "engines": {
+    "node": ">= 10"
+  },
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "buildapi": "tsc",
+    "build": "napi build --platform --release --dts ../../lib/generated/index.d.ts dist/generated",
+    "build:debug": "napi build --platform --dts ../../lib/generated/index.d.ts dist/generated",
+    "prepublishOnly": "napi prepublish -t npm",
+    "test": "tsc && ava \"**/*.mjs\" --extensions mjs",
+    "testci": "tsc && ava \"**/*.mjs\" --extensions mjs -t | tap-xunit",
+    "universal": "napi universal",
+    "version": "napi version",
+    "format": "prettier --write .",
+    "format:check": "prettier --check \"lib/**/*.ts\" \"__test__/**/*.{js,mjs,ts}\"",
+    "lint": "eslint . --ext .ts,.js --max-warnings=0"
+  },
+  "packageManager": "yarn@4.9.2"
+}

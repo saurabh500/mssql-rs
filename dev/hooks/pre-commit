@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# Run cargo fmt on both workspace and mssql-py-core
+cargo fmt
+cd mssql-py-core && cargo fmt && cd ..
+
+# Check if there are any unstaged changes after formatting
+if ! git diff --quiet -- '*.rs'; then
+    echo "Code formatting changes detected in Rust files. Please review and add the formatted files:"
+    echo ""
+    git diff --name-only -- '*.rs'
+    echo ""
+    echo "Run 'git add .' to stage the formatted files and commit again."
+    exit 1
+fi
+
+echo "✅ Code formatting check passed"
+exit 0

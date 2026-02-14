@@ -1,0 +1,57 @@
+# filepath: .pipeline/templates/test-matrix-template.yml
+parameters:
+  matrix: {}
+
+jobs:
+  - job: Test_Matrix_arm64
+    displayName: Linux arm64
+    strategy:
+      matrix: ${{ parameters.matrix }}
+    pool:
+      name: RUST-1ES-POOL-ARM-WUS3
+      demands:
+        - imageOverride -equals RUST-UBUNTU-ARM64
+    steps:
+      - task: DockerInstaller@0
+        inputs:
+          dockerVersion: '29.0.0'
+      - template: install-ubuntu-dependency.yaml
+        parameters:
+          installAzCli: true
+          installDocker: true
+      - template: azure-cli-login-template.yml
+
+      - task: DownloadPipelineArtifact@2
+        inputs:
+          buildType: 'current'
+          artifactName: 'Build_Linux_ARM'
+        displayName: 'Download Pipeline Artifacts'
+      - script: |
+          az acr login -n tdslibrs
+          echo $(container)
+          echo $(entry)
+          echo $container
+
+          scripts/generate_cert.sh
+          scripts/generate_mock_tds_server_certs.sh
+          
+          cp $(Pipeline.Workspace)/tdslib-nextest.tar.zst $(Build.SourcesDirectory)
+          docker network create testnet
+          bash .pipeline/scripts/docker-cargo-run.sh --entrypoint bash -v "$PWD:/workspace" -e "DB_USERNAME=sa" -e "DB_HOST=$(ACI_SQL_HOST_2022)" -e "DB_PORT=14333" -e "SQL_PASSWORD=$(ACI_SQL_PASSWORD)" -e "ARCHIVE_NAME=tdslib-nextest.tar.zst" -e "TRUST_SERVER_CERTIFICATE=true" --network testnet $(container) /workspace/scripts/dockerentry/$(entry)
+
+        workingDirectory: "$(Build.SourcesDirectory)"
+        displayName: Run docker test
+        condition: succeeded()
+        env :
+          SQL_PASSWORD: $(SQL_PASSWORD)
+          CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+          CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
+      - task: PublishTestResults@2
+        condition: succeededOrFailed()
+        displayName: "Publish test results"
+        inputs:
+          testResultsFormat: "JUnit"
+          testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
+          testRunTitle: $(System.PhaseName)
+
+      

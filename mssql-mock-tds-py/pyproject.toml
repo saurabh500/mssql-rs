@@ -1,0 +1,21 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "mssql-mock-tds-py"
+version = "0.1.0"
+description = "Python bindings for the mock TDS server for testing SQL Server clients"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Database :: Front-Ends",
+]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]

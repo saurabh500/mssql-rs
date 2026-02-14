@@ -1,0 +1,56 @@
+parameters:
+- name: osType  # defaults for any parameters that aren't specified
+  default: Windows
+  type: string
+  values:
+  - Windows
+  - Linux
+  - MacOS
+
+- name: buildType
+  displayName: Type of the build to produce
+  type: string
+  values:
+  - Both
+  - Debug
+  - Release
+  default: Both
+
+- name: testFilter
+  displayName: Optional Filter for tests
+  type: string
+  default: ''
+
+- name: alpineimagetag
+  displayName: Alpine Image Tag
+  type: string
+  default: 'tdslibrs.azurecr.io/build/alpine:3.18'
+
+steps:
+- script: |
+    echo "##vso[task.setvariable variable=ARCHIVE_NAME;isOutput=false]tdslib-nextest-musl.tar.zst"
+  displayName: Set Archive file name 
+  condition: succeeded()
+  
+- template: azure-cli-login-template.yml
+
+- script: |
+    az acr login -n tdslibrs
+    bash .pipeline/scripts/docker-cargo-run.sh \
+      -v "$PWD:/workspace" \
+      -e "ARCHIVE_NAME=tdslib-nextest-musl.tar.zst" \
+      ${{ parameters.alpineimagetag }} /workspace/scripts/dockerentry/alpine-build.sh
+    cp tdslib-nextest-musl.tar.zst $(Build.ArtifactStagingDirectory)
+  displayName: Rust Alpine container build
+  condition: succeeded()
+  env:
+    CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+    CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
+
+
+- task: PublishBuildArtifacts@1
+  displayName: Publish Build Drop
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+    ArtifactName: $(System.PhaseName)
+    publishLocation: Container
