@@ -62,4 +62,4 @@ crash-*
 # Generated PowerPoint presentations
 *.pptx
 
-.venv-pycore/
+.venv-pycore/mssql-py-core/pytest-smoke-results.xml

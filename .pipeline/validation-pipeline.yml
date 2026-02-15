@@ -448,3 +448,13 @@ stages:
         parameters:
           durationSeconds: 1800  # 30 minutes
           batchSize: 1000
+
+# Private-link smoke test for mssql-py-core (non-PR only)
+# Deploys wheel into ACI on trusted VNet, runs pytest suite via managed identity
+- stage: PrivateLink_Smoke
+  displayName: Private Link Smoke Test
+  dependsOn:
+    - Build
+  condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'), eq('${{ parameters.RunFuzz }}', 'false'), eq('${{ parameters.RunLongHaul }}', 'false'))
+  jobs:
+    - template: templates/private-link-smoke-template.yml

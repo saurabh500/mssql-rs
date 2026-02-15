@@ -1,19 +1,34 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Shared test fixtures and utilities."""
+"""Shared test fixtures and utilities.
+
+Auth mode (SMOKE_AUTH_MODE env var):
+  sql_auth          — user_name / password (default, used by all existing tests)
+  access_token      — pre-fetched token via ACCESS_TOKEN env var
+  managed_identity  — azure-identity ManagedIdentityCredential (ACI with user-assigned MI)
+"""
+
 import os
+
 import pytest
 from pathlib import Path
 from dotenv import load_dotenv
 
 
-def get_db_credentials():
-    """Get database credentials from environment variables or /tmp/password."""
-    # Load .env file from project root
+# ---------------------------------------------------------------------------
+# Env helpers
+# ---------------------------------------------------------------------------
+
+def _load_env():
     env_path = Path(__file__).parent.parent.parent / ".env"
     if env_path.exists():
         load_dotenv(env_path)
+
+
+def get_db_credentials():
+    """Get database credentials from environment variables or /tmp/password."""
+    _load_env()
 
     username = os.environ.get("DB_USERNAME", "sa")
 
@@ -44,21 +59,72 @@ def trust_server_certificate():
     return os.environ.get("TRUST_SERVER_CERTIFICATE", "false").lower() == "true"
 
 
-def get_client_context():
-    """Get client context dictionary for connecting to the database."""
-    username, password = get_db_credentials()
-    server = get_server_address()
-    database = get_database_name()
-    trust_cert = trust_server_certificate()
+# ---------------------------------------------------------------------------
+# Auth-mode-aware context builders
+# ---------------------------------------------------------------------------
 
+def _get_auth_mode():
+    return os.environ.get("SMOKE_AUTH_MODE", "sql_auth")
+
+
+def _build_context_sql_auth():
+    username, password = get_db_credentials()
     return {
-        "server": server,
+        "server": get_server_address(),
+        "database": get_database_name(),
         "user_name": username,
         "password": password,
-        "database": database,
-        "trust_server_certificate": trust_cert,
-        "encryption": "Optional",
+        "trust_server_certificate": trust_server_certificate(),
+        "encryption": os.environ.get("ENCRYPTION", "Optional"),
     }
+
+
+def _build_context_access_token():
+    token = os.environ.get("ACCESS_TOKEN")
+    if not token:
+        pytest.skip("ACCESS_TOKEN not set")
+    return {
+        "server": get_server_address(),
+        "database": get_database_name(),
+        "access_token": token,
+        "trust_server_certificate": True,
+        "encryption": os.environ.get("ENCRYPTION", "Mandatory"),
+    }
+
+
+def _build_context_managed_identity():
+    from azure.identity import ManagedIdentityCredential
+
+    client_id = os.environ.get(
+        "MI_CLIENT_ID", "d5c2ef7c-cb1b-4be6-b2bd-19ca351aed80"
+    )
+    credential = ManagedIdentityCredential(client_id=client_id)
+    token = credential.get_token("https://database.windows.net/.default").token
+    return {
+        "server": os.environ.get(
+            "SQL_SERVER", "mssqlrustlibtest.database.windows.net"
+        ),
+        "database": os.environ.get("SQL_DATABASE", "librarytest"),
+        "access_token": token,
+        "trust_server_certificate": False,
+        "encryption": os.environ.get("ENCRYPTION", "Mandatory"),
+    }
+
+
+_AUTH_BUILDERS = {
+    "sql_auth": _build_context_sql_auth,
+    "access_token": _build_context_access_token,
+    "managed_identity": _build_context_managed_identity,
+}
+
+
+def get_client_context():
+    """Build client context dict based on SMOKE_AUTH_MODE (default: sql_auth)."""
+    mode = _get_auth_mode()
+    builder = _AUTH_BUILDERS.get(mode)
+    if not builder:
+        pytest.fail(f"Unknown SMOKE_AUTH_MODE={mode!r}. Use: {list(_AUTH_BUILDERS)}")
+    return builder()
 
 
 @pytest.fixture
