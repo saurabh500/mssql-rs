@@ -237,6 +237,9 @@ stages:
     variables:
       CARGO_TARGET_DIR: $(Build.SourcesDirectory)
     steps:
+      - template: templates/cargo-authenticate-template.yml
+        parameters:
+          osType: Linux
       - template: templates/install-dependencies.yml
         parameters:
           osType: Linux
@@ -255,6 +258,9 @@ stages:
     variables:
       CARGO_TARGET_DIR: $(Build.SourcesDirectory)
     steps:
+      - template: templates/cargo-authenticate-template.yml
+        parameters:
+          osType: Linux
       - template: templates/install-dependencies.yml
         parameters:
           osType: Linux
@@ -273,6 +279,9 @@ stages:
     variables:
       CARGO_TARGET_DIR: $(Build.SourcesDirectory)
     steps:
+      - template: templates/cargo-authenticate-template.yml
+        parameters:
+          osType: Linux
       - template: templates/install-dependencies.yml
         parameters:
           osType: Linux
