@@ -1,0 +1,88 @@
+name: Bug Report
+description: Report a bug in mssql-rs
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a bug. Please fill out the information below to help us investigate.
+        
+        **Important:** Please do not include any sensitive information such as connection strings, passwords, access tokens, or customer data in your report.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps or code to reproduce the issue.
+      placeholder: |
+        1. Connect to SQL Server using ...
+        2. Execute query ...
+        3. Observe error ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened, including error messages or panics.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "Crate version or commit hash (e.g., mssql-tds 0.1.0 or commit abc1234)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: crate
+    attributes:
+      label: Affected crate
+      options:
+        - mssql-tds
+        - mssql-js
+        - mssql-tds-cli
+        - mssql-mock-tds
+        - mssql-py-core
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        OS, Rust version, SQL Server version, and any other relevant details.
+      placeholder: |
+        - OS: Ubuntu 22.04
+        - Rust: 1.78.0
+        - SQL Server: 2022 (16.x)
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Any other information, logs, or screenshots.
+    validations:
+      required: false

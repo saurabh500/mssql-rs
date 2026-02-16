@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerabilities
+    url: https://aka.ms/SECURITY.md
+    about: Please report security vulnerabilities through the Microsoft Security Response Center, not GitHub Issues.
+  - name: Microsoft Q&A
+    url: https://learn.microsoft.com/en-us/answers/
+    about: Ask questions about Microsoft SQL Server connectivity on Microsoft Q&A.
