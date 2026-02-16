@@ -809,12 +809,14 @@ impl GenericDecoder {
             }
 
             // === Decimal / Numeric ===
-            TdsDataType::DecimalN | TdsDataType::NumericN => {
-                match self.read_decimal(reader, metadata).await? {
-                    Some(val) => writer.write_decimal(col, val),
-                    None => writer.write_null(col),
-                }
-            }
+            TdsDataType::DecimalN => match self.read_decimal(reader, metadata).await? {
+                Some(val) => writer.write_decimal(col, val),
+                None => writer.write_null(col),
+            },
+            TdsDataType::NumericN => match self.read_decimal(reader, metadata).await? {
+                Some(val) => writer.write_numeric(col, val),
+                None => writer.write_null(col),
+            },
 
             // === String types — delegate to StringDecoder ===
             TdsDataType::NChar
