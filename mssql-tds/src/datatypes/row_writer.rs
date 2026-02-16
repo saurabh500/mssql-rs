@@ -28,6 +28,7 @@ pub trait RowWriter {
     fn write_string(&mut self, col: usize, val: SqlString);
     fn write_bytes(&mut self, col: usize, val: Vec<u8>);
     fn write_decimal(&mut self, col: usize, val: DecimalParts);
+    fn write_numeric(&mut self, col: usize, val: DecimalParts);
     fn write_date(&mut self, col: usize, val: SqlDate);
     fn write_time(&mut self, col: usize, val: SqlTime);
     fn write_datetime(&mut self, col: usize, val: SqlDateTime);
@@ -107,6 +108,10 @@ impl RowWriter for DefaultRowWriter {
         self.row.push(ColumnValues::Decimal(val));
     }
 
+    fn write_numeric(&mut self, _col: usize, val: DecimalParts) {
+        self.row.push(ColumnValues::Numeric(val));
+    }
+
     fn write_date(&mut self, _col: usize, val: SqlDate) {
         self.row.push(ColumnValues::Date(val));
     }
@@ -163,7 +168,7 @@ impl RowWriter for DefaultRowWriter {
 /// Bridges a `ColumnValues` into a `RowWriter` call. Used as a fallback path
 /// when the decoder has already produced a `ColumnValues` (e.g. for rare types)
 /// and needs to forward it through a writer.
-pub fn write_column_value<W: RowWriter>(writer: &mut W, col: usize, value: ColumnValues) {
+pub fn write_column_value<W: RowWriter + ?Sized>(writer: &mut W, col: usize, value: ColumnValues) {
     match value {
         ColumnValues::Null => writer.write_null(col),
         ColumnValues::Bit(v) => writer.write_bool(col, v),
@@ -176,7 +181,7 @@ pub fn write_column_value<W: RowWriter>(writer: &mut W, col: usize, value: Colum
         ColumnValues::String(v) => writer.write_string(col, v),
         ColumnValues::Bytes(v) => writer.write_bytes(col, v),
         ColumnValues::Decimal(v) => writer.write_decimal(col, v),
-        ColumnValues::Numeric(v) => writer.write_decimal(col, v),
+        ColumnValues::Numeric(v) => writer.write_numeric(col, v),
         ColumnValues::Date(v) => writer.write_date(col, v),
         ColumnValues::Time(v) => writer.write_time(col, v),
         ColumnValues::DateTime(v) => writer.write_datetime(col, v),
@@ -247,13 +252,12 @@ mod tests {
     }
 
     #[test]
-    fn write_column_value_bridges_numeric_as_decimal() {
+    fn write_column_value_bridges_numeric() {
         let mut writer = DefaultRowWriter::new(1);
         let parts = DecimalParts::from_i64(12345, 5, 0).unwrap();
         write_column_value(&mut writer, 0, ColumnValues::Numeric(parts.clone()));
         let row = writer.take_row();
-        // Numeric maps to write_decimal, which produces Decimal variant
-        assert_eq!(row[0], ColumnValues::Decimal(parts));
+        assert_eq!(row[0], ColumnValues::Numeric(parts));
     }
 
     #[test]
