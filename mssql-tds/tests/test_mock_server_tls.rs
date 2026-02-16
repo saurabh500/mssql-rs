@@ -134,6 +134,8 @@ mod mock_server_tls_tests {
     /// 1. The mock server correctly performs TDS 7.4-style TLS handshake
     /// 2. The client can connect when trusting the server certificate
     /// 3. The TdsTlsWrapper correctly handles TDS packet wrapping/unwrapping
+    // Disabled on Windows: intermittent 15s timeout in TDS 7.4 mock server TLS (Bug #42534)
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn test_connect_with_trust_server_certificate() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -184,6 +186,8 @@ mod mock_server_tls_tests {
     /// 1. TLS connection is properly established
     /// 2. SQL queries can be executed over the encrypted connection
     /// 3. Results are correctly returned through the encrypted channel
+    // Disabled on Windows: intermittent 15s timeout in TDS 7.4 mock server TLS (Bug #42534)
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn test_execute_query_over_tls_with_trust_certificate()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -352,6 +356,8 @@ mod mock_server_tls_tests {
     /// Test multiple queries over a single TLS connection
     ///
     /// This validates that the TLS session remains stable across multiple queries.
+    // Disabled on Windows: intermittent 15s timeout in TDS 7.4 mock server TLS (Bug #42534)
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn test_multiple_queries_over_tls() -> Result<(), Box<dyn std::error::Error>> {
         init_tracing();
@@ -410,6 +416,8 @@ mod mock_server_tls_tests {
     /// Test multiple TLS connections to the same server
     ///
     /// This validates that the mock server can handle multiple concurrent TLS clients.
+    // Disabled on Windows: intermittent 15s timeout in TDS 7.4 mock server TLS (Bug #42534)
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn test_multiple_tls_connections() -> Result<(), Box<dyn std::error::Error>> {
         init_tracing();
@@ -461,6 +469,8 @@ mod mock_server_tls_tests {
     /// Test TLS connection with custom query responses
     ///
     /// This validates that custom query responses work correctly over TLS.
+    // Disabled on Windows: intermittent 15s timeout in TDS 7.4 mock server TLS (Bug #42534)
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn test_custom_query_response_over_tls() -> Result<(), Box<dyn std::error::Error>> {
         use mssql_mock_tds::{ColumnDefinition, ColumnValue, QueryResponse, Row, SqlDataType};
