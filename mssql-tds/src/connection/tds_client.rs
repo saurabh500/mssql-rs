@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::connection::bulk_copy::{BulkCopyOptions, BulkLoadRow, ResolvedColumnMapping};
 use crate::connection::bulk_copy_state::ATTENTION_TIMEOUT_SECONDS;
 use crate::datatypes::bulk_copy_metadata::BulkCopyColumnMetadata;
-use crate::datatypes::row_writer::{DefaultRowWriter, RowWriter, write_column_value};
+use crate::datatypes::row_writer::{DefaultRowWriter, RowWriter};
 use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqltypes::SqlType;
 use crate::error::Error::UsageError;
@@ -30,7 +30,7 @@ use crate::{
     },
     datatypes::column_values::ColumnValues,
     handler::handler_factory::NegotiatedSettings,
-    io::token_stream::ParserContext,
+    io::token_stream::{ParserContext, RowReadResult},
     message::{batch::SqlBatch, messages::Request},
     token::tokens::{ColMetadataToken, CurrentCommand, Tokens},
 };
@@ -941,6 +941,9 @@ impl TdsClient {
 
     /// Decodes the next row directly into a [`RowWriter`], returning `true` if
     /// a row was written or `false` when the result set is exhausted.
+    ///
+    /// Uses `receive_row_into` to decode ROW/NBCROW tokens directly through
+    /// `decode_into`, bypassing the intermediate `RowToken { all_values }`.
     #[instrument(skip(self, writer), level = "info")]
     pub(crate) async fn get_next_row_into(
         &mut self,
@@ -954,84 +957,77 @@ impl TdsClient {
         let parser_context = ParserContext::ColumnMetadata(self.current_metadata.clone().unwrap());
         loop {
             let start = Instant::now();
-            let token = self
+            let result = self
                 .transport
-                .receive_token(
+                .receive_row_into(
                     &parser_context,
                     self.remaining_request_timeout,
                     self.cancel_handle.as_ref(),
+                    writer,
                 )
                 .await?;
             self.update_remaining_timeout(start);
 
-            match token {
-                Tokens::Row(row) | Tokens::NbcRow(row) => {
+            match result {
+                RowReadResult::RowWritten => {
                     info!("Row Received");
-                    for (col, val) in row.all_values.into_iter().enumerate() {
-                        write_column_value(writer, col, val);
-                    }
                     return Ok(true);
                 }
-                Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
-                    info!("done while get_next_row: {:?}", done);
+                RowReadResult::Token(token) => match token {
+                    Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
+                        info!("done while get_next_row: {:?}", done);
 
-                    let count = self.count_map.entry(done.cur_cmd).or_insert(0);
-                    // Use saturating_add to prevent integer overflow from malicious/corrupted TDS responses
-                    *count = count.saturating_add(done.row_count);
+                        let count = self.count_map.entry(done.cur_cmd).or_insert(0);
+                        *count = count.saturating_add(done.row_count);
 
-                    self.current_result_set_has_been_read_till_end = true;
-                    if !done.has_more() {
-                        // Token stream is terminated. Save this information.
-                        info!("No more rows for current command: {:?}", done.cur_cmd);
-                        self.execution_context.set_has_open_batch(false);
+                        self.current_result_set_has_been_read_till_end = true;
+                        if !done.has_more() {
+                            info!("No more rows for current command: {:?}", done.cur_cmd);
+                            self.execution_context.set_has_open_batch(false);
+                        }
+                        return Ok(false);
                     }
-                    return Ok(false);
-                }
-                Tokens::Order(order_token) => {
-                    // Ignore.
-                    info!(?order_token);
-                    continue;
-                }
-                Tokens::EnvChange(env_change) => {
-                    // Handle environment changes during row iteration
-                    info!(?env_change);
-                    self.execution_context
-                        .capture_change_property(&env_change)?;
-                    continue;
-                }
-                Tokens::ReturnValue(return_value_token) => {
-                    let return_value = return_value_token.into();
-                    self.return_values.push(return_value);
-                    continue;
-                }
-                Tokens::Error(error_token) => {
-                    // SQL Server error occurred during row iteration
-                    info!(?error_token);
-                    return Err(crate::error::Error::SqlServerError {
-                        message: error_token.message.clone(),
-                        state: error_token.state,
-                        class: error_token.severity as i32,
-                        number: error_token.number,
-                        server_name: Some(error_token.server_name.clone()),
-                        proc_name: Some(error_token.proc_name.clone()),
-                        line_number: Some(error_token.line_number as i32),
-                    });
-                }
-                Tokens::ColMetadata(_) => {
-                    // ColMetadata token encountered while looking for rows
-                    // This indicates incorrect API usage - likely didn't move to next result set properly
-                    return Err(crate::error::Error::UsageError(
-                        "Unexpected ColMetadata token encountered while reading rows. \
-                         This typically indicates the API was not used correctly - \
-                         you may need to call move_to_next() to advance to the next result set."
-                            .to_string(),
-                    ));
-                }
-                _ => {
-                    return Err(crate::error::Error::ProtocolError(format!(
-                        "Unexpected token while finding the next row: {token:?}"
-                    )));
-                }
+                    Tokens::Order(order_token) => {
+                        info!(?order_token);
+                        continue;
+                    }
+                    Tokens::EnvChange(env_change) => {
+                        info!(?env_change);
+                        self.execution_context
+                            .capture_change_property(&env_change)?;
+                        continue;
+                    }
+                    Tokens::ReturnValue(return_value_token) => {
+                        let return_value = return_value_token.into();
+                        self.return_values.push(return_value);
+                        continue;
+                    }
+                    Tokens::Error(error_token) => {
+                        info!(?error_token);
+                        return Err(crate::error::Error::SqlServerError {
+                            message: error_token.message.clone(),
+                            state: error_token.state,
+                            class: error_token.severity as i32,
+                            number: error_token.number,
+                            server_name: Some(error_token.server_name.clone()),
+                            proc_name: Some(error_token.proc_name.clone()),
+                            line_number: Some(error_token.line_number as i32),
+                        });
+                    }
+                    Tokens::ColMetadata(_) => {
+                        return Err(crate::error::Error::UsageError(
+                            "Unexpected ColMetadata token encountered while reading rows. \
+                             This typically indicates the API was not used correctly - \
+                             you may need to call move_to_next() to advance to the next result set."
+                                .to_string(),
+                        ));
+                    }
+                    _ => {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "Unexpected token while finding the next row: {token:?}"
+                        )));
+                    }
+                },
             }
         }
     }
