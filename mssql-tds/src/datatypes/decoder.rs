@@ -725,7 +725,7 @@ impl GenericDecoder {
     ) -> TdsResult<()>
     where
         T: TdsPacketReader + Send + Sync,
-        W: RowWriter,
+        W: RowWriter + ?Sized,
     {
         match metadata.data_type {
             // === Fixed-length integer types ===
@@ -943,7 +943,7 @@ impl GenericDecoder {
                             "Invalid GUID length: expected 16 bytes, got {length}"
                         )));
                     }
-                    let mut bytes = safe_vec![0u8; length as usize, "decode_into read_guid"];
+                    let mut bytes = [0u8; 16];
                     reader.read_bytes(&mut bytes).await?;
                     let uuid = uuid::Uuid::from_slice_le(&bytes).map_err(|e| {
                         crate::error::Error::ProtocolError(format!("Failed to parse UUID: {e}"))
@@ -1263,7 +1263,7 @@ impl StringDecoder {
     ) -> TdsResult<()>
     where
         T: TdsPacketReader + Send + Sync,
-        W: RowWriter,
+        W: RowWriter + ?Sized,
     {
         let encoding_type = get_encoding_type(metadata);
 
