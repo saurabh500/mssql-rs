@@ -970,6 +970,7 @@ impl TdsClient {
 
             match result {
                 RowReadResult::RowWritten => {
+                    writer.end_row();
                     info!("Row Received");
                     return Ok(true);
                 }

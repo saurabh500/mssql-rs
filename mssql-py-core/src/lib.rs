@@ -11,6 +11,7 @@ use mssql_tds::connection::client_context::DriverVersion;
 mod bulkcopy;
 mod connection;
 mod cursor;
+mod row_writer;
 mod types;
 mod utils;
 
