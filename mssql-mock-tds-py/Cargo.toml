@@ -3,6 +3,7 @@ name = "mssql-mock-tds-py"
 version = "0.1.0"
 edition = "2024"
 description = "Python bindings for the mock TDS server for testing SQL Server clients"
+publish = false
 
 [lib]
 name = "mssql_mock_tds_py"
