@@ -29,6 +29,11 @@ parameters:
   default: false
   displayName: 'Official pipeline (clean release on manual trigger)'
 
+- name: publishToFeed
+  type: boolean
+  default: false
+  displayName: 'Publish NuGet package to Azure Artifacts feed'
+
 stages:
 #############################################################################
 # Build Stage - All platforms
@@ -257,124 +262,125 @@ stages:
 #############################################################################
 # Publish Stage - Collect wheels, create NuGet package, publish to feed
 #############################################################################
-- stage: Publish
-  dependsOn: Build
-  # Skip publish on PR builds — only publish on CI, scheduled, or manual runs
-  condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
-  jobs:
-  - job: PackageAndPublish
-    displayName: 'Package wheels into NuGet and publish'
-    pool:
-      type: windows
-    variables:
-      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
-      ob_nugetPublishing_enabled: true
-    steps:
-    - download: current
-      displayName: 'Download all build artifacts'
+- ${{ if eq(parameters.publishToFeed, true) }}:
+  - stage: Publish
+    dependsOn: Build
+    # Skip publish on PR builds — only publish on CI, scheduled, or manual runs
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+    - job: PackageAndPublish
+      displayName: 'Package wheels into NuGet and publish'
+      pool:
+        type: windows
+      variables:
+        ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+        ob_nugetPublishing_enabled: true
+      steps:
+      - download: current
+        displayName: 'Download all build artifacts'
 
-    - task: CopyFiles@2
-      displayName: 'Collect all wheels'
-      inputs:
-        sourceFolder: '$(Pipeline.Workspace)'
-        targetFolder: '$(Build.StagingDirectory)/wheels'
-        contents: '**/*.whl'
-        flattenFolders: true
+      - task: CopyFiles@2
+        displayName: 'Collect all wheels'
+        inputs:
+          sourceFolder: '$(Pipeline.Workspace)'
+          targetFolder: '$(Build.StagingDirectory)/wheels'
+          contents: '**/*.whl'
+          flattenFolders: true
 
-    - pwsh: |
-        Write-Host "=== Collected wheels ==="
-        $wheels = Get-ChildItem "$(Build.StagingDirectory)/wheels" -Filter *.whl -ErrorAction SilentlyContinue
-        if ($wheels) {
-          $wheels | ForEach-Object {
-            Write-Host "  $($_.Name)  ($([math]::Round($_.Length/1KB, 1)) KB)"
+      - pwsh: |
+          Write-Host "=== Collected wheels ==="
+          $wheels = Get-ChildItem "$(Build.StagingDirectory)/wheels" -Filter *.whl -ErrorAction SilentlyContinue
+          if ($wheels) {
+            $wheels | ForEach-Object {
+              Write-Host "  $($_.Name)  ($([math]::Round($_.Length/1KB, 1)) KB)"
+            }
+            Write-Host "Total: $($wheels.Count) wheels"
+          } else {
+            Write-Host "WARNING: No wheels found!"
           }
-          Write-Host "Total: $($wheels.Count) wheels"
-        } else {
-          Write-Host "WARNING: No wheels found!"
-        }
-      displayName: 'List collected wheels'
+        displayName: 'List collected wheels'
 
-    - pwsh: |
-        $ErrorActionPreference = 'Stop'
+      - pwsh: |
+          $ErrorActionPreference = 'Stop'
 
-        # Extract version from mssql-py-core/Cargo.toml
-        $cargoToml = Get-Content "$(Build.SourcesDirectory)/mssql-py-core/Cargo.toml" -Raw
-        if ($cargoToml -match 'version\s*=\s*"([^"]+)"') {
-          $version = $Matches[1]
-        } else {
-          Write-Error "Could not extract version from Cargo.toml"
-          exit 1
-        }
-
-        # Determine prerelease suffix based on Build.Reason and pipeline type
-        $buildReason = "$(Build.Reason)"
-        $isOfficial = $${{ parameters.isOfficial }}
-        $dateStamp = Get-Date -Format "yyyyMMdd"
-        $buildId = "$(Build.BuildId)"
-        $commitSha = "$(Build.SourceVersion)"
-        $shortSha = $commitSha.Substring(0, 8)
-
-        switch ($buildReason) {
-          'Schedule' {
-            # Nightly build: 0.1.0-nightly.20260217
-            $packageVersion = "$version-nightly.$dateStamp"
-            Write-Host "Nightly build detected"
+          # Extract version from mssql-py-core/Cargo.toml
+          $cargoToml = Get-Content "$(Build.SourcesDirectory)/mssql-py-core/Cargo.toml" -Raw
+          if ($cargoToml -match 'version\s*=\s*"([^"]+)"') {
+            $version = $Matches[1]
+          } else {
+            Write-Error "Could not extract version from Cargo.toml"
+            exit 1
           }
-          'Manual' {
-            if ($isOfficial) {
-              # Official release: clean semver 0.1.0
-              $packageVersion = $version
-              Write-Host "Official release build detected"
-            } else {
-              # Non-official manual trigger: dev build
+
+          # Determine prerelease suffix based on Build.Reason and pipeline type
+          $buildReason = "$(Build.Reason)"
+          $isOfficial = ${{ parameters.isOfficial }}
+          $dateStamp = Get-Date -Format "yyyyMMdd"
+          $buildId = "$(Build.BuildId)"
+          $commitSha = "$(Build.SourceVersion)"
+          $shortSha = $commitSha.Substring(0, 8)
+
+          switch ($buildReason) {
+            'Schedule' {
+              # Nightly build: 0.1.0-nightly.20260217
+              $packageVersion = "$version-nightly.$dateStamp"
+              Write-Host "Nightly build detected"
+            }
+            'Manual' {
+              if ($isOfficial) {
+                # Official release: clean semver 0.1.0
+                $packageVersion = $version
+                Write-Host "Official release build detected"
+              } else {
+                # Non-official manual trigger: dev build
+                $packageVersion = "$version-dev.$dateStamp.$buildId"
+                Write-Host "Non-official manual build detected"
+              }
+            }
+            default {
+              # CI push (IndividualCI, BatchedCI, etc.): 0.1.0-dev.20260217.12345
               $packageVersion = "$version-dev.$dateStamp.$buildId"
-              Write-Host "Non-official manual build detected"
+              Write-Host "CI build detected (reason: $buildReason)"
             }
           }
-          default {
-            # CI push (IndividualCI, BatchedCI, etc.): 0.1.0-dev.20260217.12345
-            $packageVersion = "$version-dev.$dateStamp.$buildId"
-            Write-Host "CI build detected (reason: $buildReason)"
+
+          Write-Host "Package version: $packageVersion"
+          Write-Host "Build reason: $buildReason | Official: $isOfficial"
+          Write-Host "##vso[task.setvariable variable=nugetVersion]$packageVersion"
+
+          # Create .nuspec
+          $nuspecContent = @"
+          <?xml version="1.0"?>
+          <package>
+            <metadata>
+              <id>mssql-py-core-wheels</id>
+              <version>$packageVersion</version>
+              <description>Python wheels for mssql-py-core across all platforms. Commit: $shortSha. Build: $(Build.BuildNumber)</description>
+              <authors>SqlClientDrivers</authors>
+            </metadata>
+            <files>
+              <file src="wheels\**\*.whl" target="wheels" />
+            </files>
+          </package>
+          "@
+
+          $nuspecPath = "$(Build.StagingDirectory)/mssql-py-core-wheels.nuspec"
+          $nuspecContent | Out-File -FilePath $nuspecPath -Encoding utf8
+          Write-Host "Created nuspec at $nuspecPath"
+        displayName: 'Generate NuGet package metadata'
+
+      - task: NuGetCommand@2
+        displayName: 'Create NuGet package'
+        inputs:
+          command: pack
+          packagesToPack: '$(Build.StagingDirectory)/mssql-py-core-wheels.nuspec'
+          packDestination: '$(ob_outputDirectory)/packages'
+          basePath: '$(Build.StagingDirectory)'
+
+      - pwsh: |
+          Write-Host "=== NuGet package created ==="
+          Get-ChildItem "$(ob_outputDirectory)/packages" -Filter *.nupkg | ForEach-Object {
+            Write-Host "  $($_.Name)  ($([math]::Round($_.Length/1MB, 2)) MB)"
           }
-        }
-
-        Write-Host "Package version: $packageVersion"
-        Write-Host "Build reason: $buildReason | Official: $isOfficial"
-        Write-Host "##vso[task.setvariable variable=nugetVersion]$packageVersion"
-
-        # Create .nuspec
-        $nuspecContent = @"
-        <?xml version="1.0"?>
-        <package>
-          <metadata>
-            <id>mssql-py-core-wheels</id>
-            <version>$packageVersion</version>
-            <description>Python wheels for mssql-py-core across all platforms. Commit: $shortSha. Build: $(Build.BuildNumber)</description>
-            <authors>SqlClientDrivers</authors>
-          </metadata>
-          <files>
-            <file src="wheels\**\*.whl" target="wheels" />
-          </files>
-        </package>
-        "@
-
-        $nuspecPath = "$(Build.StagingDirectory)/mssql-py-core-wheels.nuspec"
-        $nuspecContent | Out-File -FilePath $nuspecPath -Encoding utf8
-        Write-Host "Created nuspec at $nuspecPath"
-      displayName: 'Generate NuGet package metadata'
-
-    - task: NuGetCommand@2
-      displayName: 'Create NuGet package'
-      inputs:
-        command: pack
-        packagesToPack: '$(Build.StagingDirectory)/mssql-py-core-wheels.nuspec'
-        packDestination: '$(ob_outputDirectory)/packages'
-        basePath: '$(Build.StagingDirectory)'
-
-    - pwsh: |
-        Write-Host "=== NuGet package created ==="
-        Get-ChildItem "$(ob_outputDirectory)/packages" -Filter *.nupkg | ForEach-Object {
-          Write-Host "  $($_.Name)  ($([math]::Round($_.Length/1MB, 2)) MB)"
-        }
-        Write-Host "OneBranch will auto-publish from $(ob_outputDirectory)/packages"
-      displayName: 'Verify NuGet package'
+          Write-Host "OneBranch will auto-publish from $(ob_outputDirectory)/packages"
+        displayName: 'Verify NuGet package'
