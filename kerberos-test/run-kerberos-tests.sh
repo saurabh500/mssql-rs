@@ -230,6 +230,7 @@ else
         --exclude='mssql-py-core' \
         -cf - \
         Cargo.toml \
+        Cargo.lock \
         .config \
         mssql-tds \
         mssql-tds-cli \
