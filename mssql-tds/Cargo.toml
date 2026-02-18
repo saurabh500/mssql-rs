@@ -12,6 +12,7 @@ gssapi = []
 # Enable both SSPI and GSSAPI for cross-platform integrated authentication
 integrated-auth = ["sspi", "gssapi"]
 
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(feature, values("sspi", "gssapi", "integrated-auth"))'] }
 
@@ -40,6 +41,8 @@ encoding_rs = "0.8"
 x509-parser = "0.18.0"
 # For DNS resolution (reverse DNS lookup for SPN canonicalization)
 dns-lookup = "2.0"
+
+
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["namedpipeapi", "winerror", "winbase"] }
@@ -72,3 +75,6 @@ mockall = "0.13.1"
 criterion = "0.5"
 mssql-mock-tds = { path = "../mssql-mock-tds" }
 tempfile = "3.13"
+arrow-array = "57"
+arrow-schema = "57"
+arrow-buffer = "57"

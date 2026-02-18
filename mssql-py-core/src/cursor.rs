@@ -87,7 +87,7 @@ impl PyCoreCursor {
         let tds_client = self.tds_client.clone();
         let runtime_handle = self.runtime_handle.clone();
 
-        // Fetch one row asynchronously
+        // Fetch one row via next_row_into → PyRowWriter (bypasses RowToken)
         let result = py.detach(|| {
             runtime_handle.block_on(async {
                 let mut client = tds_client.lock().await;
@@ -95,17 +95,19 @@ impl PyCoreCursor {
 
                 if let Some(resultset) = client.get_current_resultset() {
                     info!("fetchone: Got resultset, fetching next row");
-                    if let Some(row) = resultset.next_row().await.map_err(|e| {
+                    let col_count = resultset.get_metadata().len();
+                    let mut writer = crate::row_writer::PyRowWriter::new(col_count);
+                    let has_row = resultset.next_row_into(&mut writer).await.map_err(|e| {
                         error!("fetchone: Failed to fetch row: {}", e);
                         pyo3::exceptions::PyRuntimeError::new_err(format!(
                             "Failed to fetch row: {}",
                             e
                         ))
-                    })? {
-                        info!("fetchone: Got row with {} columns", row.len());
-                        return Ok(Some(row));
+                    })?;
+                    if has_row {
+                        info!("fetchone: Got row with {} columns", col_count);
+                        return Ok(Some(writer));
                     } else {
-                        // No more rows - close the result set to clear has_open_batch flag
                         info!("No more rows, closing result set");
                         resultset.close().await.map_err(|e| {
                             error!("fetchone: Failed to close result set: {}", e);
@@ -123,18 +125,13 @@ impl PyCoreCursor {
             })
         })?;
 
-        // Convert row to Python tuple
-        if let Some(row) = result {
+        // Convert row to Python tuple (GIL re-acquired)
+        if let Some(writer) = result {
             Python::attach(|py| {
-                let py_list: Vec<Bound<'_, PyAny>> = row
-                    .iter()
-                    .map(|col_val| Self::column_value_to_python(py, col_val))
-                    .collect();
-                let py_tuple = PyTuple::new(py, py_list.iter())?;
+                let py_tuple = writer.to_py_tuple(py)?;
                 Ok(Some(py_tuple.into()))
             })
         } else {
-            // Mark that we no longer have a result set since it's been fully consumed
             self.has_resultset = false;
             Ok(None)
         }
@@ -492,7 +489,10 @@ impl PyCoreCursor {
 
 impl PyCoreCursor {
     /// Convert a TDS ColumnValue to a Python object
-    fn column_value_to_python<'py>(py: Python<'py>, col_val: &ColumnValues) -> Bound<'py, PyAny> {
+    pub(crate) fn column_value_to_python<'py>(
+        py: Python<'py>,
+        col_val: &ColumnValues,
+    ) -> Bound<'py, PyAny> {
         use pyo3::types::{PyBytes, PyList, PyModule};
 
         match col_val {

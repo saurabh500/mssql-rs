@@ -5,6 +5,7 @@ import { SqlJsConnection } from '.';
 import { DataType } from './datatypes';
 import { JsSqlDataTypes } from './datatypes/enums';
 import { SqlDataTypes, Parameter } from './generated';
+import { decodeRawResult, RawResult } from './decode';
 
 type ColumnValue = number | string | boolean | Buffer | null | Date | bigint;
 
@@ -135,20 +136,26 @@ export class Request {
   }
 
   async query(command: string): Promise<IResult> {
-    //will correctly run regardless if there are parameters or not
+    if (this.params.length === 0) {
+      return this.queryFast(command);
+    }
     await this.connection.execute(command, this.params);
-    let result: IResult = await this.createResult();
-
+    let result: IResult = await this.createResultFast();
     await this.connection.closeQuery();
-
     return result;
+  }
+
+  private async queryFast(command: string): Promise<IResult> {
+    const buffers = await this.connection.queryRaw(command);
+    const rawResults = buffers.map((buf) => decodeRawResult(buf));
+    return reshapeRawToIResult(rawResults);
   }
 
   async execute(storedProcName: string): Promise<IResult> {
     //will correctly run regardless if there are parameters or not
     await this.connection.executeProc(storedProcName, this.params);
 
-    let result: IResult = await this.createResult();
+    let result: IResult = await this.createResultFast();
 
     let returnValues = await this.connection.getReturnValues();
     if (returnValues) {
@@ -169,90 +176,100 @@ export class Request {
     return result;
   }
 
-  // Create the result object by processing all rows from the executed commands.
-  // This iterates over all the result sets and creates the recordsets.
-  private async createResult() {
-    let result: IResult = {
-      IRecordSets: [],
-      IRecordSet: null,
-      rowCount: 0,
-      output: {},
-    };
+  private async createResultFast(): Promise<IResult> {
+    const BYTE_BUDGET = 256 * 1024;
+    const rawResults: RawResult[] = [];
 
-    // Process all rows from the executed commands
     while (true) {
-      //gets the metadata for the current result set
-      let currentRecordSet: RecordSet = Object.assign([], {
-        columns: [],
-        rowCount: 0,
-      });
-      let metadata = await this.connection.getMetadata();
-      if (!metadata || metadata.length === 0) {
-        break;
-      }
-      //build the current result set
+      let merged: RawResult | null = null;
+
       while (true) {
-        let next_row = await this.connection.nextRowInResultset();
-        if (!next_row) {
-          break;
+        const chunk = await this.connection.fetchChunk(BYTE_BUDGET);
+        if (!chunk) break;
+
+        const decoded = decodeRawResult(chunk.data);
+        if (!merged) {
+          merged = decoded;
+        } else {
+          merged.rows.push(...decoded.rows);
+          merged.rowCount += decoded.rowCount;
         }
-        //builds the current row as an object and counts the number of anonymous columns
-        let currentRow: RecordSetRow = {};
-        let anonymousColumns: number = 0;
-        next_row.forEach((rowVal, index) => {
-          if (index >= metadata.length) {
-            throw new Error(`Index ${index} out of bounds for metadata array`);
-          }
-          let transformed = SqlJsConnection.transform(metadata[index], rowVal);
-          //avoids adding the same columns
-          if (currentRecordSet.columns.length + anonymousColumns <= index) {
-            let column = {
-              index: index,
-              name: transformed.metadata.name,
-              //if the column is an anonymous column, make the column type undefined
-              type:
-                transformed.metadata.name.length > 0
-                  ? transformed.metadata.dataType
-                  : undefined,
-            };
 
-            //avoids readding unnamed columns for each anonymous column
-            if (!(column.name === '' && '' in currentRow)) {
-              currentRecordSet.columns.push(column);
-            }
-          }
-          //pushes the row item as a column name and associated value
-          //if there is no name associated such as if querying "SELECT 10", add it to an array for all anonymous columns
-          if (transformed.metadata.name === '' && '' in currentRow) {
-            if (Array.isArray(currentRow[''])) {
-              currentRow[''].push(transformed.rowVal);
-              anonymousColumns++; //only increments the count for anonymous columns after the first
-            }
-
-            //creates an array only if there are more than 1 anonymous column values
-            else {
-              currentRow[''] = [currentRow[''], transformed.rowVal];
-            }
-          } else {
-            currentRow[transformed.metadata.name] = transformed.rowVal;
-          }
-        });
-        //keeps track of the row count for each record set
-        currentRecordSet.push(currentRow);
-        currentRecordSet.rowCount++;
+        if (!chunk.hasMore) break;
       }
 
-      //keeps count of every rows in all record sets
-      result.rowCount += currentRecordSet.rowCount;
-      result.IRecordSets.push(currentRecordSet);
-
-      if (!(await this.connection.nextResultSet())) {
+      if (merged) {
+        rawResults.push(merged);
+      } else {
         break;
       }
+
+      if (!(await this.connection.nextResultSet())) break;
     }
 
-    result.IRecordSet =
-      result.IRecordSets.length > 0 ? result.IRecordSets[0] : null;
-    return result;
+    return reshapeRawToIResult(rawResults);
   }
+}
+
+/** Convert decoded result sets into an `IResult`. */
+function reshapeRawToIResult(rawResults: RawResult[]): IResult {
+  const recordSets: RecordSet[] = [];
+  let totalRowCount = 0;
+
+  for (const raw of rawResults) {
+    const colCount = raw.columns.length;
+    const colNames: string[] = raw.columns.map((c) => c.name);
+
+    // Build column metadata, collapsing duplicate unnamed columns (matches createResult)
+    const columns: Column[] = [];
+    let seenEmpty = false;
+    for (let i = 0; i < colCount; i++) {
+      const name = colNames[i];
+      if (name === '' && seenEmpty) {
+        continue;
+      }
+      if (name === '') seenEmpty = true;
+      columns.push({
+        index: i,
+        name,
+        type: name.length > 0 ? (raw.columns[i].typeId as SqlDataTypes) : undefined,
+      });
+    }
+
+    const recordSet: RecordSet = Object.assign([] as RecordSetRow[], {
+      columns,
+      rowCount: raw.rowCount,
+    });
+
+    for (let r = 0; r < raw.rowCount; r++) {
+      const rawRow = raw.rows[r];
+      const row: RecordSetRow = {};
+
+      for (let c = 0; c < colCount; c++) {
+        const name = colNames[c];
+        const val = rawRow[c] as ColumnValue;
+
+        if (name === '' && '' in row) {
+          if (Array.isArray(row[''])) {
+            (row[''] as ColumnValue[]).push(val);
+          } else {
+            row[''] = [row[''] as ColumnValue, val];
+          }
+        } else {
+          row[name] = val;
+        }
+      }
+      recordSet.push(row);
+    }
+
+    recordSets.push(recordSet);
+    totalRowCount += raw.rowCount;
+  }
+
+  return {
+    IRecordSets: recordSets,
+    IRecordSet: recordSets.length > 0 ? recordSets[0] : null,
+    rowCount: totalRowCount,
+    output: {},
+  };
 }
