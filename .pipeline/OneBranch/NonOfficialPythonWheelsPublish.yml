@@ -1,0 +1,67 @@
+#################################################################################
+#                        OneBranch Pipelines - NonOfficial                      #
+# Builds Python wheels from PyO3 bindings across 5 platforms and packages      #
+# them into a NuGet archive published to Azure Artifacts.                      #
+# Documentation:  https://aka.ms/obpipelines                                    #
+# Yaml Schema:    https://aka.ms/obpipelines/yaml/schema                        #
+# Retail Tasks:   https://aka.ms/obpipelines/tasks                              #
+# Support:        https://aka.ms/onebranchsup                                   #
+#################################################################################
+
+trigger:
+- main
+- development
+
+pr:
+- main
+- development
+
+# Nightly builds
+schedules:
+- cron: '0 2 * * *'
+  displayName: Nightly build
+  branches:
+    include:
+    - main
+  always: true
+
+variables:
+  CDP_DEFINITION_BUILD_COUNT: $[counter('', 0)]  # For onebranch.pipeline.version task
+  LinuxContainerImage: 'mcr.microsoft.com/onebranch/azurelinux/build:3.0'
+  WindowsContainerImage: 'onebranch.azurecr.io/windows/ltsc2022/vse2022:latest'
+  DEBIAN_FRONTEND: noninteractive
+  # IMPORTANT: This feed must be an Azure Artifacts NuGet feed in your ADO org with
+  # azure-feed://mscodehub/Rust/Rust@Release as an upstream source.
+  # The pipeline build service account needs Collaborator permissions on this feed.
+  # See https://aka.ms/rustinado for setup details.
+  toolchainFeed: 'https://sqlclientdrivers.pkgs.visualstudio.com/mssql-rs/_packaging/mssql-rs/nuget/v3/index.json'
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+
+extends:
+  template: v2/OneBranch.NonOfficial.CrossPlat.yml@templates
+  parameters:
+    featureFlags:
+      EnableCDPxPAT: false
+      WindowsHostVersion: 1ESWindows2022
+    globalSdl:
+      binskim:
+        # Rust build scripts will not be built with spectre-mitigations enabled
+        scanOutputDirectoryOnly: true
+      clippy:
+        enabled: true
+    nugetPublishing:
+      feeds:
+      - name: mssql-rs/mssql-rs
+        continueOnConflict: true
+    stages:
+    - template: /.pipeline/OneBranch/stages.yml@self
+      parameters:
+        buildAllTargets: true
+        buildPythonWheels: true
+        isOfficial: false
