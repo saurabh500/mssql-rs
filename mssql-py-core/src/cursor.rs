@@ -8,7 +8,7 @@ use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
 use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::datatypes::sqldatatypes::VectorBaseType;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyIterator, PyTuple};
+use pyo3::types::{PyDict, PyIterator, PyList, PyTuple};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Handle;
@@ -898,71 +898,102 @@ impl PyCoreCursor {
         }
     }
 
-    /// Parse column mappings from Python list of tuples.
+    /// Parse column mappings from Python list.
     ///
-    /// Format: `[(source, 'destination'), ...]` where source can be:
-    /// - string: column name mapping (ByName)
-    /// - int: ordinal mapping (ByOrdinal)
+    /// Supports two formats:
+    /// - `List[str]`: `['col1', 'col2']` — list index = source ordinal
+    /// - `List[Tuple[int|str, str]]`: `[(0, 'col1'), ('src', 'dst')]` — explicit mapping
     fn parse_column_mappings(
         mappings_obj: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Vec<ColumnMapping>> {
         use pyo3::exceptions::PyTypeError;
-        use pyo3::types::PyList;
 
-        let mappings = match mappings_obj {
-            Some(obj) => obj,
-            None => return Ok(Vec::new()),
+        let Some(mappings) = mappings_obj else {
+            return Ok(Vec::new());
         };
-
-        // Check if it's a list
         if !mappings.is_instance_of::<PyList>() {
             return Err(PyTypeError::new_err("column_mappings must be a list"));
         }
 
-        let mut result = Vec::new();
-
-        // Iterate through list items
-        let list_len = mappings.len()?;
-        for i in 0..list_len {
-            let item = mappings.get_item(i)?;
-
-            // Check if it's a tuple
-            if !item.is_instance_of::<PyTuple>() {
-                return Err(PyTypeError::new_err("Each mapping must be a tuple"));
-            }
-
-            let tuple_len = item.len()?;
-            if tuple_len != 2 {
-                return Err(PyTypeError::new_err(
-                    "Each mapping tuple must have exactly 2 elements: (source, destination)",
-                ));
-            }
-
-            let source = item.get_item(0)?;
-            let destination = item.get_item(1)?.extract::<String>()?;
-
-            let mapping = if let Ok(source_name) = source.extract::<String>() {
-                // Name-based mapping
-                ColumnMapping::ByName {
-                    source: source_name,
-                    destination,
-                }
-            } else if let Ok(source_ordinal) = source.extract::<usize>() {
-                // Ordinal-based mapping
-                ColumnMapping::ByOrdinal {
-                    source: source_ordinal,
-                    destination,
-                }
-            } else {
-                return Err(PyTypeError::new_err(
-                    "Source must be either a string (name) or int (ordinal)",
-                ));
-            };
-
-            result.push(mapping);
+        let list: &Bound<'_, PyList> = mappings.cast()?;
+        if list.is_empty() {
+            return Ok(Vec::new());
         }
 
-        Ok(result)
+        let first = list.get_item(0)?;
+        if first.is_instance_of::<PyTuple>() {
+            Self::parse_tuple_mappings(list)
+        } else if first.extract::<String>().is_ok() {
+            Self::parse_string_mappings(list)
+        } else {
+            Err(PyTypeError::new_err(
+                "column_mappings elements must be str or (int|str, str) tuples",
+            ))
+        }
+    }
+
+    /// `['colA', 'colB']` → `[(0, colA), (1, colB)]`
+    fn parse_string_mappings(list: &Bound<'_, PyList>) -> PyResult<Vec<ColumnMapping>> {
+        use pyo3::exceptions::PyTypeError;
+
+        list.iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let destination: String = item.extract().map_err(|_| {
+                    PyTypeError::new_err(format!(
+                        "Not all items in column mapping are the same type. column_mappings[{i}]: expected str, got {}",
+                        item.get_type()
+                    ))
+                })?;
+                Ok(ColumnMapping::ByOrdinal {
+                    source: i,
+                    destination,
+                })
+            })
+            .collect()
+    }
+
+    /// `[(0, 'colA'), ('src', 'dst')]`
+    fn parse_tuple_mappings(list: &Bound<'_, PyList>) -> PyResult<Vec<ColumnMapping>> {
+        list.iter()
+            .enumerate()
+            .map(|(i, item)| Self::parse_one_tuple(i, &item))
+            .collect()
+    }
+
+    fn parse_one_tuple(i: usize, item: &Bound<'_, PyAny>) -> PyResult<ColumnMapping> {
+        use pyo3::exceptions::PyTypeError;
+
+        if !item.is_instance_of::<PyTuple>() {
+            return Err(PyTypeError::new_err(format!(
+                "Not all items in column mapping are the same type. column_mappings[{i}]: expected tuple, got {}",
+                item.get_type()
+            )));
+        }
+        if item.len()? != 2 {
+            return Err(PyTypeError::new_err(
+                "Each mapping tuple must have exactly 2 elements: (source, destination)",
+            ));
+        }
+
+        let source = item.get_item(0)?;
+        let destination = item.get_item(1)?.extract::<String>()?;
+
+        if let Ok(name) = source.extract::<String>() {
+            Ok(ColumnMapping::ByName {
+                source: name,
+                destination,
+            })
+        } else if let Ok(ordinal) = source.extract::<usize>() {
+            Ok(ColumnMapping::ByOrdinal {
+                source: ordinal,
+                destination,
+            })
+        } else {
+            Err(PyTypeError::new_err(
+                "Tuple source must be str (name) or int (ordinal)",
+            ))
+        }
     }
 
     fn __repr__(&self) -> String {
