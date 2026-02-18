@@ -18,6 +18,10 @@ parameters:
   - '3.12'
   - '3.13'
   - '3.14'
+- name: publishArtifacts
+  type: boolean
+  default: true
+  displayName: 'Publish wheel artifacts (disable for OneBranch pipeline)'
 
 steps:
 # Login to Azure Container Registry for container-based builds
@@ -40,11 +44,11 @@ steps:
       
       echo "Building Python wheels in container: $CONTAINER_IMAGE"
       
-      mkdir -p "$(Build.ArtifactStagingDirectory)/wheels"
+      mkdir -p "$(ob_outputDirectory)/wheels"
       
       bash .pipeline/scripts/docker-cargo-run.sh --rm \
         -v "$(Build.SourcesDirectory):/workspace" \
-        -v "$(Build.ArtifactStagingDirectory)/wheels:/workspace/target/wheels" \
+        -v "$(ob_outputDirectory)/wheels:/workspace/target/wheels" \
         -e "WORKSPACE_DIR=/workspace" \
         -e "OUTPUT_DIR=/workspace/target/wheels" \
         "$CONTAINER_IMAGE" \
@@ -54,7 +58,7 @@ steps:
       sudo chown -R $(whoami):$(whoami) "$(Build.SourcesDirectory)/mssql-py-core/target" || true
       
       echo "✅ Wheels built successfully!"
-      ls -lh "$(Build.ArtifactStagingDirectory)/wheels"
+      ls -lh "$(ob_outputDirectory)/wheels"
     displayName: 'Build Python wheels in manylinux container (${{ parameters.architecture }})'
     env:
       CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
@@ -88,7 +92,7 @@ steps:
         export MACOSX_DEPLOYMENT_TARGET=15.0
         python${{ pythonVersion }} --version
         cd mssql-py-core
-        maturin build --release --target universal2-apple-darwin --interpreter python${{ pythonVersion }} --out $(Build.ArtifactStagingDirectory)/wheels
+        maturin build --release --target universal2-apple-darwin --interpreter python${{ pythonVersion }} --out $(ob_outputDirectory)/wheels
         echo "Universal2 wheel built successfully for Python ${{ pythonVersion }}"
       displayName: 'Build universal2 wheel for Python ${{ pythonVersion }} (MacOS)'
   
@@ -96,12 +100,12 @@ steps:
       echo "Re-tagging macOS wheels to use single universal2 platform tag..."
       export PATH="$HOME/.local/bin:$PATH"
       pip install wheel
-      for whl in $(Build.ArtifactStagingDirectory)/wheels/*.whl; do
+      for whl in $(ob_outputDirectory)/wheels/*.whl; do
         echo "Re-tagging: $(basename $whl)"
         wheel tags --platform-tag macosx_15_0_universal2 --remove "$whl"
       done
       echo "All wheels re-tagged:"
-      ls -lh $(Build.ArtifactStagingDirectory)/wheels
+      ls -lh $(ob_outputDirectory)/wheels
     displayName: 'Re-tag macOS wheels to uniform platform tag'
 
 # Container-based builds for Alpine (musl - musllinux)
@@ -123,11 +127,11 @@ steps:
       
       # Login to ACR and run build in the same session
       
-      mkdir -p "$(Build.ArtifactStagingDirectory)/wheels"
+      mkdir -p "$(ob_outputDirectory)/wheels"
       
       bash .pipeline/scripts/docker-cargo-run.sh --rm \
         -v "$(Build.SourcesDirectory):/workspace" \
-        -v "$(Build.ArtifactStagingDirectory)/wheels:/workspace/target/wheels" \
+        -v "$(ob_outputDirectory)/wheels:/workspace/target/wheels" \
         -e "WORKSPACE_DIR=/workspace" \
         -e "OUTPUT_DIR=/workspace/target/wheels" \
         "$CONTAINER_IMAGE" \
@@ -137,7 +141,7 @@ steps:
       sudo chown -R $(whoami):$(whoami) "$(Build.SourcesDirectory)/mssql-py-core/target" || true
       
       echo "✅ Wheels built successfully!"
-      ls -lh "$(Build.ArtifactStagingDirectory)/wheels"
+      ls -lh "$(ob_outputDirectory)/wheels"
     displayName: 'Build Python wheels in musllinux container (${{ parameters.architecture }})'
     env:
       CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
@@ -163,23 +167,25 @@ steps:
         pip install maturin
         
         # Create wheels output directory
-        New-Item -ItemType Directory -Force -Path "$(Build.ArtifactStagingDirectory)\wheels"
+        New-Item -ItemType Directory -Force -Path "$(ob_outputDirectory)\wheels"
         
         # Build the wheel
         cd mssql-py-core
-        maturin build --release --interpreter python --out "$(Build.ArtifactStagingDirectory)\wheels"
+        maturin build --release --interpreter python --out "$(ob_outputDirectory)\wheels"
         
         Write-Host "Wheel built successfully for Python ${{ pythonVersion }}"
       displayName: 'Build wheel for Python ${{ pythonVersion }} (Windows ${{ parameters.architecture }})'
   
   - pwsh: |
       Write-Host "All wheels built:"
-      Get-ChildItem "$(Build.ArtifactStagingDirectory)\wheels" | Format-Table Name, Length
+      Get-ChildItem "$(ob_outputDirectory)\wheels" | Format-Table Name, Length
     displayName: List all wheels
 
-- task: PublishBuildArtifacts@1
-  displayName: 'Publish Python Wheels'
-  inputs:
-    PathtoPublish: '$(Build.ArtifactStagingDirectory)/wheels'
-    ArtifactName: 'python-wheels-${{ parameters.osType }}-${{ parameters.architecture }}'
-    publishLocation: 'Container'
+# Publish artifacts for CI/PR pipelines (not needed for OneBranch which uses ob_outputDirectory)
+- ${{ if eq(parameters.publishArtifacts, true) }}:
+  - task: PublishPipelineArtifact@1
+    displayName: 'Publish Python wheels'
+    inputs:
+      targetPath: '$(ob_outputDirectory)/wheels'
+      artifact: 'wheels_${{ parameters.osType }}_${{ parameters.architecture }}'
+      publishLocation: 'pipeline'

@@ -2,6 +2,6 @@
 # Additional targets to install for all builds (in both CI and local builds). The toolchain will
 # always come with support for the host platform.
 targets = ["i686-pc-windows-msvc", "aarch64-pc-windows-msvc", "aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
-# This must be set to the maximum Rust version supported by Microsoft msrustup.
-# Check https://aka.ms/msrustup for the latest supported version before updating.
+# Public channel for OSS development. OneBranch pipelines override this
+# with ms-prod-1.90 via the rustToolchain.version templateContext setting.
 channel = "1.90"
