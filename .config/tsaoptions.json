@@ -7,6 +7,7 @@
     "mssql-rs-client@microsoft.com"
   ],
   "repositoryName": "mssql-rs",
+  "template" : "MSDATA_RevolutionR",
   "codebaseName": "Microsoft Rust based clients for SQL Server",
   "allTools": true,
   "includePathPatterns": "mssql_rs/*, setup.py, requirements.txt",

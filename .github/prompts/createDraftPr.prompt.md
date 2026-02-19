@@ -1,7 +1,8 @@
 ---
-agent: agent
+name: createDraftPr
+description: Describe when to use this prompt
 ---
-Using #microsoft/azure-devops-mcp create a DRAFT PR for this branch. The organization is sqlclient drivers, project is mssql-rs, the repository is mssql-tds and target branch is the `development` branch. 
+Using #microsoft/azure-devops-mcp create a DRAFT PR for this branch. The organization is sqlclient drivers, project is mssql-rs, the repository is mssql-rs and target branch is the `development` branch. 
 If the MCP server is not available, then try to use Az CLI. 
 
 Do not use unicode characters or superlatives in the PR description.
