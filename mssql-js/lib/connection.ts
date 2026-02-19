@@ -7,6 +7,7 @@ import { JsSqlDataTypes } from './datatypes/enums';
 import {
   connect,
   Connection,
+  ChunkResult,
   JsClientContext,
   Metadata,
   NapiDecimalParts,
@@ -104,20 +105,20 @@ export class SqlJsConnection {
     return this.internal_connection.nextResultSet();
   }
 
-  async nextRowInResultset() {
-    return this.internal_connection.nextRowInResultset();
-  }
-
-  async getMetadata() {
-    return this.internal_connection.getMetadata();
-  }
-
   async close(): Promise<void> {
     return this.internal_connection.close();
   }
 
   async closeQuery(): Promise<void> {
     return this.internal_connection.closeQuery();
+  }
+
+  async queryRaw(query: string): Promise<Buffer[]> {
+    return this.internal_connection.queryRaw(query);
+  }
+
+  async fetchChunk(byteBudget: number): Promise<ChunkResult | null> {
+    return this.internal_connection.fetchChunk(byteBudget);
   }
 
   async getReturnValues(): Promise<Array<OutputParams> | null> {

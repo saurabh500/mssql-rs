@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { create_connection, SqlJsConnection } from '../dist/index.js';
+import { create_connection } from '../dist/index.js';
+import { decodeRawResult } from '../dist/decode.js';
 import fs from 'fs';
 
 export async function openConnection(context) {
@@ -40,29 +41,31 @@ export async function getPassword() {
 }
 
 export async function nextRow(connection) {
-  let metadata = await connection.internal_connection.getMetadata();
-
-  if (!metadata) {
+  const chunk = await connection.fetchChunk(256 * 1024);
+  if (!chunk) {
     return [];
   }
-  let next_row = await connection.internal_connection.nextRowInResultset();
-  if (!next_row) {
-    if (!(await connection.internal_connection.nextResultSet())) {
-      return [];
-    } else {
-      metadata = await connection.internal_connection.getMetadata();
-      if (!metadata) {
-        return [];
-      }
-      next_row = await connection.internal_connection.nextRowInResultset();
+  const decoded = decodeRawResult(chunk.data);
+  if (decoded.rowCount === 0) {
+    return [];
+  }
+  const row = decoded.rows[0];
+  return decoded.columns.map((col, i) => ({
+    metadata: { name: col.name, dataType: col.typeId },
+    rowVal: row[i],
+  }));
+}
+
+export async function countAllRows(connection) {
+  let total = 0;
+  while (true) {
+    const chunk = await connection.fetchChunk(256 * 1024);
+    if (!chunk) break;
+    const decoded = decodeRawResult(chunk.data);
+    total += decoded.rowCount;
+    if (!chunk.hasMore) {
+      if (!(await connection.nextResultSet())) break;
     }
   }
-  let items = [];
-  if (next_row) {
-    next_row.forEach((rowVal, index) => {
-      let transformed = SqlJsConnection.transform(metadata[index], rowVal);
-      items.push(transformed);
-    });
-  }
-  return items;
+  return total;
 }

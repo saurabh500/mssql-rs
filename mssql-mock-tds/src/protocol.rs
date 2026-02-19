@@ -237,40 +237,76 @@ pub fn parse_login7_auth(packet_data: &[u8]) -> Login7AuthInfo {
         return auth_info;
     }
 
-    // The feature extension data is typically at the end of the Login7 packet.
-    // We need to find it by scanning for FEDAUTH feature ID (0x02)
-    // Feature extension format:
-    // - 1 byte: FeatureId (0x02 for FEDAUTH, 0xFF for terminator)
-    // - 4 bytes: FeatureDataLen (little-endian)
-    // - N bytes: FeatureData
+    // The FeatureExt entry in the Login7 offset table is at bytes 56-59
+    // (6th entry: HostName@36, UserName@40, Password@44, AppName@48, ServerName@52, FeatureExt@56)
+    // It contains an offset (2 bytes) and length (2 bytes) pointing to a DWORD in the variable data.
+    // That DWORD is the actual offset to the feature extension list.
+    if data.len() < 60 {
+        debug!("Login7 packet too short for FeatureExt offset table entry");
+        return auth_info;
+    }
 
-    // Scan from the end of fixed Login7 header structure (offset 36 is where offset/length pairs start)
-    // The actual variable data and feature extension come after the offset table
-    let scan_start = 36;
+    let feat_ext_ptr_offset = u16::from_le_bytes([data[56], data[57]]) as usize;
 
-    for i in scan_start..data.len() {
-        if data[i] == FEATURE_EXT_FEDAUTH && i + 5 < data.len() {
-            // Found FEDAUTH feature
+    // Read the DWORD at feat_ext_ptr_offset — this is the actual offset to feature extension data
+    if feat_ext_ptr_offset + 4 > data.len() {
+        debug!(
+            "FeatureExt pointer offset {} out of bounds (packet len {})",
+            feat_ext_ptr_offset,
+            data.len()
+        );
+        return auth_info;
+    }
+
+    let feature_ext_offset = u32::from_le_bytes([
+        data[feat_ext_ptr_offset],
+        data[feat_ext_ptr_offset + 1],
+        data[feat_ext_ptr_offset + 2],
+        data[feat_ext_ptr_offset + 3],
+    ]) as usize;
+
+    debug!(
+        "FeatureExt pointer at offset {}, points to feature data at offset {}",
+        feat_ext_ptr_offset, feature_ext_offset
+    );
+
+    if feature_ext_offset >= data.len() {
+        debug!(
+            "FeatureExt data offset {} out of bounds (packet len {})",
+            feature_ext_offset,
+            data.len()
+        );
+        return auth_info;
+    }
+
+    // Parse feature extension entries starting at feature_ext_offset
+    // Format: 1 byte FeatureId, 4 bytes FeatureDataLen, N bytes FeatureData
+    // Terminated by 0xFF
+    let mut i = feature_ext_offset;
+    while i < data.len() {
+        let feature_id = data[i];
+        if feature_id == FEATURE_EXT_TERMINATOR {
+            break;
+        }
+
+        if i + 5 > data.len() {
+            break;
+        }
+
+        let feat_len =
+            u32::from_le_bytes([data[i + 1], data[i + 2], data[i + 3], data[i + 4]]) as usize;
+
+        if feature_id == FEATURE_EXT_FEDAUTH {
             auth_info.has_fedauth = true;
-
-            // Read feature data length (4 bytes, little-endian)
-            let feat_len =
-                u32::from_le_bytes([data[i + 1], data[i + 2], data[i + 3], data[i + 4]]) as usize;
 
             if i + 5 + feat_len <= data.len() {
                 let feat_data = &data[i + 5..i + 5 + feat_len];
-
-                // FedAuth feature data format for AccessToken (SecurityToken library):
-                // - 1 byte: Options (library type in bits 1-2)
-                // - For SecurityToken (0x01): 4 bytes token length + token bytes
 
                 if !feat_data.is_empty() {
                     let options = feat_data[0];
                     auth_info.fedauth_library = (options >> 1) & 0x03;
 
-                    // SecurityToken library (0x01) has access token in the feature data
                     if auth_info.fedauth_library == 0x01 && feat_data.len() > 5 {
-                        // Read token length (4 bytes, little-endian) at offset 1
                         let token_len = u32::from_le_bytes([
                             feat_data[1],
                             feat_data[2],
@@ -288,6 +324,9 @@ pub fn parse_login7_auth(packet_data: &[u8]) -> Login7AuthInfo {
             }
             break;
         }
+
+        // Skip to next feature entry
+        i += 5 + feat_len;
     }
 
     auth_info

@@ -106,6 +106,23 @@ impl SqlString {
             None
         }
     }
+
+    /// Returns the raw bytes when they should be written directly to the wire
+    /// without encoding conversion. This is the case for DelayedSet and LcidBased
+    /// encodings where the bytes are already in the correct wire format.
+    #[inline]
+    pub fn as_raw_wire_bytes(&self) -> Option<&[u8]> {
+        match &self.encoding_type {
+            EncodingType::DelayedSet | EncodingType::LcidBased(_) => Some(&self.bytes),
+            _ => None,
+        }
+    }
+
+    /// Returns the encoding type of this SqlString
+    #[inline]
+    pub fn encoding_type(&self) -> &EncodingType {
+        &self.encoding_type
+    }
 }
 
 impl Debug for SqlString {

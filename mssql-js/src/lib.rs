@@ -16,6 +16,7 @@ use crate::{connection::Connection, context::JsClientContext, ffidatatypes::Coll
 #[macro_use]
 extern crate napi_derive;
 
+pub mod binary_row_writer;
 pub mod connection;
 pub mod context;
 pub mod datatypes;
