@@ -658,6 +658,8 @@ mod mock_server_tests {
     /// Test ServerCertificate with TLS-enabled mock server
     /// Tests the ServerCertificate validation feature with the mock TDS server.
     /// The mock server supports TDS 7.4-style TDS-wrapped TLS handshakes.
+    // Disabled on Windows: intermittent 15s timeout in TDS 7.4 mock server TLS (Bug #42534)
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn test_server_certificate_with_tls() -> Result<(), Box<dyn std::error::Error>> {
         init_tracing();

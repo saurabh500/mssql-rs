@@ -3,6 +3,7 @@ name = "mssql-mock-tds"
 version = "0.1.0"
 edition = "2024"
 description = "Mock TDS server library and CLI for testing SQL Server clients"
+license = "MIT"
 
 [lib]
 name = "mssql_mock_tds"

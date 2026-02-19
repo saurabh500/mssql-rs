@@ -619,14 +619,6 @@ fn get_null_sql_type(param: &Parameter) -> Result<SqlType, Error> {
     }
 }
 
-pub(crate) fn transform_row(row: Vec<ColumnValues>) -> Vec<RowDataType> {
-    let mut ret_val: Vec<RowDataType> = Vec::with_capacity(row.len());
-    for col in row {
-        ret_val.push(transform_col(col));
-    }
-    ret_val
-}
-
 pub fn transform_col(col: ColumnValues) -> RowDataType {
     match col {
         ColumnValues::Int(v) => RowDataType::B(v),

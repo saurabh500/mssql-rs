@@ -2,6 +2,8 @@
 name = "mssql-tds"
 version = "0.1.0"
 edition = "2024"
+description = "Rust implementation of the TDS (Tabular Data Stream) protocol for SQL Server"
+license = "MIT"
 
 [features]
 default = ["integrated-auth"]
@@ -11,6 +13,7 @@ sspi = []
 gssapi = []
 # Enable both SSPI and GSSAPI for cross-platform integrated authentication
 integrated-auth = ["sspi", "gssapi"]
+
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(feature, values("sspi", "gssapi", "integrated-auth"))'] }
@@ -40,6 +43,8 @@ encoding_rs = "0.8"
 x509-parser = "0.18.0"
 # For DNS resolution (reverse DNS lookup for SPN canonicalization)
 dns-lookup = "2.0"
+
+
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["namedpipeapi", "winerror", "winbase"] }
