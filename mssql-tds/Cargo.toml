@@ -77,6 +77,3 @@ mockall = "0.13.1"
 criterion = "0.5"
 mssql-mock-tds = { path = "../mssql-mock-tds" }
 tempfile = "3.13"
-arrow-array = "57"
-arrow-schema = "57"
-arrow-buffer = "57"
