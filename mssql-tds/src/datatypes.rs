@@ -6,6 +6,7 @@ pub mod column_values;
 pub mod decoder;
 pub(crate) mod encoder;
 pub mod lcid_encoding;
+pub mod row_writer;
 pub mod sql_json;
 pub mod sql_string;
 pub mod sql_vector;

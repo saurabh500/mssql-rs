@@ -1356,6 +1356,10 @@ impl TdsValueSerializer {
                 let bytes = if let Some(utf16_data) = value.as_utf16_bytes() {
                     // Already UTF-16 encoded, use directly (zero-copy optimization)
                     utf16_data
+                } else if let Some(raw_bytes) = value.as_raw_wire_bytes() {
+                    // DelayedSet/LcidBased: bytes are already in wire format, use directly.
+                    // This is critical for the RPC path where bytes are pre-encoded.
+                    raw_bytes
                 } else {
                     // Need to encode to UTF-16LE
                     // Get UTF-8 string first
@@ -1379,9 +1383,14 @@ impl TdsValueSerializer {
             }
             VARCHAR | CHAR | TEXT => {
                 // VARCHAR/CHAR/TEXT - single-byte encoding
-                // 0xA7 = VARCHAR, 0xAF = CHAR, 0x23 = TEXT
-                // The incoming bytes are UTF-16LE, but we need single-byte encoding for these types
-                // Decode UTF-16LE to string first
+                // If the bytes are already in wire format (DelayedSet or LcidBased),
+                // use them directly without decode→re-encode roundtrip.
+                // This is critical for the RPC path where bytes are pre-encoded.
+                if let Some(raw_bytes) = value.as_raw_wire_bytes() {
+                    return Self::serialize_char_varchar_direct(writer, raw_bytes, ctx).await;
+                }
+
+                // Otherwise (UTF-8 or UTF-16 source), decode and re-encode to target code page
                 let decoded_str = value.to_utf8_string();
 
                 // Encode to single-byte based on collation

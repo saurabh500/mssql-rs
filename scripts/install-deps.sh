@@ -19,6 +19,7 @@ if [ "$ARCH" = "x86_64" ]; then
         build-essential \
         pkg-config \
         libssl-dev \
+        libkrb5-dev \
         python-is-python3 \
         python3.10-venv \
         pip \
@@ -32,6 +33,7 @@ elif [ "$ARCH" = "aarch64" ]; then
         build-essential \
         pkg-config \
         libssl-dev \
+        libkrb5-dev \
         python-is-python3 \
         python3.10-venv \
         pip \

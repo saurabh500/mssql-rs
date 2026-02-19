@@ -15,12 +15,13 @@ use tokio::sync::Mutex;
 use tracing::instrument;
 
 use crate::{
+    binary_row_writer::BinaryRowWriter,
     datatypes::datetime::{
         NapiF64, NapiSqlDateTime, NapiSqlDateTime2, NapiSqlDateTimeOffset, NapiSqlTime,
     },
     ffidatatypes::{
-        CollationMetadata, Metadata, NapiDecimalParts, NapiSqlMoney, OutputParams, Parameter,
-        ParameterDirection, transform_row,
+        CollationMetadata, NapiDecimalParts, NapiSqlMoney, OutputParams, Parameter,
+        ParameterDirection,
     },
 };
 
@@ -42,6 +43,12 @@ pub(crate) type RowDataType = Either14<
     NapiDecimalParts,      // M
     String,                // N
 >;
+
+#[napi(object)]
+pub struct ChunkResult {
+    pub data: Buffer,
+    pub has_more: bool,
+}
 
 #[napi]
 pub struct Connection {
@@ -159,74 +166,116 @@ impl Connection {
         }
     }
 
-    // We dont use RowDataType directly as the return type. The binding generation cannot generate aliases for Rust Types,
-    // or replace them. Hence to have compilable typings, its necessary that Either* is directly used in the return type.
+    /// Executes a query and returns all result sets as binary `Buffer`s,
+    /// one per result set, avoiding per-row N-API boundary crossings.
+    ///
+    /// The buffer layout is decoded on the JS side by `decode.ts`.
     #[napi]
-    #[instrument]
-    #[allow(clippy::type_complexity)]
-    pub async fn next_row_in_resultset(
-        &self,
-    ) -> napi::Result<
-        Option<
-            Vec<
-                Either14<
-                    NapiF64,               // A
-                    i32,                   // B
-                    BigInt,                // C
-                    bool,                  // D
-                    Buffer,                // E
-                    Null,                  // F
-                    NapiSqlDateTime,       // G
-                    u32,                   // H
-                    NapiSqlTime,           // I
-                    NapiSqlDateTime2,      // J
-                    NapiSqlDateTimeOffset, // K
-                    NapiSqlMoney,          // L
-                    NapiDecimalParts,      // M
-                    String,                // N
-                >,
-            >,
-        >,
-    > {
+    pub async fn query_raw(&self, query: String) -> napi::Result<Vec<Buffer>> {
         let mut client = self.tds_client.lock().await;
 
-        let result_set = client.get_current_resultset();
-        // Check if the client has a result set.
-        if result_set.is_none() {
-            return Ok(None);
-        }
-        let result_set = result_set.unwrap();
-        let next_row = result_set
-            .next_row()
+        client
+            .execute(query, None, None)
             .await
-            .map_err(|e| napi::Error::from_reason(format!("Failed to get next row: {e}")))?;
+            .map_err(|e| napi::Error::from_reason(format!("Failed to execute query: {e}")))?;
 
-        match next_row {
-            Some(row) => {
-                let transformed_row = transform_row(row);
-                Ok(Some(transformed_row))
+        let mut buffers: Vec<Buffer> = Vec::new();
+
+        loop {
+            let result_set = client.get_current_resultset();
+            if result_set.is_none() {
+                break;
             }
-            None => Ok(None),
+            let result_set = result_set.unwrap();
+
+            let metadata = result_set.get_metadata().clone();
+            let col_count = metadata.len() as u16;
+
+            let mut writer = BinaryRowWriter::new(col_count);
+
+            let col_names: Vec<String> = metadata.iter().map(|m| m.column_name.clone()).collect();
+            let col_name_indices = writer.intern_column_names(&col_names);
+            let col_type_ids: Vec<u8> = metadata.iter().map(|m| m.data_type as u8).collect();
+
+            while result_set
+                .next_row_into(&mut writer)
+                .await
+                .map_err(|e| napi::Error::from_reason(format!("Failed to read row: {e}")))?
+            {
+            }
+
+            buffers.push(Buffer::from(writer.finalize(
+                &col_name_indices,
+                &col_type_ids,
+                0,
+            )));
+
+            let has_next = client.move_to_next().await.map_err(|e| {
+                napi::Error::from_reason(format!("Failed to advance to next result set: {e}"))
+            })?;
+            if !has_next {
+                break;
+            }
         }
+
+        // If no result sets at all (e.g. DML-only), close and return empty vec
+        if buffers.is_empty() {
+            client
+                .close_query()
+                .await
+                .map_err(|e| napi::Error::from_reason(format!("Failed to close query: {e}")))?;
+        }
+
+        Ok(buffers)
     }
 
+    /// Fetch rows from the current result set into a binary buffer, stopping
+    /// when the accumulated row data reaches `byte_budget` bytes or the result
+    /// set is exhausted.
+    ///
+    /// Returns `None` when there is no active result set.
     #[napi]
-    #[instrument]
-    pub async fn get_metadata(&self) -> napi::Result<Option<Vec<Metadata>>> {
+    pub async fn fetch_chunk(&self, byte_budget: u32) -> napi::Result<Option<ChunkResult>> {
         let mut client = self.tds_client.lock().await;
+
         let result_set = client.get_current_resultset();
-        // Check if the client has a result set.
         if result_set.is_none() {
             return Ok(None);
         }
         let result_set = result_set.unwrap();
-        let metadata = result_set.get_metadata();
 
-        let metadata_vec: Result<Vec<Metadata>, _> =
-            metadata.iter().map(Metadata::try_from).collect();
-        let metadata_vec = metadata_vec
-            .map_err(|e| napi::Error::from_reason(format!("Failed to convert metadata: {e}")))?;
-        Ok(Some(metadata_vec))
+        let metadata = result_set.get_metadata().clone();
+        let col_count = metadata.len() as u16;
+
+        let mut writer = BinaryRowWriter::new(col_count);
+
+        let col_names: Vec<String> = metadata.iter().map(|m| m.column_name.clone()).collect();
+        let col_name_indices = writer.intern_column_names(&col_names);
+        let col_type_ids: Vec<u8> = metadata.iter().map(|m| m.data_type as u8).collect();
+
+        let budget = byte_budget as usize;
+        let mut has_more = false;
+
+        loop {
+            let had_row = result_set
+                .next_row_into(&mut writer)
+                .await
+                .map_err(|e| napi::Error::from_reason(format!("Failed to read row: {e}")))?;
+
+            if !had_row {
+                break;
+            }
+
+            if writer.row_data_len() >= budget {
+                has_more = true;
+                break;
+            }
+        }
+
+        Ok(Some(ChunkResult {
+            data: Buffer::from(writer.finalize(&col_name_indices, &col_type_ids, 0)),
+            has_more,
+        }))
     }
 
     #[napi]
