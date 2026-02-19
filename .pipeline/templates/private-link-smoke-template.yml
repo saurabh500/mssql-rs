@@ -11,7 +11,7 @@ parameters:
 - name: wheelArtifact
   displayName: Name of the published wheel artifact
   type: string
-  default: python-wheels-Linux-x64
+  default: wheels_Linux_x64
 
 - name: wheelPattern
   displayName: Glob to find the .whl inside the artifact
@@ -79,13 +79,12 @@ jobs:
   - template: azure-cli-login-template.yml
 
   # --- Download wheel artifact from Build stage ---
-  - task: DownloadBuildArtifacts@1
+  - task: DownloadPipelineArtifact@2
     displayName: Download wheel artifact
     inputs:
-      buildType: current
-      downloadType: single
-      artifactName: ${{ parameters.wheelArtifact }}
-      downloadPath: $(Pipeline.Workspace)/artifacts
+      source: current
+      artifact: ${{ parameters.wheelArtifact }}
+      path: $(Pipeline.Workspace)/artifacts/${{ parameters.wheelArtifact }}
 
   # --- Resolve tag ---
   - script: |
