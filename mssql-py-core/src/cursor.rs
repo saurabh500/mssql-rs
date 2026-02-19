@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 
 use crate::bulkcopy::PythonRowAdapter;
+use crate::python_logger_adapter::scoped_tracing_bridge;
 use crate::utils::convert_tds_error;
 
 /// Python Cursor class for Core TDS backend
@@ -244,7 +245,7 @@ impl PyCoreCursor {
     /// result = cursor.bulkcopy('Users', iter(data), column_mappings=['id', 'name'])
     /// print(f"Copied {result['rows_copied']} rows in {result['batch_count']} batches")
     /// ```
-    #[pyo3(signature = (table_name, data_source, batch_size=0, timeout=30, column_mappings=None, keep_identity=false, check_constraints=false, table_lock=false, keep_nulls=false, fire_triggers=false, use_internal_transaction=false))]
+    #[pyo3(signature = (table_name, data_source, batch_size=0, timeout=30, column_mappings=None, keep_identity=false, check_constraints=false, table_lock=false, keep_nulls=false, fire_triggers=false, use_internal_transaction=false, python_logger=None))]
     #[allow(clippy::too_many_arguments)]
     fn bulkcopy(
         &mut self,
@@ -260,7 +261,12 @@ impl PyCoreCursor {
         keep_nulls: bool,
         fire_triggers: bool,
         use_internal_transaction: bool,
+        python_logger: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyDict>> {
+        // Set up tracing bridge if logger provided
+        let _guard = python_logger
+            .map(|logger| scoped_tracing_bridge(Arc::new(logger.clone().unbind()), file!()));
+
         info!("bulkcopy: Starting bulkcopy to table: {}", table_name);
 
         // Build options from explicit parameters (defaults handled by PyO3 signature)

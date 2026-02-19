@@ -27,6 +27,7 @@ use pyo3::types::{PyDate, PyDateTime, PyTime};
 use pyo3::types::{PyString, PyTuple};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
+use tracing::instrument;
 
 /// Represents the source Python type for conversion mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,12 +170,19 @@ impl PythonRowAdapter {
 
         // Step 2: Handle NULL values with validation
         if source_type == SourcePythonType::None {
-            return Self::handle_null_value(target_metadata);
+            return Self::handle_null_value(target_metadata).map_err(|e| {
+                tracing::error!("NULL validation failed: {}", e);
+                e
+            });
         }
 
         // Step 3: Check if we need type coercion based on source → target mapping
         if let Some(meta) = target_metadata
-            && let Some(coerced_value) = Self::try_type_coercion(py_obj, source_type, meta)?
+            && let Some(coerced_value) = Self::try_type_coercion(py_obj, source_type, meta)
+                .map_err(|e| {
+                    tracing::error!("Type coercion failed: {}", e);
+                    e
+                })?
         {
             return Ok(coerced_value);
         }
@@ -1856,6 +1864,7 @@ impl BulkLoadRow for PythonRowAdapter {
     /// - Python value cannot be converted to a TDS type
     /// - Column count doesn't match expected metadata
     /// - Network errors occur during transmission
+    #[instrument(skip(self, writer), level = "debug")]
     async fn write_to_packet(
         &self,
         writer: &mut StreamingBulkLoadWriter<'_>,
@@ -1863,13 +1872,13 @@ impl BulkLoadRow for PythonRowAdapter {
     ) -> TdsResult<()> {
         // Step 1: Acquire GIL and convert Python values to ColumnValues
         let column_values: Vec<_> = Python::attach(|py| {
-            let tuple = self
-                .row
-                .bind(py)
-                .cast::<PyTuple>()
-                .map_err(|e| Error::UsageError(format!("Expected tuple, got: {}", e)))?;
+            let tuple = self.row.bind(py).cast::<PyTuple>().map_err(|e| {
+                tracing::error!("Failed to cast row to tuple: {}", e);
+                Error::UsageError(format!("Expected tuple, got: {}", e))
+            })?;
 
             // If we have resolved mappings, use them to determine column order and indices
+
             if let Some(mappings) = &self.resolved_mappings {
                 Self::validate_column_count(tuple.len(), self.expected_source_columns)?;
 
@@ -1882,6 +1891,12 @@ impl BulkLoadRow for PythonRowAdapter {
 
                     // Read from source column index specified in the mapping
                     let item = tuple.get_item(mapping.source_index).map_err(|e| {
+                        tracing::error!(
+                            "Source column index {} out of bounds (tuple has {} columns): {}",
+                            mapping.source_index,
+                            tuple.len(),
+                            e
+                        );
                         Error::UsageError(format!(
                             "Source column index {} out of bounds (tuple has {} columns): {}",
                             mapping.source_index,
