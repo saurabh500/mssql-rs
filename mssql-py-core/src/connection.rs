@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
+use crate::python_logger_adapter::scoped_tracing_bridge;
 use mssql_tds::{
     connection::client_context::{ClientContext, IPAddressPreference, TdsAuthenticationMethod},
     connection::tds_client::TdsClient,
@@ -28,14 +29,31 @@ pub struct PyCoreConnection {
 #[pymethods]
 impl PyCoreConnection {
     #[new]
-    fn new(client_context_dict: &Bound<'_, PyDict>) -> PyResult<Self> {
-        let runtime = Runtime::new()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))?;
+    #[pyo3(signature = (client_context_dict, python_logger=None))]
+    fn new(
+        client_context_dict: &Bound<'_, PyDict>,
+        python_logger: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Self> {
+        // Set up tracing bridge if logger provided
+        let _guard = python_logger
+            .map(|logger| scoped_tracing_bridge(Arc::new(logger.clone().unbind()), file!()));
 
-        // Convert PyDict to ClientContext and get the datasource string
-        let (client_context, datasource) = Self::dict_to_client_context(client_context_dict)?;
+        tracing::info!("Creating new PyCoreConnection");
+        let runtime = Runtime::new().map_err(|e| {
+            tracing::error!("Failed to create Tokio runtime: {}", e);
+            PyRuntimeError::new_err(format!("Failed to create runtime: {e}"))
+        })?;
+
+        // Convert PyDict to ClientContext
+        tracing::debug!("Converting Python dict to ClientContext");
+        let client_context = Self::dict_to_client_context(client_context_dict)?;
 
         // Connect using TdsConnectionProvider
+        tracing::info!(
+            "Attempting connection to datasource: {}",
+            client_context.data_source
+        );
+        let datasource = client_context.data_source.clone();
         let provider = TdsConnectionProvider {};
         let tds_client = runtime.block_on(async {
             provider
@@ -44,14 +62,20 @@ impl PyCoreConnection {
         });
 
         match tds_client {
-            Ok(client) => Ok(PyCoreConnection {
-                runtime,
-                tds_client: Some(Arc::new(Mutex::new(client))),
-                is_closed: false,
-            }),
-            Err(e) => Err(PyRuntimeError::new_err(format!(
-                "Failed to connect to SQL Server: {e}"
-            ))),
+            Ok(client) => {
+                tracing::info!("Successfully connected to SQL Server");
+                Ok(PyCoreConnection {
+                    runtime,
+                    tds_client: Some(Arc::new(Mutex::new(client))),
+                    is_closed: false,
+                })
+            }
+            Err(e) => {
+                tracing::error!("Failed to connect to SQL Server: {}", e);
+                Err(PyRuntimeError::new_err(format!(
+                    "Failed to connect to SQL Server: {e}"
+                )))
+            }
         }
     }
 
@@ -110,14 +134,15 @@ impl PyCoreConnection {
 
 impl PyCoreConnection {
     /// Convert Python dict (ClientContext fields) to Rust ClientContext
-    /// Returns (ClientContext, datasource_string)
-    fn dict_to_client_context(dict: &Bound<'_, PyDict>) -> PyResult<(ClientContext, String)> {
+    fn dict_to_client_context(dict: &Bound<'_, PyDict>) -> PyResult<ClientContext> {
+        tracing::debug!("Extracting connection parameters from Python dict");
         // Extract required fields with defaults
         let server = dict
             .get_item("server")?
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or_else(|| "localhost".to_string());
 
+        tracing::debug!("Server: {}", server);
         // Keep the server string as datasource for create_client
         let datasource = server.clone();
 
@@ -311,17 +336,25 @@ impl PyCoreConnection {
         let authentication_method = match (has_access_token, has_user_name, has_password) {
             // Access token with any credentials → Error
             (true, true, _) | (true, _, true) => {
+                tracing::error!("Both access_token and username/password provided");
                 return Err(PyRuntimeError::new_err(
                     "Cannot use both 'access_token' and 'user_name'/'password'. \
                      Please provide either an access token OR username/password credentials, not both.",
                 ));
             }
             // Access token only → AccessToken auth
-            (true, false, false) => TdsAuthenticationMethod::AccessToken,
+            (true, false, false) => {
+                tracing::debug!("Using AccessToken authentication");
+                TdsAuthenticationMethod::AccessToken
+            }
             // Both username and password → SQL Password auth
-            (false, true, true) => TdsAuthenticationMethod::Password,
+            (false, true, true) => {
+                tracing::debug!("Using SQL Password authentication for user: {}", user_name);
+                TdsAuthenticationMethod::Password
+            }
             // Only username, no password → Error
             (false, true, false) => {
+                tracing::error!("Incomplete credentials: user_name without password");
                 return Err(PyRuntimeError::new_err(
                     "Incomplete credentials: 'user_name' provided without 'password'. \
                      Please provide both 'user_name' and 'password' for SQL authentication.",
@@ -329,6 +362,7 @@ impl PyCoreConnection {
             }
             // Only password, no username → Error
             (false, false, true) => {
+                tracing::error!("Incomplete credentials: password without user_name");
                 return Err(PyRuntimeError::new_err(
                     "Incomplete credentials: 'password' provided without 'user_name'. \
                      Please provide both 'user_name' and 'password' for SQL authentication.",
@@ -336,6 +370,7 @@ impl PyCoreConnection {
             }
             // Nothing provided → Error
             (false, false, false) => {
+                tracing::error!("No authentication credentials provided");
                 return Err(PyRuntimeError::new_err(
                     "No authentication credentials provided. \
                      Please provide either 'access_token' or both 'user_name' and 'password'.",
@@ -344,6 +379,18 @@ impl PyCoreConnection {
         };
 
         // Create ClientContext with the data source (transport_context will be set by parse_datasource)
+        tracing::debug!(
+            "Creating ClientContext - database: {:?}, app: {}, timeout: {}s, packet_size: {}, encryption: {:?}",
+            if database.is_empty() {
+                None
+            } else {
+                Some(&database)
+            },
+            application_name,
+            connect_timeout,
+            packet_size,
+            encryption_mode
+        );
         let mut context = ClientContext::with_data_source(&datasource);
         context.user_name = user_name;
         context.password = password;
@@ -372,6 +419,6 @@ impl PyCoreConnection {
         // Use the module-level driver version (set once by mssql-python at import time)
         context.driver_version = crate::get_driver_version();
 
-        Ok((context, datasource))
+        Ok(context)
     }
 }

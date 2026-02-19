@@ -11,7 +11,10 @@ use mssql_tds::connection::client_context::DriverVersion;
 mod bulkcopy;
 mod connection;
 mod cursor;
+mod python_logger_adapter;
 mod row_writer;
+
+pub use python_logger_adapter::{init_tracing_bridge, scoped_tracing_bridge};
 mod types;
 mod utils;
 
