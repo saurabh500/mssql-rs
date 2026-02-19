@@ -1,5 +1,6 @@
 ---
-agent: agent
+name: createPr
+description: Describe when to use this prompt
 ---
 #microsoft/azure-devops-mcp create a PR for this branch. The project is mssql-rs, the repository is mssql-rs and target branch is the `development` branch. 
 If the MCP server is not available, then try to use Az CLI. 
