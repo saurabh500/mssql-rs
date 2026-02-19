@@ -1,0 +1,15 @@
+{
+  "instanceUrl": "https://sqlclientdrivers.visualstudio.com",
+  "projectName": "mssql-rs",
+  "areaPath": "mssql-rs",
+  "iterationPath": "mssql-rs",
+  "notificationAliases": [
+    "mssql-rs-client@microsoft.com"
+  ],
+  "repositoryName": "mssql-rs",
+  "template" : "MSDATA_RevolutionR",
+  "codebaseName": "Microsoft Rust based clients for SQL Server",
+  "allTools": true,
+  "includePathPatterns": "mssql_rs/*, setup.py, requirements.txt",
+  "excludePathPatterns": "tests/*, benchmarks/*, eng/*, OneBranchPipelines/*"
+}
