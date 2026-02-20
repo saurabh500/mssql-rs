@@ -314,7 +314,9 @@ stages:
 
           # Determine prerelease suffix based on Build.Reason and pipeline type
           $buildReason = "$(Build.Reason)"
-          $isOfficial = ${{ parameters.isOfficial }}
+          # Template expansion produces bare True/False which aren't valid PowerShell;
+          # string comparison converts to a proper $true/$false boolean.
+          $isOfficial = "${{ parameters.isOfficial }}" -eq "True"
           $dateStamp = Get-Date -Format "yyyyMMdd"
           $buildId = "$(Build.BuildId)"
           $commitSha = "$(Build.SourceVersion)"
