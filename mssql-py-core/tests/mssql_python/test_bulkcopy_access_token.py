@@ -316,11 +316,12 @@ class TestPyCoreAccessToken:
         import mssql_py_core
 
         context = {
-            "server": "fake-server.database.windows.net",
+            "server": "192.0.2.1",
             "database": "mydb",
             "trust_server_certificate": True,
             "encryption": "Optional",
             "access_token": FAKE_JWT,
+            "connect_timeout": 1,
         }
         # PyCoreConnection will try to connect and fail on the network,
         # but it should NOT reject the context dict itself.
@@ -336,43 +337,52 @@ class TestPyCoreAccessToken:
         import mssql_py_core
 
         context = {
-            "server": "fake-server.database.windows.net",
+            "server": "192.0.2.1",
             "database": "mydb",
             "trust_server_certificate": True,
             "encryption": "Optional",
             "access_token": FAKE_JWT,
             "user_name": "sa",
             "password": FAKE_PWD,
+            "connect_timeout": 1,
         }
-        with pytest.raises(Exception, match="(?i)cannot use both"):
+        with pytest.raises(Exception, match="(?i)access token cannot be used"):
             mssql_py_core.PyCoreConnection(context)
 
-    def test_no_credentials_rejected(self):
-        """Context with no access_token and no uid/pwd should be rejected."""
+    def test_no_credentials_attempts_connection(self):
+        """Context with no access_token and no uid/pwd is valid per ODBC —
+        falls through to SQL auth with blank credentials. Server decides."""
         import mssql_py_core
 
         context = {
-            "server": "fake-server.database.windows.net",
+            "server": "192.0.2.1",
             "database": "mydb",
             "trust_server_certificate": True,
             "encryption": "Optional",
+            "connect_timeout": 1,
         }
-        with pytest.raises(Exception, match="(?i)no authentication credentials"):
+        with pytest.raises(Exception) as exc_info:
             mssql_py_core.PyCoreConnection(context)
+        err_msg = str(exc_info.value).lower()
+        assert "no authentication credentials" not in err_msg
 
-    def test_partial_credentials_rejected(self):
-        """Context with only user_name (no password) should be rejected."""
+    def test_partial_credentials_attempts_connection(self):
+        """Context with only user_name (no password) is valid per ODBC —
+        PWD defaults to empty string. Server decides."""
         import mssql_py_core
 
         context = {
-            "server": "fake-server.database.windows.net",
+            "server": "192.0.2.1",
             "database": "mydb",
             "trust_server_certificate": True,
             "encryption": "Optional",
             "user_name": "sa",
+            "connect_timeout": 1,
         }
-        with pytest.raises(Exception, match="(?i)incomplete credentials"):
+        with pytest.raises(Exception) as exc_info:
             mssql_py_core.PyCoreConnection(context)
+        err_msg = str(exc_info.value).lower()
+        assert "incomplete credentials" not in err_msg
 
 
 # ===========================================================================
