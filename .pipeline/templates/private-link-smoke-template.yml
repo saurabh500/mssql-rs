@@ -16,7 +16,7 @@ parameters:
 - name: wheelPattern
   displayName: Glob to find the .whl inside the artifact
   type: string
-  default: 'mssql_py_core-*-cp314-*-manylinux*.whl'
+  default: 'mssql_py_core-*-cp314-*-linux*.whl'
 
 - name: acrName
   type: string
