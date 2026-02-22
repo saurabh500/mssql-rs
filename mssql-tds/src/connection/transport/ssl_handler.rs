@@ -69,6 +69,7 @@ impl SslHandler {
                     "TrustServerCertificate is ignored for Strict encryption mode. Certificate validation will be enforced."
                 );
             } else {
+                info!("TrustServerCertificate=true: accepting invalid certs");
                 builder.danger_accept_invalid_certs(true);
             }
         }
@@ -87,6 +88,16 @@ impl SslHandler {
                     }
                 },
             );
+
+        info!(
+            "TLS config: encryption_mode={:?}, trust_server_certificate={}, server_certificate={:?}, host_name_in_cert={:?}, resolved_host_name={}, server_host_name={}",
+            self.encryption_options.mode,
+            self.encryption_options.trust_server_certificate,
+            self.encryption_options.server_certificate,
+            self.encryption_options.host_name_in_cert,
+            host_name,
+            self.server_host_name,
+        );
 
         let connector = builder.build()?;
 
@@ -133,7 +144,16 @@ impl SslHandler {
                 Ok(Box::new(stream))
             }
             Err(e) => {
-                // Always provide context about the hostname we were trying to match
+                error!(
+                    "TLS handshake FAILED: host_name={}, server_host_name={}, error={:?}, \
+                     trust_server_certificate={}, encryption_mode={:?}, os={}",
+                    host_name,
+                    self.server_host_name,
+                    e,
+                    self.encryption_options.trust_server_certificate,
+                    self.encryption_options.mode,
+                    std::env::consts::OS,
+                );
                 // Note: We can't retrieve the certificate SANs from a failed handshake
                 // because the connection is terminated before we can access the peer cert
                 Err(crate::error::Error::TlsHandshakeError {
@@ -663,13 +683,12 @@ impl AsyncWrite for BufferedTdsStream {
         if !self.is_executing_tls_handshake {
             AsyncWrite::poll_flush(Pin::new(&mut self.tls_over_tds_stream), cx)
         } else {
-            match Self::flush_buffered(Pin::new(&mut self), cx) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-                Poll::Ready(Ok(())) => {
-                    AsyncWrite::poll_flush(Pin::new(&mut self.tls_over_tds_stream), cx)
-                }
-            }
+            // During TLS handshake, suppress flushes. Security.framework calls
+            // write+flush for each TLS record (ClientKeyExchange, ChangeCipherSpec,
+            // Finished), but SQL Server expects the entire client flight as a single
+            // TDS message. Deferring the flush to poll_read (via flush_buffered)
+            // batches all records into one TDS packet.
+            Poll::Ready(Ok(()))
         }
     }
 
