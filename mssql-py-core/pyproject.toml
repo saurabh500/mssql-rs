@@ -14,6 +14,11 @@ classifiers = [
 
 [tool.maturin]
 module-name = "mssql_py_core"
+# Don't vendor shared libraries (libssl, libcrypto) into the wheel.
+# Built on manylinux_2_34 (AlmaLinux 9) so the native extension links against
+# libssl.so.3 / libcrypto.so.3 and expects the OS to provide OpenSSL 3.x at runtime.
+# On macOS (Security.framework) and Windows (SChannel) there is no OpenSSL dep.
+auditwheel = "skip"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21.0", "python-dotenv>=1.0.0", "maturin>=1.0,<2.0"]
