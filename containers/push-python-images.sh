@@ -32,13 +32,13 @@ fi
 
 # Push manylinux x64 image
 echo "==> Pushing manylinux x64 image..."
-docker push "${ACR_REGISTRY}/python-build/manylinux_2_28_x86_64_rust:latest"
+docker push "${ACR_REGISTRY}/python-build/manylinux_2_34_x86_64_rust:latest"
 echo "✅ manylinux x64 image pushed"
 echo ""
 
 # Push manylinux ARM64 image
 echo "==> Pushing manylinux ARM64 image..."
-docker push "${ACR_REGISTRY}/python-build/manylinux_2_28_aarch64_rust:latest"
+docker push "${ACR_REGISTRY}/python-build/manylinux_2_34_aarch64_rust:latest"
 echo "✅ manylinux ARM64 image pushed"
 echo ""
 
@@ -59,7 +59,7 @@ echo "✅ All images pushed successfully!"
 echo "======================================================"
 echo ""
 echo "Images available in ACR:"
-echo "  - ${ACR_REGISTRY}/python-build/manylinux_2_28_x86_64_rust:latest"
-echo "  - ${ACR_REGISTRY}/python-build/manylinux_2_28_aarch64_rust:latest"
+echo "  - ${ACR_REGISTRY}/python-build/manylinux_2_34_x86_64_rust:latest"
+echo "  - ${ACR_REGISTRY}/python-build/manylinux_2_34_aarch64_rust:latest"
 echo "  - ${ACR_REGISTRY}/python-build/musllinux_1_2_x86_64_rust:latest"
 echo "  - ${ACR_REGISTRY}/python-build/musllinux_1_2_aarch64_rust:latest"

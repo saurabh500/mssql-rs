@@ -25,7 +25,7 @@ cd "$SCRIPT_DIR"
 echo "==> Building manylinux x64 image..."
 docker build \
     -f Dockerfile.PythonBuild.manylinux.x64 \
-    -t "${ACR_REGISTRY}/python-build/manylinux_2_28_x86_64_rust:latest" \
+    -t "${ACR_REGISTRY}/python-build/manylinux_2_34_x86_64_rust:latest" \
     .
 echo "✅ manylinux x64 image built successfully"
 echo ""
@@ -34,7 +34,7 @@ echo ""
 echo "==> Building manylinux ARM64 image..."
 docker build \
     -f Dockerfile.PythonBuild.manylinux.arm64 \
-    -t "${ACR_REGISTRY}/python-build/manylinux_2_28_aarch64_rust:latest" \
+    -t "${ACR_REGISTRY}/python-build/manylinux_2_34_aarch64_rust:latest" \
     .
 echo "✅ manylinux ARM64 image built successfully"
 echo ""
@@ -62,8 +62,8 @@ echo "✅ All images built successfully!"
 echo "======================================================"
 echo ""
 echo "Built images:"
-echo "  - ${ACR_REGISTRY}/python-build/manylinux_2_28_x86_64_rust:latest"
-echo "  - ${ACR_REGISTRY}/python-build/manylinux_2_28_aarch64_rust:latest"
+echo "  - ${ACR_REGISTRY}/python-build/manylinux_2_34_x86_64_rust:latest"
+echo "  - ${ACR_REGISTRY}/python-build/manylinux_2_34_aarch64_rust:latest"
 echo "  - ${ACR_REGISTRY}/python-build/musllinux_1_2_x86_64_rust:latest"
 echo "  - ${ACR_REGISTRY}/python-build/musllinux_1_2_aarch64_rust:latest"
 echo ""

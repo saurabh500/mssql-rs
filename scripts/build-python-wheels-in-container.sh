@@ -83,10 +83,13 @@ for PY_VERSION in "${PYTHON_VERSIONS[@]}"; do
     echo "✅ Wheel built successfully for Python $PY_VERSION"
 done
 
-# For manylinux, run auditwheel to ensure compatibility
+# auditwheel=skip in pyproject.toml means maturin won't vendor shared libs
+# (libssl, libcrypto) into the wheel. The native extension links against
+# standard sonames and expects the OS to provide them at runtime.
+# Run auditwheel show for diagnostic info only.
 if command -v auditwheel &> /dev/null; then
     echo ""
-    echo "==> Running auditwheel to verify manylinux compatibility..."
+    echo "==> Running auditwheel show (diagnostic only — bundling is disabled)..."
     for wheel in "$OUTPUT_DIR"/*.whl; do
         if [ -f "$wheel" ]; then
             echo "Checking: $(basename "$wheel")"
