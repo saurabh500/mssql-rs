@@ -53,6 +53,9 @@ yarn format:check        # Prettier
 - **CI profile:** `.config/nextest.toml` — 5 retries, JUnit XML output
 - **Mock server:** `mssql-mock-tds` crate for unit/integration tests without a live SQL Server
 - **Integration tests** require a `.env` file with connection details (uses `dotenv` crate)
+- **Rust tests:** Unit tests in `#[cfg(test)]` inline modules for pure logic; integration tests in `tests/` directory
+- **Python tests:** Shared fixtures and env helpers in `conftest.py` — always reuse existing patterns from sibling test files
+- **Kerberos tests:** Gated by `KERBEROS_TEST=1` env var; CI uses Docker-based Kerberos setup in `kerberos-test/`
 
 ## Code Conventions
 
@@ -79,6 +82,7 @@ Every `.rs` file must start with:
 - **Visibility:** Use `pub(crate)` for internal APIs, deliberate public surface
 - **Tracing:** `tracing` crate (`debug!`, `error!`, `info!`, `trace!`, `#[instrument]`)
 - **Cancellation:** `CancelHandle` wrapping `tokio_util::CancellationToken`
+- **Authentication:** Two-phase resolution (validate inputs → resolve method) in `connection/`. Kerberos/GSSAPI for integrated auth cross-platform.
 
 ### FFI Patterns
 
@@ -124,3 +128,5 @@ The hook at `dev/hooks/pre-commit` auto-runs `cargo fmt` on workspace + `mssql-p
 - Don't skip clippy — `-D warnings` means any warning is a build failure
 - Don't forget `mssql-py-core` when running fmt/clippy — it's excluded from the workspace and needs separate runs
 - Don't add `cfg(test)` modules for integration tests — use the `tests/` directory
+- Don't invent new test patterns — follow existing fixtures, helpers, and env-loading conventions from `conftest.py` and sibling test files
+- Don't add guards, rejections, or platform checks without grepping the codebase first — check CI configs, test infrastructure (`kerberos-test/`, `tests/`), and README for existing support. A spec saying "X is platform-specific" doesn't mean this codebase hasn't already solved it cross-platform.
