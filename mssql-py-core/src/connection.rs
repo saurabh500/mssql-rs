@@ -10,7 +10,9 @@ use tokio::sync::Mutex;
 
 use crate::python_logger_adapter::scoped_tracing_bridge;
 use mssql_tds::{
-    connection::client_context::{ClientContext, IPAddressPreference, TdsAuthenticationMethod},
+    connection::client_context::{ClientContext, IPAddressPreference},
+    connection::odbc_authentication_transformer::transform_auth,
+    connection::odbc_authentication_validator::validate_auth,
     connection::tds_client::TdsClient,
     connection_provider::tds_connection_provider::TdsConnectionProvider,
     core::{EncryptionOptions, EncryptionSetting},
@@ -47,6 +49,15 @@ impl PyCoreConnection {
         // Convert PyDict to ClientContext
         tracing::debug!("Converting Python dict to ClientContext");
         let client_context = Self::dict_to_client_context(client_context_dict)?;
+
+        // Log encryption/TLS details for diagnosing handshake failures
+        tracing::info!(
+            "Encryption options: mode={:?}, trust_server_certificate={}, host_name_in_cert={:?}, server_certificate={:?}",
+            client_context.encryption_options.mode,
+            client_context.encryption_options.trust_server_certificate,
+            client_context.encryption_options.host_name_in_cert,
+            client_context.encryption_options.server_certificate,
+        );
 
         // Connect using TdsConnectionProvider
         tracing::info!(
@@ -194,15 +205,11 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<bool>().ok())
             .unwrap_or(false);
 
-        let multi_subnet_failover = dict
-            .get_item("multi_subnet_failover")?
-            .and_then(|v| v.extract::<bool>().ok())
-            .unwrap_or(false);
+        let multi_subnet_failover =
+            Self::extract_yes_no_bool(dict, "multi_subnet_failover", "MultiSubnetFailover")?;
 
-        let trust_server_certificate = dict
-            .get_item("trust_server_certificate")?
-            .and_then(|v| v.extract::<bool>().ok())
-            .unwrap_or(false);
+        let trust_server_certificate =
+            Self::extract_yes_no_bool(dict, "trust_server_certificate", "TrustServerCertificate")?;
 
         // Extract server_spn for Kerberos authentication
         let server_spn = dict
@@ -216,16 +223,22 @@ impl PyCoreConnection {
             .and_then(|v| v.extract::<String>().ok());
 
         // Parse encryption setting (case-insensitive)
+        // Default matches ODBC Driver 18 secure-by-default: Encrypt=Yes (Mandatory)
         let encryption_str = dict
             .get_item("encryption")?
             .and_then(|v| v.extract::<String>().ok())
-            .unwrap_or_else(|| "Optional".to_string());
+            .unwrap_or_else(|| "Mandatory".to_string());
 
         let encryption_mode = match encryption_str.to_ascii_lowercase().as_str() {
-            "mandatory" | "required" => EncryptionSetting::Required,
-            "disabled" => EncryptionSetting::PreferOff,
+            "yes" | "true" | "mandatory" | "required" => EncryptionSetting::Required,
+            "no" | "false" | "optional" | "disabled" => EncryptionSetting::PreferOff,
             "strict" => EncryptionSetting::Strict,
-            _ => EncryptionSetting::On, // Default to On (encryption after prelogin)
+            other => {
+                return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Invalid Encrypt value '{}'. Expected: Yes, No, True, False, Optional, Mandatory, Strict",
+                    other
+                )));
+            }
         };
 
         // ServerCertificate - path to the server certificate file for validation
@@ -248,7 +261,13 @@ impl PyCoreConnection {
 
         let application_intent = match application_intent_str.to_ascii_lowercase().as_str() {
             "readonly" => ApplicationIntent::ReadOnly,
-            _ => ApplicationIntent::ReadWrite,
+            "readwrite" => ApplicationIntent::ReadWrite,
+            other => {
+                return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Invalid ApplicationIntent value '{}'. Expected: ReadOnly, ReadWrite",
+                    other
+                )));
+            }
         };
 
         let workstation_id = dict
@@ -300,7 +319,13 @@ impl PyCoreConnection {
         let ipaddress_preference = match ipaddress_preference_str.to_ascii_lowercase().as_str() {
             "ipv4first" => IPAddressPreference::IPv4First,
             "ipv6first" => IPAddressPreference::IPv6First,
-            _ => IPAddressPreference::UsePlatformDefault,
+            "useplatformdefault" => IPAddressPreference::UsePlatformDefault,
+            other => {
+                return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Invalid IPAddressPreference value '{}'. Expected: IPv4First, IPv6First, UsePlatformDefault",
+                    other
+                )));
+            }
         };
 
         // TCP Keep-alive settings (milliseconds)
@@ -323,60 +348,45 @@ impl PyCoreConnection {
             .get_item("access_token")?
             .and_then(|v| v.extract::<String>().ok());
 
-        // Determine authentication method based on provided credentials:
-        // - access_token provided → AccessToken authentication
-        // - user_name AND password provided → SQL Password authentication
-        // - both access_token and credentials → Error
-        // - partial credentials (only user_name or only password) → Error
-        // - neither provided → Error
-        let has_access_token = access_token.is_some();
-        let has_user_name = !user_name.is_empty();
-        let has_password = !password.is_empty();
+        // Authentication keyword (e.g., "ActiveDirectoryPassword", "SqlPassword")
+        let authentication: Option<String> = dict
+            .get_item("authentication")?
+            .and_then(|v| v.extract::<String>().ok());
 
-        let authentication_method = match (has_access_token, has_user_name, has_password) {
-            // Access token with any credentials → Error
-            (true, true, _) | (true, _, true) => {
-                tracing::error!("Both access_token and username/password provided");
-                return Err(PyRuntimeError::new_err(
-                    "Cannot use both 'access_token' and 'user_name'/'password'. \
-                     Please provide either an access token OR username/password credentials, not both.",
-                ));
+        // Trusted_Connection (Integrated Security / SSPI)
+        // ODBC only accepts "Yes"/"No" — reject "true"/"false" and other values.
+        let trusted_connection: Option<bool> = match dict
+            .get_item("trusted_connection")?
+            .and_then(|v| v.extract::<String>().ok())
+        {
+            Some(val) if val.eq_ignore_ascii_case("yes") => Some(true),
+            Some(val) if val.eq_ignore_ascii_case("no") => Some(false),
+            Some(val) => {
+                return Err(PyRuntimeError::new_err(format!(
+                    "Invalid Trusted_Connection value: '{val}'. Only 'Yes' or 'No' are accepted."
+                )));
             }
-            // Access token only → AccessToken auth
-            (true, false, false) => {
-                tracing::debug!("Using AccessToken authentication");
-                TdsAuthenticationMethod::AccessToken
-            }
-            // Both username and password → SQL Password auth
-            (false, true, true) => {
-                tracing::debug!("Using SQL Password authentication for user: {}", user_name);
-                TdsAuthenticationMethod::Password
-            }
-            // Only username, no password → Error
-            (false, true, false) => {
-                tracing::error!("Incomplete credentials: user_name without password");
-                return Err(PyRuntimeError::new_err(
-                    "Incomplete credentials: 'user_name' provided without 'password'. \
-                     Please provide both 'user_name' and 'password' for SQL authentication.",
-                ));
-            }
-            // Only password, no username → Error
-            (false, false, true) => {
-                tracing::error!("Incomplete credentials: password without user_name");
-                return Err(PyRuntimeError::new_err(
-                    "Incomplete credentials: 'password' provided without 'user_name'. \
-                     Please provide both 'user_name' and 'password' for SQL authentication.",
-                ));
-            }
-            // Nothing provided → Error
-            (false, false, false) => {
-                tracing::error!("No authentication credentials provided");
-                return Err(PyRuntimeError::new_err(
-                    "No authentication credentials provided. \
-                     Please provide either 'access_token' or both 'user_name' and 'password'.",
-                ));
-            }
+            None => None,
         };
+
+        // Validate auth inputs (ODBC-parity conflict checks)
+        validate_auth(
+            authentication.as_deref(),
+            trusted_connection,
+            &user_name,
+            &password,
+            access_token.as_deref(),
+        )
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        // Transform validated inputs into final auth method + cleaned credentials
+        let transformed = transform_auth(
+            authentication.as_deref(),
+            trusted_connection,
+            &user_name,
+            &password,
+            access_token.as_deref(),
+        );
 
         // Create ClientContext with the data source (transport_context will be set by parse_datasource)
         tracing::debug!(
@@ -392,8 +402,8 @@ impl PyCoreConnection {
             encryption_mode
         );
         let mut context = ClientContext::with_data_source(&datasource);
-        context.user_name = user_name;
-        context.password = password;
+        context.user_name = transformed.user_name;
+        context.password = transformed.password;
         context.database = database;
         context.application_name = application_name;
         context.connect_timeout = connect_timeout;
@@ -410,8 +420,8 @@ impl PyCoreConnection {
         context.ipaddress_preference = ipaddress_preference;
         context.keep_alive_in_ms = keep_alive_in_ms;
         context.keep_alive_interval_in_ms = keep_alive_interval_in_ms;
-        context.tds_authentication_method = authentication_method;
-        context.access_token = access_token;
+        context.tds_authentication_method = transformed.method;
+        context.access_token = transformed.access_token;
 
         // Set library_name to "mssql-python" for Python driver
         context.library_name = "mssql-python".to_string();
@@ -420,5 +430,28 @@ impl PyCoreConnection {
         context.driver_version = crate::get_driver_version();
 
         Ok(context)
+    }
+
+    /// Extract a Yes/No string (ODBC-style) or Python bool, defaulting to `false`.
+    /// This is to ensure that ODBC parameters like MultiSubnetFailover and TrustServerCertificate only accept valid values, while still allowing Pythonic bools for convenience.
+    fn extract_yes_no_bool(
+        dict: &Bound<'_, PyDict>,
+        key: &str,
+        display_name: &str,
+    ) -> PyResult<bool> {
+        match dict.get_item(key)? {
+            Some(v) if v.extract::<String>().is_ok() => {
+                let s = v.extract::<String>()?;
+                match s.to_ascii_lowercase().as_str() {
+                    "yes" => Ok(true),
+                    "no" => Ok(false),
+                    _ => Err(PyErr::new::<PyRuntimeError, _>(format!(
+                        "Invalid {display_name} value '{s}'. Only 'Yes' or 'No' are accepted."
+                    ))),
+                }
+            }
+            Some(v) => Ok(v.extract::<bool>().unwrap_or(false)),
+            None => Ok(false),
+        }
     }
 }

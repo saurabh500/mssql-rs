@@ -147,7 +147,7 @@ stages:
         parameters:
           architecture: ARM64
           buildType: ${{ parameters.buildType }}
-          testFilter: -E 'not (test(query_processing_driver) | test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout_and_cancel) | test(rpc_datatypes) | test(client_based_iterators) | test(connect_fetch_multiple_packets) | test(bulk_copy) | test(transport_protocols) | test(vector_integration_tests) | test(no_protocol_resolution) | test(multi_subnet_failover) | test(encryption_tests))'
+          testFilter: -E 'not (test(query_processing_driver) | test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout_and_cancel) | test(rpc_datatypes) | test(client_based_iterators) | test(connect_fetch_multiple_packets) | test(bulk_copy) | test(transport_protocols) | test(vector_integration_tests) | test(no_protocol_resolution) | test(multi_subnet_failover) | test(encryption_tests) | binary(test_tls_handshake))'
           additionalPythonTestArgs: '--skip-integration'
       - template: templates/build-template-alpine.yml
         parameters:
@@ -171,6 +171,7 @@ stages:
       # For details on this CARGO_TARGET_DIR setting, see https://eng.ms/docs/more/rust/topics/onebranch-workaround
       CARGO_TARGET_DIR: $(Build.SourcesDirectory)
       ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+      TRUST_SERVER_CERTIFICATE: 'true'
     steps:
       - template: templates/sql-setup-template.yml
         parameters:
@@ -185,7 +186,7 @@ stages:
         parameters:
           osType: MacOS
           buildType: ${{ parameters.buildType }}
-          testFilter: -E 'not (test(query_result) | test(connectivity) | test(transaction) | test(rpc_results) | test(timeout) | test(rpc_datatypes) | test(client_based_iterators) | test(connect_fetch_multiple_packets) | test(bulk_copy) | test(transport_protocols) | test(vector_integration_tests) | test(no_protocol_resolution) | test(multi_subnet_failover) | test(encryption_tests))'
+          testFilter: -E 'not (test(connectivity))'
           enableJsBuild: true
       - template: templates/build-python-wheels-template.yml
         parameters:
@@ -331,6 +332,16 @@ stages:
       CARGO_TARGET_DIR: $(Build.SourcesDirectory)
     steps:
       - template: templates/test-mssql-python-template.yml
+
+  - job: Build_mssql_python_MacOS
+    displayName: Build mssql-python macOS (cross-repo)
+    pool:
+      name: Azure Pipelines
+      vmImage: macOS-latest
+    variables:
+      CARGO_TARGET_DIR: $(Build.SourcesDirectory)
+    steps:
+      - template: templates/test-mssql-python-macos-template.yml
 
 - stage: Test_alpine
   dependsOn: 

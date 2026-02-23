@@ -189,3 +189,35 @@ steps:
       # Exit 0 is a workaround since the update-ca-certificates command does not return a non-zero exit code on warning. The warning is typically nascent. 
       exit 0
     displayName: "Update CA certificates on the client"
+
+- ${{ if eq(parameters.buildTarget, 'MacOS') }}:
+  - script: |
+      set -euo pipefail
+      brew install docker colima
+      colima start --cpu 4 --memory 4 --disk 50
+      docker context use colima >/dev/null || true
+      docker version
+    displayName: 'Install and start Colima-based Docker'
+
+  - script: |
+      set -euo pipefail
+      docker pull mcr.microsoft.com/mssql/server:2025-latest
+      docker run \
+        --name sqlserver \
+        -e ACCEPT_EULA=Y \
+        -e "MSSQL_SA_PASSWORD=$(SQL_PASSWORD)" \
+        -p 1433:1433 \
+        -d mcr.microsoft.com/mssql/server:2025-latest
+
+      echo "Waiting for SQL Server to start..."
+      for i in $(seq 1 30); do
+        docker exec sqlserver \
+          /opt/mssql-tools18/bin/sqlcmd \
+          -S localhost -U SA -P "$(SQL_PASSWORD)" \
+          -C -Q "SELECT 1" 2>/dev/null && break
+        echo "  attempt $i/30..."
+        sleep 2
+      done
+    displayName: 'Start SQL Server (Docker, no TLS certs)'
+    env:
+      SQL_PASSWORD: $(SQL_PASSWORD)
