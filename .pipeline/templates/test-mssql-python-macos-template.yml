@@ -1,0 +1,161 @@
+# Template for running mssql-python tests on macOS
+# Builds mssql-py-core + ddbc_bindings natively, then starts SQL Server
+# via Colima (no TLS certs) and runs pytest with TrustServerCertificate=yes.
+
+steps:
+# ── 1. Python & Cargo setup ──────────────────────────────────────────────────
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '3.13'
+    addToPath: true
+  displayName: 'Use Python 3.13 on macOS'
+
+- template: cargo-authenticate-template.yml
+  parameters:
+    osType: MacOS
+
+- script: |
+    brew update
+    brew uninstall cmake --ignore-dependencies || echo "CMake not installed or already removed"
+    brew install cmake
+  displayName: 'Install CMake'
+
+# ── 2. Clone mssql-python ────────────────────────────────────────────────────
+- script: |
+    set -euo pipefail
+
+    MSSQL_PYTHON_BRANCH="main"
+
+    if [ -n "${SYSTEM_PULLREQUEST_PULLREQUESTID:-}" ]; then
+      echo "PR build detected (PR #${SYSTEM_PULLREQUEST_PULLREQUESTID})"
+
+      az extension add --name azure-devops --yes --allow-preview true 2>/dev/null || echo "Extension may already be installed"
+      az devops configure --defaults organization="${SYSTEM_COLLECTIONURI}" project="${SYSTEM_TEAMPROJECT}"
+
+      PR_DESC=$(az repos pr show --id "${SYSTEM_PULLREQUEST_PULLREQUESTID}" --query description -o tsv 2>&1) || {
+        echo "##[warning]Failed to get PR description: $PR_DESC"
+        PR_DESC=""
+      }
+
+      if [ -n "$PR_DESC" ]; then
+        BRANCH_OVERRIDE=$(echo "$PR_DESC" | grep -oP 'mssql-python-branch:\s*\K[a-zA-Z0-9_/.-]+' | head -1 | tr -d '[:space:]' || true)
+        if [ -n "$BRANCH_OVERRIDE" ]; then
+          MSSQL_PYTHON_BRANCH="$BRANCH_OVERRIDE"
+          echo "##[section]Using mssql-python branch override: $MSSQL_PYTHON_BRANCH"
+        fi
+      fi
+    fi
+
+    echo "Cloning microsoft/mssql-python (branch: $MSSQL_PYTHON_BRANCH)..."
+    if ! git clone --depth 1 -b "$MSSQL_PYTHON_BRANCH" https://github.com/microsoft/mssql-python.git ../mssql-python 2>/dev/null; then
+      echo "##[warning]Branch '$MSSQL_PYTHON_BRANCH' not found, falling back to main"
+      git clone --depth 1 -b main https://github.com/microsoft/mssql-python.git ../mssql-python
+    fi
+  displayName: Clone mssql-python
+  env:
+    AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+
+# ── 3. Build bindings (no Docker needed) ─────────────────────────────────────
+- script: |
+    set -euo pipefail
+
+    MSSQL_PYTHON_DIR=$(Build.SourcesDirectory)/../mssql-python
+
+    python -m pip install --upgrade pip
+    python -m pip install maturin pytest pytest-asyncio python-dotenv pybind11 wheel setuptools patchelf
+    python -m pip install -r "$MSSQL_PYTHON_DIR/requirements.txt"
+
+    # Build ddbc_bindings (C++ pybind11 .so)
+    echo "=== Building ddbc_bindings ==="
+    cd "$MSSQL_PYTHON_DIR/mssql_python/pybind"
+    chmod +x build.sh
+    ./build.sh
+
+    # Build mssql-py-core wheel and extract .so into mssql-python
+    echo "=== Building mssql-py-core ==="
+    cd $(Build.SourcesDirectory)/mssql-py-core
+    rm -rf dist/
+    maturin build --release -o dist/
+
+    WHEEL_FILE=$(ls dist/*.whl | head -1)
+    echo "Installing mssql-py-core wheel: $WHEEL_FILE"
+    python -m pip install "$WHEEL_FILE"
+
+    echo "=== Verifying mssql_py_core is importable ==="
+    python -c "import mssql_py_core; print('mssql_py_core OK')"
+
+    # Install mssql-python in editable mode
+    python -m pip install -e "$MSSQL_PYTHON_DIR"
+  displayName: 'Build ddbc_bindings and mssql-py-core'
+  env:
+    CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_PUBLIC_TOKEN)
+    CARGO_REGISTRIES_MSSQL_RS_TOKEN: $(CARGO_REGISTRIES_MSSQL_RS_TOKEN)
+
+# ── 4. Start Docker via Colima ───────────────────────────────────────────────
+- script: |
+    brew update
+    brew install docker colima
+
+    colima start --cpu 4 --memory 4 --disk 50
+    docker context use colima >/dev/null || true
+
+    docker version
+    docker ps
+  displayName: 'Install and start Colima-based Docker'
+
+# ── 5. Start SQL Server (no TLS certs) ──────────────────────────────────────
+- script: |
+    set -euo pipefail
+
+    docker pull mcr.microsoft.com/mssql/server:2025-latest
+
+    docker run \
+      --name sqlserver \
+      -e ACCEPT_EULA=Y \
+      -e "MSSQL_SA_PASSWORD=${SQL_PASSWORD}" \
+      -p 1433:1433 \
+      -d mcr.microsoft.com/mssql/server:2025-latest
+
+    echo "Waiting for SQL Server to start..."
+    for i in $(seq 1 30); do
+      docker exec sqlserver \
+        /opt/mssql-tools18/bin/sqlcmd \
+        -S localhost \
+        -U SA \
+        -P "$SQL_PASSWORD" \
+        -C -Q "SELECT 1" && break
+      echo "  attempt $i/30..."
+      sleep 2
+    done
+  displayName: 'Start SQL Server (Docker, no TLS certs)'
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+
+# ── 6. Run tests ─────────────────────────────────────────────────────────────
+- script: |
+    set -euo pipefail
+    pytest $(Build.SourcesDirectory)/mssql-py-core/tests/mssql_python/ -v --tb=short --junitxml=$(Build.SourcesDirectory)/pytest-mssql-python-macos-results.xml
+  displayName: 'Run mssql-python tests'
+  env:
+    SQL_PASSWORD: $(SQL_PASSWORD)
+    DB_CONNECTION_STRING: 'Server=tcp:127.0.0.1,1433;Database=master;Uid=sa;Pwd=$(SQL_PASSWORD);TrustServerCertificate=yes'
+    DB_HOST: '127.0.0.1'
+    DB_USERNAME: 'sa'
+    SQL_SERVER: '127.0.0.1'
+    SQL_DATABASE: 'master'
+    TRUST_SERVER_CERTIFICATE: 'true'
+  continueOnError: true
+
+- task: PublishTestResults@2
+  condition: succeededOrFailed()
+  displayName: Publish mssql-python macOS test results
+  inputs:
+    testResultsFiles: '**/pytest-mssql-python-macos-results.xml'
+    testRunTitle: 'mssql-python macOS tests'
+
+- script: |
+    docker stop sqlserver || true
+    docker rm sqlserver || true
+    rm -rf $(Build.SourcesDirectory)/../mssql-python || true
+  displayName: Cleanup
+  condition: always()
