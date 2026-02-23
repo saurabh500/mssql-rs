@@ -2,14 +2,18 @@
 # This image extends the official PyPA manylinux image with pre-installed Rust and maturin
 # to speed up CI builds by avoiding runtime installation of these tools.
 # Base image is synced from quay.io/pypa to ACR via sync-container-images.yml pipeline
+#
+# manylinux_2_34 is based on AlmaLinux 9 (glibc 2.34, OpenSSL 3.x).
+# This ensures the native extension links against libssl.so.3, matching
+# Ubuntu 22.04+, Debian 12+, and other modern distros at runtime.
 
-FROM tdslibrs.azurecr.io/import/python-build/manylinux_2_28_aarch64:latest
+FROM tdslibrs.azurecr.io/import/python-build/manylinux_2_34_aarch64:latest
 
 # Install system dependencies required for building Python wheels with Rust extensions
-RUN yum install -y \
+RUN dnf install -y \
     openssl-devel \
     pkgconfig \
-    && yum clean all
+    && dnf clean all
 
 # Install Rust toolchain (stable)
 # This is installed system-wide so all Python versions can use it
@@ -32,7 +36,8 @@ RUN PYTHON_BIN=$(ls /opt/python/cp312-*/bin/python 2>/dev/null | head -n1) && \
     $PYTHON_BIN -m pip install --no-cache-dir maturin && \
     $PYTHON_BIN -m pip show maturin
 
-# auditwheel is already pre-installed in PyPA manylinux images
+# auditwheel is pre-installed in PyPA manylinux images (used for diagnostics;
+# auditwheel=skip in pyproject.toml disables library vendoring)
 RUN which auditwheel && auditwheel --version
 
 WORKDIR /workspace

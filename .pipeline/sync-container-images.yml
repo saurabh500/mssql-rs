@@ -126,8 +126,8 @@ stages:
         inlineScript: |
           az acr import \
             --name $(ACR_NAME) \
-            --source quay.io/pypa/manylinux_2_28_x86_64:latest \
-            --image import/python-build/manylinux_2_28_x86_64:latest \
+            --source quay.io/pypa/manylinux_2_34_x86_64:latest \
+            --image import/python-build/manylinux_2_34_x86_64:latest \
             --force
       retryCountOnTaskFailure: 3
     - task: AzureCLI@2
@@ -139,8 +139,8 @@ stages:
         inlineScript: |
           az acr import \
             --name $(ACR_NAME) \
-            --source quay.io/pypa/manylinux_2_28_aarch64:latest \
-            --image import/python-build/manylinux_2_28_aarch64:latest \
+            --source quay.io/pypa/manylinux_2_34_aarch64:latest \
+            --image import/python-build/manylinux_2_34_aarch64:latest \
             --force
       retryCountOnTaskFailure: 3
 
@@ -537,7 +537,7 @@ stages:
           echo "==> Building manylinux x64 image..."
           docker build \
               -f Dockerfile.PythonBuild.manylinux.x64 \
-              -t tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64_rust:latest \
+              -t tdslibrs.azurecr.io/python-build/manylinux_2_34_x86_64_rust:latest \
               .
           echo "✅ manylinux x64 image built successfully"
           
@@ -605,7 +605,7 @@ stages:
           
           # Push Python images if enabled
           if [ "${{ parameters.buildPythonImages }}" == "True" ]; then
-            docker push tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64_rust:latest
+            docker push tdslibrs.azurecr.io/python-build/manylinux_2_34_x86_64_rust:latest
             docker push tdslibrs.azurecr.io/python-build/musllinux_1_2_x86_64_rust:latest
           fi
           
@@ -655,7 +655,7 @@ stages:
           echo "==> Building manylinux ARM64 image..."
           docker build \
               -f Dockerfile.PythonBuild.manylinux.arm64 \
-              -t tdslibrs.azurecr.io/python-build/manylinux_2_28_aarch64_rust:latest \
+              -t tdslibrs.azurecr.io/python-build/manylinux_2_34_aarch64_rust:latest \
               .
           echo "✅ manylinux ARM64 image built successfully"
           
@@ -723,7 +723,7 @@ stages:
           
           # Push Python images if enabled
           if [ "${{ parameters.buildPythonImages }}" == "True" ]; then
-            docker push tdslibrs.azurecr.io/python-build/manylinux_2_28_aarch64_rust:latest
+            docker push tdslibrs.azurecr.io/python-build/manylinux_2_34_aarch64_rust:latest
             docker push tdslibrs.azurecr.io/python-build/musllinux_1_2_aarch64_rust:latest
           fi
           
@@ -821,7 +821,7 @@ stages:
           echo "======================================================"
           echo "Vanilla PyPA Base Images:"
           echo "======================================================"
-          for image in python-build/manylinux_2_28_x86_64 python-build/manylinux_2_28_aarch64 python-build/musllinux_1_2_x86_64 python-build/musllinux_1_2_aarch64; do
+          for image in import/python-build/manylinux_2_34_x86_64 import/python-build/manylinux_2_34_aarch64 import/python-build/musllinux_1_2_x86_64 import/python-build/musllinux_1_2_aarch64; do
             echo ""
             echo "==> $image"
             az acr repository show-tags --name $(ACR_NAME) --repository $image --output table --orderby time_desc --top 3 || echo "  (not found)"
@@ -831,7 +831,7 @@ stages:
           echo "======================================================"
           echo "Custom Images with Rust Pre-installed (Recommended):"
           echo "======================================================"
-          for image in python-build/manylinux_2_28_x86_64_rust python-build/manylinux_2_28_aarch64_rust python-build/musllinux_1_2_x86_64_rust python-build/musllinux_1_2_aarch64_rust; do
+          for image in python-build/manylinux_2_34_x86_64_rust python-build/manylinux_2_34_aarch64_rust python-build/musllinux_1_2_x86_64_rust python-build/musllinux_1_2_aarch64_rust; do
             echo ""
             echo "==> $image"
             az acr repository show-tags --name $(ACR_NAME) --repository $image --output table --orderby time_desc --top 3 || echo "  (not found)"
@@ -871,14 +871,14 @@ stages:
         echo ""
         echo "Available images in ACR:"
         echo "  Vanilla PyPA base images:"
-        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_28_x86_64:latest"
-        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_28_aarch64:latest"
+        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_34_x86_64:latest"
+        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_34_aarch64:latest"
         echo "    - $(ACR_REGISTRY)/python-build/musllinux_1_2_x86_64:latest"
         echo "    - $(ACR_REGISTRY)/python-build/musllinux_1_2_aarch64:latest"
         echo ""
         echo "  Custom images with Rust (RECOMMENDED FOR CI/CD):"
-        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_28_x86_64_rust:latest"
-        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_28_aarch64_rust:latest"
+        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_34_x86_64_rust:latest"
+        echo "    - $(ACR_REGISTRY)/python-build/manylinux_2_34_aarch64_rust:latest"
         echo "    - $(ACR_REGISTRY)/python-build/musllinux_1_2_x86_64_rust:latest"
         echo "    - $(ACR_REGISTRY)/python-build/musllinux_1_2_aarch64_rust:latest"
         echo ""

@@ -31,12 +31,14 @@ steps:
 # Container-based builds for Linux (glibc - manylinux)
 - ${{ if eq(parameters.osType, 'Linux') }}:
   - script: |
+      set -euo pipefail
+      
       # Determine container image based on architecture
       # Using pre-built images with Rust and maturin pre-installed for faster builds
       if [ "${{ parameters.architecture }}" = "x64" ]; then
-        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_28_x86_64_rust:latest"
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_34_x86_64_rust:latest"
       elif [ "${{ parameters.architecture }}" = "ARM64" ] || [ "${{ parameters.architecture }}" = "arm64" ]; then
-        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_28_aarch64_rust:latest"
+        CONTAINER_IMAGE="tdslibrs.azurecr.io/python-build/manylinux_2_34_aarch64_rust:latest"
       else
         echo "ERROR: Unsupported architecture: ${{ parameters.architecture }}"
         exit 1
@@ -57,7 +59,13 @@ steps:
       # Fix permissions on any files created by the container
       sudo chown -R $(whoami):$(whoami) "$(Build.SourcesDirectory)/mssql-py-core/target" || true
       
-      echo "✅ Wheels built successfully!"
+      set -o pipefail
+      WHEEL_COUNT=$(find "$(ob_outputDirectory)/wheels" -type f -name '*.whl' | wc -l)
+      if [ "$WHEEL_COUNT" -eq 0 ]; then
+        echo "ERROR: No wheels were produced by the manylinux build!"
+        exit 1
+      fi
+      echo "✅ $WHEEL_COUNT wheels built successfully!"
       ls -lh "$(ob_outputDirectory)/wheels"
     displayName: 'Build Python wheels in manylinux container (${{ parameters.architecture }})'
     env:
@@ -111,6 +119,7 @@ steps:
 # Container-based builds for Alpine (musl - musllinux)
 - ${{ if eq(parameters.osType, 'Alpine') }}:
   - script: |
+      set -euo pipefail
       
       # Determine container image based on architecture
       # Using pre-built images with Rust and maturin pre-installed for faster builds
@@ -125,8 +134,6 @@ steps:
       
       echo "Building Python wheels in container: $CONTAINER_IMAGE"
       
-      # Login to ACR and run build in the same session
-      
       mkdir -p "$(ob_outputDirectory)/wheels"
       
       bash .pipeline/scripts/docker-cargo-run.sh --rm \
@@ -140,7 +147,12 @@ steps:
       # Fix permissions on any files created by the container
       sudo chown -R $(whoami):$(whoami) "$(Build.SourcesDirectory)/mssql-py-core/target" || true
       
-      echo "✅ Wheels built successfully!"
+      WHEEL_COUNT=$(find "$(ob_outputDirectory)/wheels" -name '*.whl' | wc -l)
+      if [ "$WHEEL_COUNT" -eq 0 ]; then
+        echo "ERROR: No wheels were produced by the musllinux build!"
+        exit 1
+      fi
+      echo "✅ $WHEEL_COUNT wheels built successfully!"
       ls -lh "$(ob_outputDirectory)/wheels"
     displayName: 'Build Python wheels in musllinux container (${{ parameters.architecture }})'
     env:

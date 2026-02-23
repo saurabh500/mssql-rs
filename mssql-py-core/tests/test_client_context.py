@@ -721,17 +721,13 @@ class TestIpAddressPreferenceParameter:
         conn.close()
         assert result[0] == 1
 
-    def test_ip_address_preference_invalid_defaults_to_platform(self):
-        """Test that invalid value defaults to UsePlatformDefault."""
+    def test_ip_address_preference_invalid_rejects(self):
+        """Test that invalid value is rejected (ODBC parity)."""
         context = get_base_context()
         context["database"] = "master"
         context["ip_address_preference"] = "InvalidValue"
-        conn = mssql_py_core.PyCoreConnection(context)
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 AS connected")
-        result = cursor.fetchone()
-        conn.close()
-        assert result[0] == 1
+        with pytest.raises(RuntimeError, match="Invalid IPAddressPreference value"):
+            mssql_py_core.PyCoreConnection(context)
 
     def test_ip_address_preference_case_insensitive_lowercase(self):
         """Test that ip_address_preference comparison is case-insensitive (lowercase).
