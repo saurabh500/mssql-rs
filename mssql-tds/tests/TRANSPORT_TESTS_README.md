@@ -50,7 +50,7 @@ TRUST_SERVER_CERTIFICATE=true
 CERT_HOST_NAME=localhost   # Optional: hostname in certificate
 
 # Debugging
-ENABLE_TRACE=false         # Set to true for detailed logging
+ENABLE_TEST_TRACE=false         # Set to true for detailed logging
 ```
 
 ## Running Tests
