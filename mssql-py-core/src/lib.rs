@@ -2,9 +2,7 @@
 // Licensed under the MIT License.
 
 use pyo3::prelude::*;
-use std::sync::{Once, OnceLock};
-use tracing::Level;
-use tracing_subscriber::FmtSubscriber;
+use std::sync::OnceLock;
 
 use mssql_tds::connection::client_context::DriverVersion;
 
@@ -13,12 +11,11 @@ mod connection;
 mod cursor;
 mod python_logger_adapter;
 mod row_writer;
-
-pub use python_logger_adapter::{init_tracing_bridge, scoped_tracing_bridge};
+mod tracing_init;
 mod types;
 mod utils;
 
-static INIT: Once = Once::new();
+pub use python_logger_adapter::{init_tracing_bridge, scoped_tracing_bridge};
 
 /// Module-level driver version, set once by the host Python package.
 /// Falls back to mssql-tds crate version if never set.
@@ -44,28 +41,11 @@ fn set_driver_version(major: u8, minor: u8, build: u16) {
     let _ = DRIVER_VERSION.set(DriverVersion::new(major, minor, build));
 }
 
-/// Initialize tracing if ENABLE_TRACE environment variable is set to true
-fn init_tracing() {
-    let enable_trace = std::env::var("ENABLE_TRACE")
-        .unwrap_or_else(|_| "false".to_string())
-        .parse::<bool>()
-        .unwrap_or(false);
-
-    if enable_trace {
-        INIT.call_once(|| {
-            let subscriber = FmtSubscriber::builder()
-                .with_max_level(Level::TRACE)
-                .finish();
-            let _ = tracing::subscriber::set_global_default(subscriber);
-        });
-    }
-}
-
 /// Python module for Core TDS connectivity
 #[pymodule(name = "mssql_py_core")]
 fn mssql_py_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Initialize tracing on module load
-    init_tracing();
+    // Initialize tracing on module load (via MSSQL_TDS_TRACE env var)
+    tracing_init::init_tracing();
 
     m.add_function(wrap_pyfunction!(set_driver_version, m)?)?;
     m.add_class::<connection::PyCoreConnection>()?;
