@@ -50,6 +50,15 @@ impl PyCoreConnection {
         tracing::debug!("Converting Python dict to ClientContext");
         let client_context = Self::dict_to_client_context(client_context_dict)?;
 
+        // Log encryption/TLS details for diagnosing handshake failures
+        tracing::info!(
+            "Encryption options: mode={:?}, trust_server_certificate={}, host_name_in_cert={:?}, server_certificate={:?}",
+            client_context.encryption_options.mode,
+            client_context.encryption_options.trust_server_certificate,
+            client_context.encryption_options.host_name_in_cert,
+            client_context.encryption_options.server_certificate,
+        );
+
         // Connect using TdsConnectionProvider
         tracing::info!(
             "Attempting connection to datasource: {}",
