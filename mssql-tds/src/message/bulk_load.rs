@@ -528,13 +528,10 @@ impl<'a> StreamingBulkLoadWriter<'a> {
                 if col_meta.is_plp() {
                     self.packet_writer.write_u16_async(0xFFFF).await?;
                 } else {
-                    // CRITICAL: For NVARCHAR/NCHAR, COLMETADATA length is in CHARACTERS, not bytes
-                    // col_meta.length is in bytes (e.g., 8000 for NVARCHAR(4000))
-                    // We must divide by 2 to get character count for COLMETADATA
-                    // This is different from row data length prefix which uses byte count!
-                    let char_count = (col_meta.length / 2) as u16;
+                    // TDS COLMETADATA MaxLength for NVARCHAR/NCHAR is in BYTES
+                    // col_meta.length is already in bytes (e.g., 10 for NVARCHAR(5))
                     self.packet_writer
-                        .write_u16_async(char_count)
+                        .write_u16_async(col_meta.length as u16)
                         .await?;
                 }
 

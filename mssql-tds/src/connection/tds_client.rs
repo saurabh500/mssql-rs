@@ -106,6 +106,20 @@ impl TdsClient {
         self.current_metadata.as_ref()
     }
 
+    /// Converts an `Option<u32>` timeout (where `Some(0)` means infinite) to `Option<Duration>`.
+    ///
+    /// The bulk copy API uses `0` to mean "no timeout" (infinite). This helper
+    /// normalises that convention so `Some(0)` becomes `None` (no deadline).
+    fn timeout_to_duration(timeout_sec: Option<u32>) -> Option<Duration> {
+        timeout_sec.and_then(|secs| {
+            if secs == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(secs as u64))
+            }
+        })
+    }
+
     /// Updates the remaining timeout by subtracting the elapsed time.
     fn update_remaining_timeout(&mut self, start: Instant) {
         self.remaining_request_timeout = self.remaining_request_timeout.map(|t| {
@@ -133,7 +147,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.transport.reset_reader();
@@ -169,7 +183,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.transport.reset_reader();
@@ -272,7 +286,7 @@ impl TdsClient {
         }
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.transport.reset_reader();
@@ -459,7 +473,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.return_values.clear();
@@ -506,7 +520,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.return_values.clear();
@@ -592,7 +606,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.transport.reset_reader();
@@ -638,7 +652,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.return_values.clear();
@@ -711,7 +725,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.return_values.clear();
@@ -1407,4 +1421,27 @@ pub trait ResultSetClient<T = TdsClient> {
     /// If there is no next result set, the current result set will be closed and
     /// the method will return false.
     async fn move_to_next(&mut self) -> TdsResult<bool>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_to_duration_none_yields_none() {
+        assert_eq!(TdsClient::timeout_to_duration(None), None);
+    }
+
+    #[test]
+    fn timeout_to_duration_zero_yields_none() {
+        assert_eq!(TdsClient::timeout_to_duration(Some(0)), None);
+    }
+
+    #[test]
+    fn timeout_to_duration_positive_yields_duration() {
+        assert_eq!(
+            TdsClient::timeout_to_duration(Some(30)),
+            Some(Duration::from_secs(30))
+        );
+    }
 }

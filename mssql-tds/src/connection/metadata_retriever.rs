@@ -146,9 +146,14 @@ impl MetadataRetriever for FmtOnlyMetadataRetriever {
         table_name: &str,
         timeout_sec: u32,
     ) -> TdsResult<Vec<BulkCopyColumnMetadata>> {
+        // Convert 0 → None (infinite timeout) to match TdsClient convention
+        let timeout = if timeout_sec == 0 {
+            None
+        } else {
+            Some(timeout_sec)
+        };
         // Fetch metadata using SET FMTONLY ON and sp_tablecollations_100
-        let metadata_result =
-            fetch_table_metadata(client, table_name, Some(timeout_sec), None).await?;
+        let metadata_result = fetch_table_metadata(client, table_name, timeout, None).await?;
 
         // Convert using TryFrom trait - directly to BulkCopyColumnMetadata
         Vec::<BulkCopyColumnMetadata>::try_from(metadata_result)
