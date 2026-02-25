@@ -41,7 +41,7 @@ def test_bulkcopy_simple_list_format_basic(cursor):
         ]
 
         # Simple format: position in list = source ordinal
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             column_mappings=['id', 'name', 'value'],
@@ -89,7 +89,7 @@ def test_bulkcopy_simple_list_format_reordering(cursor):
         ]
 
         # Map source positions to target columns
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             column_mappings=['id', 'first_name', 'last_name'],
@@ -132,7 +132,7 @@ def test_bulkcopy_simple_list_format_subset_columns(cursor):
         ]
 
         # Map only the columns we have
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             column_mappings=['id', 'name'],
@@ -171,7 +171,7 @@ def test_bulkcopy_simple_list_format_many_columns(cursor):
         # Simple mappings
         column_mappings = [f"col{i}" for i in range(num_columns)]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             column_mappings=column_mappings,
@@ -210,7 +210,7 @@ def test_bulkcopy_simple_list_format_with_identity(cursor):
             (200, "Record 200", 2000),
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             column_mappings=['id', 'name', 'value'],
@@ -250,7 +250,7 @@ def test_bulkcopy_simple_list_format_mixed_types_error(cursor):
 
         # Mixed format should fail
         with pytest.raises(TypeError, match="Not all items in column mapping are the same type"):
-            cursor._bulkcopy(
+            cursor.bulkcopy(
                 table_name,
                 iter(data),
                 column_mappings=['id', (1, 'name')],  # Mixed!
@@ -282,7 +282,7 @@ def test_bulkcopy_simple_list_format_case_sensitivity(cursor):
         ]
 
         # Use exact case
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             column_mappings=['ProductID', 'ProductName', 'UnitPrice'],
@@ -318,7 +318,7 @@ def test_bulkcopy_simple_list_format_empty_list(cursor):
         data = [(1, 100), (2, 200)]
 
         # Empty list should use auto-mapping
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             column_mappings=[],
