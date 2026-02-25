@@ -38,7 +38,7 @@ def test_bulkcopy_unicode_cjk_characters(cursor):
             (5, "繁體中文測試"),            # Traditional Chinese
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -79,7 +79,7 @@ def test_bulkcopy_unicode_emoji(cursor):
             (5, "✅ Done ✓"),
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -116,7 +116,7 @@ def test_bulkcopy_unicode_diacritics(cursor):
             (5, "Çağdaş Türkçe"),          # Turkish
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -157,7 +157,7 @@ def test_bulkcopy_empty_strings(cursor):
             (5, "   "),          # Multiple spaces
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -210,7 +210,7 @@ def test_bulkcopy_special_sql_characters(cursor):
             (8, "Tab\there\tand\there"),     # Tabs
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -252,7 +252,7 @@ def test_bulkcopy_long_strings(cursor):
             (5, "E" * 2500 + "中文" * 100),  # Mixed with unicode
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -296,7 +296,7 @@ def test_bulkcopy_nvarchar_max(cursor):
             (3, "Short text"),
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -335,7 +335,7 @@ def test_bulkcopy_unicode_normalization(cursor):
             (3, "naïve"),          # ï composed
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -374,7 +374,7 @@ def test_bulkcopy_rtl_languages(cursor):
             (3, "Mixed: Hello مرحبا"),   # Mixed LTR and RTL
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
