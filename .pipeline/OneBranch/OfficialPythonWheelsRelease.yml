@@ -53,9 +53,7 @@ resources:
   # resources.pipeline.officialBuild.sourceCommit automatically.
   pipelines:
     - pipeline: officialBuild
-      # TODO: Replace with the actual ADO pipeline name after creating the
-      #       OfficialBuild pipeline definition in Azure DevOps.
-      source: 'OfficialPythonWheelsBuild'  # <-- ADO pipeline definition name (not filename)
+      source: 'Official Python Wheels Build'  # ADO pipeline definition name (ID 2234)
       trigger: none  # Manual only — no automatic release on build completion
 
 extends:
@@ -95,23 +93,10 @@ extends:
         #####################################################################
         # Step 1: Download NuGet artifact from the Official Build pipeline
         #####################################################################
-        - task: DownloadPipelineArtifact@2
-          displayName: 'Download NuGet from Official Build'
-          inputs:
-            buildType: 'specific'
-            project: '$(System.TeamProject)'
-            # TODO: Replace with the actual pipeline definition ID after
-            #       creating the OfficialBuild pipeline in Azure DevOps.
-            definition: 0  # <-- ADO pipeline definition ID (integer)
-            buildVersionToDownload: 'specific'
-            buildId: $(resources.pipeline.officialBuild.runID)
-            # The artifact name follows OneBranch's auto-naming convention:
-            # drop_<Stage>_<Job>[_<suffix>]
-            # TODO: Verify the exact artifact name after a successful
-            #       OfficialBuild run. It will be something like:
-            #       'drop_Build_Windows_x64_windows_x64'
-            artifactName: 'drop_Build_Windows_x64_windows_x64'
-            targetPath: '$(Build.SourcesDirectory)/artifacts'
+        - download: officialBuild
+          displayName: 'Download all artifacts from Official Build'
+          # Downloads every artifact published by the selected build run
+          # (one per platform: Windows x64/ARM64, Linux x64/ARM64, macOS).
 
         #####################################################################
         # Step 2: List and verify downloaded artifacts
@@ -122,7 +107,7 @@ extends:
             Write-Host "Source commit: $(resources.pipeline.officialBuild.sourceCommit)"
             Write-Host "====================================="
 
-            $artifactPath = "$(Build.SourcesDirectory)/artifacts"
+            $artifactPath = "$(Pipeline.Workspace)/officialBuild"
             if (Test-Path $artifactPath) {
               Get-ChildItem -Path $artifactPath -Recurse | ForEach-Object {
                 $size = [math]::Round($_.Length / 1KB, 1)
@@ -164,7 +149,7 @@ extends:
             # Collect wheels
             $wheelsDir = "$(Build.StagingDirectory)/wheels"
             New-Item -ItemType Directory -Force -Path $wheelsDir | Out-Null
-            $wheels = Get-ChildItem "$(Build.SourcesDirectory)/artifacts" -Filter *.whl -Recurse
+            $wheels = Get-ChildItem "$(Pipeline.Workspace)/officialBuild" -Filter *.whl -Recurse
             if ($wheels.Count -eq 0) {
               Write-Error "No wheels found to package. Aborting."
               exit 1
