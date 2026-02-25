@@ -35,7 +35,7 @@ def test_bulkcopy_multiple_batches(cursor):
         # Generate 1000 rows
         data = [(i, i * 10) for i in range(1, 1001)]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=100,
@@ -76,7 +76,7 @@ def test_bulkcopy_partial_final_batch(cursor):
         # Generate 250 rows - not evenly divisible by batch_size
         data = [(i, f"Value {i}") for i in range(1, 251)]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=100,
@@ -112,7 +112,7 @@ def test_bulkcopy_single_row_batches(cursor):
         # 10 rows with batch_size=1 means 10 batches
         data = [(i, f"Row {i}") for i in range(1, 11)]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1,
@@ -149,7 +149,7 @@ def test_bulkcopy_large_batch_size(cursor):
         # 50 rows with batch_size=10000
         data = [(i, i * 2) for i in range(1, 51)]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=10000,
@@ -186,7 +186,7 @@ def test_bulkcopy_generator_with_batching(cursor):
         )
         cursor.execute(f"CREATE TABLE {table_name} (id INT, description NVARCHAR(100), amount INT)")
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             data_generator(500),  # Generator, not list
             batch_size=75,
@@ -231,7 +231,7 @@ def test_bulkcopy_10000_rows(cursor):
         # Generate 10,000 rows
         data = [(i, i % 100, i * 2, f"Row {i}") for i in range(1, 10001)]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -283,7 +283,7 @@ def test_bulkcopy_batch_with_mixed_types(cursor):
             for i in range(1, 151)
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=50,

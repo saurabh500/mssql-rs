@@ -188,6 +188,13 @@ steps:
         # Copy mssql_py_core.so standalone for plug-n-play
         cp mssql_python/mssql_py_core*.so /workspace/mssql-python-artifacts/
         
+        # Extract mssql_py_core from NuGet (sets up mssql_py_core/ directory
+        # with __init__.py and native extension required by setup.py validation)
+        bash eng/scripts/install-mssql-py-core.sh
+        
+        # Overwrite with freshly built .so from test step
+        cp mssql_python/mssql_py_core*.so mssql_py_core/
+        
         # Build mssql-python wheel
         echo "Building mssql-python wheel..."
         rm -rf dist/ build/ *.egg-info

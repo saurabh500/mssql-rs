@@ -8,7 +8,6 @@
 //! intermediate allocations.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use crate::types::py_to_column_value;
 use async_trait::async_trait;
@@ -24,6 +23,7 @@ use mssql_tds::error::Error;
 use mssql_tds::message::bulk_load::StreamingBulkLoadWriter;
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateTime, PyTime};
+
 use pyo3::types::{PyString, PyTuple};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
@@ -1507,6 +1507,64 @@ impl PythonRowAdapter {
         Ok(())
     }
 
+    /// Target-type-driven value extraction — skips source type detection entirely.
+    ///
+    /// For the common bulk copy case where we know the destination SQL type from metadata,
+    /// we can extract the Python value directly without first detecting the Python type.
+    /// Falls back to `convert_with_coercion` for types not on the fast path.
+    #[inline]
+    fn convert_by_target_type(
+        py_obj: &Bound<'_, PyAny>,
+        meta: &BulkCopyColumnMetadata,
+    ) -> TdsResult<ColumnValues> {
+        if py_obj.is_none() {
+            return Self::handle_null_value(Some(meta));
+        }
+
+        match meta.sql_type {
+            SqlDbType::BigInt => match py_obj.extract::<i64>() {
+                Ok(val) => Ok(ColumnValues::BigInt(val)),
+                Err(_) => Self::convert_with_coercion(py_obj, Some(meta)),
+            },
+            SqlDbType::Int => match py_obj.extract::<i32>() {
+                Ok(val) => Ok(ColumnValues::Int(val)),
+                Err(_) => Self::convert_with_coercion(py_obj, Some(meta)),
+            },
+            SqlDbType::SmallInt => match py_obj.extract::<i16>() {
+                Ok(val) => Ok(ColumnValues::SmallInt(val)),
+                Err(_) => Self::convert_with_coercion(py_obj, Some(meta)),
+            },
+            SqlDbType::TinyInt => match py_obj.extract::<u8>() {
+                Ok(val) => Ok(ColumnValues::TinyInt(val)),
+                Err(_) => Self::convert_with_coercion(py_obj, Some(meta)),
+            },
+            SqlDbType::Float => match py_obj.extract::<f64>() {
+                Ok(val) => Ok(ColumnValues::Float(val)),
+                Err(_) => Self::convert_with_coercion(py_obj, Some(meta)),
+            },
+            SqlDbType::Real => match py_obj.extract::<f32>() {
+                Ok(val) => Ok(ColumnValues::Real(val)),
+                Err(_) => Self::convert_with_coercion(py_obj, Some(meta)),
+            },
+            SqlDbType::Bit => match py_obj.extract::<bool>() {
+                Ok(val) => Ok(ColumnValues::Bit(val)),
+                Err(_) => Self::convert_with_coercion(py_obj, Some(meta)),
+            },
+            SqlDbType::NVarChar
+            | SqlDbType::VarChar
+            | SqlDbType::NChar
+            | SqlDbType::Char
+            | SqlDbType::NText
+            | SqlDbType::Text => match py_obj.extract::<String>() {
+                Ok(s) => Ok(ColumnValues::String(
+                    mssql_tds::datatypes::sql_string::SqlString::from_utf8_string(s),
+                )),
+                Err(_) => Self::convert_with_coercion(py_obj, Some(meta)),
+            },
+            _ => Self::convert_with_coercion(py_obj, Some(meta)),
+        }
+    }
+
     /// Coerce a Python string to SQL Server JSON.
     ///
     /// Validates that the string contains valid JSON and converts to SqlJson.
@@ -1878,17 +1936,13 @@ impl BulkLoadRow for PythonRowAdapter {
             })?;
 
             // If we have resolved mappings, use them to determine column order and indices
-
             if let Some(mappings) = &self.resolved_mappings {
                 Self::validate_column_count(tuple.len(), self.expected_source_columns)?;
 
                 // Use mappings to read columns in the correct order
                 let mut values = Vec::with_capacity(mappings.len());
-                let mut total_extract_time = Duration::ZERO;
 
                 for mapping in mappings.iter() {
-                    let extract_start = Instant::now();
-
                     // Read from source column index specified in the mapping
                     let item = tuple.get_item(mapping.source_index).map_err(|e| {
                         tracing::error!(
@@ -1906,15 +1960,20 @@ impl BulkLoadRow for PythonRowAdapter {
                     })?;
 
                     // Get target metadata from destination_metadata using destination_index
-                    let target_metadata = self
+                    let meta = self
                         .destination_metadata
                         .as_ref()
-                        .and_then(|meta| meta.get(mapping.destination_index));
+                        .and_then(|meta| meta.get(mapping.destination_index))
+                        .ok_or_else(|| {
+                            Error::UsageError(format!(
+                                "Unexpected missing destination metadata for column index {}",
+                                mapping.destination_index
+                            ))
+                        })?;
 
                     // Try conversion with type coercion and null validation
-                    let column_value = Self::convert_with_coercion(&item, target_metadata)?;
+                    let column_value = Self::convert_by_target_type(&item, meta)?;
 
-                    total_extract_time += extract_start.elapsed();
                     values.push(column_value);
                 }
 
@@ -1922,21 +1981,23 @@ impl BulkLoadRow for PythonRowAdapter {
             } else {
                 // No mappings - use sequential reading (original behavior)
                 let mut values = Vec::with_capacity(tuple.len());
-                let mut total_extract_time = Duration::ZERO;
 
                 for (i, item) in tuple.iter().enumerate() {
-                    let extract_start = Instant::now();
-
                     // Get target metadata if available
-                    let target_metadata = self
+                    let meta = self
                         .destination_metadata
                         .as_ref()
-                        .and_then(|meta| meta.get(i));
+                        .and_then(|meta| meta.get(i))
+                        .ok_or_else(|| {
+                            Error::UsageError(format!(
+                                "Unexpected missing destination metadata for column index {}",
+                                i
+                            ))
+                        })?;
 
                     // Try conversion with type coercion and null validation
-                    let column_value = Self::convert_with_coercion(&item, target_metadata)?;
+                    let column_value = Self::convert_by_target_type(&item, meta)?;
 
-                    total_extract_time += extract_start.elapsed();
                     values.push(column_value);
                 }
 

@@ -4,7 +4,7 @@
 """Full-stack auth resolution e2e tests.
 
 Each test builds a connection string → calls mssql_python.connect() (DDBC/ODBC path)
-→ then calls cursor._bulkcopy() (py-core/mssql-tds path) and verifies BOTH paths
+→ then calls cursor.bulkcopy() (py-core/mssql-tds path) and verifies BOTH paths
 agree on success/failure.
 
 The conflict matrix is from "docs/ODBC Auth Resolution - Deep Dive.md" §3.
@@ -85,7 +85,7 @@ def _ensure_table(cursor):
 def _do_bulkcopy(cursor):
     """Perform a small bulkcopy and return the result."""
     _ensure_table(cursor)
-    result = cursor._bulkcopy(
+    result = cursor.bulkcopy(
         _BULKCOPY_TABLE,
         [(1, "Alice"), (2, "Bob")],
         timeout=30,
@@ -828,7 +828,7 @@ class TestConnectBulkcopyParity:
 # ═════════════════════════════════════════════════════════════════
 
 class TestBulkcopyContextBuilding:
-    """Verify cursor._bulkcopy() builds the right pycore_context dict
+    """Verify cursor.bulkcopy() builds the right pycore_context dict
     by patching PyCoreConnection and inspecting the dict.
     """
 
@@ -843,7 +843,7 @@ class TestBulkcopyContextBuilding:
         original_pycore = __import__("mssql_py_core")
 
         class SpyPyCoreConnection:
-            def __init__(self, ctx):
+            def __init__(self, ctx, **kwargs):
                 captured.update(ctx)
                 raise RuntimeError("Spy: captured context")
 
@@ -852,7 +852,7 @@ class TestBulkcopyContextBuilding:
 
         with patch.object(original_pycore, "PyCoreConnection", SpyPyCoreConnection):
             with pytest.raises(RuntimeError, match="Spy: captured context"):
-                cur._bulkcopy(_BULKCOPY_TABLE, [(1, "test")], timeout=30)
+                cur.bulkcopy(_BULKCOPY_TABLE, [(1, "test")], timeout=30)
 
         assert "user_name" in captured
         assert captured["user_name"] == _uid()
@@ -870,7 +870,7 @@ class TestBulkcopyContextBuilding:
 
         # We can't easily mock through mssql_python.connect() for AD since
         # it needs DDBC. Instead, test the pycore_context building logic
-        # by simulating what cursor._bulkcopy() does when _auth_type is set.
+        # by simulating what cursor.bulkcopy() does when _auth_type is set.
         from mssql_python import connect as mssql_connect
 
         # Connect with SQL auth (known to work)
@@ -890,7 +890,7 @@ class TestBulkcopyContextBuilding:
             OrigPyCoreConn = original_pycore.PyCoreConnection
 
             class SpyPyCoreConnection:
-                def __init__(self, ctx):
+                def __init__(self, ctx, **kwargs):
                     captured.update(ctx)
                     # Don't actually connect — just capture the context
                     raise RuntimeError("Spy: captured context")
@@ -900,7 +900,7 @@ class TestBulkcopyContextBuilding:
 
             with patch.object(original_pycore, "PyCoreConnection", SpyPyCoreConnection):
                 with pytest.raises(RuntimeError, match="Spy: captured context"):
-                    cur._bulkcopy(_BULKCOPY_TABLE, [(1, "test")], timeout=30)
+                    cur.bulkcopy(_BULKCOPY_TABLE, [(1, "test")], timeout=30)
 
         assert "access_token" in captured
         assert captured["access_token"] == "fake.jwt.token"
@@ -940,7 +940,7 @@ class TestBulkcopyTokenAcquisition:
             original_pycore = __import__("mssql_py_core")
 
             class SpyPyCoreConnection:
-                def __init__(self, ctx):
+                def __init__(self, ctx, **kwargs):
                     raise RuntimeError("Spy stop")
 
                 def cursor(self):
@@ -948,7 +948,7 @@ class TestBulkcopyTokenAcquisition:
 
             with patch.object(original_pycore, "PyCoreConnection", SpyPyCoreConnection):
                 with pytest.raises(RuntimeError, match="Spy stop"):
-                    cur._bulkcopy(_BULKCOPY_TABLE, [(1, "test")], timeout=30)
+                    cur.bulkcopy(_BULKCOPY_TABLE, [(1, "test")], timeout=30)
 
             mock_get.assert_called_once_with(auth_type)
 
@@ -962,7 +962,7 @@ class TestBulkcopyTokenAcquisition:
             side_effect=RuntimeError("Azure Identity unavailable"),
         ):
             with pytest.raises(RuntimeError, match="Bulk copy failed"):
-                cur._bulkcopy(_BULKCOPY_TABLE, [(1, "test")], timeout=30)
+                cur.bulkcopy(_BULKCOPY_TABLE, [(1, "test")], timeout=30)
 
 
 # ═════════════════════════════════════════════════════════════════

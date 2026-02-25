@@ -92,7 +92,15 @@ impl PyCoreConnection {
 
     fn close(&mut self) -> PyResult<()> {
         if !self.is_closed {
-            self.tds_client = None;
+            // Send TDS close to the server and shut down the TCP connection
+            if let Some(client) = self.tds_client.take() {
+                self.runtime.block_on(async {
+                    let mut guard = client.lock().await;
+                    if let Err(e) = guard.close_connection().await {
+                        tracing::warn!("Error closing connection: {}", e);
+                    }
+                });
+            }
             self.is_closed = true;
         }
         Ok(())

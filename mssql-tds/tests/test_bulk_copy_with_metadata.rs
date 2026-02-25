@@ -493,4 +493,188 @@ mod bulk_copy_integration_tests {
             println!("Expected error occurred: {:?}", e);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // NVARCHAR(n) odd-length metadata regression tests
+    //
+    // Verifies that bulk copy works with NVARCHAR(n) where n is odd.
+    // Previously, the COLMETADATA writer sent n (char count) instead of 2n
+    // (byte count) as the MaxLength field.  When n is odd, SQL Server
+    // rejects it with "Unicode data is odd byte size".
+    // -----------------------------------------------------------------------
+
+    #[derive(Debug, Clone)]
+    struct NVarCharRow {
+        id: i32,
+        value: String,
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for NVarCharRow {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            use mssql_tds::datatypes::sql_string::SqlString;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
+            *column_index += 1;
+            let sql_string = SqlString::from_utf8_string(self.value.clone());
+            writer
+                .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                .await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BulkLoadRow for &NVarCharRow {
+        async fn write_to_packet(
+            &self,
+            writer: &mut mssql_tds::message::bulk_load::StreamingBulkLoadWriter<'_>,
+            column_index: &mut usize,
+        ) -> TdsResult<()> {
+            use mssql_tds::datatypes::sql_string::SqlString;
+            writer
+                .write_column_value(*column_index, &ColumnValues::Int(self.id))
+                .await?;
+            *column_index += 1;
+            let sql_string = SqlString::from_utf8_string(self.value.clone());
+            writer
+                .write_column_value(*column_index, &ColumnValues::String(sql_string))
+                .await?;
+            *column_index += 1;
+            Ok(())
+        }
+    }
+
+    /// Regression test: NVARCHAR with odd character lengths (1, 3, 5, 7, 15, 255).
+    /// These caused "Unicode data is odd byte size" before the fix because
+    /// COLMETADATA MaxLength was sent as char count (odd) instead of byte count (even).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_bulk_copy_nvarchar_odd_lengths() {
+        let mut client = begin_connection(&build_tcp_datasource()).await;
+
+        for n in [1, 3, 5, 7, 15, 255] {
+            let table_name = format!("#NVarCharOdd_{}", n);
+
+            client
+                .execute(
+                    format!(
+                        "CREATE TABLE {} (id INT NOT NULL, val NVARCHAR({}) NOT NULL)",
+                        table_name, n
+                    ),
+                    None,
+                    None,
+                )
+                .await
+                .expect("Failed to create table");
+            client.close_query().await.expect("Failed to close query");
+
+            let test_data = vec![
+                NVarCharRow {
+                    id: 1,
+                    value: "A".to_string(),
+                },
+                NVarCharRow {
+                    id: 2,
+                    value: "B".to_string(),
+                },
+            ];
+
+            let result = {
+                let bulk_copy = BulkCopy::new(&mut client, &table_name);
+                bulk_copy
+                    .batch_size(100)
+                    .write_to_server_zerocopy(&test_data)
+                    .await
+            };
+
+            assert!(
+                result.is_ok(),
+                "NVARCHAR({}) bulk copy failed: {:?}",
+                n,
+                result.err()
+            );
+
+            // Verify round-trip
+            client
+                .execute(
+                    format!("SELECT id, val FROM {} ORDER BY id", table_name),
+                    None,
+                    None,
+                )
+                .await
+                .expect("Failed to query");
+
+            let resultset = client.get_current_resultset().expect("No resultset");
+            let row1 = resultset
+                .next_row()
+                .await
+                .expect("Failed to read")
+                .expect("No row");
+            let row2 = resultset
+                .next_row()
+                .await
+                .expect("Failed to read")
+                .expect("No row");
+
+            if let ColumnValues::String(s) = &row1[1] {
+                assert_eq!(s.to_utf8_string(), "A", "NVARCHAR({}) row 1 mismatch", n);
+            } else {
+                panic!("Expected String for NVARCHAR({}) row 1", n);
+            }
+            if let ColumnValues::String(s) = &row2[1] {
+                assert_eq!(s.to_utf8_string(), "B", "NVARCHAR({}) row 2 mismatch", n);
+            } else {
+                panic!("Expected String for NVARCHAR({}) row 2", n);
+            }
+
+            client.close_query().await.expect("Failed to close query");
+            println!("NVARCHAR({}) passed", n);
+        }
+    }
+
+    /// Verify metadata reports correct byte lengths for NVARCHAR with odd char counts.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_retrieve_metadata_nvarchar_odd_lengths() {
+        let mut client = begin_connection(&build_tcp_datasource()).await;
+
+        client
+            .execute(
+                "CREATE TABLE #NVarCharOddMeta (
+                    col1 NVARCHAR(1),
+                    col3 NVARCHAR(3),
+                    col5 NVARCHAR(5),
+                    col7 NVARCHAR(7),
+                    col50 NVARCHAR(50)
+                )"
+                .to_string(),
+                None,
+                None,
+            )
+            .await
+            .expect("Failed to create table");
+        client.close_query().await.expect("Failed to close query");
+
+        let mut bulk_copy = BulkCopy::new(&mut client, "#NVarCharOddMeta");
+        let metadata = bulk_copy
+            .retrieve_destination_metadata()
+            .await
+            .expect("Failed to retrieve metadata");
+
+        assert_eq!(metadata.len(), 5);
+        // length is always in bytes = 2 * char_count
+        assert_eq!(metadata[0].sql_type, SqlDbType::NVarChar);
+        assert_eq!(metadata[0].length, 2, "NVARCHAR(1) should be 2 bytes");
+        assert_eq!(metadata[1].length, 6, "NVARCHAR(3) should be 6 bytes");
+        assert_eq!(metadata[2].length, 10, "NVARCHAR(5) should be 10 bytes");
+        assert_eq!(metadata[3].length, 14, "NVARCHAR(7) should be 14 bytes");
+        assert_eq!(metadata[4].length, 100, "NVARCHAR(50) should be 100 bytes");
+
+        println!("NVARCHAR odd-length metadata assertions passed");
+    }
 }

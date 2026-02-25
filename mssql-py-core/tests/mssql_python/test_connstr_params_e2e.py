@@ -77,7 +77,7 @@ def _connect(connstr, autocommit=True):
 # ── spy helper ───────────────────────────────────────────────────
 
 def _capture_pycore_context(cursor, table="__param_test"):
-    """Run cursor._bulkcopy through a spy PyCoreConnection and return the
+    """Run cursor.bulkcopy through a spy PyCoreConnection and return the
     captured context dict (what connection.rs would receive).
     """
     cursor.execute(f"IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}")
@@ -87,7 +87,7 @@ def _capture_pycore_context(cursor, table="__param_test"):
     original_pycore = __import__("mssql_py_core")
 
     class SpyPyCoreConnection:
-        def __init__(self, ctx):
+        def __init__(self, ctx, **kwargs):
             captured.update(ctx)
             raise RuntimeError("Spy: captured context")
         def cursor(self):
@@ -96,7 +96,7 @@ def _capture_pycore_context(cursor, table="__param_test"):
     try:
         with patch.object(original_pycore, "PyCoreConnection", SpyPyCoreConnection):
             with pytest.raises(RuntimeError, match="Spy: captured context"):
-                cursor._bulkcopy(table, [(1,)], timeout=30)
+                cursor.bulkcopy(table, [(1,)], timeout=30)
     finally:
         cursor.execute(f"IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}")
 
@@ -755,7 +755,7 @@ class TestBulkcopyWithExtraParams:
     def test_bulkcopy_with_packet_size(self, setup_table):
         conn = _connect(_base_connstr(PacketSize="16384"))
         cur = conn.cursor()
-        result = cur._bulkcopy(_BC_TABLE, [(1, "Alice"), (2, "Bob")], timeout=30)
+        result = cur.bulkcopy(_BC_TABLE, [(1, "Alice"), (2, "Bob")], timeout=30)
         assert result["rows_copied"] == 2
         cur.close()
         conn.close()
@@ -763,7 +763,7 @@ class TestBulkcopyWithExtraParams:
     def test_bulkcopy_with_multi_subnet_failover(self, setup_table):
         conn = _connect(_base_connstr(MultiSubnetFailover="Yes"))
         cur = conn.cursor()
-        result = cur._bulkcopy(_BC_TABLE, [(1, "Alice"), (2, "Bob")], timeout=30)
+        result = cur.bulkcopy(_BC_TABLE, [(1, "Alice"), (2, "Bob")], timeout=30)
         assert result["rows_copied"] == 2
         cur.close()
         conn.close()
@@ -771,7 +771,7 @@ class TestBulkcopyWithExtraParams:
     def test_bulkcopy_with_application_intent_readwrite(self, setup_table):
         conn = _connect(_base_connstr(ApplicationIntent="ReadWrite"))
         cur = conn.cursor()
-        result = cur._bulkcopy(_BC_TABLE, [(1, "Alice"), (2, "Bob")], timeout=30)
+        result = cur.bulkcopy(_BC_TABLE, [(1, "Alice"), (2, "Bob")], timeout=30)
         assert result["rows_copied"] == 2
         cur.close()
         conn.close()
@@ -786,7 +786,7 @@ class TestBulkcopyWithExtraParams:
             ConnectRetryInterval="5",
         ))
         cur = conn.cursor()
-        result = cur._bulkcopy(_BC_TABLE, [(1, "Alice"), (2, "Bob"), (3, "Charlie")], timeout=30)
+        result = cur.bulkcopy(_BC_TABLE, [(1, "Alice"), (2, "Bob"), (3, "Charlie")], timeout=30)
         assert result["rows_copied"] == 3
         cur.close()
         conn.close()
