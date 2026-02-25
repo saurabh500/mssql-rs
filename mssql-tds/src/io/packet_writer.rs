@@ -138,6 +138,9 @@ impl<'a> PacketWriter<'a> {
         // Position the cursor at the end of the header. The header will be populated later.
         buffer_cursor.set_position(Self::PACKET_HEADER_SIZE as u64);
 
+        // Normalise 0 → None (infinite timeout)
+        let effective_timeout = timeout.filter(|&t| t > 0);
+
         PacketWriter {
             packet_type,
             network_writer,
@@ -147,7 +150,7 @@ impl<'a> PacketWriter<'a> {
             packet_size,
             is_first_packet: true,
             start_time: Instant::now(),
-            max_timeout_sec: timeout,
+            max_timeout_sec: effective_timeout,
             cancel_handle: cancel_handle.map(|handle| handle.child_handle()),
         }
     }
@@ -1099,5 +1102,32 @@ pub(crate) mod tests {
         }
 
         assert_eq!(reconstructed, data);
+    }
+
+    #[test]
+    fn test_zero_timeout_treated_as_infinite() {
+        let packet_size: usize = 4096;
+        let mut mock = MockNetworkWriter::new(packet_size as u32);
+        let writer = PacketWriter::new(PacketType::TabularResult, &mut mock, Some(0), None);
+        assert!(
+            writer.max_timeout_sec.is_none(),
+            "timeout=0 should be normalised to None (infinite)"
+        );
+    }
+
+    #[test]
+    fn test_positive_timeout_preserved() {
+        let packet_size: usize = 4096;
+        let mut mock = MockNetworkWriter::new(packet_size as u32);
+        let writer = PacketWriter::new(PacketType::TabularResult, &mut mock, Some(30), None);
+        assert_eq!(writer.max_timeout_sec, Some(30));
+    }
+
+    #[test]
+    fn test_none_timeout_stays_none() {
+        let packet_size: usize = 4096;
+        let mut mock = MockNetworkWriter::new(packet_size as u32);
+        let writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+        assert!(writer.max_timeout_sec.is_none());
     }
 }

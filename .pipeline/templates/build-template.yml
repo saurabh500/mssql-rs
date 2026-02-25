@@ -31,6 +31,11 @@ parameters:
   type: boolean
   default: false
 
+- name: enableTests
+  displayName: Enable Test Execution
+  type: boolean
+  default: true
+
 steps:
 - script: cargo fetch
   displayName: Fetch Crates
@@ -82,69 +87,70 @@ steps:
     displayName: Build Fuzz Targets
     condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
-- script: cargo install cargo-llvm-cov --version 0.6.16 --locked && cargo install cargo-nextest --version 0.9.99 --locked
-  displayName: Install llvm-cov and nextest 
-  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+- ${{ if eq(parameters.enableTests, true) }}:
+  - script: cargo install cargo-llvm-cov --version 0.6.16 --locked && cargo install cargo-nextest --version 0.9.99 --locked
+    displayName: Install llvm-cov and nextest 
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
-# Generate test certificates for mock TDS server TLS tests
-- ${{ if eq(parameters.osType, 'Windows') }}:
-  - pwsh: ./scripts/generate_mock_tds_server_certs.ps1
-    displayName: Generate Test Certificates for Mock TDS Server
+  # Generate test certificates for mock TDS server TLS tests
+  - ${{ if eq(parameters.osType, 'Windows') }}:
+    - pwsh: ./scripts/generate_mock_tds_server_certs.ps1
+      displayName: Generate Test Certificates for Mock TDS Server
 
-- ${{ if ne(parameters.osType, 'Windows') }}:
-  - script: ./scripts/generate_mock_tds_server_certs.sh
-    displayName: Generate Test Certificates for Mock TDS Server
+  - ${{ if ne(parameters.osType, 'Windows') }}:
+    - script: ./scripts/generate_mock_tds_server_certs.sh
+      displayName: Generate Test Certificates for Mock TDS Server
 
-- script: cargo llvm-cov clean --workspace
-  displayName: Clean up old coverage files
-  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+  - script: cargo llvm-cov clean --workspace
+    displayName: Clean up old coverage files
+    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
 
-- ${{ if eq(parameters.osType, 'Linux') }}:
+  - ${{ if eq(parameters.osType, 'Linux') }}:
+    - script: |
+        echo "##vso[task.setvariable variable=ARCHIVE_NAME;isOutput=false]tdslib-nextest.tar.zst"   
+        cargo install cargo-nextest  --version 0.9.99 --locked
+        cd mssql-tds && cargo nextest archive --archive-file tdslib-nextest.tar.zst && cp tdslib-nextest.tar.zst $(Build.ArtifactStagingDirectory) && mv tdslib-nextest.tar.zst ../ 
+      displayName: Archive nextest results
+      condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+
   - script: |
-      echo "##vso[task.setvariable variable=ARCHIVE_NAME;isOutput=false]tdslib-nextest.tar.zst"   
-      cargo install cargo-nextest  --version 0.9.99 --locked
-      cd mssql-tds && cargo nextest archive --archive-file tdslib-nextest.tar.zst && cp tdslib-nextest.tar.zst $(Build.ArtifactStagingDirectory) && mv tdslib-nextest.tar.zst ../ 
-    displayName: Archive nextest results
-    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
- 
-- script: |
-      export CERT_HOST_NAME="sql1"
-      cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets --package mssql-tds --no-fail-fast --profile ci --success-output immediate
-  displayName: Run tests (mssql-tds package only)
-  condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
-  env:
-    SQL_PASSWORD: $(SQL_PASSWORD)
-    RUST_BACKTRACE: full
-
-- task: PublishTestResults@2
-  condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
-  displayName: "Publish test results"
-  inputs:
-    testResultsFormat: "JUnit"
-    testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
-    testRunTitle: $(System.PhaseName)
-
-- script: cargo llvm-cov report --package mssql-tds --lcov --output-path "$(Build.SourcesDirectory)/target/lcov.info"
-  condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
-  workingDirectory: "$(Build.SourcesDirectory)"
-  displayName: Save code coverage in lcov format (mssql-tds package only)
-
-- ${{ if eq(parameters.osType, 'Linux') }}:
-  - bash: |
-      echo "Running Python tests for mssql-py-core..."
-      ./dev/test-python.sh
-    displayName: Run Python Tests (mssql-py-core)
+        export CERT_HOST_NAME="sql1"
+        cargo llvm-cov nextest ${{ parameters.testFilter }} --frozen --no-report --all-targets --package mssql-tds --no-fail-fast --profile ci --success-output immediate
+    displayName: Run tests (mssql-tds package only)
     condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
     env:
       SQL_PASSWORD: $(SQL_PASSWORD)
+      RUST_BACKTRACE: full
 
-- ${{ if eq(parameters.osType, 'Windows') }}:
-  - task: PublishCodeCoverageResults@2
-    condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
-    displayName: "Publish coverage results"
+  - task: PublishTestResults@2
+    condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
+    displayName: "Publish test results"
     inputs:
-      summaryFileLocation: "$(Build.SourcesDirectory)/target/lcov.info"
-      pathToSources: "$(Build.SourcesDirectory)"
+      testResultsFormat: "JUnit"
+      testResultsFiles: $(Build.SourcesDirectory)/target/nextest/ci/junit.xml
+      testRunTitle: $(System.PhaseName)
+
+  - script: cargo llvm-cov report --package mssql-tds --lcov --output-path "$(Build.SourcesDirectory)/target/lcov.info"
+    condition: and(succeededOrFailed(), eq(variables['Build.Reason'], 'PullRequest'))
+    workingDirectory: "$(Build.SourcesDirectory)"
+    displayName: Save code coverage in lcov format (mssql-tds package only)
+
+  - ${{ if eq(parameters.osType, 'Linux') }}:
+    - bash: |
+        echo "Running Python tests for mssql-py-core..."
+        ./dev/test-python.sh
+      displayName: Run Python Tests (mssql-py-core)
+      condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+      env:
+        SQL_PASSWORD: $(SQL_PASSWORD)
+
+  - ${{ if eq(parameters.osType, 'Windows') }}:
+    - task: PublishCodeCoverageResults@2
+      condition: and(succeeded(), eq(variables['Build.Reason'], 'PullRequest'))
+      displayName: "Publish coverage results"
+      inputs:
+        summaryFileLocation: "$(Build.SourcesDirectory)/target/lcov.info"
+        pathToSources: "$(Build.SourcesDirectory)"
 
 - task: CopyFiles@2
   displayName: Copy Rust Debug Build

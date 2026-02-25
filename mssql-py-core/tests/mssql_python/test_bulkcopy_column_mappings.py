@@ -47,7 +47,7 @@ def test_bulkcopy_column_mappings_simple_list(cursor):
         ]
 
         # Tuple mapping - source ordinal to target column name
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -95,7 +95,7 @@ def test_bulkcopy_column_mappings_reorder(cursor):
         ]
 
         # Map: source[0] -> "id", source[1] -> "first_name", source[2] -> "last_name"
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -144,7 +144,7 @@ def test_bulkcopy_column_mappings_partial_columns(cursor):
         ]
 
         # Only map the columns we have data for
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -193,7 +193,7 @@ def test_bulkcopy_column_mappings_skip_source_column(cursor):
         ]
 
         # Map source[0] -> id, source[1] -> name, source[3] -> amount (skip source[2])
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -241,7 +241,7 @@ def test_bulkcopy_column_mappings_case_sensitivity(cursor):
         ]
 
         # Use exact case matching (required by mssql_py_core)
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -285,7 +285,7 @@ def test_bulkcopy_column_mappings_with_identity(cursor):
         ]
 
         # Map all columns including identity, with keep_identity=True
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -330,7 +330,7 @@ def test_bulkcopy_column_mappings_noncontiguous_ordinals(cursor):
             ("A2", "skip", 200, "skip", "C2"),
         ]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,
@@ -371,7 +371,7 @@ def test_bulkcopy_column_mappings_many_columns(cursor):
         # Map all columns explicitly using tuple format
         column_mappings = [(i, f"col{i}") for i in range(num_columns)]
 
-        result = cursor._bulkcopy(
+        result = cursor.bulkcopy(
             table_name,
             iter(data),
             batch_size=1000,

@@ -171,11 +171,7 @@ stages:
       # For details on this CARGO_TARGET_DIR setting, see https://eng.ms/docs/more/rust/topics/onebranch-workaround
       CARGO_TARGET_DIR: $(Build.SourcesDirectory)
       ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
-      TRUST_SERVER_CERTIFICATE: 'true'
     steps:
-      - template: templates/sql-setup-template.yml
-        parameters:
-          buildTarget: MacOS
       - template: templates/cargo-authenticate-template.yml
         parameters:
           osType: MacOS
@@ -188,10 +184,36 @@ stages:
           buildType: ${{ parameters.buildType }}
           testFilter: -E 'not (test(connectivity))'
           enableJsBuild: true
+          enableTests: false
       - template: templates/build-python-wheels-template.yml
         parameters:
           osType: MacOS
           architecture: x64
+
+  - job: Test_MacOS
+    displayName: Test MacOS
+    pool:
+      name: Azure Pipelines
+      vmImage: macOS-latest
+    variables:
+      CARGO_TARGET_DIR: $(Build.SourcesDirectory)
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+      TRUST_SERVER_CERTIFICATE: 'true'
+    steps:
+      - template: templates/sql-setup-template.yml
+        parameters:
+          buildTarget: MacOS
+      - template: templates/cargo-authenticate-template.yml
+        parameters:
+          osType: MacOS
+      - template: templates/install-dependencies.yml
+        parameters:
+          osType: MacOS
+      - template: templates/build-template.yml
+        parameters:
+          osType: MacOS
+          buildType: ${{ parameters.buildType }}
+          testFilter: -E 'not (test(connectivity))'
 
 # Kerberos tests for PRs (fast - 2 distros: ubuntu22 + alpine318)
 - stage: Kerberos_Test_PR
