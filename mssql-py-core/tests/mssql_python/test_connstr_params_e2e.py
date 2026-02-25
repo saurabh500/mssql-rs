@@ -77,7 +77,7 @@ def _connect(connstr, autocommit=True):
 # ── spy helper ───────────────────────────────────────────────────
 
 def _capture_pycore_context(cursor, table="__param_test"):
-    """Run cursor._bulkcopy through a spy PyCoreConnection and return the
+    """Run cursor.bulkcopy through a spy PyCoreConnection and return the
     captured context dict (what connection.rs would receive).
     """
     cursor.execute(f"IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}")
@@ -87,7 +87,7 @@ def _capture_pycore_context(cursor, table="__param_test"):
     original_pycore = __import__("mssql_py_core")
 
     class SpyPyCoreConnection:
-        def __init__(self, ctx):
+        def __init__(self, ctx, **kwargs):
             captured.update(ctx)
             raise RuntimeError("Spy: captured context")
         def cursor(self):

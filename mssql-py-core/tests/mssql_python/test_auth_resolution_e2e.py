@@ -843,7 +843,7 @@ class TestBulkcopyContextBuilding:
         original_pycore = __import__("mssql_py_core")
 
         class SpyPyCoreConnection:
-            def __init__(self, ctx):
+            def __init__(self, ctx, **kwargs):
                 captured.update(ctx)
                 raise RuntimeError("Spy: captured context")
 
@@ -890,7 +890,7 @@ class TestBulkcopyContextBuilding:
             OrigPyCoreConn = original_pycore.PyCoreConnection
 
             class SpyPyCoreConnection:
-                def __init__(self, ctx):
+                def __init__(self, ctx, **kwargs):
                     captured.update(ctx)
                     # Don't actually connect — just capture the context
                     raise RuntimeError("Spy: captured context")
@@ -940,7 +940,7 @@ class TestBulkcopyTokenAcquisition:
             original_pycore = __import__("mssql_py_core")
 
             class SpyPyCoreConnection:
-                def __init__(self, ctx):
+                def __init__(self, ctx, **kwargs):
                     raise RuntimeError("Spy stop")
 
                 def cursor(self):
