@@ -572,3 +572,96 @@ def test_cursor_bulkcopy_nvarchar_mixed_types(client_context):
     # Cleanup
     cursor.execute(f"DROP TABLE {table_name}")
     conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_nvarchar_odd_lengths(client_context):
+    """Regression test: NVARCHAR(n) with odd n values.
+
+    Previously, the COLMETADATA MaxLength was sent as n (char count) instead
+    of 2n (byte count).  When n is odd, SQL Server rejects it with:
+      "Unicode data is odd byte size for column N. Should be even byte size."
+    All existing tests used even n values (10, 50, 100, 200), so the bug
+    was never caught.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    table_name = "BulkCopyNVarcharOddLengths"
+    cursor.execute(
+        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+    )
+    cursor.execute(
+        f"""CREATE TABLE {table_name} (
+            id INT,
+            col1 NVARCHAR(1),
+            col3 NVARCHAR(3),
+            col5 NVARCHAR(5),
+            col7 NVARCHAR(7),
+            col15 NVARCHAR(15),
+            col255 NVARCHAR(255)
+        )"""
+    )
+
+    data = [
+        (1, "A", "ABC", "Hello", "Testing", "Odd length test", "X" * 100),
+        (2, "Z", "XYZ", "World", "Columns", "Regression test", "Y" * 200),
+        (3, None, None, None, None, None, None),
+    ]
+
+    result = cursor.bulkcopy(table_name, iter(data), batch_size=100, timeout=30)
+
+    assert result is not None
+    assert result["rows_copied"] == 3
+
+    cursor.execute(
+        f"SELECT id, col1, col3, col5, col7, col15, col255 FROM {table_name} ORDER BY id"
+    )
+    rows = cursor.fetchall()
+    assert len(rows) == 3
+
+    assert rows[0] == (1, "A", "ABC", "Hello", "Testing", "Odd length test", "X" * 100)
+    assert rows[1] == (2, "Z", "XYZ", "World", "Columns", "Regression test", "Y" * 200)
+    assert rows[2] == (3, None, None, None, None, None, None)
+
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_nvarchar_odd_lengths_near_boundary(client_context):
+    """Test NVARCHAR(n) with odd n, inserting strings at the max boundary.
+
+    Ensures that strings of exactly n characters work with odd-n NVARCHAR
+    columns — not just short strings.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    table_name = "BulkCopyNVarcharOddBoundary"
+    cursor.execute(
+        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+    )
+    cursor.execute(
+        f"""CREATE TABLE {table_name} (
+            col1 NVARCHAR(1),
+            col3 NVARCHAR(3),
+            col5 NVARCHAR(5)
+        )"""
+    )
+
+    data = [
+        ("X", "ABC", "HELLO"),       # exactly at max length
+        ("Y", "XY", "HI"),           # under max length
+    ]
+
+    result = cursor.bulkcopy(table_name, iter(data), batch_size=100, timeout=30)
+    assert result["rows_copied"] == 2
+
+    cursor.execute(f"SELECT col1, col3, col5 FROM {table_name} ORDER BY col1")
+    rows = cursor.fetchall()
+    assert rows[0] == ("X", "ABC", "HELLO")
+    assert rows[1] == ("Y", "XY", "HI")
+
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()

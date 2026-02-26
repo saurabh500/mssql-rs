@@ -1,0 +1,317 @@
+# Template: Private-link smoke test for mssql-py-core via ACI
+#
+# Builds a Docker image with the mssql-py-core wheel + pytest smoke suite,
+# pushes to ACR, deploys an ACI container in the trusted VNet, runs tests,
+# downloads JUnit results, and tears down.
+#
+# Naming convention: smoke-<BuildId>-<YYYYMMDD-HHmmss>
+# This ties each ACR image and ACI instance back to the pipeline run.
+
+parameters:
+- name: wheelArtifact
+  displayName: Name of the published wheel artifact
+  type: string
+  default: wheels_Linux_x64
+
+- name: wheelPattern
+  displayName: Glob to find the .whl inside the artifact
+  type: string
+  default: 'mssql_py_core-*-cp314-*-linux*.whl'
+
+- name: acrName
+  type: string
+  default: tdslibrs
+
+- name: acrRepo
+  type: string
+  default: pycore-smoke
+
+- name: resourceGroup
+  type: string
+  default: rust-lib-rg
+
+- name: vnetResourceGroup
+  displayName: Resource group containing the VNet (may differ from ACI resource group)
+  type: string
+  default: rg-sqldrivers-shared
+
+- name: location
+  type: string
+  default: westus3
+
+- name: vnet
+  type: string
+  default: vnet-sqldrivers-trusted-westus3
+
+- name: subnet
+  type: string
+  default: default2
+
+- name: miName
+  type: string
+  default: PipelinesUsageIndentity
+
+# Client ID of the managed identity. Retrieve with:
+# az identity show -g <resourceGroup> -n <miName> --query clientId -o tsv
+- name: miClientId
+  type: string
+  default: d5c2ef7c-cb1b-4be6-b2bd-19ca351aed80
+
+- name: sqlServer
+  type: string
+  default: mssqlrustlibtest.database.windows.net
+
+# The name of the pre-existing database to be used in Azure for smoke testing.
+- name: sqlDatabase
+  type: string
+  default: librarytest
+
+jobs:
+- job: PrivateLink_Smoke
+  displayName: Private Link Smoke Test (ACI)
+  pool:
+    name: RUST-1ES-POOL-WUS3
+    demands:
+      - imageOverride -equals RUST-1ES-UBUSLIM
+  timeoutInMinutes: 30
+  steps:
+  # --- Login ---
+  - template: azure-cli-login-template.yml
+
+  # --- Download wheel artifact from Build stage ---
+  - task: DownloadPipelineArtifact@2
+    displayName: Download wheel artifact
+    inputs:
+      source: current
+      artifact: ${{ parameters.wheelArtifact }}
+      path: $(Pipeline.Workspace)/artifacts/${{ parameters.wheelArtifact }}
+
+  # --- Resolve tag ---
+  - script: |
+      TAG="smoke-$(Build.BuildId)-$(date -u +%Y%m%d-%H%M%S)"
+      echo "##vso[task.setvariable variable=SMOKE_TAG]$TAG"
+      echo "Tag: $TAG"
+    displayName: Generate smoke tag
+
+  # --- Build & push image ---
+  - task: AzureCLI@2
+    displayName: Build and push smoke image
+    inputs:
+      azureSubscription: 'Magnitude Test'
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+
+        STAGING=$(mktemp -d)
+        cp mssql-py-core/tests/smoke/Dockerfile "$STAGING/Dockerfile"
+        cp -r mssql-py-core/tests "$STAGING/tests"
+        cp mssql-py-core/pytest.ini "$STAGING/pytest.ini"
+
+        # Copy matching wheel
+        shopt -s nullglob
+        wheels=( $(Pipeline.Workspace)/artifacts/${{ parameters.wheelArtifact }}/${{ parameters.wheelPattern }} )
+        if [ ${#wheels[@]} -eq 0 ]; then
+          echo "##[error]No wheel matching '${{ parameters.wheelPattern }}' found"
+          exit 1
+        fi
+        cp "${wheels[0]}" "$STAGING/"
+        echo "Using wheel: $(basename "${wheels[0]}")"
+
+        IMAGE="${{ parameters.acrName }}.azurecr.io/${{ parameters.acrRepo }}:$(SMOKE_TAG)"
+        echo "Building image: $IMAGE"
+        az acr login -n ${{ parameters.acrName }}
+        docker build -t "$IMAGE" "$STAGING"
+        docker push "$IMAGE"
+        echo "##vso[task.setvariable variable=SMOKE_IMAGE]$IMAGE"
+        rm -rf "$STAGING"
+
+  # --- Deploy ACI ---
+  - task: AzureCLI@2
+    displayName: Deploy ACI container
+    inputs:
+      azureSubscription: 'Magnitude Test'
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+
+        MI_RES_ID=$(az identity show \
+          -g ${{ parameters.resourceGroup }} \
+          -n ${{ parameters.miName }} \
+          --query id -o tsv)
+
+        SUBNET_ID=$(az network vnet subnet show \
+          -g ${{ parameters.vnetResourceGroup }} \
+          --vnet-name ${{ parameters.vnet }} \
+          -n ${{ parameters.subnet }} \
+          --query id -o tsv)
+
+        echo "Creating ACI: $(SMOKE_TAG)"
+        echo "MI:     $MI_RES_ID"
+        echo "Subnet: $SUBNET_ID"
+
+        # Generate YAML definition to avoid CLI argument parsing issues
+        # with cross-resource-group subnet references
+        cat > "$(Agent.TempDirectory)/aci-deploy.yaml" <<YAML
+        apiVersion: '2021-10-01'
+        location: ${{ parameters.location }}
+        name: $(SMOKE_TAG)
+        type: Microsoft.ContainerInstance/containerGroups
+        identity:
+          type: UserAssigned
+          userAssignedIdentities:
+            '$MI_RES_ID': {}
+        properties:
+          osType: Linux
+          restartPolicy: Never
+          imageRegistryCredentials:
+            - server: ${{ parameters.acrName }}.azurecr.io
+              identity: $MI_RES_ID
+          subnetIds:
+            - id: $SUBNET_ID
+          containers:
+            - name: smoke
+              properties:
+                image: $(SMOKE_IMAGE)
+                resources:
+                  requests:
+                    cpu: 1
+                    memoryInGB: 1.5
+                environmentVariables:
+                  - name: SMOKE_AUTH_MODE
+                    value: managed_identity
+                  - name: MI_CLIENT_ID
+                    value: ${{ parameters.miClientId }}
+                  - name: SQL_SERVER
+                    value: ${{ parameters.sqlServer }}
+                  - name: SQL_DATABASE
+                    value: ${{ parameters.sqlDatabase }}
+        YAML
+
+        az container create \
+          -g ${{ parameters.resourceGroup }} \
+          --file "$(Agent.TempDirectory)/aci-deploy.yaml" \
+          -o none
+
+  # --- Wait for completion ---
+  - task: AzureCLI@2
+    displayName: Wait for ACI completion
+    inputs:
+      azureSubscription: 'Magnitude Test'
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        echo "Waiting for $(SMOKE_TAG) to finish..."
+
+        for i in $(seq 1 60); do
+          STATE=$(az container show \
+            -g ${{ parameters.resourceGroup }} \
+            -n "$(SMOKE_TAG)" \
+            --query 'instanceView.state' -o tsv 2>/dev/null || echo "Unknown")
+
+          echo "  [$i/60] state=$STATE"
+
+          if [ "$STATE" = "Succeeded" ] || [ "$STATE" = "Failed" ] || [ "$STATE" = "Stopped" ]; then
+            break
+          fi
+          sleep 15
+        done
+
+        # Dump container logs
+        echo "=== Container Logs ==="
+        az container logs -g ${{ parameters.resourceGroup }} -n "$(SMOKE_TAG)" || true
+
+        if [ "$STATE" != "Succeeded" ] && [ "$STATE" != "Stopped" ]; then
+          echo "##[error]ACI finished with state: $STATE"
+          exit 1
+        fi
+
+  # --- Download JUnit results ---
+  - task: AzureCLI@2
+    displayName: Download test results
+    condition: always()
+    inputs:
+      azureSubscription: 'Magnitude Test'
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        mkdir -p $(Build.ArtifactStagingDirectory)/smoke-results
+
+        # VNet-injected ACI containers do not support 'az container exec'.
+        # Parse test results from container logs instead.
+        # The pytest output in logs is sufficient for the pipeline.
+        # The JUnit XML was written inside the container at /results/ but
+        # is not retrievable without exec or a mounted file share.
+        #
+        # Generate a synthetic JUnit XML from the container exit code and logs.
+        EXIT_CODE=$(az container show \
+          -g ${{ parameters.resourceGroup }} \
+          -n "$(SMOKE_TAG)" \
+          --query 'containers[0].instanceView.currentState.exitCode' -o tsv 2>/dev/null || echo "1")
+
+        LOGS=$(az container logs \
+          -g ${{ parameters.resourceGroup }} \
+          -n "$(SMOKE_TAG)" 2>/dev/null || echo "No logs available")
+
+        if [ "$EXIT_CODE" = "0" ]; then
+          # Extract pass count from pytest output (e.g. "9 passed")
+          PASS_COUNT=$(echo "$LOGS" | grep -oP '\d+ passed' | grep -oP '\d+' || echo "0")
+          cat > $(Build.ArtifactStagingDirectory)/smoke-results/smoke-results.xml <<JXML
+        <?xml version="1.0" encoding="utf-8"?>
+        <testsuites>
+          <testsuite name="smoke-private-link" tests="$PASS_COUNT" failures="0" errors="0">
+            <testcase name="private_link_smoke" classname="aci">
+              <system-out><![CDATA[$LOGS]]></system-out>
+            </testcase>
+          </testsuite>
+        </testsuites>
+        JXML
+        else
+          cat > $(Build.ArtifactStagingDirectory)/smoke-results/smoke-results.xml <<JXML
+        <?xml version="1.0" encoding="utf-8"?>
+        <testsuites>
+          <testsuite name="smoke-private-link" tests="1" failures="1" errors="0">
+            <testcase name="private_link_smoke" classname="aci">
+              <failure message="Container exited with code $EXIT_CODE"><![CDATA[$LOGS]]></failure>
+            </testcase>
+          </testsuite>
+        </testsuites>
+        JXML
+          echo "##[error]Smoke tests failed (exit code: $EXIT_CODE)"
+          exit 1
+        fi
+
+  # --- Publish results ---
+  - task: PublishTestResults@2
+    displayName: Publish smoke test results
+    condition: always()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: '$(Build.ArtifactStagingDirectory)/smoke-results/*.xml'
+      testRunTitle: 'PyCore Private Link Smoke ($(SMOKE_TAG))'
+      mergeTestResults: true
+
+  # --- Teardown ---
+  - task: AzureCLI@2
+    displayName: Teardown ACI and ACR image
+    condition: always()
+    inputs:
+      azureSubscription: 'Magnitude Test'
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        echo "Deleting ACI: $(SMOKE_TAG)"
+        az container delete \
+          -g ${{ parameters.resourceGroup }} \
+          -n "$(SMOKE_TAG)" --yes || true
+
+        echo "Deleting ACR image: ${{ parameters.acrRepo }}:$(SMOKE_TAG)"
+        az acr repository delete \
+          -n ${{ parameters.acrName }} \
+          --image "${{ parameters.acrRepo }}:$(SMOKE_TAG)" --yes || true
+
+

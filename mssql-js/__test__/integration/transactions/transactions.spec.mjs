@@ -35,10 +35,8 @@ test('transaction rollback', async (t) => {
     await transaction.rollback();
 
     const result = await request.query('SELECT * FROM #TestTable');
-    let firstRowDictionary = Object.values(result.IRecordSet)[0];
 
-    // Check if firstRowDictionary is undefined or has zero keys
-    if (!firstRowDictionary || Object.keys(firstRowDictionary).length === 0) {
+    if (result.IRecordSet.length === 0) {
       t.pass('Expected no rows to be returned');
     } else {
       t.fail('Expected no rows, but got some data');

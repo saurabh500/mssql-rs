@@ -76,7 +76,15 @@ impl TdsReadBuffer {
     pub(crate) fn shift_data_to_front(&mut self) {
         let remaining = self.get_remaining_byte_count();
 
-        // Move pending bytes right after where remaining data will be
+        // Move the remaining data to front FIRST, before touching pending bytes.
+        // This prevents the pending copy from clobbering the tail of the remaining
+        // data when the pending region overlaps with [buffer_position..buffer_length].
+        self.working_buffer
+            .copy_within(self.buffer_position..self.buffer_length, 0);
+        self.buffer_position = 0;
+        self.buffer_length = remaining;
+
+        // Now move pending bytes right after the (already relocated) remaining data.
         if self.pending_bytes > 0 {
             let pending_src_start = self.pending_bytes_offset;
             let pending_src_end = self.pending_bytes_offset + self.pending_bytes;
@@ -85,12 +93,6 @@ impl TdsReadBuffer {
                 .copy_within(pending_src_start..pending_src_end, pending_dest);
             self.pending_bytes_offset = remaining;
         }
-
-        // Now move the remaining data to front
-        self.working_buffer
-            .copy_within(self.buffer_position..self.buffer_length, 0);
-        self.buffer_position = 0;
-        self.buffer_length = remaining;
     }
 
     pub(crate) fn remove_header_from_packet(&mut self, new_packet_size: usize) {
@@ -280,5 +282,257 @@ mod tests {
         assert_eq!(buffer.buffer_length, 0);
         assert_eq!(buffer.working_buffer.len(), 16000);
         assert_eq!(buffer.max_packet_size, 8000);
+    }
+
+    /// Reproduces data corruption when shift_data_to_front moves pending bytes
+    /// before relocating remaining data, causing an overlap that clobbers the
+    /// tail of the remaining region.
+    ///
+    /// Layout before shift (packet_size=4096, buffer=8192):
+    ///   [consumed 82B | remaining 4006B | pending 4096B at offset 4088]
+    ///
+    /// Bug: copying pending to offset 4006 overwrites remaining[4006..4088].
+    #[test]
+    fn test_shift_data_to_front_with_pending_bytes_no_corruption() {
+        let mut buf = TdsReadBuffer::new(4096);
+
+        // Fill the "remaining" region [82..4088] with recognizable data.
+        for i in 82..4088 {
+            buf.working_buffer[i] = (i % 256) as u8;
+        }
+        buf.buffer_position = 82;
+        buf.buffer_length = 4088;
+
+        // Simulate pending bytes from a second TDS packet right after.
+        let pending_start = 4088;
+        let pending_len = 4096;
+        for i in 0..pending_len {
+            buf.working_buffer[pending_start + i] = 0xAA;
+        }
+        buf.pending_bytes = pending_len;
+        buf.pending_bytes_offset = pending_start;
+
+        // Snapshot the remaining data before shifting.
+        let expected_remaining: Vec<u8> = buf.working_buffer[82..4088].to_vec();
+
+        buf.shift_data_to_front();
+
+        // Remaining data must be intact at [0..4006].
+        assert_eq!(
+            &buf.working_buffer[..4006],
+            &expected_remaining[..],
+            "remaining data corrupted after shift_data_to_front"
+        );
+
+        // Pending data must follow at [4006..4006+4096].
+        assert!(
+            buf.working_buffer[4006..4006 + pending_len]
+                .iter()
+                .all(|&b| b == 0xAA),
+            "pending data not correctly placed after remaining"
+        );
+
+        assert_eq!(buf.buffer_position, 0);
+        assert_eq!(buf.buffer_length, 4006);
+        assert_eq!(buf.pending_bytes_offset, 4006);
+        assert_eq!(buf.pending_bytes, pending_len);
+    }
+
+    /// Simulates a partially-consumed buffer with pending bytes from a second
+    /// TCP read. The consumed (position) region is non-zero, remaining data
+    /// sits in the middle, and pending bytes follow at the end.
+    #[test]
+    fn test_shift_data_to_front_consumed_remaining_and_pending() {
+        let mut buf = TdsReadBuffer::new(4096);
+
+        // [0..500] consumed, [500..2000] remaining, [4088..4088+200] pending
+        for i in 500..2000 {
+            buf.working_buffer[i] = (i % 256) as u8;
+        }
+        buf.buffer_position = 500;
+        buf.buffer_length = 2000;
+
+        let pending_start = 4088;
+        let pending_len = 200;
+        for i in 0..pending_len {
+            buf.working_buffer[pending_start + i] = 0xDD;
+        }
+        buf.pending_bytes = pending_len;
+        buf.pending_bytes_offset = pending_start;
+
+        let expected_remaining: Vec<u8> = buf.working_buffer[500..2000].to_vec();
+
+        buf.shift_data_to_front();
+
+        let remaining = 1500;
+        assert_eq!(buf.buffer_position, 0);
+        assert_eq!(buf.buffer_length, remaining);
+        assert_eq!(
+            &buf.working_buffer[..remaining],
+            &expected_remaining[..],
+            "remaining data corrupted"
+        );
+        assert_eq!(buf.pending_bytes_offset, remaining);
+        assert_eq!(buf.pending_bytes, pending_len);
+        assert!(
+            buf.working_buffer[remaining..remaining + pending_len]
+                .iter()
+                .all(|&b| b == 0xDD),
+            "pending data corrupted or misplaced"
+        );
+    }
+
+    #[test]
+    fn test_shift_data_to_front_no_pending_bytes() {
+        let mut buf = TdsReadBuffer::new(4096);
+        for i in 100..500 {
+            buf.working_buffer[i] = (i % 256) as u8;
+        }
+        buf.buffer_position = 100;
+        buf.buffer_length = 500;
+
+        let expected: Vec<u8> = buf.working_buffer[100..500].to_vec();
+        buf.shift_data_to_front();
+
+        assert_eq!(&buf.working_buffer[..400], &expected[..]);
+        assert_eq!(buf.buffer_position, 0);
+        assert_eq!(buf.buffer_length, 400);
+    }
+
+    #[test]
+    fn test_shift_data_to_front_already_at_zero() {
+        let mut buf = TdsReadBuffer::new(4096);
+        for i in 0..200 {
+            buf.working_buffer[i] = (i % 256) as u8;
+        }
+        buf.buffer_position = 0;
+        buf.buffer_length = 200;
+
+        let expected: Vec<u8> = buf.working_buffer[..200].to_vec();
+        buf.shift_data_to_front();
+
+        assert_eq!(&buf.working_buffer[..200], &expected[..]);
+        assert_eq!(buf.buffer_position, 0);
+        assert_eq!(buf.buffer_length, 200);
+    }
+
+    #[test]
+    fn test_shift_data_to_front_no_remaining_with_pending() {
+        let mut buf = TdsReadBuffer::new(4096);
+        buf.buffer_position = 0;
+        buf.buffer_length = 0;
+
+        let pending_start = 4088;
+        for i in 0..100 {
+            buf.working_buffer[pending_start + i] = 0xBB;
+        }
+        buf.pending_bytes = 100;
+        buf.pending_bytes_offset = pending_start;
+
+        buf.shift_data_to_front();
+
+        assert_eq!(buf.buffer_position, 0);
+        assert_eq!(buf.buffer_length, 0);
+        assert_eq!(buf.pending_bytes_offset, 0);
+        assert!(buf.working_buffer[..100].iter().all(|&b| b == 0xBB));
+    }
+
+    #[test]
+    fn test_consume_bytes_partial() {
+        let mut buf = TdsReadBuffer::new(4096);
+        buf.buffer_length = 500;
+        buf.buffer_position = 0;
+
+        buf.consume_bytes(200);
+
+        assert_eq!(buf.buffer_position, 200);
+        assert_eq!(buf.buffer_length, 500);
+    }
+
+    #[test]
+    fn test_consume_bytes_exact_resets() {
+        let mut buf = TdsReadBuffer::new(4096);
+        buf.buffer_length = 500;
+        buf.buffer_position = 100;
+
+        buf.consume_bytes(400);
+
+        assert_eq!(buf.buffer_position, 0);
+        assert_eq!(buf.buffer_length, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Not enough data to consume")]
+    fn test_consume_bytes_over_panics() {
+        let mut buf = TdsReadBuffer::new(4096);
+        buf.buffer_length = 500;
+        buf.buffer_position = 100;
+
+        buf.consume_bytes(401);
+    }
+
+    #[test]
+    fn test_do_we_have_enough_data() {
+        let mut buf = TdsReadBuffer::new(4096);
+        buf.buffer_length = 500;
+        buf.buffer_position = 100;
+
+        assert!(buf.do_we_have_enough_data(400));
+        assert!(buf.do_we_have_enough_data(1));
+        assert!(!buf.do_we_have_enough_data(401));
+    }
+
+    #[test]
+    fn test_get_remaining_byte_count() {
+        let mut buf = TdsReadBuffer::new(4096);
+        buf.buffer_length = 500;
+        buf.buffer_position = 100;
+
+        assert_eq!(buf.get_remaining_byte_count(), 400);
+
+        buf.consume_bytes(200);
+        assert_eq!(buf.get_remaining_byte_count(), 200);
+    }
+
+    #[test]
+    fn test_reset_to_length() {
+        let mut buf = TdsReadBuffer::new(4096);
+        buf.buffer_position = 250;
+        buf.buffer_length = 500;
+
+        buf.reset_to_length(1000);
+
+        assert_eq!(buf.buffer_position, 0);
+        assert_eq!(buf.buffer_length, 1000);
+    }
+
+    #[test]
+    fn test_remove_header_from_packet() {
+        let mut buf = TdsReadBuffer::new(4096);
+        buf.buffer_length = 100;
+
+        // Place a fake packet at offset 100: 8-byte header + 92 bytes payload = 100 bytes.
+        let header = [0x04, 0x00, 0x00, 0x64, 0x00, 0x00, 0x01, 0x00];
+        buf.working_buffer[100..108].copy_from_slice(&header);
+        for i in 108..200 {
+            buf.working_buffer[i] = 0xCC;
+        }
+
+        buf.remove_header_from_packet(100);
+
+        assert_eq!(buf.buffer_length, 192);
+        assert!(buf.working_buffer[100..192].iter().all(|&b| b == 0xCC));
+    }
+
+    #[test]
+    fn test_get_slice_returns_from_position() {
+        let mut buf = TdsReadBuffer::new(4096);
+        buf.working_buffer[50] = 0xDE;
+        buf.working_buffer[51] = 0xAD;
+        buf.buffer_position = 50;
+
+        let slice = buf.get_slice();
+        assert_eq!(slice[0], 0xDE);
+        assert_eq!(slice[1], 0xAD);
     }
 }

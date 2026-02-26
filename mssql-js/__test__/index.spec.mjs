@@ -5,7 +5,7 @@ import test from 'ava';
 
 import { Request } from '../dist/index.js';
 import { TYPES } from '../dist/datatypes/types.js';
-import { createContext, nextRow, openConnection } from './db.mjs';
+import { createContext, countAllRows, nextRow, openConnection } from './db.mjs';
 import { JsSqlDataTypes } from '../dist/datatypes/enums.js';
 
 test('connect to sqlserver and fetch multiple result sets', async (t) => {
@@ -18,17 +18,7 @@ test('connect to sqlserver and fetch multiple result sets', async (t) => {
       'select top(1) * from sys.databases; select top(1) * from sys.tables; select top(1) * from sys.columns';
     await connection.execute(query);
 
-    // select * from sys.databases
-    let row = undefined;
-    let row_count = 0;
-    while (true) {
-      row = await nextRow(connection);
-      if (row && row.length > 0) {
-        row_count++;
-      } else {
-        break;
-      }
-    }
+    let row_count = await countAllRows(connection);
     t.is(row_count, 3, 'Expected to fetch 3 rows');
     await connection.closeQuery();
     await connection.close();
@@ -75,16 +65,7 @@ test('connect to sqlserver and execute parameterized query.', async (t) => {
 
     await connection.execute(query, params);
 
-    let row = undefined;
-    let row_count = 0;
-    while (true) {
-      row = await nextRow(connection);
-      if (row && row.length > 0) {
-        row_count++;
-      } else {
-        break;
-      }
-    }
+    let row_count = await countAllRows(connection);
     t.assert(row_count > 1000, 'Expected to fetch more than 1000 rows');
     await connection.closeQuery();
     await connection.close();

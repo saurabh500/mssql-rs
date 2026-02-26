@@ -3,7 +3,7 @@ set -e
 
 # Script to run Python tests for mssql-py-core
 # This script sets up a Python virtual environment, installs dependencies, and runs pytest
-# Usage: test-python.sh [--skip-integration] [--mssql-python]
+# Usage: test-python.sh [--skip-integration] [--mssql-python] [--smoke]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -15,10 +15,12 @@ VENV_DIR="$PROJECT_ROOT/.venv-pycore"
 # Parse command line arguments
 SKIP_INTEGRATION=false
 RUN_MSSQL_PYTHON=false
+RUN_SMOKE_ONLY=false
 for arg in "$@"; do
     case $arg in
         --skip-integration) SKIP_INTEGRATION=true ;;
         --mssql-python) RUN_MSSQL_PYTHON=true ;;
+        --smoke) RUN_SMOKE_ONLY=true ;;
     esac
 done
 
@@ -75,14 +77,18 @@ cd "$PY_CORE_DIR"
 
 # Run tests
 echo ""
-if [ "$SKIP_INTEGRATION" = true ]; then
-    echo "Running pytest (unit tests only, skipping integration tests)..."
+if [ "$RUN_SMOKE_ONLY" = true ]; then
+    echo "Running pytest (smoke tests only)..."
     echo "==================================="
-    pytest tests/ -v -m "not integration and not longhaul" --ignore=tests/mssql_python --junitxml=pytest-results.xml
+    pytest tests/smoke/ -v --tb=short --junitxml=pytest-smoke-results.xml
+elif [ "$SKIP_INTEGRATION" = true ]; then
+    echo "Running pytest (unit tests only, skipping integration and smoke tests)..."
+    echo "==================================="
+    pytest tests/ -v -m "not integration and not longhaul and not smoke" --ignore=tests/mssql_python --junitxml=pytest-results.xml
 else
-    echo "Running pytest (unit and integration tests, excluding longhaul tests)..."
+    echo "Running pytest (unit and integration tests, excluding longhaul and smoke tests)..."
     echo "==================================="
-    pytest tests/ -v -m "not longhaul" --ignore=tests/mssql_python --junitxml=pytest-results.xml
+    pytest tests/ -v -m "not longhaul and not smoke" --ignore=tests/mssql_python --junitxml=pytest-results.xml
 fi
 
 echo ""

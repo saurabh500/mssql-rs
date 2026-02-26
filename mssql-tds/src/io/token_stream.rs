@@ -3,9 +3,11 @@
 
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::decoder::GenericDecoder;
+use crate::datatypes::row_writer::RowWriter;
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::TimeoutErrorType;
 use crate::io::packet_reader::TdsPacketReader;
+use crate::query::metadata::ColumnMetadata;
 use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
     EnvChangeTokenParser, ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser,
@@ -20,6 +22,22 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tracing::event;
 
+/// Result of attempting to read a row directly into a [`RowWriter`].
+#[cfg(not(fuzzing))]
+pub(crate) enum RowReadResult {
+    /// A row was decoded directly into the writer via `decode_into`,
+    /// bypassing the intermediate `RowToken { all_values: Vec<ColumnValues> }`.
+    RowWritten,
+    /// A non-row token was received and needs normal handling.
+    Token(Tokens),
+}
+
+#[cfg(fuzzing)]
+pub enum RowReadResult {
+    RowWritten,
+    Token(Tokens),
+}
+
 #[async_trait]
 #[cfg(not(fuzzing))]
 pub(crate) trait TdsTokenStreamReader {
@@ -29,6 +47,14 @@ pub(crate) trait TdsTokenStreamReader {
         remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<Tokens>;
+
+    async fn receive_row_into(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+        writer: &mut (dyn RowWriter + Send),
+    ) -> TdsResult<RowReadResult>;
 }
 
 #[async_trait]
@@ -40,6 +66,14 @@ pub trait TdsTokenStreamReader {
         remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<Tokens>;
+
+    async fn receive_row_into(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+        writer: &mut (dyn RowWriter + Send),
+    ) -> TdsResult<RowReadResult>;
 }
 
 #[cfg(not(fuzzing))]
@@ -109,29 +143,83 @@ where
     }
 
     async fn receive_token_internal(&mut self, context: &ParserContext) -> TdsResult<Tokens> {
-        // Read the token type so that we can get the right parser for this token.
-        // The first byte of the token is the token type.
         let token_type_byte = self.packet_reader.read_byte().await?;
-        let token_type: crate::token::tokens::TokenType = token_type_byte.try_into()?;
-
-        // We should always have a parser for the token type.
-        // If we don't, then this is an unsupported token type.
-        if !self.parser_registry.has_parser(&token_type) {
-            return Err(crate::error::Error::ProtocolError(format!(
-                "No parser implemented for token type: {token_type:?}. This token type is not supported yet."
-            )));
-        }
-
-        let parser = self
-            .parser_registry
-            .get_parser(&token_type)
-            .expect("Parser not found");
-
+        let token_type: TokenType = token_type_byte.try_into()?;
         event!(
             tracing::Level::DEBUG,
             "Parsing token type: {:?}",
             &token_type
         );
+        self.dispatch_token(token_type, context).await
+    }
+
+    /// Reads the next token; for ROW/NBCROW tokens, decodes directly into the
+    /// writer via `decode_into`, bypassing `RowToken` construction entirely.
+    async fn receive_row_into_internal(
+        &mut self,
+        context: &ParserContext,
+        writer: &mut (dyn RowWriter + Send),
+    ) -> TdsResult<RowReadResult> {
+        let token_type_byte = self.packet_reader.read_byte().await?;
+        let token_type: TokenType = token_type_byte.try_into()?;
+
+        match token_type {
+            TokenType::Row => {
+                let columns = Self::extract_column_metadata(context)?;
+                let decoder = GenericDecoder::default();
+                for (col, meta) in columns.iter().enumerate() {
+                    decoder
+                        .decode_into(&mut self.packet_reader, meta, col, writer)
+                        .await?;
+                }
+                Ok(RowReadResult::RowWritten)
+            }
+            TokenType::NbcRow => {
+                let columns = Self::extract_column_metadata(context)?;
+                let bitmap_len = columns.len().div_ceil(8);
+                let mut bitmap = vec![0u8; bitmap_len];
+                self.packet_reader.read_bytes(&mut bitmap).await?;
+                let decoder = GenericDecoder::default();
+                for (col, meta) in columns.iter().enumerate() {
+                    if bitmap[col / 8] & (1 << (col % 8)) != 0 {
+                        writer.write_null(col);
+                    } else {
+                        decoder
+                            .decode_into(&mut self.packet_reader, meta, col, writer)
+                            .await?;
+                    }
+                }
+                Ok(RowReadResult::RowWritten)
+            }
+            _ => {
+                let token = self.dispatch_token(token_type, context).await?;
+                Ok(RowReadResult::Token(token))
+            }
+        }
+    }
+
+    fn extract_column_metadata(context: &ParserContext) -> TdsResult<&[ColumnMetadata]> {
+        match context {
+            ParserContext::ColumnMetadata(metadata) => Ok(&metadata.columns),
+            _ => Err(crate::error::Error::ProtocolError(
+                "Expected ColumnMetadata in context for row decoding".to_string(),
+            )),
+        }
+    }
+
+    async fn dispatch_token(
+        &mut self,
+        token_type: TokenType,
+        context: &ParserContext,
+    ) -> TdsResult<Tokens> {
+        let parser = match self.parser_registry.get_parser(&token_type) {
+            Some(parser) => parser,
+            None => {
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "No parser implemented for token type: {token_type:?}. This token type is not supported yet."
+                )));
+            }
+        };
 
         match parser {
             TokenParsers::EnvChange(parser) => parser.parse(&mut self.packet_reader, context).await,
@@ -218,6 +306,37 @@ where
             },
         }
         token_result
+    }
+
+    async fn receive_row_into(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+        writer: &mut (dyn RowWriter + Send),
+    ) -> TdsResult<RowReadResult> {
+        let cancellable = CancelHandle::run_until_cancelled(
+            cancel_handle,
+            self.receive_row_into_internal(context, writer),
+        );
+        let result = match remaining_request_timeout.as_ref() {
+            Some(t) => match timeout(*t, cancellable).await {
+                Ok(r) => r,
+                Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
+            },
+            None => cancellable.await,
+        };
+
+        match &result {
+            Ok(_) => {}
+            Err(err) => match err {
+                OperationCancelledError(_) | TimeoutError(_) => {
+                    self.cancel_read_stream_and_wait().await?;
+                }
+                _ => {}
+            },
+        }
+        result
     }
 }
 #[cfg(not(fuzzing))]

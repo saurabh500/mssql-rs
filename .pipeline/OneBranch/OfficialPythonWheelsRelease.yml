@@ -1,0 +1,259 @@
+#################################################################################
+#                        OneBranch Pipelines - Official Release                 #
+# Downloads NuGet wheel artifacts from the Official Build pipeline and         #
+# publishes them to Azure Artifacts. Also tags the source commit and           #
+# creates a release branch.                                                     #
+#                                                                               #
+# This pipeline does NOT build anything — it consumes artifacts produced by    #
+# OfficialBuild.yml.                                                            #
+#                                                                               #
+# The source commit is obtained from the build pipeline via                     #
+#   $(resources.pipeline.officialBuild.sourceCommit)                            #
+# This is the exact commit that was built and is used for git tagging and       #
+# release branch creation.                                                      #
+#                                                                               #
+# Documentation:  https://aka.ms/obpipelines                                    #
+# Yaml Schema:    https://aka.ms/obpipelines/yaml/schema                        #
+# Support:        https://aka.ms/onebranchsup                                   #
+#################################################################################
+
+name: $(Year:YY)$(DayOfYear)$(Rev:.r)-Release
+
+# Manual trigger only — releases should be deliberate
+trigger: none
+pr: none
+
+parameters:
+  - name: publishNuGet
+    displayName: 'Publish NuGet package to Azure Artifacts'
+    type: boolean
+    default: false  # Safety: default to false to prevent accidental releases
+
+  - name: tagRelease
+    displayName: 'Create git tag and release branch'
+    type: boolean
+    default: false  # Safety: default to false
+
+variables:
+  CDP_DEFINITION_BUILD_COUNT: $[counter('', 0)]
+  LinuxContainerImage: 'mcr.microsoft.com/onebranch/azurelinux/build:3.0'
+  WindowsContainerImage: 'onebranch.azurecr.io/windows/ltsc2022/vse2022:latest'
+  DEBIAN_FRONTEND: noninteractive
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+
+  # Reference to the Official Build pipeline.
+  # When running this release pipeline, the operator selects which build run
+  # to release from. ADO populates resources.pipeline.officialBuild.runID and
+  # resources.pipeline.officialBuild.sourceCommit automatically.
+  pipelines:
+    - pipeline: officialBuild
+      source: 'Official Python Wheels Build'  # ADO pipeline definition name (ID 2234)
+      trigger: none  # Manual only — no automatic release on build completion
+
+extends:
+  template: v2/OneBranch.Official.CrossPlat.yml@templates
+  parameters:
+    featureFlags:
+      EnableCDPxPAT: false
+      WindowsHostVersion: 1ESWindows2022
+    globalSdl:
+      binskim:
+        enabled: true
+        scanOutputDirectoryOnly: true
+      credscan:
+        enabled: true
+      policheck:
+        enabled: true
+    nugetPublishing:
+      feeds:
+      - name: public/mssql-rs_Public
+        continueOnConflict: true
+
+    stages:
+    ###########################################################################
+    # Stage 1: Download artifacts, verify, and publish NuGet
+    ###########################################################################
+    - stage: Release
+      displayName: 'Release NuGet Package'
+      jobs:
+      - job: PublishRelease
+        displayName: 'Download Build Artifacts and Publish'
+        pool:
+          type: windows
+        variables:
+          ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+          ob_nugetPublishing_enabled: ${{ parameters.publishNuGet }}
+        steps:
+        #####################################################################
+        # Step 1: Download NuGet artifact from the Official Build pipeline
+        #####################################################################
+        - download: officialBuild
+          displayName: 'Download all artifacts from Official Build'
+          # Downloads every artifact published by the selected build run
+          # (one per platform: Windows x64/ARM64, Linux x64/ARM64, macOS).
+
+        #####################################################################
+        # Step 2: List and verify downloaded artifacts
+        #####################################################################
+        - pwsh: |
+            Write-Host "====================================="
+            Write-Host "Downloaded Artifacts from Build $(resources.pipeline.officialBuild.runID)"
+            Write-Host "Source commit: $(resources.pipeline.officialBuild.sourceCommit)"
+            Write-Host "====================================="
+
+            $artifactPath = "$(Pipeline.Workspace)/officialBuild"
+            if (Test-Path $artifactPath) {
+              Get-ChildItem -Path $artifactPath -Recurse | ForEach-Object {
+                $size = [math]::Round($_.Length / 1KB, 1)
+                Write-Host "  $($_.FullName.Replace($artifactPath, ''))  ($size KB)"
+              }
+            } else {
+              Write-Error "Artifact directory not found: $artifactPath"
+              exit 1
+            }
+          displayName: 'List downloaded artifacts'
+
+        #####################################################################
+        # Step 3: Extract version and create NuGet package
+        # This reuses the same version logic from stages.yml but with
+        # isOfficial=true, producing a clean semver (no prerelease suffix).
+        #####################################################################
+        - pwsh: |
+            $ErrorActionPreference = 'Stop'
+
+            $cargoToml = Get-Content "$(Build.SourcesDirectory)/mssql-py-core/Cargo.toml" -Raw
+            if ($cargoToml -match 'version\s*=\s*"([^"]+)"') {
+              $version = $Matches[1]
+            } else {
+              Write-Error "Could not extract version from Cargo.toml"
+              exit 1
+            }
+
+            # Official release: clean semver, no prerelease suffix
+            $packageVersion = $version
+            $commitSha = "$(resources.pipeline.officialBuild.sourceCommit)"
+            $shortSha = $commitSha.Substring(0, 8)
+
+            Write-Host "Release version: $packageVersion"
+            Write-Host "Source commit: $commitSha"
+            Write-Host "Build run: $(resources.pipeline.officialBuild.runID)"
+            Write-Host "##vso[task.setvariable variable=releaseVersion]$packageVersion"
+            Write-Host "##vso[task.setvariable variable=sourceCommit]$commitSha"
+
+            # Collect wheels
+            $wheelsDir = "$(Build.StagingDirectory)/wheels"
+            New-Item -ItemType Directory -Force -Path $wheelsDir | Out-Null
+            $wheels = Get-ChildItem "$(Pipeline.Workspace)/officialBuild" -Filter *.whl -Recurse
+            if ($wheels.Count -eq 0) {
+              Write-Error "No wheels found to package. Aborting."
+              exit 1
+            }
+            $wheels | Copy-Item -Destination $wheelsDir
+            Write-Host "Collected $($wheels.Count) wheels"
+
+            # Create .nuspec
+            $nuspecContent = @"
+            <?xml version="1.0"?>
+            <package>
+              <metadata>
+                <id>mssql-py-core-wheels</id>
+                <version>$packageVersion</version>
+                <description>Python wheels for mssql-py-core (official release). Commit: $shortSha. Build: $(resources.pipeline.officialBuild.runID)</description>
+                <authors>SqlClientDrivers</authors>
+              </metadata>
+              <files>
+                <file src="wheels\**\*.whl" target="wheels" />
+              </files>
+            </package>
+            "@
+
+            $nuspecPath = "$(Build.StagingDirectory)/mssql-py-core-wheels.nuspec"
+            $nuspecContent | Out-File -FilePath $nuspecPath -Encoding utf8
+            Write-Host "Created nuspec: $nuspecPath"
+          displayName: 'Prepare release NuGet package'
+
+        - task: NuGetCommand@2
+          displayName: 'Create NuGet package'
+          inputs:
+            command: pack
+            packagesToPack: '$(Build.StagingDirectory)/mssql-py-core-wheels.nuspec'
+            packDestination: '$(ob_outputDirectory)/packages'
+            basePath: '$(Build.StagingDirectory)'
+
+        - pwsh: |
+            Write-Host "=== Release NuGet package ==="
+            Get-ChildItem "$(ob_outputDirectory)/packages" -Filter *.nupkg | ForEach-Object {
+              Write-Host "  $($_.Name)  ($([math]::Round($_.Length/1MB, 2)) MB)"
+            }
+            if ($${{ parameters.publishNuGet }}) {
+              Write-Host "NuGet WILL be published to feed (publishNuGet=true)"
+            } else {
+              Write-Host "DRY RUN — NuGet will NOT be published (publishNuGet=false)"
+            }
+          displayName: 'Verify NuGet package'
+
+    ###########################################################################
+    # Stage 2: Tag the source commit and create release branch
+    ###########################################################################
+    - ${{ if eq(parameters.tagRelease, true) }}:
+      - stage: Tag
+        displayName: 'Tag Release and Create Branch'
+        dependsOn: Release
+        jobs:
+        - job: TagAndBranch
+          displayName: 'Git tag + release branch'
+          pool:
+            type: windows
+          variables:
+            ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+          steps:
+          - checkout: self
+            persistCredentials: true
+
+          - pwsh: |
+              $ErrorActionPreference = 'Stop'
+
+              $cargoToml = Get-Content "$(Build.SourcesDirectory)/mssql-py-core/Cargo.toml" -Raw
+              if ($cargoToml -match 'version\s*=\s*"([^"]+)"') {
+                $version = $Matches[1]
+              } else {
+                Write-Error "Could not extract version from Cargo.toml"
+                exit 1
+              }
+
+              $commitSha = "$(resources.pipeline.officialBuild.sourceCommit)"
+              $tagName = "v$version"
+              $branchName = "release/$version"
+
+              Write-Host "Version:    $version"
+              Write-Host "Commit:     $commitSha"
+              Write-Host "Tag:        $tagName"
+              Write-Host "Branch:     $branchName"
+
+              # Create annotated tag on the build's source commit
+              git tag -a $tagName $commitSha -m "Release $version"
+              if ($LASTEXITCODE -ne 0) { Write-Error "Failed to create tag"; exit 1 }
+
+              # Create release branch from the tagged commit
+              git branch $branchName $commitSha
+              if ($LASTEXITCODE -ne 0) { Write-Error "Failed to create branch"; exit 1 }
+
+              # Push tag and branch
+              git push origin $tagName
+              if ($LASTEXITCODE -ne 0) { Write-Error "Failed to push tag"; exit 1 }
+
+              git push origin $branchName
+              if ($LASTEXITCODE -ne 0) { Write-Error "Failed to push branch"; exit 1 }
+
+              Write-Host "====================================="
+              Write-Host "Release tagged and branched:"
+              Write-Host "  Tag:    $tagName -> $commitSha"
+              Write-Host "  Branch: $branchName"
+              Write-Host "====================================="
+            displayName: 'Create git tag and release branch'

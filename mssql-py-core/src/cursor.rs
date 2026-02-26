@@ -8,7 +8,7 @@ use mssql_tds::connection::tds_client::{ResultSet, ResultSetClient, TdsClient};
 use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::datatypes::sqldatatypes::VectorBaseType;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyIterator, PyTuple};
+use pyo3::types::{PyDict, PyIterator, PyList, PyTuple};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Handle;
@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 
 use crate::bulkcopy::PythonRowAdapter;
+use crate::python_logger_adapter::scoped_tracing_bridge;
 use crate::utils::convert_tds_error;
 
 /// Python Cursor class for Core TDS backend
@@ -87,7 +88,7 @@ impl PyCoreCursor {
         let tds_client = self.tds_client.clone();
         let runtime_handle = self.runtime_handle.clone();
 
-        // Fetch one row asynchronously
+        // Fetch one row via next_row_into → PyRowWriter (bypasses RowToken)
         let result = py.detach(|| {
             runtime_handle.block_on(async {
                 let mut client = tds_client.lock().await;
@@ -95,17 +96,19 @@ impl PyCoreCursor {
 
                 if let Some(resultset) = client.get_current_resultset() {
                     info!("fetchone: Got resultset, fetching next row");
-                    if let Some(row) = resultset.next_row().await.map_err(|e| {
+                    let col_count = resultset.get_metadata().len();
+                    let mut writer = crate::row_writer::PyRowWriter::new(col_count);
+                    let has_row = resultset.next_row_into(&mut writer).await.map_err(|e| {
                         error!("fetchone: Failed to fetch row: {}", e);
                         pyo3::exceptions::PyRuntimeError::new_err(format!(
                             "Failed to fetch row: {}",
                             e
                         ))
-                    })? {
-                        info!("fetchone: Got row with {} columns", row.len());
-                        return Ok(Some(row));
+                    })?;
+                    if has_row {
+                        info!("fetchone: Got row with {} columns", col_count);
+                        return Ok(Some(writer));
                     } else {
-                        // No more rows - close the result set to clear has_open_batch flag
                         info!("No more rows, closing result set");
                         resultset.close().await.map_err(|e| {
                             error!("fetchone: Failed to close result set: {}", e);
@@ -123,18 +126,13 @@ impl PyCoreCursor {
             })
         })?;
 
-        // Convert row to Python tuple
-        if let Some(row) = result {
+        // Convert row to Python tuple (GIL re-acquired)
+        if let Some(writer) = result {
             Python::attach(|py| {
-                let py_list: Vec<Bound<'_, PyAny>> = row
-                    .iter()
-                    .map(|col_val| Self::column_value_to_python(py, col_val))
-                    .collect();
-                let py_tuple = PyTuple::new(py, py_list.iter())?;
+                let py_tuple = writer.to_py_tuple(py)?;
                 Ok(Some(py_tuple.into()))
             })
         } else {
-            // Mark that we no longer have a result set since it's been fully consumed
             self.has_resultset = false;
             Ok(None)
         }
@@ -247,7 +245,7 @@ impl PyCoreCursor {
     /// result = cursor.bulkcopy('Users', iter(data), column_mappings=['id', 'name'])
     /// print(f"Copied {result['rows_copied']} rows in {result['batch_count']} batches")
     /// ```
-    #[pyo3(signature = (table_name, data_source, batch_size=0, timeout=30, column_mappings=None, keep_identity=false, check_constraints=false, table_lock=false, keep_nulls=false, fire_triggers=false, use_internal_transaction=false))]
+    #[pyo3(signature = (table_name, data_source, batch_size=0, timeout=30, column_mappings=None, keep_identity=false, check_constraints=false, table_lock=false, keep_nulls=false, fire_triggers=false, use_internal_transaction=false, python_logger=None))]
     #[allow(clippy::too_many_arguments)]
     fn bulkcopy(
         &mut self,
@@ -263,7 +261,12 @@ impl PyCoreCursor {
         keep_nulls: bool,
         fire_triggers: bool,
         use_internal_transaction: bool,
+        python_logger: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyDict>> {
+        // Set up tracing bridge if logger provided
+        let _guard = python_logger
+            .map(|logger| scoped_tracing_bridge(Arc::new(logger.clone().unbind()), file!()));
+
         info!("bulkcopy: Starting bulkcopy to table: {}", table_name);
 
         // Build options from explicit parameters (defaults handled by PyO3 signature)
@@ -492,7 +495,10 @@ impl PyCoreCursor {
 
 impl PyCoreCursor {
     /// Convert a TDS ColumnValue to a Python object
-    fn column_value_to_python<'py>(py: Python<'py>, col_val: &ColumnValues) -> Bound<'py, PyAny> {
+    pub(crate) fn column_value_to_python<'py>(
+        py: Python<'py>,
+        col_val: &ColumnValues,
+    ) -> Bound<'py, PyAny> {
         use pyo3::types::{PyBytes, PyList, PyModule};
 
         match col_val {
@@ -898,71 +904,102 @@ impl PyCoreCursor {
         }
     }
 
-    /// Parse column mappings from Python list of tuples.
+    /// Parse column mappings from Python list.
     ///
-    /// Format: `[(source, 'destination'), ...]` where source can be:
-    /// - string: column name mapping (ByName)
-    /// - int: ordinal mapping (ByOrdinal)
+    /// Supports two formats:
+    /// - `List[str]`: `['col1', 'col2']` — list index = source ordinal
+    /// - `List[Tuple[int|str, str]]`: `[(0, 'col1'), ('src', 'dst')]` — explicit mapping
     fn parse_column_mappings(
         mappings_obj: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Vec<ColumnMapping>> {
         use pyo3::exceptions::PyTypeError;
-        use pyo3::types::PyList;
 
-        let mappings = match mappings_obj {
-            Some(obj) => obj,
-            None => return Ok(Vec::new()),
+        let Some(mappings) = mappings_obj else {
+            return Ok(Vec::new());
         };
-
-        // Check if it's a list
         if !mappings.is_instance_of::<PyList>() {
             return Err(PyTypeError::new_err("column_mappings must be a list"));
         }
 
-        let mut result = Vec::new();
-
-        // Iterate through list items
-        let list_len = mappings.len()?;
-        for i in 0..list_len {
-            let item = mappings.get_item(i)?;
-
-            // Check if it's a tuple
-            if !item.is_instance_of::<PyTuple>() {
-                return Err(PyTypeError::new_err("Each mapping must be a tuple"));
-            }
-
-            let tuple_len = item.len()?;
-            if tuple_len != 2 {
-                return Err(PyTypeError::new_err(
-                    "Each mapping tuple must have exactly 2 elements: (source, destination)",
-                ));
-            }
-
-            let source = item.get_item(0)?;
-            let destination = item.get_item(1)?.extract::<String>()?;
-
-            let mapping = if let Ok(source_name) = source.extract::<String>() {
-                // Name-based mapping
-                ColumnMapping::ByName {
-                    source: source_name,
-                    destination,
-                }
-            } else if let Ok(source_ordinal) = source.extract::<usize>() {
-                // Ordinal-based mapping
-                ColumnMapping::ByOrdinal {
-                    source: source_ordinal,
-                    destination,
-                }
-            } else {
-                return Err(PyTypeError::new_err(
-                    "Source must be either a string (name) or int (ordinal)",
-                ));
-            };
-
-            result.push(mapping);
+        let list: &Bound<'_, PyList> = mappings.cast()?;
+        if list.is_empty() {
+            return Ok(Vec::new());
         }
 
-        Ok(result)
+        let first = list.get_item(0)?;
+        if first.is_instance_of::<PyTuple>() {
+            Self::parse_tuple_mappings(list)
+        } else if first.extract::<String>().is_ok() {
+            Self::parse_string_mappings(list)
+        } else {
+            Err(PyTypeError::new_err(
+                "column_mappings elements must be str or (int|str, str) tuples",
+            ))
+        }
+    }
+
+    /// `['colA', 'colB']` → `[(0, colA), (1, colB)]`
+    fn parse_string_mappings(list: &Bound<'_, PyList>) -> PyResult<Vec<ColumnMapping>> {
+        use pyo3::exceptions::PyTypeError;
+
+        list.iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let destination: String = item.extract().map_err(|_| {
+                    PyTypeError::new_err(format!(
+                        "Not all items in column mapping are the same type. column_mappings[{i}]: expected str, got {}",
+                        item.get_type()
+                    ))
+                })?;
+                Ok(ColumnMapping::ByOrdinal {
+                    source: i,
+                    destination,
+                })
+            })
+            .collect()
+    }
+
+    /// `[(0, 'colA'), ('src', 'dst')]`
+    fn parse_tuple_mappings(list: &Bound<'_, PyList>) -> PyResult<Vec<ColumnMapping>> {
+        list.iter()
+            .enumerate()
+            .map(|(i, item)| Self::parse_one_tuple(i, &item))
+            .collect()
+    }
+
+    fn parse_one_tuple(i: usize, item: &Bound<'_, PyAny>) -> PyResult<ColumnMapping> {
+        use pyo3::exceptions::PyTypeError;
+
+        if !item.is_instance_of::<PyTuple>() {
+            return Err(PyTypeError::new_err(format!(
+                "Not all items in column mapping are the same type. column_mappings[{i}]: expected tuple, got {}",
+                item.get_type()
+            )));
+        }
+        if item.len()? != 2 {
+            return Err(PyTypeError::new_err(
+                "Each mapping tuple must have exactly 2 elements: (source, destination)",
+            ));
+        }
+
+        let source = item.get_item(0)?;
+        let destination = item.get_item(1)?.extract::<String>()?;
+
+        if let Ok(name) = source.extract::<String>() {
+            Ok(ColumnMapping::ByName {
+                source: name,
+                destination,
+            })
+        } else if let Ok(ordinal) = source.extract::<usize>() {
+            Ok(ColumnMapping::ByOrdinal {
+                source: ordinal,
+                destination,
+            })
+        } else {
+            Err(PyTypeError::new_err(
+                "Tuple source must be str (name) or int (ordinal)",
+            ))
+        }
     }
 
     fn __repr__(&self) -> String {

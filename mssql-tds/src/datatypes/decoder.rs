@@ -23,6 +23,8 @@ use crate::{
 };
 use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 
+use super::row_writer::{RowWriter, write_column_value};
+
 // Maximum reasonable allocation size for a single value (100MB)
 // This prevents fuzzer-induced capacity overflow panics
 #[cfg(fuzzing)]
@@ -709,6 +711,255 @@ impl GenericDecoder {
             Ok(Some(plp_buffer))
         }
     }
+
+    /// Decodes a column value from the wire and writes it directly into a
+    /// [`RowWriter`], bypassing the intermediate `ColumnValues` enum for
+    /// common types. Rare types (XML, JSON, Vector, Image, UDT, SsVariant)
+    /// fall back to `decode()` + `write_column_value()`.
+    pub(crate) async fn decode_into<T, W>(
+        &self,
+        reader: &mut T,
+        metadata: &ColumnMetadata,
+        col: usize,
+        writer: &mut W,
+    ) -> TdsResult<()>
+    where
+        T: TdsPacketReader + Send + Sync,
+        W: RowWriter + ?Sized,
+    {
+        match metadata.data_type {
+            // === Fixed-length integer types ===
+            TdsDataType::Int1 => {
+                writer.write_u8(col, reader.read_byte().await?);
+            }
+            TdsDataType::Int2 => {
+                writer.write_i16(col, reader.read_int16().await?);
+            }
+            TdsDataType::Int4 => {
+                writer.write_i32(col, reader.read_int32().await?);
+            }
+            TdsDataType::Int8 => {
+                writer.write_i64(col, reader.read_int64().await?);
+            }
+            TdsDataType::IntN => {
+                let byte_len = reader.read_byte().await?;
+                match byte_len {
+                    1 => writer.write_u8(col, reader.read_byte().await?),
+                    2 => writer.write_i16(col, reader.read_int16().await?),
+                    4 => writer.write_i32(col, reader.read_int32().await?),
+                    8 => writer.write_i64(col, reader.read_int64().await?),
+                    0 => writer.write_null(col),
+                    _ => {
+                        return Err(crate::error::Error::from(Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Invalid IntN length",
+                        )));
+                    }
+                }
+            }
+
+            // === Fixed-length float types ===
+            TdsDataType::Flt4 => {
+                writer.write_f32(col, reader.read_float32().await?);
+            }
+            TdsDataType::Flt8 => {
+                writer.write_f64(col, reader.read_float64().await?);
+            }
+            TdsDataType::FltN => {
+                let length = reader.read_byte().await?;
+                match length {
+                    0 => writer.write_null(col),
+                    4 => writer.write_f32(col, reader.read_float32().await?),
+                    _ => writer.write_f64(col, reader.read_float64().await?),
+                }
+            }
+
+            // === Bit types ===
+            TdsDataType::Bit => {
+                writer.write_bool(col, reader.read_byte().await? == 1);
+            }
+            TdsDataType::BitN => {
+                let byte_len = reader.read_byte().await?;
+                if byte_len > 0 {
+                    writer.write_bool(col, reader.read_byte().await? == 1);
+                } else {
+                    writer.write_null(col);
+                }
+            }
+
+            // === Money types ===
+            TdsDataType::Money4 => {
+                writer.write_smallmoney(col, self.read_money4(reader).await?);
+            }
+            TdsDataType::Money => {
+                writer.write_money(col, self.read_money8(reader).await?);
+            }
+            TdsDataType::MoneyN => {
+                let byte_len = reader.read_byte().await?;
+                match byte_len {
+                    4 => writer.write_smallmoney(col, self.read_money4(reader).await?),
+                    8 => writer.write_money(col, self.read_money8(reader).await?),
+                    0 => writer.write_null(col),
+                    _ => {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "Invalid MoneyN length - {byte_len}"
+                        )));
+                    }
+                }
+            }
+
+            // === Decimal / Numeric ===
+            TdsDataType::DecimalN => match self.read_decimal(reader, metadata).await? {
+                Some(val) => writer.write_decimal(col, val),
+                None => writer.write_null(col),
+            },
+            TdsDataType::NumericN => match self.read_decimal(reader, metadata).await? {
+                Some(val) => writer.write_numeric(col, val),
+                None => writer.write_null(col),
+            },
+
+            // === String types — delegate to StringDecoder ===
+            TdsDataType::NChar
+            | TdsDataType::NVarChar
+            | TdsDataType::BigChar
+            | TdsDataType::BigVarChar
+            | TdsDataType::Char
+            | TdsDataType::VarChar
+            | TdsDataType::NText
+            | TdsDataType::Text => {
+                self.string_decoder
+                    .decode_string_into(reader, metadata, col, writer)
+                    .await?;
+            }
+
+            // === Binary types ===
+            TdsDataType::BigBinary => {
+                let length = reader.read_uint16().await?;
+                if length as usize > MAX_ALLOC_SIZE {
+                    return Err(crate::error::Error::ProtocolError(format!(
+                        "BigBinary length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+                    )));
+                }
+                let mut bytes = vec![0u8; length as usize];
+                reader.read_bytes(&mut bytes).await?;
+                writer.write_bytes(col, bytes);
+            }
+            TdsDataType::BigVarBinary => {
+                if metadata.is_plp() {
+                    match GenericDecoder::read_plp_bytes(reader).await? {
+                        Some(bytes) => writer.write_bytes(col, bytes),
+                        None => writer.write_null(col),
+                    }
+                } else {
+                    let length = reader.read_uint16().await?;
+                    if length as usize > MAX_ALLOC_SIZE {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "BigVarBinary length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+                        )));
+                    }
+                    let mut bytes = vec![0u8; length as usize];
+                    reader.read_bytes(&mut bytes).await?;
+                    writer.write_bytes(col, bytes);
+                }
+            }
+
+            // === DateTime types ===
+            TdsDataType::DateTime => {
+                writer.write_datetime(col, self.read_datetime(reader).await?);
+            }
+            TdsDataType::DateTim4 => {
+                let daypart = reader.read_uint16().await?;
+                let timepart = reader.read_uint16().await?;
+                writer.write_smalldatetime(
+                    col,
+                    SqlSmallDateTime {
+                        days: daypart,
+                        time: timepart,
+                    },
+                );
+            }
+            TdsDataType::DateTimeN => {
+                let length = reader.read_byte().await?;
+                match length {
+                    0 => writer.write_null(col),
+                    4 => writer.write_smalldatetime(col, self.read_small_datetime(reader).await?),
+                    _ => writer.write_datetime(col, self.read_datetime(reader).await?),
+                }
+            }
+            TdsDataType::DateN => {
+                let length = reader.read_byte().await?;
+                if length == 0 {
+                    writer.write_null(col);
+                } else {
+                    writer.write_date(col, Self::read_date(reader).await?);
+                }
+            }
+            TdsDataType::TimeN => {
+                let length = reader.read_byte().await?;
+                if length == 0 {
+                    writer.write_null(col);
+                } else {
+                    writer.write_time(
+                        col,
+                        self.read_time(reader, length, metadata.get_scale()).await?,
+                    );
+                }
+            }
+            TdsDataType::DateTime2N => {
+                let length = reader.read_byte().await?;
+                if length == 0 {
+                    writer.write_null(col);
+                } else {
+                    let cv = self
+                        .read_datetime2(reader, length, metadata.get_scale())
+                        .await?;
+                    if let ColumnValues::DateTime2(dt2) = cv {
+                        writer.write_datetime2(col, dt2);
+                    }
+                }
+            }
+            TdsDataType::DateTimeOffsetN => {
+                let length = reader.read_byte().await?;
+                if length == 0 {
+                    writer.write_null(col);
+                } else {
+                    let cv = self
+                        .read_datetime_offset(reader, length, metadata.get_scale())
+                        .await?;
+                    if let ColumnValues::DateTimeOffset(dto) = cv {
+                        writer.write_datetimeoffset(col, dto);
+                    }
+                }
+            }
+
+            // === GUID ===
+            TdsDataType::Guid => {
+                let length = reader.read_byte().await?;
+                if length == 0 {
+                    writer.write_null(col);
+                } else {
+                    if length != 16 {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "Invalid GUID length: expected 16 bytes, got {length}"
+                        )));
+                    }
+                    let mut bytes = [0u8; 16];
+                    reader.read_bytes(&mut bytes).await?;
+                    let uuid = uuid::Uuid::from_slice_le(&bytes).map_err(|e| {
+                        crate::error::Error::ProtocolError(format!("Failed to parse UUID: {e}"))
+                    })?;
+                    writer.write_uuid(col, uuid);
+                }
+            }
+
+            // === Fallback: rare types go through decode() → write_column_value() ===
+            _ => {
+                let value = self.decode(reader, metadata).await?;
+                write_column_value(writer, col, value);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -1001,6 +1252,64 @@ impl StringDecoder {
 
     fn is_long_len_type(data_type: TdsDataType) -> bool {
         matches!(data_type, TdsDataType::NText | TdsDataType::Text)
+    }
+
+    async fn decode_string_into<T, W>(
+        &self,
+        reader: &mut T,
+        metadata: &ColumnMetadata,
+        col: usize,
+        writer: &mut W,
+    ) -> TdsResult<()>
+    where
+        T: TdsPacketReader + Send + Sync,
+        W: RowWriter + ?Sized,
+    {
+        let encoding_type = get_encoding_type(metadata);
+
+        if metadata.is_plp() {
+            match GenericDecoder::read_plp_bytes(reader).await? {
+                Some(bytes) => writer.write_string(col, SqlString::new(bytes, encoding_type)),
+                None => writer.write_null(col),
+            }
+        } else if Self::is_long_len_type(metadata.data_type) {
+            let text_ptr_len = reader.read_byte().await? as usize;
+
+            if text_ptr_len == 0 {
+                writer.write_null(col);
+                return Ok(());
+            }
+
+            const TIMESTAMP_BYTE_COUNT: usize = 8;
+            reader.skip_bytes(text_ptr_len).await?;
+            reader.skip_bytes(TIMESTAMP_BYTE_COUNT).await?;
+            let length = reader.read_uint32().await? as usize;
+
+            if length > MAX_ALLOC_SIZE {
+                return Err(crate::error::Error::ProtocolError(format!(
+                    "Text data length {length} exceeds maximum allowed size of {MAX_ALLOC_SIZE} bytes"
+                )));
+            }
+
+            let sql_string = if length == 0 {
+                SqlString::new(Vec::new(), encoding_type)
+            } else {
+                let mut buffer = vec![0u8; length];
+                reader.read_bytes(&mut buffer).await?;
+                SqlString::new(buffer, encoding_type)
+            };
+            writer.write_string(col, sql_string);
+        } else {
+            let length = reader.read_uint16().await? as usize;
+            if length == 0xFFFF {
+                writer.write_null(col);
+            } else {
+                let mut buffer = vec![0u8; length];
+                reader.read_bytes(&mut buffer).await?;
+                writer.write_string(col, SqlString::new(buffer, encoding_type));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2378,6 +2687,495 @@ mod test {
                 }
                 _ => panic!("Expected Vector variant"),
             }
+        }
+    }
+
+    mod decode_into_tests {
+        use async_trait::async_trait;
+        use byteorder::{ByteOrder, LittleEndian};
+
+        use crate::core::TdsResult;
+        use crate::datatypes::column_values::{ColumnValues, SqlDateTime, SqlSmallDateTime};
+        use crate::datatypes::decoder::{GenericDecoder, SqlTypeDecode};
+        use crate::datatypes::row_writer::DefaultRowWriter;
+        use crate::datatypes::sqldatatypes::VariableLengthTypes;
+        use crate::datatypes::sqldatatypes::{TdsDataType, TypeInfo, TypeInfoVariant};
+        use crate::io::packet_reader::TdsPacketReader;
+        use crate::query::metadata::ColumnMetadata;
+
+        /// Byte-buffer backed mock implementing every `TdsPacketReader` method
+        /// used by the decoder.
+        struct ByteReader {
+            data: Vec<u8>,
+            pos: usize,
+        }
+
+        impl ByteReader {
+            fn new(data: Vec<u8>) -> Self {
+                Self { data, pos: 0 }
+            }
+
+            fn take(&mut self, n: usize) -> TdsResult<&[u8]> {
+                if self.pos + n > self.data.len() {
+                    return Err(crate::error::Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "End of data",
+                    )));
+                }
+                let slice = &self.data[self.pos..self.pos + n];
+                self.pos += n;
+                Ok(slice)
+            }
+        }
+
+        #[async_trait]
+        impl TdsPacketReader for ByteReader {
+            async fn read_byte(&mut self) -> TdsResult<u8> {
+                Ok(self.take(1)?[0])
+            }
+            async fn read_int16(&mut self) -> TdsResult<i16> {
+                Ok(LittleEndian::read_i16(self.take(2)?))
+            }
+            async fn read_uint16(&mut self) -> TdsResult<u16> {
+                Ok(LittleEndian::read_u16(self.take(2)?))
+            }
+            async fn read_int32(&mut self) -> TdsResult<i32> {
+                Ok(LittleEndian::read_i32(self.take(4)?))
+            }
+            async fn read_uint32(&mut self) -> TdsResult<u32> {
+                Ok(LittleEndian::read_u32(self.take(4)?))
+            }
+            async fn read_int64(&mut self) -> TdsResult<i64> {
+                Ok(LittleEndian::read_i64(self.take(8)?))
+            }
+            async fn read_uint64(&mut self) -> TdsResult<u64> {
+                Ok(LittleEndian::read_u64(self.take(8)?))
+            }
+            async fn read_float32(&mut self) -> TdsResult<f32> {
+                Ok(LittleEndian::read_f32(self.take(4)?))
+            }
+            async fn read_float64(&mut self) -> TdsResult<f64> {
+                Ok(LittleEndian::read_f64(self.take(8)?))
+            }
+            async fn read_uint24(&mut self) -> TdsResult<u32> {
+                let b = self.take(3)?;
+                Ok(b[0] as u32 | (b[1] as u32) << 8 | (b[2] as u32) << 16)
+            }
+            async fn read_int24(&mut self) -> TdsResult<i32> {
+                let v = self.read_uint24().await?;
+                Ok(v as i32)
+            }
+            async fn read_uint40(&mut self) -> TdsResult<u64> {
+                let b = self.take(5)?;
+                Ok(b[0] as u64
+                    | (b[1] as u64) << 8
+                    | (b[2] as u64) << 16
+                    | (b[3] as u64) << 24
+                    | (b[4] as u64) << 32)
+            }
+            async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
+                let slice = self.take(buffer.len())?;
+                buffer.copy_from_slice(slice);
+                Ok(buffer.len())
+            }
+            async fn skip_bytes(&mut self, count: usize) -> TdsResult<()> {
+                self.take(count)?;
+                Ok(())
+            }
+            async fn read_int16_big_endian(&mut self) -> TdsResult<i16> {
+                unimplemented!()
+            }
+            async fn read_int32_big_endian(&mut self) -> TdsResult<i32> {
+                unimplemented!()
+            }
+            async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
+                unimplemented!()
+            }
+            async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>> {
+                unimplemented!()
+            }
+            async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
+                unimplemented!()
+            }
+            async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
+                unimplemented!()
+            }
+            async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
+                unimplemented!()
+            }
+            async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
+                unimplemented!()
+            }
+            async fn read_unicode(&mut self, _len: usize) -> TdsResult<String> {
+                unimplemented!()
+            }
+            async fn read_unicode_with_byte_length(&mut self, _len: usize) -> TdsResult<String> {
+                unimplemented!()
+            }
+            async fn cancel_read_stream(&mut self) -> TdsResult<()> {
+                unimplemented!()
+            }
+            fn reset_reader(&mut self) {
+                self.pos = 0;
+            }
+        }
+
+        fn fixed_metadata(data_type: TdsDataType, length: usize) -> ColumnMetadata {
+            ColumnMetadata {
+                user_type: 0,
+                flags: 0,
+                data_type,
+                type_info: TypeInfo {
+                    tds_type: data_type,
+                    length,
+                    type_info_variant: TypeInfoVariant::FixedLen(
+                        crate::datatypes::sqldatatypes::FixedLengthTypes::try_from(data_type)
+                            .unwrap_or(crate::datatypes::sqldatatypes::FixedLengthTypes::Int4),
+                    ),
+                },
+                column_name: String::new(),
+                multi_part_name: None,
+            }
+        }
+
+        fn varlen_metadata(data_type: TdsDataType, length: usize) -> ColumnMetadata {
+            ColumnMetadata {
+                user_type: 0,
+                flags: 0,
+                data_type,
+                type_info: TypeInfo {
+                    tds_type: data_type,
+                    length,
+                    type_info_variant: TypeInfoVariant::VarLen(
+                        VariableLengthTypes::try_from(data_type)
+                            .unwrap_or(VariableLengthTypes::IntN),
+                        length,
+                    ),
+                },
+                column_name: String::new(),
+                multi_part_name: None,
+            }
+        }
+
+        /// Runs both decode() and decode_into() on the same bytes and asserts
+        /// that decode_into via DefaultRowWriter produces the same ColumnValues
+        /// as decode().
+        async fn assert_decode_equivalence(
+            bytes: Vec<u8>,
+            metadata: &ColumnMetadata,
+        ) -> ColumnValues {
+            let decoder = GenericDecoder::default();
+
+            // Run decode()
+            let mut reader1 = ByteReader::new(bytes.clone());
+            let expected = decoder.decode(&mut reader1, metadata).await.unwrap();
+
+            // Run decode_into()
+            let mut reader2 = ByteReader::new(bytes);
+            let mut writer = DefaultRowWriter::new(1);
+            decoder
+                .decode_into(&mut reader2, metadata, 0, &mut writer)
+                .await
+                .unwrap();
+            let row = writer.take_row();
+            assert_eq!(row.len(), 1);
+            assert_eq!(
+                row[0], expected,
+                "decode_into mismatch for {:?}",
+                metadata.data_type
+            );
+            expected
+        }
+
+        #[tokio::test]
+        async fn decode_into_int1() {
+            let md = fixed_metadata(TdsDataType::Int1, 1);
+            let val = assert_decode_equivalence(vec![42], &md).await;
+            assert_eq!(val, ColumnValues::TinyInt(42));
+        }
+
+        #[tokio::test]
+        async fn decode_into_int2() {
+            let md = fixed_metadata(TdsDataType::Int2, 2);
+            let mut buf = [0u8; 2];
+            LittleEndian::write_i16(&mut buf, -1234);
+            let val = assert_decode_equivalence(buf.to_vec(), &md).await;
+            assert_eq!(val, ColumnValues::SmallInt(-1234));
+        }
+
+        #[tokio::test]
+        async fn decode_into_int4() {
+            let md = fixed_metadata(TdsDataType::Int4, 4);
+            let mut buf = [0u8; 4];
+            LittleEndian::write_i32(&mut buf, 99999);
+            let val = assert_decode_equivalence(buf.to_vec(), &md).await;
+            assert_eq!(val, ColumnValues::Int(99999));
+        }
+
+        #[tokio::test]
+        async fn decode_into_int8() {
+            let md = fixed_metadata(TdsDataType::Int8, 8);
+            let mut buf = [0u8; 8];
+            LittleEndian::write_i64(&mut buf, i64::MAX);
+            let val = assert_decode_equivalence(buf.to_vec(), &md).await;
+            assert_eq!(val, ColumnValues::BigInt(i64::MAX));
+        }
+
+        #[tokio::test]
+        async fn decode_into_intn_null() {
+            let md = varlen_metadata(TdsDataType::IntN, 4);
+            // length byte = 0 → null
+            let val = assert_decode_equivalence(vec![0], &md).await;
+            assert_eq!(val, ColumnValues::Null);
+        }
+
+        #[tokio::test]
+        async fn decode_into_intn_i32() {
+            let md = varlen_metadata(TdsDataType::IntN, 4);
+            let mut buf = vec![4u8]; // length = 4
+            let mut i32_buf = [0u8; 4];
+            LittleEndian::write_i32(&mut i32_buf, 777);
+            buf.extend_from_slice(&i32_buf);
+            let val = assert_decode_equivalence(buf, &md).await;
+            assert_eq!(val, ColumnValues::Int(777));
+        }
+
+        #[tokio::test]
+        async fn decode_into_flt4() {
+            let md = fixed_metadata(TdsDataType::Flt4, 4);
+            let mut buf = [0u8; 4];
+            LittleEndian::write_f32(&mut buf, 1.5);
+            let val = assert_decode_equivalence(buf.to_vec(), &md).await;
+            assert_eq!(val, ColumnValues::Real(1.5));
+        }
+
+        #[tokio::test]
+        async fn decode_into_flt8() {
+            let md = fixed_metadata(TdsDataType::Flt8, 8);
+            let mut buf = [0u8; 8];
+            LittleEndian::write_f64(&mut buf, 99.25);
+            let val = assert_decode_equivalence(buf.to_vec(), &md).await;
+            assert_eq!(val, ColumnValues::Float(99.25));
+        }
+
+        #[tokio::test]
+        async fn decode_into_fltn_null() {
+            let md = varlen_metadata(TdsDataType::FltN, 8);
+            let val = assert_decode_equivalence(vec![0], &md).await;
+            assert_eq!(val, ColumnValues::Null);
+        }
+
+        #[tokio::test]
+        async fn decode_into_fltn_f32() {
+            let md = varlen_metadata(TdsDataType::FltN, 4);
+            let mut buf = vec![4u8];
+            let mut f32_buf = [0u8; 4];
+            LittleEndian::write_f32(&mut f32_buf, 2.5);
+            buf.extend_from_slice(&f32_buf);
+            let val = assert_decode_equivalence(buf, &md).await;
+            assert_eq!(val, ColumnValues::Real(2.5));
+        }
+
+        #[tokio::test]
+        async fn decode_into_bit() {
+            let md = fixed_metadata(TdsDataType::Bit, 1);
+            let val = assert_decode_equivalence(vec![1], &md).await;
+            assert_eq!(val, ColumnValues::Bit(true));
+        }
+
+        #[tokio::test]
+        async fn decode_into_bitn_null() {
+            let md = varlen_metadata(TdsDataType::BitN, 1);
+            let val = assert_decode_equivalence(vec![0], &md).await;
+            assert_eq!(val, ColumnValues::Null);
+        }
+
+        #[tokio::test]
+        async fn decode_into_bitn_true() {
+            let md = varlen_metadata(TdsDataType::BitN, 1);
+            let val = assert_decode_equivalence(vec![1, 1], &md).await;
+            assert_eq!(val, ColumnValues::Bit(true));
+        }
+
+        #[tokio::test]
+        async fn decode_into_money4() {
+            let md = fixed_metadata(TdsDataType::Money4, 4);
+            let mut buf = [0u8; 4];
+            LittleEndian::write_i32(&mut buf, 10000); // $1.00
+            let val = assert_decode_equivalence(buf.to_vec(), &md).await;
+            assert!(matches!(val, ColumnValues::SmallMoney(_)));
+        }
+
+        #[tokio::test]
+        async fn decode_into_money8() {
+            let md = fixed_metadata(TdsDataType::Money, 8);
+            let mut buf = [0u8; 8];
+            // money is stored as msb + lsb i32 pair
+            LittleEndian::write_i32(&mut buf[0..4], 0); // msb
+            LittleEndian::write_i32(&mut buf[4..8], 10000); // lsb
+            let val = assert_decode_equivalence(buf.to_vec(), &md).await;
+            assert!(matches!(val, ColumnValues::Money(_)));
+        }
+
+        #[tokio::test]
+        async fn decode_into_moneyn_null() {
+            let md = varlen_metadata(TdsDataType::MoneyN, 8);
+            let val = assert_decode_equivalence(vec![0], &md).await;
+            assert_eq!(val, ColumnValues::Null);
+        }
+
+        #[tokio::test]
+        async fn decode_into_datetime() {
+            let md = fixed_metadata(TdsDataType::DateTime, 8);
+            let mut buf = [0u8; 8];
+            LittleEndian::write_i32(&mut buf[0..4], 43000); // days
+            LittleEndian::write_u32(&mut buf[4..8], 100); // ticks
+            let val = assert_decode_equivalence(buf.to_vec(), &md).await;
+            assert!(matches!(
+                val,
+                ColumnValues::DateTime(SqlDateTime {
+                    days: 43000,
+                    time: 100
+                })
+            ));
+        }
+
+        #[tokio::test]
+        async fn decode_into_smalldatetime() {
+            let md = fixed_metadata(TdsDataType::DateTim4, 4);
+            let mut buf = [0u8; 4];
+            LittleEndian::write_u16(&mut buf[0..2], 1000); // days
+            LittleEndian::write_u16(&mut buf[2..4], 60); // minutes
+            let val = assert_decode_equivalence(buf.to_vec(), &md).await;
+            assert!(matches!(
+                val,
+                ColumnValues::SmallDateTime(SqlSmallDateTime {
+                    days: 1000,
+                    time: 60
+                })
+            ));
+        }
+
+        #[tokio::test]
+        async fn decode_into_datetimen_null() {
+            let md = varlen_metadata(TdsDataType::DateTimeN, 8);
+            let val = assert_decode_equivalence(vec![0], &md).await;
+            assert_eq!(val, ColumnValues::Null);
+        }
+
+        #[tokio::test]
+        async fn decode_into_daten() {
+            let md = varlen_metadata(TdsDataType::DateN, 3);
+            // length=3, then 3 bytes for date (uint24 days)
+            let val = assert_decode_equivalence(vec![3, 0x01, 0x00, 0x00], &md).await;
+            assert!(matches!(val, ColumnValues::Date(_)));
+        }
+
+        #[tokio::test]
+        async fn decode_into_daten_null() {
+            let md = varlen_metadata(TdsDataType::DateN, 3);
+            let val = assert_decode_equivalence(vec![0], &md).await;
+            assert_eq!(val, ColumnValues::Null);
+        }
+
+        #[tokio::test]
+        async fn decode_into_guid() {
+            let md = varlen_metadata(TdsDataType::Guid, 16);
+            let mut buf = vec![16u8]; // length
+            buf.extend_from_slice(&[1u8; 16]); // 16 bytes
+            let val = assert_decode_equivalence(buf, &md).await;
+            assert!(matches!(val, ColumnValues::Uuid(_)));
+        }
+
+        #[tokio::test]
+        async fn decode_into_guid_null() {
+            let md = varlen_metadata(TdsDataType::Guid, 16);
+            let val = assert_decode_equivalence(vec![0], &md).await;
+            assert_eq!(val, ColumnValues::Null);
+        }
+
+        #[tokio::test]
+        async fn decode_into_bigbinary() {
+            let md = varlen_metadata(TdsDataType::BigBinary, 4);
+            let mut buf = Vec::new();
+            // u16 length = 4
+            buf.extend_from_slice(&[4, 0]);
+            buf.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+            let val = assert_decode_equivalence(buf, &md).await;
+            assert_eq!(val, ColumnValues::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]));
+        }
+
+        #[tokio::test]
+        async fn decode_into_nvarchar() {
+            // non-PLP, non-LOB: u16 length + bytes
+            let md = varlen_metadata(TdsDataType::NVarChar, 100);
+            let text_bytes = b"hi";
+            let mut buf = Vec::new();
+            // u16 length = 2
+            buf.extend_from_slice(&[2, 0]);
+            buf.extend_from_slice(text_bytes);
+            let val = assert_decode_equivalence(buf, &md).await;
+            assert!(matches!(val, ColumnValues::String(_)));
+        }
+
+        #[tokio::test]
+        async fn decode_into_nvarchar_null() {
+            let md = varlen_metadata(TdsDataType::NVarChar, 100);
+            // 0xFFFF = NULL
+            let val = assert_decode_equivalence(vec![0xFF, 0xFF], &md).await;
+            assert_eq!(val, ColumnValues::Null);
+        }
+
+        #[tokio::test]
+        async fn decode_into_decimaln_null() {
+            let md = ColumnMetadata {
+                user_type: 0,
+                flags: 0,
+                data_type: TdsDataType::DecimalN,
+                type_info: TypeInfo {
+                    tds_type: TdsDataType::DecimalN,
+                    length: 9,
+                    type_info_variant: TypeInfoVariant::VarLenPrecisionScale(
+                        VariableLengthTypes::DecimalN,
+                        9,
+                        18,
+                        5,
+                    ),
+                },
+                column_name: String::new(),
+                multi_part_name: None,
+            };
+            // length byte = 0 → NULL
+            let val = assert_decode_equivalence(vec![0], &md).await;
+            assert_eq!(val, ColumnValues::Null);
+        }
+
+        #[tokio::test]
+        async fn decode_into_decimaln_value() {
+            let md = ColumnMetadata {
+                user_type: 0,
+                flags: 0,
+                data_type: TdsDataType::DecimalN,
+                type_info: TypeInfo {
+                    tds_type: TdsDataType::DecimalN,
+                    length: 9,
+                    type_info_variant: TypeInfoVariant::VarLenPrecisionScale(
+                        VariableLengthTypes::DecimalN,
+                        9,
+                        18,
+                        2,
+                    ),
+                },
+                column_name: String::new(),
+                multi_part_name: None,
+            };
+            // length=5, sign=1 (positive), one i32 part = 12345
+            let mut buf = vec![5u8, 1u8];
+            let mut part = [0u8; 4];
+            LittleEndian::write_i32(&mut part, 12345);
+            buf.extend_from_slice(&part);
+            let val = assert_decode_equivalence(buf, &md).await;
+            assert!(matches!(val, ColumnValues::Decimal(_)));
         }
     }
 }

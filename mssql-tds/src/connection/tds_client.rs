@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use crate::connection::bulk_copy::{BulkCopyOptions, BulkLoadRow, ResolvedColumnMapping};
 use crate::connection::bulk_copy_state::ATTENTION_TIMEOUT_SECONDS;
 use crate::datatypes::bulk_copy_metadata::BulkCopyColumnMetadata;
+use crate::datatypes::row_writer::{DefaultRowWriter, RowWriter};
 use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqltypes::SqlType;
 use crate::error::Error::UsageError;
@@ -29,7 +30,7 @@ use crate::{
     },
     datatypes::column_values::ColumnValues,
     handler::handler_factory::NegotiatedSettings,
-    io::token_stream::ParserContext,
+    io::token_stream::{ParserContext, RowReadResult},
     message::{batch::SqlBatch, messages::Request},
     token::tokens::{ColMetadataToken, CurrentCommand, Tokens},
 };
@@ -105,6 +106,20 @@ impl TdsClient {
         self.current_metadata.as_ref()
     }
 
+    /// Converts an `Option<u32>` timeout (where `Some(0)` means infinite) to `Option<Duration>`.
+    ///
+    /// The bulk copy API uses `0` to mean "no timeout" (infinite). This helper
+    /// normalises that convention so `Some(0)` becomes `None` (no deadline).
+    fn timeout_to_duration(timeout_sec: Option<u32>) -> Option<Duration> {
+        timeout_sec.and_then(|secs| {
+            if secs == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(secs as u64))
+            }
+        })
+    }
+
     /// Updates the remaining timeout by subtracting the elapsed time.
     fn update_remaining_timeout(&mut self, start: Instant) {
         self.remaining_request_timeout = self.remaining_request_timeout.map(|t| {
@@ -132,7 +147,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.transport.reset_reader();
@@ -168,7 +183,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.transport.reset_reader();
@@ -271,7 +286,7 @@ impl TdsClient {
         }
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.transport.reset_reader();
@@ -458,7 +473,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.return_values.clear();
@@ -505,7 +520,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.return_values.clear();
@@ -591,7 +606,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.transport.reset_reader();
@@ -637,7 +652,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.return_values.clear();
@@ -710,7 +725,7 @@ impl TdsClient {
         };
 
         // Store timeout and cancel handle for this operation
-        self.remaining_request_timeout = timeout_sec.map(|secs| Duration::from_secs(secs as u64));
+        self.remaining_request_timeout = Self::timeout_to_duration(timeout_sec);
         self.cancel_handle = cancel_handle.map(|handle| handle.child_handle());
 
         self.return_values.clear();
@@ -925,95 +940,111 @@ impl TdsClient {
     /// If there are no more rows, it returns None.
     #[instrument(skip(self), level = "info")]
     pub(crate) async fn get_next_row(&mut self) -> TdsResult<Option<Vec<ColumnValues>>> {
+        let col_count = self
+            .current_metadata
+            .as_ref()
+            .map(|m| m.columns.len())
+            .unwrap_or(0);
+        let mut writer = DefaultRowWriter::new(col_count);
+        if self.get_next_row_into(&mut writer).await? {
+            Ok(Some(writer.take_row()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Decodes the next row directly into a [`RowWriter`], returning `true` if
+    /// a row was written or `false` when the result set is exhausted.
+    ///
+    /// Uses `receive_row_into` to decode ROW/NBCROW tokens directly through
+    /// `decode_into`, bypassing the intermediate `RowToken { all_values }`.
+    #[instrument(skip(self, writer), level = "info")]
+    pub(crate) async fn get_next_row_into(
+        &mut self,
+        writer: &mut (dyn RowWriter + Send),
+    ) -> TdsResult<bool> {
         if self.current_metadata.is_none() {
             return Err(UsageError(
                 "No metadata found while fetching the next row. Have you called the execute method or was the query supposed to return resultset?".to_string(),
             ));
         }
         let parser_context = ParserContext::ColumnMetadata(self.current_metadata.clone().unwrap());
-        let mut result: Option<Vec<ColumnValues>> = None;
         loop {
             let start = Instant::now();
-            let token = self
+            let result = self
                 .transport
-                .receive_token(
+                .receive_row_into(
                     &parser_context,
                     self.remaining_request_timeout,
                     self.cancel_handle.as_ref(),
+                    writer,
                 )
                 .await?;
             self.update_remaining_timeout(start);
 
-            match token {
-                Tokens::Row(row) | Tokens::NbcRow(row) => {
+            match result {
+                RowReadResult::RowWritten => {
+                    writer.end_row();
                     info!("Row Received");
-                    result = Some(row.all_values);
-                    break;
+                    return Ok(true);
                 }
-                Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
-                    info!("done while get_next_row: {:?}", done);
+                RowReadResult::Token(token) => match token {
+                    Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
+                        info!("done while get_next_row: {:?}", done);
 
-                    let count = self.count_map.entry(done.cur_cmd).or_insert(0);
-                    // Use saturating_add to prevent integer overflow from malicious/corrupted TDS responses
-                    *count = count.saturating_add(done.row_count);
+                        let count = self.count_map.entry(done.cur_cmd).or_insert(0);
+                        *count = count.saturating_add(done.row_count);
 
-                    self.current_result_set_has_been_read_till_end = true;
-                    if !done.has_more() {
-                        // Token stream is terminated. Save this information.
-                        info!("No more rows for current command: {:?}", done.cur_cmd);
-                        self.execution_context.set_has_open_batch(false);
+                        self.current_result_set_has_been_read_till_end = true;
+                        if !done.has_more() {
+                            info!("No more rows for current command: {:?}", done.cur_cmd);
+                            self.execution_context.set_has_open_batch(false);
+                        }
+                        return Ok(false);
                     }
-                    break;
-                }
-                Tokens::Order(order_token) => {
-                    // Ignore.
-                    info!(?order_token);
-                    continue;
-                }
-                Tokens::EnvChange(env_change) => {
-                    // Handle environment changes during row iteration
-                    info!(?env_change);
-                    self.execution_context
-                        .capture_change_property(&env_change)?;
-                    continue;
-                }
-                Tokens::ReturnValue(return_value_token) => {
-                    let return_value = return_value_token.into();
-                    self.return_values.push(return_value);
-                    continue;
-                }
-                Tokens::Error(error_token) => {
-                    // SQL Server error occurred during row iteration
-                    info!(?error_token);
-                    return Err(crate::error::Error::SqlServerError {
-                        message: error_token.message.clone(),
-                        state: error_token.state,
-                        class: error_token.severity as i32,
-                        number: error_token.number,
-                        server_name: Some(error_token.server_name.clone()),
-                        proc_name: Some(error_token.proc_name.clone()),
-                        line_number: Some(error_token.line_number as i32),
-                    });
-                }
-                Tokens::ColMetadata(_) => {
-                    // ColMetadata token encountered while looking for rows
-                    // This indicates incorrect API usage - likely didn't move to next result set properly
-                    return Err(crate::error::Error::UsageError(
-                        "Unexpected ColMetadata token encountered while reading rows. \
-                         This typically indicates the API was not used correctly - \
-                         you may need to call move_to_next() to advance to the next result set."
-                            .to_string(),
-                    ));
-                }
-                _ => {
-                    return Err(crate::error::Error::ProtocolError(format!(
-                        "Unexpected token while finding the next row: {token:?}"
-                    )));
-                }
+                    Tokens::Order(order_token) => {
+                        info!(?order_token);
+                        continue;
+                    }
+                    Tokens::EnvChange(env_change) => {
+                        info!(?env_change);
+                        self.execution_context
+                            .capture_change_property(&env_change)?;
+                        continue;
+                    }
+                    Tokens::ReturnValue(return_value_token) => {
+                        let return_value = return_value_token.into();
+                        self.return_values.push(return_value);
+                        continue;
+                    }
+                    Tokens::Error(error_token) => {
+                        info!(?error_token);
+                        return Err(crate::error::Error::SqlServerError {
+                            message: error_token.message.clone(),
+                            state: error_token.state,
+                            class: error_token.severity as i32,
+                            number: error_token.number,
+                            server_name: Some(error_token.server_name.clone()),
+                            proc_name: Some(error_token.proc_name.clone()),
+                            line_number: Some(error_token.line_number as i32),
+                        });
+                    }
+                    Tokens::ColMetadata(_) => {
+                        return Err(crate::error::Error::UsageError(
+                            "Unexpected ColMetadata token encountered while reading rows. \
+                             This typically indicates the API was not used correctly - \
+                             you may need to call move_to_next() to advance to the next result set."
+                                .to_string(),
+                        ));
+                    }
+                    _ => {
+                        return Err(crate::error::Error::ProtocolError(format!(
+                            "Unexpected token while finding the next row: {token:?}"
+                        )));
+                    }
+                },
             }
         }
-
-        Ok(result)
     }
 
     /// Gets the return values collected so far.
@@ -1282,10 +1313,18 @@ impl ResultSet for TdsClient {
     #[instrument(skip(self), level = "info")]
     async fn next_row(&mut self) -> TdsResult<Option<Vec<ColumnValues>>> {
         if self.maybe_has_unread_rows() {
-            // If there are rows available, fetch the next row.
             self.get_next_row().await
         } else {
             Ok(None)
+        }
+    }
+
+    #[instrument(skip(self, writer), level = "info")]
+    async fn next_row_into(&mut self, writer: &mut (dyn RowWriter + Send)) -> TdsResult<bool> {
+        if self.maybe_has_unread_rows() {
+            self.get_next_row_into(writer).await
+        } else {
+            Ok(false)
         }
     }
 
@@ -1356,6 +1395,10 @@ pub trait ResultSet {
     /// If there is no more data, it returns None.
     async fn next_row(&mut self) -> TdsResult<Option<Vec<ColumnValues>>>;
 
+    /// Decodes the next row directly into a [`RowWriter`], returning `true` if
+    /// a row was written or `false` when the result set is exhausted.
+    async fn next_row_into(&mut self, writer: &mut (dyn RowWriter + Send)) -> TdsResult<bool>;
+
     fn maybe_has_unread_rows(&self) -> bool;
 
     /// Iterates over the result set, and marks it as closed. After calling close, the next_row method,
@@ -1378,4 +1421,27 @@ pub trait ResultSetClient<T = TdsClient> {
     /// If there is no next result set, the current result set will be closed and
     /// the method will return false.
     async fn move_to_next(&mut self) -> TdsResult<bool>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_to_duration_none_yields_none() {
+        assert_eq!(TdsClient::timeout_to_duration(None), None);
+    }
+
+    #[test]
+    fn timeout_to_duration_zero_yields_none() {
+        assert_eq!(TdsClient::timeout_to_duration(Some(0)), None);
+    }
+
+    #[test]
+    fn timeout_to_duration_positive_yields_duration() {
+        assert_eq!(
+            TdsClient::timeout_to_duration(Some(30)),
+            Some(Duration::from_secs(30))
+        );
+    }
 }

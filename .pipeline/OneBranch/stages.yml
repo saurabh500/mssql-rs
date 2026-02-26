@@ -1,0 +1,388 @@
+#################################################################################
+#                        Shared Build Stages Template                           #
+# Builds Python wheels from PyO3 bindings (mssql-py-core) across 7 targets:  #
+#   Windows x64/ARM64, Linux x64/ARM64 (manylinux + musllinux),              #
+#   macOS universal2                                                          #
+# Then packages all wheels into a NuGet archive and publishes to Azure         #
+# Artifacts via OneBranch native nugetPublishing mechanism.                    #
+#                                                                               #
+# Build jobs use custom 1ES pools (Rust, Docker, Python pre-installed).        #
+# Publish job uses managed OneBranch pool with ob_nugetPublishing_enabled.     #
+# Artifact publishing on custom pools requires explicit                        #
+# PublishPipelineArtifact@1 (governed template rewrites to                     #
+# 1ES.PublishPipelineArtifact@1).                                              #
+#################################################################################
+
+parameters:
+- name: buildAllTargets
+  type: boolean
+  default: true
+  displayName: 'Build all targets (Windows/Linux x64 and ARM64)'
+
+- name: buildPythonWheels
+  type: boolean
+  default: true
+  displayName: 'Build Python wheels'
+
+- name: isOfficial
+  type: boolean
+  default: false
+  displayName: 'Official pipeline (clean release on manual trigger)'
+
+- name: publishToFeed
+  type: boolean
+  default: false
+  displayName: 'Publish NuGet package to Azure Artifacts feed'
+
+stages:
+#############################################################################
+# Build Stage - All platforms
+#############################################################################
+- stage: Build
+  jobs:
+  #########################################################################
+  # Windows x64
+  #########################################################################
+  - job: Windows_x64
+    displayName: 'Windows x64'
+    pool:
+      type: windows
+      isCustom: true
+      name: RUST-1ES-POOL-WUS3
+      demands:
+        - imageOverride -equals RUST-Win22-Sql25-1P
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+      ob_artifactSuffix: '_windows_x64'
+      CARGO_TARGET_DIR: C:\cargo_target_dir
+    steps:
+    - template: /.pipeline/templates/cargo-authenticate-template.yml
+      parameters:
+        osType: Windows
+    - template: /.pipeline/templates/install-dependencies.yml
+      parameters:
+        osType: Windows
+        skipPythonSetup: true
+        skipRustupInstall: false
+        enableJsDeps: false
+    - ${{ if eq(parameters.buildPythonWheels, true) }}:
+      - template: /.pipeline/templates/build-python-wheels-template.yml
+        parameters:
+          osType: Windows
+          architecture: x64
+          publishArtifacts: false
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish Windows x64 Artifacts'
+      inputs:
+        targetPath: '$(ob_outputDirectory)'
+        artifact: 'drop_Build_Windows_x64_windows_x64'
+        publishLocation: 'pipeline'
+
+  #########################################################################
+  # Windows ARM64
+  #########################################################################
+  - ${{ if eq(parameters.buildAllTargets, true) }}:
+    - job: Windows_ARM64
+      displayName: 'Windows ARM64'
+      pool:
+        type: windows
+        isCustom: true
+        name: RUST-1ES-POOL-ARM-WUS3
+        demands:
+          - imageOverride -equals RUST-WINSRV-ARM
+      variables:
+        ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+        ob_artifactSuffix: '_windows_arm64'
+        CARGO_TARGET_DIR: C:\cargo_target_dir
+      steps:
+      # Node.js workaround for ARM64 ADO tasks
+      - pwsh: ./scripts/setup-nodejs-path.ps1
+        displayName: 'Add Node.js to PATH for ADO tasks'
+      - pwsh: ./scripts/install-nodejs-to-agent.ps1
+        displayName: 'Install Node.js to agent externals folder'
+      - template: /.pipeline/templates/cargo-authenticate-template.yml
+        parameters:
+          osType: Windows
+      - template: /.pipeline/templates/install-dependencies.yml
+        parameters:
+          osType: Windows
+          enableJsDeps: false
+          skipPythonSetup: true
+          skipRustupInstall: false
+      - ${{ if eq(parameters.buildPythonWheels, true) }}:
+        - template: /.pipeline/templates/build-python-wheels-template.yml
+          parameters:
+            osType: Windows
+            architecture: arm64
+            publishArtifacts: false
+            # Python 3.10 excluded - limited ARM64 support
+            pythonVersions:
+            - '3.11'
+            - '3.12'
+            - '3.13'
+            - '3.14'
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish Windows ARM64 Artifacts'
+        inputs:
+          targetPath: '$(ob_outputDirectory)'
+          artifact: 'drop_Build_Windows_ARM64_windows_arm64'
+          publishLocation: 'pipeline'
+
+  #########################################################################
+  # Linux x64
+  #########################################################################
+  - job: Linux_x64
+    displayName: 'Linux x64'
+    pool:
+      type: linux
+      isCustom: true
+      name: RUST-1ES-POOL-WUS3
+      demands:
+        - imageOverride -equals RUST-1ES-UBUSLIM
+    variables:
+      ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+      ob_artifactSuffix: '_linux_x64'
+      CARGO_TARGET_DIR: $(Build.SourcesDirectory)
+    steps:
+    - template: /.pipeline/templates/cargo-authenticate-template.yml
+      parameters:
+        osType: Linux
+    - script: .pipeline/scripts/install-rustup.sh
+      displayName: 'Install Rustup'
+    - task: DockerInstaller@0
+      inputs:
+        dockerVersion: '29.0.0'
+      displayName: 'Install Docker'
+    - template: /.pipeline/templates/install-ubuntu-dependency.yaml
+      parameters:
+        installDocker: true
+    - ${{ if eq(parameters.buildPythonWheels, true) }}:
+      - template: /.pipeline/templates/build-python-wheels-template.yml
+        parameters:
+          osType: Linux
+          architecture: x64
+          publishArtifacts: false
+      - template: /.pipeline/templates/build-python-wheels-template.yml
+        parameters:
+          osType: Alpine
+          architecture: x64
+          publishArtifacts: false
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish Linux x64 Artifacts'
+      inputs:
+        targetPath: '$(ob_outputDirectory)'
+        artifact: 'drop_Build_Linux_x64_linux_x64'
+        publishLocation: 'pipeline'
+
+  #########################################################################
+  # Linux ARM64
+  #########################################################################
+  - ${{ if eq(parameters.buildAllTargets, true) }}:
+    - job: Linux_ARM64
+      displayName: 'Linux ARM64'
+      pool:
+        type: linux
+        isCustom: true
+        name: RUST-1ES-POOL-ARM-WUS3
+        demands:
+          - imageOverride -equals RUST-UBUNTU-ARM64
+      variables:
+        ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+        ob_artifactSuffix: '_linux_arm64'
+        CARGO_TARGET_DIR: $(Build.SourcesDirectory)
+      steps:
+      - template: /.pipeline/templates/cargo-authenticate-template.yml
+        parameters:
+          osType: Linux
+      - script: .pipeline/scripts/install-rustup.sh
+        displayName: 'Install Rustup'
+      - task: DockerInstaller@0
+        inputs:
+          dockerVersion: '29.0.0'
+        displayName: 'Install Docker'
+      - template: /.pipeline/templates/install-ubuntu-dependency.yaml
+        parameters:
+          installDocker: true
+      - ${{ if eq(parameters.buildPythonWheels, true) }}:
+        - template: /.pipeline/templates/build-python-wheels-template.yml
+          parameters:
+            osType: Linux
+            architecture: arm64
+            publishArtifacts: false
+        - template: /.pipeline/templates/build-python-wheels-template.yml
+          parameters:
+            osType: Alpine
+            architecture: arm64
+            publishArtifacts: false
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish Linux ARM64 Artifacts'
+        inputs:
+          targetPath: '$(ob_outputDirectory)'
+          artifact: 'drop_Build_Linux_ARM64_linux_arm64'
+          publishLocation: 'pipeline'
+
+  #########################################################################
+  # macOS (universal2 = x86_64 + ARM64)
+  # Governed templates don't support macOS pool type natively.
+  # Using type: linux with isCustom + Azure Pipelines macOS image
+  # (same pattern as mssql-python OneBranch pipeline).
+  #########################################################################
+  - ${{ if eq(parameters.buildAllTargets, true) }}:
+    - job: MacOS_universal2
+      displayName: 'macOS universal2'
+      pool:
+        type: linux
+        isCustom: true
+        name: Azure Pipelines
+        vmImage: macOS-14
+      variables:
+        ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+        ob_artifactSuffix: '_macos_universal2'
+        CARGO_TARGET_DIR: $(Build.SourcesDirectory)
+      steps:
+      - template: /.pipeline/templates/cargo-authenticate-template.yml
+        parameters:
+          osType: MacOS
+      - template: /.pipeline/templates/install-dependencies.yml
+        parameters:
+          osType: MacOS
+      - ${{ if eq(parameters.buildPythonWheels, true) }}:
+        - template: /.pipeline/templates/build-python-wheels-template.yml
+          parameters:
+            osType: MacOS
+            architecture: universal2
+            publishArtifacts: false
+      - task: PublishPipelineArtifact@1
+        displayName: 'Publish macOS Artifacts'
+        inputs:
+          targetPath: '$(ob_outputDirectory)'
+          artifact: 'drop_Build_MacOS_universal2_macos_universal2'
+          publishLocation: 'pipeline'
+
+#############################################################################
+# Publish Stage - Collect wheels, create NuGet package, publish to feed
+#############################################################################
+- ${{ if eq(parameters.publishToFeed, true) }}:
+  - stage: Publish
+    dependsOn: Build
+    # Skip publish on PR builds — only publish on CI, scheduled, or manual runs
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+    - job: PackageAndPublish
+      displayName: 'Package wheels into NuGet and publish'
+      pool:
+        type: windows
+      variables:
+        ob_outputDirectory: '$(Build.ArtifactStagingDirectory)'
+        ob_nugetPublishing_enabled: true
+      steps:
+      - download: current
+        displayName: 'Download all build artifacts'
+
+      - task: CopyFiles@2
+        displayName: 'Collect all wheels'
+        inputs:
+          sourceFolder: '$(Pipeline.Workspace)'
+          targetFolder: '$(Build.StagingDirectory)/wheels'
+          contents: '**/*.whl'
+          flattenFolders: true
+
+      - pwsh: |
+          Write-Host "=== Collected wheels ==="
+          $wheels = Get-ChildItem "$(Build.StagingDirectory)/wheels" -Filter *.whl -ErrorAction SilentlyContinue
+          if ($wheels) {
+            $wheels | ForEach-Object {
+              Write-Host "  $($_.Name)  ($([math]::Round($_.Length/1KB, 1)) KB)"
+            }
+            Write-Host "Total: $($wheels.Count) wheels"
+          } else {
+            Write-Host "WARNING: No wheels found!"
+          }
+        displayName: 'List collected wheels'
+
+      - pwsh: |
+          $ErrorActionPreference = 'Stop'
+
+          # Extract version from mssql-py-core/Cargo.toml
+          $cargoToml = Get-Content "$(Build.SourcesDirectory)/mssql-py-core/Cargo.toml" -Raw
+          if ($cargoToml -match 'version\s*=\s*"([^"]+)"') {
+            $version = $Matches[1]
+          } else {
+            Write-Error "Could not extract version from Cargo.toml"
+            exit 1
+          }
+
+          # Determine prerelease suffix based on Build.Reason and pipeline type
+          $buildReason = "$(Build.Reason)"
+          # Template expansion produces bare True/False which aren't valid PowerShell;
+          # string comparison converts to a proper $true/$false boolean.
+          $isOfficial = "${{ parameters.isOfficial }}" -eq "True"
+          $dateStamp = Get-Date -Format "yyyyMMdd"
+          $buildId = "$(Build.BuildId)"
+          $commitSha = "$(Build.SourceVersion)"
+          $shortSha = $commitSha.Substring(0, 8)
+
+          switch ($buildReason) {
+            'Schedule' {
+              # Nightly build: 0.1.0-nightly.20260217
+              $packageVersion = "$version-nightly.$dateStamp"
+              Write-Host "Nightly build detected"
+            }
+            'Manual' {
+              if ($isOfficial) {
+                # Official release: clean semver 0.1.0
+                $packageVersion = $version
+                Write-Host "Official release build detected"
+              } else {
+                # Non-official manual trigger: dev build
+                $packageVersion = "$version-dev.$dateStamp.$buildId"
+                Write-Host "Non-official manual build detected"
+              }
+            }
+            default {
+              # CI push (IndividualCI, BatchedCI, etc.): 0.1.0-dev.20260217.12345
+              $packageVersion = "$version-dev.$dateStamp.$buildId"
+              Write-Host "CI build detected (reason: $buildReason)"
+            }
+          }
+
+          Write-Host "Package version: $packageVersion"
+          Write-Host "Build reason: $buildReason | Official: $isOfficial"
+          Write-Host "##vso[task.setvariable variable=nugetVersion]$packageVersion"
+
+          # Create .nuspec
+          $nuspecContent = @"
+          <?xml version="1.0"?>
+          <package>
+            <metadata>
+              <id>mssql-py-core-wheels</id>
+              <version>$packageVersion</version>
+              <description>Python wheels for mssql-py-core across all platforms. Commit: $shortSha. Build: $(Build.BuildNumber)</description>
+              <authors>SqlClientDrivers</authors>
+            </metadata>
+            <files>
+              <file src="wheels\**\*.whl" target="wheels" />
+            </files>
+          </package>
+          "@
+
+          $nuspecPath = "$(Build.StagingDirectory)/mssql-py-core-wheels.nuspec"
+          $nuspecContent | Out-File -FilePath $nuspecPath -Encoding utf8
+          Write-Host "Created nuspec at $nuspecPath"
+        displayName: 'Generate NuGet package metadata'
+
+      - task: NuGetCommand@2
+        displayName: 'Create NuGet package'
+        inputs:
+          command: pack
+          packagesToPack: '$(Build.StagingDirectory)/mssql-py-core-wheels.nuspec'
+          packDestination: '$(ob_outputDirectory)/packages'
+          basePath: '$(Build.StagingDirectory)'
+
+      - pwsh: |
+          Write-Host "=== NuGet package created ==="
+          Get-ChildItem "$(ob_outputDirectory)/packages" -Filter *.nupkg | ForEach-Object {
+            Write-Host "  $($_.Name)  ($([math]::Round($_.Length/1MB, 2)) MB)"
+          }
+          Write-Host "OneBranch will auto-publish from $(ob_outputDirectory)/packages"
+        displayName: 'Verify NuGet package'

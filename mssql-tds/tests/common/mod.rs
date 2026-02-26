@@ -27,13 +27,13 @@ static INIT: Once = Once::new();
 #[allow(dead_code)]
 pub fn init_tracing() {
     dotenv().ok();
-    let enable_trace = env::var("ENABLE_TRACE")
+    let enable_trace = env::var("ENABLE_TEST_TRACE")
         .unwrap_or_else(|_| "false".to_string())
         .parse::<bool>()
         .unwrap();
     if enable_trace {
         INIT.call_once(|| {
-            // Initialize the global tracing subscriber
+            // Initialize the global tracing subscriber for standalone Rust tests
             let subscriber = FmtSubscriber::builder()
                 .with_max_level(Level::TRACE)
                 .finish();

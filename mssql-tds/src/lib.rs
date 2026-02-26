@@ -198,6 +198,18 @@ pub mod fuzz_support {
                 .receive_token(context, remaining_request_timeout, cancel_handle)
                 .await
         }
+
+        async fn receive_row_into(
+            &mut self,
+            context: &ParserContext,
+            remaining_request_timeout: Option<Duration>,
+            cancel_handle: Option<&CancelHandle>,
+            writer: &mut (dyn datatypes::row_writer::RowWriter + Send),
+        ) -> TdsResult<io::token_stream::RowReadResult> {
+            self.token_stream_reader
+                .receive_row_into(context, remaining_request_timeout, cancel_handle, writer)
+                .await
+        }
     }
 
     #[async_trait]

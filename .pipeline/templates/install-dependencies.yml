@@ -16,34 +16,51 @@ parameters:
   displayName: Enable JS/Yarn dependencies installation
   type: boolean
   default: true
+
+- name: skipPythonSetup
+  displayName: Skip Python path setup (when managed by 1ES templateContext)
+  type: boolean
+  default: false
+
+- name: skipRustupInstall
+  displayName: Skip Rustup install (when managed by 1ES templateContext)
+  type: boolean
+  default: false
+
+- name: minimal
+  displayName: Minimal mode - skip all non-essential steps (for OneBranch containers)
+  type: boolean
+  default: false
  
 steps:
 - ${{ if eq(parameters.osType, 'Linux') }}:
 
-  - script: |
-      .pipeline/scripts/printinfo.sh
-    displayName: "Print Linux Agent info"
+  - ${{ if eq(parameters.minimal, false) }}:
+    - script: |
+        .pipeline/scripts/printinfo.sh
+      displayName: "Print Linux Agent info"
 
-  - script: |
-      # This causes unexpected failures in APT package installation.
-      sudo systemctl disable unattended-upgrades
-    displayName: "Disable unattended upgrades"
+    - script: |
+        # This causes unexpected failures in APT package installation.
+        sudo systemctl disable unattended-upgrades || true
+      displayName: "Disable unattended upgrades"
+      continueOnError: true
 
-  - script: |
-      scripts/install-deps.sh ${{ parameters.installdepsparams }}
-    displayName: "Install linux dependencies"
+    - script: |
+        scripts/install-deps.sh ${{ parameters.installdepsparams }}
+      displayName: "Install linux dependencies"
 
-  - script: |
-      .pipeline/scripts/install-rustup.sh
-    displayName: "Install Rustup"
+    - script: |
+        .pipeline/scripts/install-rustup.sh
+      displayName: "Install Rustup"
 
-  - script: |
-      scripts/install-jsdeps.sh
-    displayName: "Install JS dependencies"
+    - script: |
+        scripts/install-jsdeps.sh
+      displayName: "Install JS dependencies"
 
-  - script: |
-      docker ps
-    displayName: "Test Docker installation"
+    - script: |
+        docker ps
+      displayName: "Test Docker installation"
 
 - ${{ if eq(parameters.osType, 'MacOS') }}:
   - script: |
@@ -94,18 +111,20 @@ steps:
       targetType: 'filePath'
       filePath: '.pipeline/scripts/PrintAgentDebugInfo.ps1'
 
-  - task: PowerShell@2
-    displayName: 'Setup Python Paths'
-    inputs:
-      targetType: 'filePath'
-      filePath: '.pipeline/scripts/SetupPythonPaths.ps1'
+  - ${{ if eq(parameters.skipPythonSetup, false) }}:
+    - task: PowerShell@2
+      displayName: 'Setup Python Paths'
+      inputs:
+        targetType: 'filePath'
+        filePath: '.pipeline/scripts/SetupPythonPaths.ps1'
 
-  - task: PowerShell@2
-    displayName: 'Install Rustup toolchain'
-    condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
-    inputs:
-      targetType: 'filePath'
-      filePath: '.pipeline/scripts/InstallRustup.ps1'
+  - ${{ if eq(parameters.skipRustupInstall, false) }}:
+    - task: PowerShell@2
+      displayName: 'Install Rustup toolchain'
+      condition: and(succeeded(), eq('${{parameters.osType}}', 'Windows'))
+      inputs:
+        targetType: 'filePath'
+        filePath: '.pipeline/scripts/InstallRustup.ps1'
 
   - ${{ if eq(parameters.enableJsDeps, true) }}:
     - task: PowerShell@2

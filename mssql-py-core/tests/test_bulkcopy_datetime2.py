@@ -258,10 +258,17 @@ def test_cursor_bulkcopy_datetime2_all_precisions(client_context):
     """Test cursor bulkcopy with all DATETIME2 precision values (0-7).
 
     Tests datetime2 with each valid precision value to ensure proper handling
-    of different fractional second precisions.
+    of different fractional second precisions. Verifies that date/time components
+    and truncated microseconds are correct at each scale.
     """
     conn = mssql_py_core.PyCoreConnection(client_context)
     cursor = conn.cursor()
+
+    # Expected microseconds after SQL Server truncation at each scale for 123456µs:
+    # scale 0 → 0, 1 → 100000, 2 → 120000, 3 → 123000,
+    # 4 → 123400, 5 → 123450, 6 → 123456, 7 → 123456
+    expected_us_for_123456 = [0, 100000, 120000, 123000, 123400, 123450, 123456, 123456]
+    expected_us_for_999999 = [0, 900000, 990000, 999000, 999900, 999990, 999999, 999999]
 
     # Test each precision from 0 to 7
     for precision in range(8):  # 0-7 inclusive
@@ -287,11 +294,34 @@ def test_cursor_bulkcopy_datetime2_all_precisions(client_context):
         assert result is not None, f"Bulk copy failed for precision {precision}"
         assert result["rows_copied"] == 3, f"Expected 3 rows for precision {precision}, got {result['rows_copied']}"
 
-        # Verify data was inserted
-        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-        count = cursor.fetchone()[0]
-        cursor.fetchall()
-        assert count == 3, f"Expected 3 rows in table for precision {precision}, got {count}"
+        # Verify actual values round-tripped correctly
+        cursor.execute(f"SELECT id, event_datetime FROM {table_name} ORDER BY id")
+        rows = cursor.fetchall()
+        assert len(rows) == 3, f"Precision {precision}: expected 3 rows, got {len(rows)}"
+
+        for row_id, actual_dt in rows:
+            expected_id, expected_dt = data[row_id - 1]
+            assert row_id == expected_id, f"Precision {precision}: id mismatch"
+            assert actual_dt.year == expected_dt.year, f"Precision {precision}, row {row_id}: year"
+            assert actual_dt.month == expected_dt.month, f"Precision {precision}, row {row_id}: month"
+            assert actual_dt.day == expected_dt.day, f"Precision {precision}, row {row_id}: day"
+            assert actual_dt.hour == expected_dt.hour, f"Precision {precision}, row {row_id}: hour"
+            assert actual_dt.minute == expected_dt.minute, f"Precision {precision}, row {row_id}: minute"
+            assert actual_dt.second == expected_dt.second, f"Precision {precision}, row {row_id}: second"
+
+            # Verify microsecond truncation matches expected for this scale
+            if expected_dt.microsecond == 0:
+                assert actual_dt.microsecond == 0, (
+                    f"Precision {precision}, row {row_id}: expected 0µs, got {actual_dt.microsecond}µs"
+                )
+            elif expected_dt.microsecond == 123456:
+                assert actual_dt.microsecond == expected_us_for_123456[precision], (
+                    f"Precision {precision}, row {row_id}: expected {expected_us_for_123456[precision]}µs, got {actual_dt.microsecond}µs"
+                )
+            elif expected_dt.microsecond == 999999:
+                assert actual_dt.microsecond == expected_us_for_999999[precision], (
+                    f"Precision {precision}, row {row_id}: expected {expected_us_for_999999[precision]}µs, got {actual_dt.microsecond}µs"
+                )
 
         # Cleanup
         cursor.execute(f"DROP TABLE {table_name}")
@@ -668,4 +698,229 @@ def test_cursor_bulkcopy_datetime2_default_precision_without_explicit_scale(clie
 
     # Cleanup
     cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_datetime2_leap_year_dates(client_context):
+    """Test datetime2 bulk copy with leap year edge cases.
+
+    Exercises the pure-Rust date_to_ordinal() function with dates that
+    require correct leap year handling: Feb 29 in leap years, century
+    years that are/aren't leap years (1900 not leap, 2000 leap).
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    table_name = "BulkCopyTestDateTime2LeapYear"
+    cursor.execute(
+        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+    )
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, dt DATETIME2)")
+
+    data = [
+        (1, datetime.datetime(2000, 2, 29, 12, 0, 0, 0)),       # 2000 IS leap (divisible by 400)
+        (2, datetime.datetime(2000, 3, 1, 0, 0, 0, 0)),         # Day after 2000 leap day
+        (3, datetime.datetime(2024, 2, 29, 23, 59, 59, 999999)), # 2024 leap year
+        (4, datetime.datetime(2024, 3, 1, 0, 0, 0, 0)),         # Day after 2024 leap day
+        (5, datetime.datetime(1904, 2, 29, 6, 30, 0, 0)),       # 1904 leap year
+        (6, datetime.datetime(2400, 2, 29, 0, 0, 0, 0)),        # 2400 IS leap (divisible by 400)
+        (7, datetime.datetime(4, 2, 29, 0, 0, 0, 0)),           # Year 4 - first leap year
+    ]
+
+    result = cursor.bulkcopy(table_name, iter(data), batch_size=1000, timeout=30)
+
+    assert result is not None
+    assert result["rows_copied"] == 7
+
+    cursor.execute(f"SELECT id, dt FROM {table_name} ORDER BY id")
+    rows = cursor.fetchall()
+
+    assert len(rows) == 7
+    for i, (expected_id, expected_dt) in enumerate(data):
+        actual_id, actual_dt = rows[i]
+        assert actual_id == expected_id
+        assert actual_dt.year == expected_dt.year, f"Row {expected_id}: year mismatch"
+        assert actual_dt.month == expected_dt.month, f"Row {expected_id}: month mismatch"
+        assert actual_dt.day == expected_dt.day, f"Row {expected_id}: day mismatch"
+        assert actual_dt.hour == expected_dt.hour
+        assert actual_dt.minute == expected_dt.minute
+        assert actual_dt.second == expected_dt.second
+        assert abs(actual_dt.microsecond - expected_dt.microsecond) <= 1
+
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_datetime2_non_leap_century_years(client_context):
+    """Test datetime2 with century years that are NOT leap years.
+
+    1900 and 2100 are divisible by 100 but not by 400 - not leap.
+    Mar 1 of these years must have the correct ordinal (no off-by-one
+    from incorrectly treating them as leap years).
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    table_name = "BulkCopyTestDateTime2NonLeapCentury"
+    cursor.execute(
+        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+    )
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, dt DATETIME2)")
+
+    data = [
+        (1, datetime.datetime(1900, 2, 28, 23, 59, 59, 999999)),  # Last day of Feb 1900 (non-leap)
+        (2, datetime.datetime(1900, 3, 1, 0, 0, 0, 0)),           # Mar 1 1900
+        (3, datetime.datetime(2100, 2, 28, 12, 0, 0, 0)),         # Last day of Feb 2100 (non-leap)
+        (4, datetime.datetime(2100, 3, 1, 0, 0, 0, 0)),           # Mar 1 2100
+        (5, datetime.datetime(1800, 3, 1, 0, 0, 0, 0)),           # 1800 non-leap century
+    ]
+
+    result = cursor.bulkcopy(table_name, iter(data), batch_size=1000, timeout=30)
+
+    assert result is not None
+    assert result["rows_copied"] == 5
+
+    cursor.execute(f"SELECT id, dt FROM {table_name} ORDER BY id")
+    rows = cursor.fetchall()
+
+    assert len(rows) == 5
+    for i, (expected_id, expected_dt) in enumerate(data):
+        actual_id, actual_dt = rows[i]
+        assert actual_id == expected_id
+        assert actual_dt.year == expected_dt.year, f"Row {expected_id}: year"
+        assert actual_dt.month == expected_dt.month, f"Row {expected_id}: month"
+        assert actual_dt.day == expected_dt.day, f"Row {expected_id}: day"
+
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_datetime2_scales_roundtrip(client_context):
+    """Test datetime2 bulk copy round-trip with every scale (0-7).
+
+    For each scale, inserts a value with known microseconds and verifies
+    the returned precision matches what SQL Server stores at that scale.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    input_dt = datetime.datetime(2024, 7, 15, 14, 30, 45, 123456)
+
+    # Expected microseconds after SQL Server truncation at each scale:
+    # scale 0 -> 0, scale 1 -> 100000, scale 2 -> 120000, scale 3 -> 123000,
+    # scale 4 -> 123400, scale 5 -> 123450, scale 6 -> 123456, scale 7 -> 123456
+    expected_us = [0, 100000, 120000, 123000, 123400, 123450, 123456, 123456]
+
+    for scale in range(8):
+        table_name = f"BulkCopyDT2Scale{scale}"
+        cursor.execute(
+            f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+        )
+        cursor.execute(f"CREATE TABLE {table_name} (dt DATETIME2({scale}))")
+
+        cursor.bulkcopy(table_name, iter([(input_dt,)]), batch_size=1, timeout=30)
+
+        cursor.execute(f"SELECT dt FROM {table_name}")
+        row = cursor.fetchone()
+        cursor.fetchall()
+
+        actual_us = row[0].microsecond
+        assert actual_us == expected_us[scale], (
+            f"Scale {scale}: expected {expected_us[scale]}us, got {actual_us}us"
+        )
+
+        cursor.execute(f"DROP TABLE {table_name}")
+
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_datetime2_end_of_year_boundaries(client_context):
+    """Test datetime2 at year-end boundaries where ordinal calculation crosses years.
+
+    Dec 31 to Jan 1 transitions exercise the ordinal rollover logic.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    table_name = "BulkCopyTestDateTime2YearEnd"
+    cursor.execute(
+        f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+    )
+    cursor.execute(f"CREATE TABLE {table_name} (id INT, dt DATETIME2)")
+
+    data = [
+        (1, datetime.datetime(2023, 12, 31, 23, 59, 59, 999999)),  # Last instant of 2023
+        (2, datetime.datetime(2024, 1, 1, 0, 0, 0, 0)),            # First instant of 2024 (leap)
+        (3, datetime.datetime(2024, 12, 31, 23, 59, 59, 999999)),  # Last instant of 2024 (leap)
+        (4, datetime.datetime(2025, 1, 1, 0, 0, 0, 0)),            # First instant of 2025
+        (5, datetime.datetime(1999, 12, 31, 23, 59, 59, 0)),       # Y2K eve
+        (6, datetime.datetime(2000, 1, 1, 0, 0, 0, 0)),            # Y2K day
+    ]
+
+    result = cursor.bulkcopy(table_name, iter(data), batch_size=1000, timeout=30)
+
+    assert result is not None
+    assert result["rows_copied"] == 6
+
+    cursor.execute(f"SELECT id, dt FROM {table_name} ORDER BY id")
+    rows = cursor.fetchall()
+
+    assert len(rows) == 6
+    for i, (expected_id, expected_dt) in enumerate(data):
+        actual_id, actual_dt = rows[i]
+        assert actual_id == expected_id
+        assert actual_dt.year == expected_dt.year, f"Row {expected_id}: year"
+        assert actual_dt.month == expected_dt.month, f"Row {expected_id}: month"
+        assert actual_dt.day == expected_dt.day, f"Row {expected_id}: day"
+        assert actual_dt.hour == expected_dt.hour
+        assert actual_dt.minute == expected_dt.minute
+        assert actual_dt.second == expected_dt.second
+        assert abs(actual_dt.microsecond - expected_dt.microsecond) <= 1
+
+    cursor.execute(f"DROP TABLE {table_name}")
+    conn.close()
+
+
+@pytest.mark.integration
+def test_cursor_bulkcopy_datetime2_midnight_and_noon(client_context):
+    """Test datetime2 with exact midnight and noon across multiple scales.
+
+    Midnight (00:00:00.000000) and noon (12:00:00.000000) are clean time
+    values that should produce exact zero/half-day time_nanoseconds.
+    """
+    conn = mssql_py_core.PyCoreConnection(client_context)
+    cursor = conn.cursor()
+
+    for scale in [0, 3, 7]:
+        table_name = f"BulkCopyDT2MidNoon{scale}"
+        cursor.execute(
+            f"IF OBJECT_ID('{table_name}', 'U') IS NOT NULL DROP TABLE {table_name}"
+        )
+        cursor.execute(f"CREATE TABLE {table_name} (id INT, dt DATETIME2({scale}))")
+
+        data = [
+            (1, datetime.datetime(2024, 6, 15, 0, 0, 0, 0)),       # midnight
+            (2, datetime.datetime(2024, 6, 15, 12, 0, 0, 0)),      # noon
+            (3, datetime.datetime(2024, 6, 15, 23, 59, 59, 0)),    # last second
+        ]
+
+        cursor.bulkcopy(table_name, iter(data), batch_size=1000, timeout=30)
+
+        cursor.execute(f"SELECT id, dt FROM {table_name} ORDER BY id")
+        rows = cursor.fetchall()
+
+        assert len(rows) == 3
+        for j, (expected_id, expected_dt) in enumerate(data):
+            actual_id, actual_dt = rows[j]
+            assert actual_id == expected_id
+            assert actual_dt.hour == expected_dt.hour, f"Scale {scale}, row {expected_id}: hour"
+            assert actual_dt.minute == expected_dt.minute
+            assert actual_dt.second == expected_dt.second
+
+        cursor.execute(f"DROP TABLE {table_name}")
+
     conn.close()
