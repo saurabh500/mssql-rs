@@ -16,9 +16,9 @@
 
 **Purpose**: Create the `mssql-rs` crate skeleton and integrate it into the Cargo workspace.
 
-- [ ] T001 Create mssql-rs/Cargo.toml with dependencies (mssql-tds, futures, bytes, tokio, thiserror, tracing, bigdecimal, uuid) and edition=2024 in mssql-rs/Cargo.toml
-- [ ] T002 [P] Add mssql-rs to workspace members list in Cargo.toml (root)
-- [ ] T003 [P] Create mssql-rs/src/lib.rs with copyright header, module declarations (client, value, row, result_set, from_value, error, metadata, datetime, column_stream), and pub use re-exports per contracts/public-api.md in mssql-rs/src/lib.rs
+- [X] T001 Create mssql-rs/Cargo.toml with dependencies (mssql-tds, futures, bytes, tokio, thiserror, tracing, bigdecimal, uuid) and edition=2024 in mssql-rs/Cargo.toml
+- [X] T002 [P] Add mssql-rs to workspace members list in Cargo.toml (root)
+- [X] T003 [P] Create mssql-rs/src/lib.rs with copyright header, module declarations (client, value, row, result_set, from_value, error, metadata, datetime, column_stream), and pub use re-exports per contracts/public-api.md in mssql-rs/src/lib.rs
 
 ---
 
@@ -28,11 +28,11 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T004 [P] Implement Error enum (9 variants) with thiserror derives, From<mssql_tds::Error> mapping, and Result<T> type alias in mssql-rs/src/error.rs
-- [ ] T005 [P] Implement DateTime struct (8 optional fields: year, month, day, hour, minute, second, nanoseconds, offset_minutes) with From impls for all 6 TDS temporal types (SqlDateTime, SqlDateTime2, SqlDate, SqlTime, SqlDateTimeOffset, SqlSmallDateTime) in mssql-rs/src/datetime.rs
-- [ ] T006 [P] Implement ColumnMetadata struct (name, data_type, nullable, collation) and DataType enum (11 variants) in mssql-rs/src/metadata.rs
-- [ ] T007 Implement Value enum (13 variants: Null, Bool, Int, Float, Decimal, String, Binary, DateTime, Uuid, Xml, Json, Vector) with is_null() method and derive(Debug, Clone, PartialEq) in mssql-rs/src/value.rs
-- [ ] T008 Implement ColumnValues → Value coalescing logic (25 wire variants → 13 Value variants per research R2 mapping table) in mssql-rs/src/value/from_column.rs
+- [X] T004 [P] Implement Error enum (9 variants) with thiserror derives, From<mssql_tds::Error> mapping, and Result<T> type alias in mssql-rs/src/error.rs
+- [X] T005 [P] Implement DateTime struct (8 optional fields: year, month, day, hour, minute, second, nanoseconds, offset_minutes) with From impls for all 6 TDS temporal types (SqlDateTime, SqlDateTime2, SqlDate, SqlTime, SqlDateTimeOffset, SqlSmallDateTime) in mssql-rs/src/datetime.rs
+- [X] T006 [P] Implement ColumnMetadata struct (name, data_type, nullable, collation) and DataType enum (11 variants) in mssql-rs/src/metadata.rs
+- [X] T007 Implement Value enum (13 variants: Null, Bool, Int, Float, Decimal, String, Binary, DateTime, Uuid, Xml, Json, Vector) with is_null() method and derive(Debug, Clone, PartialEq) in mssql-rs/src/value.rs
+- [X] T008 Implement ColumnValues → Value coalescing logic (25 wire variants → 13 Value variants per research R2 mapping table) in mssql-rs/src/value/from_column.rs
 
 **Checkpoint**: All shared types compiled. `cargo bclippy` passes on mssql-rs.
 
@@ -48,12 +48,12 @@
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] Implement ODBC connection string parser: semicolon-delimited key=value parsing, case-insensitive keys, brace-quoted values, unknown-key error, 12 standard key → ClientContext field mapping (per research R1) in mssql-rs/src/client/connection.rs
-- [ ] T010 [US1] Implement Client struct with connect() (parses connection string, calls TdsConnectionProvider::create_client), pending_rollback/pending_unprepare fields, cancel(), and close() in mssql-rs/src/client.rs
-- [ ] T011 [P] [US1] Implement Row struct with random-access methods: value(index), len(), is_empty(), metadata(), into_values(), internal columns Vec, and Arc<Vec<ColumnMetadata>> in mssql-rs/src/row.rs
-- [ ] T012 [P] [US1] Implement ResultSet struct holding &mut Client + Arc<Vec<ColumnMetadata>>, with metadata() and collect_rows() (drains rows into Vec<Vec<Value>>) in mssql-rs/src/result_set.rs
-- [ ] T013 [US1] Implement Client::query() — execute ad-hoc SQL via TdsClient, read column metadata, construct ResultSet; return empty ResultSet for DDL (FR-002) in mssql-rs/src/client/query.rs
-- [ ] T014 [US1] Implement Client::query_collect() — call query() then collect_rows(), return Vec<Vec<Value>> in mssql-rs/src/client/query.rs
+- [X] T009 [US1] Implement ODBC connection string parser: semicolon-delimited key=value parsing, case-insensitive keys, brace-quoted values, unknown-key error, 12 standard key → ClientContext field mapping (per research R1) in mssql-rs/src/client/connection.rs
+- [X] T010 [US1] Implement Client struct with connect() (parses connection string, calls TdsConnectionProvider::create_client), pending_rollback/pending_unprepare fields, cancel(), and close() in mssql-rs/src/client.rs
+- [X] T011 [P] [US1] Implement Row struct with random-access methods: value(index), len(), is_empty(), metadata(), into_values(), internal columns Vec, and Arc<Vec<ColumnMetadata>> in mssql-rs/src/row.rs
+- [X] T012 [P] [US1] Implement ResultSet struct holding &mut Client + Arc<Vec<ColumnMetadata>>, with metadata() and collect_rows() (drains rows into Vec<Vec<Value>>) in mssql-rs/src/result_set.rs
+- [X] T013 [US1] Implement Client::query() — execute ad-hoc SQL via TdsClient, read column metadata, construct ResultSet; return empty ResultSet for DDL (FR-002) in mssql-rs/src/client/query.rs
+- [X] T014 [US1] Implement Client::query_collect() — call query() then collect_rows(), return Vec<Vec<Value>> in mssql-rs/src/client/query.rs
 
 **Checkpoint**: `Client::connect("...").await?.query_collect("SELECT 1 AS val").await?` returns `[[Value::Int(1)]]`. US1 is end-to-end functional.
 
@@ -69,12 +69,12 @@
 
 ### Implementation for User Story 2
 
-- [ ] T015 [US2] Implement futures::Stream for ResultSet via manual poll_next — delegate to TdsClient::get_next_row(), convert ColumnValues to Row, handle stream exhaustion in mssql-rs/src/result_set.rs
-- [ ] T016 [P] [US2] Implement Row::next_column() sequential column streaming mode — yield Value one at a time, track position, enforce mutual exclusivity with random-access methods in mssql-rs/src/row.rs
-- [ ] T017 [US2] Implement ResultSet::next_result_set(self) — consume current stream, call move_to_next(), return new ResultSet or None in mssql-rs/src/result_set.rs
-- [ ] T018 [P] [US2] Wire CancelHandle from mssql-tds into Client::cancel(&self) for in-flight query cancellation in mssql-rs/src/client.rs
-- [ ] T019 [P] [US2] Implement Connection Timeout and Query Timeout parsing from connection string keys (seconds → Duration), set connect_timeout on ClientContext, implement query timeout via tokio::time::timeout wrapper in mssql-rs/src/client/connection.rs
-- [ ] T020 [P] [US2] Create column_stream.rs with buffered binary streaming stub — define API surface for FR-017 (yields Bytes chunks from a fully-buffered column); mark as initial-buffered-only per research R4 in mssql-rs/src/column_stream.rs
+- [X] T015 [US2] Implement futures::Stream for ResultSet via manual poll_next — delegate to TdsClient::get_next_row(), convert ColumnValues to Row, handle stream exhaustion in mssql-rs/src/result_set.rs
+- [X] T016 [P] [US2] Implement Row::next_column() sequential column streaming mode — yield Value one at a time, track position, enforce mutual exclusivity with random-access methods in mssql-rs/src/row.rs
+- [X] T017 [US2] Implement ResultSet::next_result_set(self) — consume current stream, call move_to_next(), return new ResultSet or None in mssql-rs/src/result_set.rs
+- [X] T018 [P] [US2] Wire CancelHandle from mssql-tds into Client::cancel(&self) for in-flight query cancellation in mssql-rs/src/client.rs
+- [X] T019 [P] [US2] Implement Connection Timeout and Query Timeout parsing from connection string keys (seconds → Duration), set connect_timeout on ClientContext, implement query timeout via tokio::time::timeout wrapper in mssql-rs/src/client/connection.rs
+- [X] T020 [P] [US2] Create column_stream.rs with buffered binary streaming stub — define API surface for FR-017 (yields Bytes chunks from a fully-buffered column); mark as initial-buffered-only per research R4 in mssql-rs/src/column_stream.rs
 
 **Checkpoint**: `while let Some(row) = result_set.next().await { ... }` streams rows. `next_result_set()` advances to second set. `cancel()` stops iteration.
 
@@ -90,10 +90,10 @@
 
 ### Implementation for User Story 3
 
-- [ ] T021 [US3] Define FromValue trait with `fn from_value(value: Value) -> Result<Self>` in mssql-rs/src/from_value.rs
-- [ ] T022 [US3] Implement built-in FromValue for primitive types: bool, i8, i16, i32, i64, u8, u16, u32, f32, f64 — with range-check errors for narrowing conversions (e.g., i64 → i32) in mssql-rs/src/from_value.rs
-- [ ] T023 [US3] Implement FromValue for complex types: String (accepts String/Xml/Json), Vec<u8>, BigDecimal, uuid::Uuid, DateTime, and Option<T: FromValue> (returns None for Null) in mssql-rs/src/from_value.rs
-- [ ] T024 [US3] Wire Row::get<T: FromValue>(index) and Row::get_by_name<T: FromValue>(name) — clone Value from columns, call T::from_value(), case-insensitive name lookup via metadata in mssql-rs/src/row.rs
+- [X] T021 [US3] Define FromValue trait with `fn from_value(value: Value) -> Result<Self>` in mssql-rs/src/from_value.rs
+- [X] T022 [US3] Implement built-in FromValue for primitive types: bool, i8, i16, i32, i64, u8, u16, u32, f32, f64 — with range-check errors for narrowing conversions (e.g., i64 → i32) in mssql-rs/src/from_value.rs
+- [X] T023 [US3] Implement FromValue for complex types: String (accepts String/Xml/Json), Vec<u8>, BigDecimal, uuid::Uuid, DateTime, and Option<T: FromValue> (returns None for Null) in mssql-rs/src/from_value.rs
+- [X] T024 [US3] Wire Row::get<T: FromValue>(index) and Row::get_by_name<T: FromValue>(name) — clone Value from columns, call T::from_value(), case-insensitive name lookup via metadata in mssql-rs/src/row.rs
 
 **Checkpoint**: `row.get::<i64>(0)?` works. `row.get::<Option<String>>(1)?` returns None for NULL. Mismatched type returns `Error::TypeConversion`.
 
@@ -109,8 +109,8 @@
 
 ### Implementation for User Story 4
 
-- [ ] T025 [US4] Ensure collect_rows() correctly handles: zero-row results (empty Vec), DDL statements (empty ResultSet, empty Vec), and columns with mixed Value variants in a single result set in mssql-rs/src/result_set.rs
-- [ ] T026 [P] [US4] Add doc-test examples on Client::query_collect() and ResultSet::collect_rows() demonstrating empty, single-row, and mixed-type returns in mssql-rs/src/client/query.rs and mssql-rs/src/result_set.rs
+- [X] T025 [US4] Ensure collect_rows() correctly handles: zero-row results (empty Vec), DDL statements (empty ResultSet, empty Vec), and columns with mixed Value variants in a single result set in mssql-rs/src/result_set.rs
+- [X] T026 [P] [US4] Add doc-test examples on Client::query_collect() and ResultSet::collect_rows() demonstrating empty, single-row, and mixed-type returns in mssql-rs/src/client/query.rs and mssql-rs/src/result_set.rs
 
 **Checkpoint**: `query_collect` handles all edge cases from US4 acceptance scenarios.
 
@@ -126,9 +126,9 @@
 
 ### Implementation for User Story 5
 
-- [ ] T027 [US5] Implement parameterized query execution — build sp_executesql call from SQL + named params, map Value variants to TDS parameter types, delegate to TdsClient in mssql-rs/src/client/parameterized.rs
-- [ ] T028 [US5] Implement Client::query_with_params(&mut self, sql, params) — call parameterized executor, return ResultSet in mssql-rs/src/client.rs
-- [ ] T029 [US5] Implement Client::query_collect_with_params(&mut self, sql, params) — call query_with_params then collect_rows in mssql-rs/src/client/query.rs
+- [X] T027 [US5] Implement parameterized query execution — build sp_executesql call from SQL + named params, map Value variants to TDS parameter types, delegate to TdsClient in mssql-rs/src/client/parameterized.rs
+- [X] T028 [US5] Implement Client::query_with_params(&mut self, sql, params) — call parameterized executor, return ResultSet in mssql-rs/src/client.rs
+- [X] T029 [US5] Implement Client::query_collect_with_params(&mut self, sql, params) — call query_with_params then collect_rows in mssql-rs/src/client/query.rs
 
 **Checkpoint**: Parameterized queries execute correctly. Injection patterns are safely transmitted as parameter values.
 
@@ -144,10 +144,10 @@
 
 ### Implementation for User Story 6
 
-- [ ] T030 [US6] Implement PreparedStatement struct (handle: i32, client: &mut Client, closed: bool) with execute(&mut self, params) → ResultSet and close(self) → Result<()> in mssql-rs/src/client/prepared.rs
-- [ ] T031 [US6] Implement Client::prepare(&mut self, sql, params) — call sp_prepare, return PreparedStatement with server handle in mssql-rs/src/client.rs
-- [ ] T032 [US6] Implement Drop for PreparedStatement — if not closed, push handle to Client::pending_unprepare for deferred cleanup (research R8) in mssql-rs/src/client/prepared.rs
-- [ ] T033 [US6] Implement pending_unprepare drain — before any Client operation, iterate pending_unprepare handles and call sp_unprepare for each in mssql-rs/src/client.rs
+- [X] T030 [US6] Implement PreparedStatement struct (handle: i32, client: &mut Client, closed: bool) with execute(&mut self, params) → ResultSet and close(self) → Result<()> in mssql-rs/src/client/prepared.rs
+- [X] T031 [US6] Implement Client::prepare(&mut self, sql, params) — call sp_prepare, return PreparedStatement with server handle in mssql-rs/src/client.rs
+- [X] T032 [US6] Implement Drop for PreparedStatement — if not closed, push handle to Client::pending_unprepare for deferred cleanup (research R8) in mssql-rs/src/client/prepared.rs
+- [X] T033 [US6] Implement pending_unprepare drain — before any Client operation, iterate pending_unprepare handles and call sp_unprepare for each in mssql-rs/src/client.rs
 
 **Checkpoint**: Prepare → execute × 3 → close works. Dropping without close drains unprepare on next Client operation.
 
@@ -163,11 +163,11 @@
 
 ### Implementation for User Story 7
 
-- [ ] T034 [US7] Implement IsolationLevel enum (5 variants) with mapping to mssql_tds::TransactionIsolationLevel in mssql-rs/src/client/transaction.rs
-- [ ] T035 [US7] Implement Transaction struct (client: &mut Client, committed: bool, rolled_back: bool) with commit(self) and rollback(self) in mssql-rs/src/client/transaction.rs
-- [ ] T036 [P] [US7] Implement Client::begin_transaction() and begin_transaction_with_isolation(level) — call TdsClient begin_transaction, return Transaction in mssql-rs/src/client.rs
-- [ ] T037 [US7] Implement Transaction::query(), query_with_params(), and prepare() (FR-018) — delegate to Client's inner TdsClient within the active transaction scope in mssql-rs/src/client/transaction.rs
-- [ ] T038 [US7] Implement Drop for Transaction — if not committed/rolled back, set Client::pending_rollback=true + emit tracing::debug!; extend Client operation preamble to drain pending_rollback before proceeding in mssql-rs/src/client/transaction.rs and mssql-rs/src/client.rs
+- [X] T034 [US7] Implement IsolationLevel enum (5 variants) with mapping to mssql_tds::TransactionIsolationLevel in mssql-rs/src/client/transaction.rs
+- [X] T035 [US7] Implement Transaction struct (client: &mut Client, committed: bool, rolled_back: bool) with commit(self) and rollback(self) in mssql-rs/src/client/transaction.rs
+- [X] T036 [P] [US7] Implement Client::begin_transaction() and begin_transaction_with_isolation(level) — call TdsClient begin_transaction, return Transaction in mssql-rs/src/client.rs
+- [X] T037 [US7] Implement Transaction::query(), query_with_params(), and prepare() (FR-018) — delegate to Client's inner TdsClient within the active transaction scope in mssql-rs/src/client/transaction.rs
+- [X] T038 [US7] Implement Drop for Transaction — if not committed/rolled back, set Client::pending_rollback=true + emit tracing::debug!; extend Client operation preamble to drain pending_rollback before proceeding in mssql-rs/src/client/transaction.rs and mssql-rs/src/client.rs
 
 **Checkpoint**: Begin → query → commit works. Drop without commit triggers deferred rollback on next operation. Isolation level is set on server.
 
@@ -177,10 +177,10 @@
 
 **Purpose**: Documentation, formatting, lint compliance, and quickstart validation.
 
-- [ ] T039 [P] Add crate-level doc comments (//!) with overview, usage example, and feature summary to mssql-rs/src/lib.rs
-- [ ] T040 [P] Add doc comments with usage examples to all public methods and types across mssql-rs/src/ (SC-005)
-- [ ] T041 Run cargo bfmt and cargo bclippy against mssql-rs; fix all warnings (zero-warning discipline, Principle III)
-- [ ] T042 Validate quickstart.md examples compile against the implemented API — adjust quickstart.md or implementation if any example fails
+- [X] T039 [P] Add crate-level doc comments (//!) with overview, usage example, and feature summary to mssql-rs/src/lib.rs
+- [X] T040 [P] Add doc comments with usage examples to all public methods and types across mssql-rs/src/ (SC-005)
+- [X] T041 Run cargo bfmt and cargo bclippy against mssql-rs; fix all warnings (zero-warning discipline, Principle III)
+- [X] T042 Validate quickstart.md examples compile against the implemented API — adjust quickstart.md or implementation if any example fails
 
 ---
 
