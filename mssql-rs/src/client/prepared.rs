@@ -66,6 +66,7 @@ impl<'a> PreparedStatement<'a> {
     /// Close the prepared statement by calling `sp_unprepare` on the server.
     pub async fn close(mut self) -> Result<()> {
         self.closed = true;
+        self.client.inner.close_query().await?;
         self.client
             .inner
             .execute_sp_unprepare(self.handle, None, None)

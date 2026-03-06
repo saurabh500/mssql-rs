@@ -37,6 +37,8 @@ impl Client {
     /// Drain any deferred cleanup (pending rollback / unprepare) before
     /// executing a new operation.
     pub(crate) async fn drain_pending(&mut self) -> Result<()> {
+        // Close any open batch from a previous partially-consumed result set
+        self.inner.close_query().await?;
         if self.pending_rollback {
             self.pending_rollback = false;
             self.inner.rollback_transaction(None, None).await?;

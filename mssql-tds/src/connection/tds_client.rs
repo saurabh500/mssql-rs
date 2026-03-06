@@ -552,11 +552,15 @@ impl TdsClient {
             output_handler_value,
         );
 
+        // @options = 1 tells sp_prepare to return metadata
+        let options_parameter = RpcParameter::new(None, StatusFlags::NONE, SqlType::Int(Some(1)));
+
         // Create the parameter list for positional parameters of sp_prepare.
         let positional_parameters_vec = vec![
             output_handler_parameter,
             params_parameter,
             execute_sql_statement_parameter,
+            options_parameter,
         ];
         let positional_parameters = Some(positional_parameters_vec);
 

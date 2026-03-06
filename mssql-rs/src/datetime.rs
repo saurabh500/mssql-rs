@@ -60,7 +60,9 @@ fn days_to_ymd(total_days: u32) -> (i32, u8, u8) {
     (year, month, day)
 }
 
-fn nanos_to_hms(nanos: u64) -> (u8, u8, u8, u32) {
+fn nanos_to_hms(ticks_100ns: u64) -> (u8, u8, u8, u32) {
+    // SqlTime.time_nanoseconds stores 100-nanosecond ticks, convert to actual nanoseconds
+    let nanos = ticks_100ns * 100;
     let total_secs = nanos / 1_000_000_000;
     let sub_nanos = (nanos % 1_000_000_000) as u32;
     let hour = (total_secs / 3600) as u8;

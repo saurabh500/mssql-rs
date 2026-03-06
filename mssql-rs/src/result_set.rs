@@ -68,6 +68,8 @@ impl<'a> ResultSet<'a> {
             let values: Vec<Value> = raw.into_iter().map(Value::from).collect();
             rows.push(values);
         }
+        // Drain remaining batch-level tokens (e.g., ReturnStatus/DoneProc from RPC calls)
+        client.inner.close_query().await?;
         self.finished = true;
         Ok(rows)
     }

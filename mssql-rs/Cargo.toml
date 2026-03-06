@@ -19,3 +19,6 @@ pin-project-lite = "0.2"
 [dev-dependencies]
 tokio = { version = "1.48.0", features = ["full", "test-util"] }
 mssql-mock-tds = { path = "../mssql-mock-tds" }
+dotenv = "0.15"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+futures = "0.3"
