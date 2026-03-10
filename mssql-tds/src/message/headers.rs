@@ -11,20 +11,6 @@ use crate::{
     io::packet_writer::{PacketWriter, TdsPacketWriter},
 };
 
-pub(crate) const ACTIVITY_ID_LENGTH_IN_BYTES: u32 = 16;
-
-/// TDS Header length
-pub(crate) const TDS_HEADER_LENGTH_IN_BYTES: u32 = 4;
-
-/// TransactionDescriptor
-pub(crate) const TRANSACTION_DESCRIPTOR_HEADER_LENGTH_IN_BYTES: u32 = 8;
-
-/// OutstandingRequestCount
-pub(crate) const OUTSTANDING_REQUEST_COUNT_HEADER_LENGTH_IN_BYTES: u32 = 4;
-
-/// HeaderType
-pub(crate) const HEADER_TYPE_LENGTH_IN_BYTES: u32 = 2;
-
 // Static counter for non-transaction request count
 static NON_TRANSACTION_REQUEST_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -303,14 +289,5 @@ mod tests {
             TdsHeaders::TransactionDescriptor(_) => {}
             _ => panic!("Expected TransactionDescriptor"),
         }
-    }
-
-    #[test]
-    fn test_constants() {
-        assert_eq!(ACTIVITY_ID_LENGTH_IN_BYTES, 16);
-        assert_eq!(TDS_HEADER_LENGTH_IN_BYTES, 4);
-        assert_eq!(TRANSACTION_DESCRIPTOR_HEADER_LENGTH_IN_BYTES, 8);
-        assert_eq!(OUTSTANDING_REQUEST_COUNT_HEADER_LENGTH_IN_BYTES, 4);
-        assert_eq!(HEADER_TYPE_LENGTH_IN_BYTES, 2);
     }
 }
