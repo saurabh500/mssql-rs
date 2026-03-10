@@ -41,7 +41,7 @@ pub const ATTENTION_TIMEOUT_SECONDS: u64 = 5;
 /// and restored after attention processing. This ensures error information
 /// is not lost during the attention handling sequence.
 #[derive(Debug)]
-pub struct BulkCopyTimeoutState {
+pub(crate) struct BulkCopyTimeoutState {
     /// When the timeout expires (None = infinite timeout)
     deadline: Option<Instant>,
 

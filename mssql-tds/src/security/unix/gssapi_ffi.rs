@@ -26,32 +26,32 @@ use std::sync::OnceLock;
 // =============================================================================
 
 /// GSSAPI OM_uint32 type (status codes and flags)
-pub type GssOmUint32 = u32;
+pub(crate) type GssOmUint32 = u32;
 
 /// GSSAPI context handle (opaque pointer)
-pub type GssCtxIdT = *mut c_void;
+pub(crate) type GssCtxIdT = *mut c_void;
 
 /// GSSAPI credential handle (opaque pointer)
-pub type GssCredIdT = *mut c_void;
+pub(crate) type GssCredIdT = *mut c_void;
 
 /// GSSAPI name handle (opaque pointer)
-pub type GssNameT = *mut c_void;
+pub(crate) type GssNameT = *mut c_void;
 
 /// GSSAPI OID structure
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct GssOidDesc {
+pub(crate) struct GssOidDesc {
     pub length: GssOmUint32,
     pub elements: *mut c_void,
 }
 
 /// GSSAPI OID pointer type
-pub type GssOid = *mut GssOidDesc;
+pub(crate) type GssOid = *mut GssOidDesc;
 
 /// GSSAPI buffer descriptor
 #[repr(C)]
 #[derive(Debug)]
-pub struct GssBufferDesc {
+pub(crate) struct GssBufferDesc {
     pub length: usize,
     pub value: *mut c_void,
 }
@@ -97,90 +97,90 @@ impl GssBufferDesc {
 }
 
 /// GSSAPI buffer pointer type
-pub type GssBufferT = *mut GssBufferDesc;
+type GssBufferT = *mut GssBufferDesc;
 
 /// GSSAPI channel bindings structure
 #[repr(C)]
 #[derive(Debug)]
-pub struct GssChannelBindingsStruct {
-    pub initiator_addrtype: GssOmUint32,
-    pub initiator_address: GssBufferDesc,
-    pub acceptor_addrtype: GssOmUint32,
-    pub acceptor_address: GssBufferDesc,
-    pub application_data: GssBufferDesc,
+pub(super) struct GssChannelBindingsStruct {
+    pub(super) initiator_addrtype: GssOmUint32,
+    pub(super) initiator_address: GssBufferDesc,
+    pub(super) acceptor_addrtype: GssOmUint32,
+    pub(super) acceptor_address: GssBufferDesc,
+    pub(super) application_data: GssBufferDesc,
 }
 
-pub type GssChannelBindingsT = *mut GssChannelBindingsStruct;
+pub(super) type GssChannelBindingsT = *mut GssChannelBindingsStruct;
 
 // =============================================================================
 // GSSAPI Constants
 // =============================================================================
 
 /// Null context handle
-pub const GSS_C_NO_CONTEXT: GssCtxIdT = ptr::null_mut();
+pub(super) const GSS_C_NO_CONTEXT: GssCtxIdT = ptr::null_mut();
 
 /// Null credential handle (use default credentials)
-pub const GSS_C_NO_CREDENTIAL: GssCredIdT = ptr::null_mut();
+pub(super) const GSS_C_NO_CREDENTIAL: GssCredIdT = ptr::null_mut();
 
 /// Null OID (use default mechanism)
-pub const GSS_C_NO_OID: GssOid = ptr::null_mut();
+pub(super) const GSS_C_NO_OID: GssOid = ptr::null_mut();
 
 /// Null channel bindings
-pub const GSS_C_NO_CHANNEL_BINDINGS: GssChannelBindingsT = ptr::null_mut();
+pub(super) const GSS_C_NO_CHANNEL_BINDINGS: GssChannelBindingsT = ptr::null_mut();
 
 /// Null buffer
-pub const GSS_C_NO_BUFFER: GssBufferT = ptr::null_mut();
+const GSS_C_NO_BUFFER: GssBufferT = ptr::null_mut();
 
 // GSSAPI Major Status Codes
 /// Operation completed successfully
-pub const GSS_S_COMPLETE: GssOmUint32 = 0;
+pub(super) const GSS_S_COMPLETE: GssOmUint32 = 0;
 
 /// Continuation call needed (not an error)
-pub const GSS_S_CONTINUE_NEEDED: GssOmUint32 = 1 << 0;
+pub(super) const GSS_S_CONTINUE_NEEDED: GssOmUint32 = 1 << 0;
 
 /// Unsupported mechanism
-pub const GSS_S_BAD_MECH: GssOmUint32 = 1 << 16;
+const GSS_S_BAD_MECH: GssOmUint32 = 1 << 16;
 
 /// No credentials available
-pub const GSS_S_NO_CRED: GssOmUint32 = 7 << 16;
+pub(super) const GSS_S_NO_CRED: GssOmUint32 = 7 << 16;
 
 /// Credentials expired
-pub const GSS_S_CREDENTIALS_EXPIRED: GssOmUint32 = 11 << 16;
+const GSS_S_CREDENTIALS_EXPIRED: GssOmUint32 = 11 << 16;
 
 /// Invalid context
-pub const GSS_S_NO_CONTEXT: GssOmUint32 = 8 << 16;
+const GSS_S_NO_CONTEXT: GssOmUint32 = 8 << 16;
 
 /// Defective token
-pub const GSS_S_DEFECTIVE_TOKEN: GssOmUint32 = 9 << 16;
+const GSS_S_DEFECTIVE_TOKEN: GssOmUint32 = 9 << 16;
 
 /// Invalid name
-pub const GSS_S_BAD_NAME: GssOmUint32 = 2 << 16;
+const GSS_S_BAD_NAME: GssOmUint32 = 2 << 16;
 
 /// Name type not supported
-pub const GSS_S_BAD_NAMETYPE: GssOmUint32 = 3 << 16;
+const GSS_S_BAD_NAMETYPE: GssOmUint32 = 3 << 16;
 
 /// General failure
-pub const GSS_S_FAILURE: GssOmUint32 = 13 << 16;
+const GSS_S_FAILURE: GssOmUint32 = 13 << 16;
 
 // GSSAPI Request Flags
 /// Request mutual authentication
-pub const GSS_C_MUTUAL_FLAG: GssOmUint32 = 2;
+pub(super) const GSS_C_MUTUAL_FLAG: GssOmUint32 = 2;
 
 /// Request credential delegation
-pub const GSS_C_DELEG_FLAG: GssOmUint32 = 1;
+pub(super) const GSS_C_DELEG_FLAG: GssOmUint32 = 1;
 
 /// Request replay detection
-pub const GSS_C_REPLAY_FLAG: GssOmUint32 = 4;
+const GSS_C_REPLAY_FLAG: GssOmUint32 = 4;
 
 /// Request sequence detection
-pub const GSS_C_SEQUENCE_FLAG: GssOmUint32 = 8;
+const GSS_C_SEQUENCE_FLAG: GssOmUint32 = 8;
 
 // Status type constants for gss_display_status
 /// Major status (calling/routine error)
-pub const GSS_C_GSS_CODE: i32 = 1;
+const GSS_C_GSS_CODE: i32 = 1;
 
 /// Minor status (mechanism-specific)
-pub const GSS_C_MECH_CODE: i32 = 2;
+const GSS_C_MECH_CODE: i32 = 2;
 
 // =============================================================================
 // GSSAPI Function Pointer Types
