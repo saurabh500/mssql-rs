@@ -316,21 +316,13 @@ pub(crate) async fn fetch_table_metadata(
         r#"SELECT @@TRANCOUNT;
 
 DECLARE @Column_Names NVARCHAR(MAX) = NULL;
+DECLARE @object_id INT = OBJECT_ID('{escaped_full_name}');
+DECLARE @sql NVARCHAR(MAX);
+SET @sql = N'SELECT @CN = COALESCE(@CN + N'', '', N'''') + QUOTENAME([name]) FROM {catalog_prefix}sys.all_columns WHERE [object_id] = @ObjId';
 IF EXISTS (SELECT TOP 1 * FROM sys.all_columns WHERE [object_id] = OBJECT_ID('sys.all_columns') AND [name] = 'graph_type')
-BEGIN
-    SELECT @Column_Names = COALESCE(@Column_Names + ', ', '') + QUOTENAME([name]) 
-    FROM {catalog_prefix}sys.all_columns 
-    WHERE [object_id] = OBJECT_ID('{escaped_full_name}') 
-    AND COALESCE([graph_type], 0) NOT IN (1, 3, 4, 6, 7) 
-    ORDER BY [column_id] ASC;
-END
-ELSE
-BEGIN
-    SELECT @Column_Names = COALESCE(@Column_Names + ', ', '') + QUOTENAME([name]) 
-    FROM {catalog_prefix}sys.all_columns 
-    WHERE [object_id] = OBJECT_ID('{escaped_full_name}') 
-    ORDER BY [column_id] ASC;
-END
+    SET @sql = @sql + N' AND COALESCE([graph_type], 0) NOT IN (1, 3, 4, 6, 7)';
+SET @sql = @sql + N' ORDER BY [column_id] ASC';
+EXEC sp_executesql @sql, N'@CN NVARCHAR(MAX) OUTPUT, @ObjId INT', @CN = @Column_Names OUTPUT, @ObjId = @object_id;
 
 SELECT @Column_Names = COALESCE(@Column_Names, '*');
 
