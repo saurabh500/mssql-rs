@@ -1101,7 +1101,7 @@ impl<'a> BulkCopy<'a> {
     ///
     /// This is useful for advanced scenarios where you need to inspect
     /// or manage the timeout state directly.
-    pub fn timeout_state(&self) -> Option<&BulkCopyTimeoutState> {
+    pub(crate) fn timeout_state(&self) -> Option<&BulkCopyTimeoutState> {
         self.timeout_state.as_ref()
     }
 }
