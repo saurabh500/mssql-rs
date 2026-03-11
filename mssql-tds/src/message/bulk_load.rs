@@ -26,7 +26,6 @@ const TOKEN_DONE: u8 = 0xFD;
 
 // NULL markers for different type classes
 const FIXEDNULL: u8 = 0x00;
-const VARNULL: u16 = 0xFFFF;
 // PLP constants imported from tds_value_serializer
 
 /// Streaming bulk load writer for transmitting bulk copy data row-by-row.

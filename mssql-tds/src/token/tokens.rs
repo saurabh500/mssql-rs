@@ -240,10 +240,6 @@ pub(crate) struct EnvChangeToken {
     pub change_type: EnvChangeContainer,
 }
 
-trait EnvChangeSubToken {
-    fn sub_type(&self) -> EnvChangeTokenSubType;
-}
-
 #[derive(Debug)]
 pub(crate) struct FeatureExtAckToken {
     features: Vec<(FeatureExtension, Vec<u8>)>,
@@ -262,12 +258,6 @@ impl FeatureExtAckToken {
 impl Token for EnvChangeToken {
     fn token_type(&self) -> TokenType {
         TokenType::EnvChange
-    }
-}
-
-impl EnvChangeSubToken for EnvChangeToken {
-    fn sub_type(&self) -> EnvChangeTokenSubType {
-        self.sub_type
     }
 }
 
