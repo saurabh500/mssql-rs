@@ -16,7 +16,11 @@ static NON_TRANSACTION_REQUEST_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub(crate) enum TdsHeaders {
     TransactionDescriptor(TransactionDescriptorHeader),
+    #[allow(dead_code)]
+    // This variant is not used currently, but may be used in the future for generating trace activity headers for requests.
     TraceActivity(TraceActivityHeader),
+    #[allow(dead_code)]
+    // This variant is not used currently, but may be used in the future for generating query notifications headers for requests.
     QueryNotifications(QueryNotificationsHeader),
 }
 
@@ -94,6 +98,8 @@ pub(crate) struct QueryNotificationsHeader {
 }
 
 impl QueryNotificationsHeader {
+    #[allow(dead_code)]
+    // This constructor is not used currently, but may be used in the future for generating query notifications headers for requests.
     pub fn new(notification_data: Vec<u8>) -> Self {
         Self { notification_data }
     }
@@ -125,6 +131,8 @@ pub(crate) struct TraceActivityHeader {
 }
 
 impl TraceActivityHeader {
+    #[allow(dead_code)]
+    // This constructor is not used currently, but may be used in the future for generating trace activity headers for requests.
     pub fn new(id: uuid::Uuid) -> Self {
         // Interlocked.Increment(ref sequenceNumber);
         static SEQUENCE_NUMBER: AtomicU32 = AtomicU32::new(0);

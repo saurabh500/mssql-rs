@@ -50,13 +50,6 @@ impl TdsPacketReader for EmptyReader {
         )))
     }
 
-    async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-        Err(mssql_tds::error::Error::Io(Error::new(
-            ErrorKind::UnexpectedEof,
-            "EOF",
-        )))
-    }
-
     async fn read_uint40(&mut self) -> TdsResult<u64> {
         Err(mssql_tds::error::Error::Io(Error::new(
             ErrorKind::UnexpectedEof,
@@ -100,13 +93,6 @@ impl TdsPacketReader for EmptyReader {
     }
 
     async fn read_int16(&mut self) -> TdsResult<i16> {
-        Err(mssql_tds::error::Error::Io(Error::new(
-            ErrorKind::UnexpectedEof,
-            "EOF",
-        )))
-    }
-
-    async fn read_int24(&mut self) -> TdsResult<i32> {
         Err(mssql_tds::error::Error::Io(Error::new(
             ErrorKind::UnexpectedEof,
             "EOF",
@@ -163,13 +149,6 @@ impl TdsPacketReader for EmptyReader {
     }
 
     async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
-        Err(mssql_tds::error::Error::Io(Error::new(
-            ErrorKind::UnexpectedEof,
-            "EOF",
-        )))
-    }
-
-    async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
         Err(mssql_tds::error::Error::Io(Error::new(
             ErrorKind::UnexpectedEof,
             "EOF",

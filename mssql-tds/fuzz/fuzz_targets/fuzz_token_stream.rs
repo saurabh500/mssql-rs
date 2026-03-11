@@ -250,29 +250,13 @@ impl TdsPacketReader for FuzzReader {
         Ok(i32::from_be_bytes(buf))
     }
 
-    async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-        let mut buf = [0u8; 8];
-        self.read_bytes(&mut buf).await?;
-        Ok(i64::from_be_bytes(buf))
-    }
-
     async fn read_uint24(&mut self) -> TdsResult<u32> {
         let mut buf = [0u8; 3];
         self.read_bytes(&mut buf).await?;
         Ok(u32::from_le_bytes([buf[0], buf[1], buf[2], 0]))
     }
 
-    async fn read_int24(&mut self) -> TdsResult<i32> {
-        let mut buf = [0u8; 3];
-        self.read_bytes(&mut buf).await?;
-        let value = i32::from_le_bytes([buf[0], buf[1], buf[2], 0]);
-        // Sign extend if negative
-        if buf[2] & 0x80 != 0 {
-            Ok(value | 0xFF000000u32 as i32)
-        } else {
-            Ok(value)
-        }
-    }
+
 
     async fn read_uint40(&mut self) -> TdsResult<u64> {
         let mut buf = [0u8; 5];
@@ -280,29 +264,6 @@ impl TdsPacketReader for FuzzReader {
         Ok(u64::from_le_bytes([
             buf[0], buf[1], buf[2], buf[3], buf[4], 0, 0, 0,
         ]))
-    }
-
-    async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
-        let byte_len = self.read_byte().await? as usize;
-        // Prevent capacity overflow
-        const MAX_ALLOC: usize = 1024 * 1024; // 1MB
-        if byte_len > MAX_ALLOC {
-            return Err(mssql_tds::error::Error::Io(Error::new(
-                ErrorKind::InvalidData,
-                format!("Allocation size {} exceeds max {}", byte_len, MAX_ALLOC),
-            )));
-        }
-        let mut buf = vec![0u8; byte_len];
-        self.read_bytes(&mut buf).await?;
-
-        let chars: Vec<u16> = buf
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-            .collect();
-
-        String::from_utf16(&chars).map_err(|_| {
-            mssql_tds::error::Error::Io(Error::new(ErrorKind::InvalidData, "Invalid UTF-16"))
-        })
     }
 
     async fn read_unicode_with_byte_length(&mut self, byte_len: usize) -> TdsResult<String> {

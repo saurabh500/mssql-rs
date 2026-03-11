@@ -327,7 +327,6 @@ impl TdsClient {
             &mut packet_writer,
             table_name,
             mapped_column_metadata,
-            options,
             default_collation,
         );
 

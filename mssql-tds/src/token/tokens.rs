@@ -93,7 +93,6 @@ pub(crate) enum Tokens {
     Sspi(SspiToken),
     Row(RowToken),
     ColMetadata(ColMetadataToken),
-    NbcRow(RowToken),
     Order(OrderToken),
     ReturnStatus(ReturnStatusToken),
     ReturnValue(ReturnValueToken),
@@ -114,7 +113,6 @@ pub enum Tokens {
     Sspi(SspiToken),
     Row(RowToken),
     ColMetadata(ColMetadataToken),
-    NbcRow(RowToken),
     Order(OrderToken),
     ReturnStatus(ReturnStatusToken),
     ReturnValue(ReturnValueToken),
@@ -158,17 +156,11 @@ impl Token for Tokens {
             Tokens::Sspi(token) => token.token_type(),
             Tokens::Row(token) => token.token_type(),
             Tokens::ColMetadata(token) => token.token_type(),
-            Tokens::NbcRow(token) => token.token_type(),
             Tokens::Order(token) => token.token_type(),
             Tokens::ReturnStatus(token) => token.token_type(),
             Tokens::ReturnValue(token) => token.token_type(),
         }
     }
-}
-
-pub(crate) struct TokenEvent<'a> {
-    pub token: &'a dyn Token,
-    pub exit: bool,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -280,17 +272,8 @@ impl Token for ColMetadataToken {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct NbcRowToken {}
-
-impl Token for NbcRowToken {
-    fn token_type(&self) -> TokenType {
-        TokenType::NbcRow
-    }
-}
-
-#[derive(Debug, Default)]
 pub(crate) struct OrderToken {
-    pub order_columns: Vec<u16>,
+    pub _order_columns: Vec<u16>,
 }
 
 impl Token for OrderToken {
@@ -802,6 +785,7 @@ impl Token for ErrorToken {
 /// - Don't cause statement failure
 /// - Execution continues normally
 #[derive(Debug)]
+#[allow(dead_code)] // Not exposed publicly via any API yet.
 pub(crate) struct InfoToken {
     /// Message number (informational code, e.g., 5701 for database change)
     pub number: u32,
@@ -917,7 +901,7 @@ impl DoneToken {
 pub(crate) struct ReturnStatusToken {
     /// Return value from the stored procedure's RETURN statement
     /// Convention: 0 = success, negative = error, positive = application-specific
-    pub value: i32,
+    pub _value: i32,
 }
 
 impl Token for ReturnStatusToken {
@@ -983,32 +967,6 @@ impl Token for ReturnValueToken {
 }
 
 #[derive(Debug)]
-pub(crate) struct DoneInProcToken {
-    pub status: DoneStatus,
-    pub cur_cmd: CurrentCommand,
-    pub row_count: u64,
-}
-
-impl Token for DoneInProcToken {
-    fn token_type(&self) -> TokenType {
-        TokenType::DoneInProc
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct DoneProcToken {
-    pub status: DoneStatus,
-    pub cur_cmd: CurrentCommand,
-    pub row_count: u64,
-}
-
-impl Token for DoneProcToken {
-    fn token_type(&self) -> TokenType {
-        TokenType::DoneProc
-    }
-}
-
-#[derive(Debug)]
 pub struct RowToken {
     pub all_values: Vec<ColumnValues>,
 }
@@ -1048,16 +1006,6 @@ bitflags::bitflags! {
 
         /// Server Error.
         const SERVER_ERROR = 0x0100;
-    }
-}
-
-impl DoneStatus {
-    /// Check if this status indicates an attention acknowledgment.
-    ///
-    /// This is set when the server responds to an attention packet (MT_ATTN = 0x06).
-    #[inline]
-    pub fn is_attention_ack(&self) -> bool {
-        self.contains(DoneStatus::ATTN)
     }
 }
 
@@ -1182,36 +1130,6 @@ impl EnvChangeTokenSubType {
             EnvChangeTokenSubType::Routing => 20,
             EnvChangeTokenSubType::Unknown(val) => *val,
         }
-    }
-}
-
-#[cfg(test)]
-mod done_status_tests {
-    use super::*;
-
-    #[test]
-    fn test_is_attention_ack() {
-        let status_with_attn = DoneStatus::ATTN;
-        assert!(status_with_attn.is_attention_ack());
-
-        let status_combined = DoneStatus::ATTN | DoneStatus::COUNT;
-        assert!(status_combined.is_attention_ack());
-
-        let status_without_attn = DoneStatus::COUNT | DoneStatus::MORE;
-        assert!(!status_without_attn.is_attention_ack());
-
-        let status_final = DoneStatus::FINAL;
-        assert!(!status_final.is_attention_ack());
-    }
-
-    #[test]
-    fn test_done_status_from_u16() {
-        let status = DoneStatus::from(0x0020_u16);
-        assert!(status.is_attention_ack());
-
-        let status2 = DoneStatus::from(0x0030_u16); // ATTN | COUNT
-        assert!(status2.is_attention_ack());
-        assert!(status2.contains(DoneStatus::COUNT));
     }
 }
 

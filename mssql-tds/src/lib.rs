@@ -275,13 +275,6 @@ pub mod fuzz_support {
                 .await
         }
 
-        async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-            self.token_stream_reader
-                .packet_reader
-                .read_int64_big_endian()
-                .await
-        }
-
         async fn read_uint40(&mut self) -> TdsResult<u64> {
             self.token_stream_reader.packet_reader.read_uint40().await
         }
@@ -300,10 +293,6 @@ pub mod fuzz_support {
 
         async fn read_uint16(&mut self) -> TdsResult<u16> {
             self.token_stream_reader.packet_reader.read_uint16().await
-        }
-
-        async fn read_int24(&mut self) -> TdsResult<i32> {
-            self.token_stream_reader.packet_reader.read_int24().await
         }
 
         async fn read_uint24(&mut self) -> TdsResult<u32> {
@@ -358,13 +347,6 @@ pub mod fuzz_support {
             self.token_stream_reader
                 .packet_reader
                 .read_varchar_u8_length()
-                .await
-        }
-
-        async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
-            self.token_stream_reader
-                .packet_reader
-                .read_varchar_byte_len()
                 .await
         }
 

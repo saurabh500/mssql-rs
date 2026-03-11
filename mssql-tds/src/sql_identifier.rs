@@ -54,7 +54,6 @@ pub fn parse_multipart_identifier(
         InQuotedPart, // Reading quoted part
         AfterQuote,   // After closing quote
         AfterDot,     // After separator dot
-        Done,         // Finished parsing
     }
 
     let mut state = State::Init;
@@ -164,7 +163,6 @@ pub fn parse_multipart_identifier(
                     state = State::InPart;
                 }
             }
-            State::Done => break,
         }
 
         i += 1;
