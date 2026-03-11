@@ -27,7 +27,7 @@ where
             columns.push(reader.read_uint16().await?);
         }
         Ok(Tokens::from(OrderToken {
-            order_columns: columns,
+            _order_columns: columns,
         }))
     }
 }
@@ -57,8 +57,8 @@ mod tests {
 
         match result {
             Tokens::Order(token) => {
-                assert_eq!(token.order_columns.len(), 1);
-                assert_eq!(token.order_columns[0], 1);
+                assert_eq!(token._order_columns.len(), 1);
+                assert_eq!(token._order_columns[0], 1);
             }
             _ => panic!("Expected Order token"),
         }
@@ -83,10 +83,10 @@ mod tests {
 
         match result {
             Tokens::Order(token) => {
-                assert_eq!(token.order_columns.len(), 3);
-                assert_eq!(token.order_columns[0], 1);
-                assert_eq!(token.order_columns[1], 3);
-                assert_eq!(token.order_columns[2], 2);
+                assert_eq!(token._order_columns.len(), 3);
+                assert_eq!(token._order_columns[0], 1);
+                assert_eq!(token._order_columns[1], 3);
+                assert_eq!(token._order_columns[2], 2);
             }
             _ => panic!("Expected Order token"),
         }
@@ -108,7 +108,7 @@ mod tests {
 
         match result {
             Tokens::Order(token) => {
-                assert_eq!(token.order_columns.len(), 0);
+                assert_eq!(token._order_columns.len(), 0);
             }
             _ => panic!("Expected Order token"),
         }
@@ -135,8 +135,8 @@ mod tests {
 
         match result {
             Tokens::Order(token) => {
-                assert_eq!(token.order_columns.len(), column_count as usize);
-                for (idx, &col) in token.order_columns.iter().enumerate() {
+                assert_eq!(token._order_columns.len(), column_count as usize);
+                for (idx, &col) in token._order_columns.iter().enumerate() {
                     assert_eq!(col, idx as u16);
                 }
             }
