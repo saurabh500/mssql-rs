@@ -10,6 +10,7 @@ use crate::datatypes::row_writer::{DefaultRowWriter, RowWriter};
 use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqltypes::SqlType;
 use crate::error::Error::UsageError;
+use crate::error::SqlErrorInfo;
 use crate::io::packet_writer::PacketWriter;
 use crate::message::bulk_load::{StreamingBulkLoadWriter, build_insert_bulk_command};
 use crate::message::messages::PacketType;
@@ -375,6 +376,7 @@ impl TdsClient {
     async fn consume_done_token(&mut self) -> TdsResult<u64> {
         let parser_context = ParserContext::None(());
         let mut rows_affected = 0_u64;
+        let mut collected_errors: Vec<SqlErrorInfo> = Vec::new();
 
         loop {
             let start = Instant::now();
@@ -392,6 +394,13 @@ impl TdsClient {
                 Tokens::Done(done) | Tokens::DoneProc(done) | Tokens::DoneInProc(done) => {
                     info!("Done token: {:?}", done);
 
+                    if done.has_error() && collected_errors.is_empty() {
+                        return Err(crate::error::Error::ProtocolError(
+                            "Server reported error in DONE token without preceding ERROR token"
+                                .to_string(),
+                        ));
+                    }
+
                     // Accumulate row count from multiple DONE tokens
                     rows_affected += done.row_count;
 
@@ -402,36 +411,29 @@ impl TdsClient {
                 }
                 Tokens::Error(error_token) => {
                     info!(?error_token);
-                    return Err(crate::error::Error::SqlServerError {
-                        message: error_token.message.clone(),
-                        state: error_token.state,
-                        class: error_token.severity as i32,
-                        number: error_token.number,
-                        server_name: Some(error_token.server_name.clone()),
-                        proc_name: Some(error_token.proc_name.clone()),
-                        line_number: Some(error_token.line_number as i32),
-                    });
+                    collected_errors.push(SqlErrorInfo::from(&error_token));
                 }
                 Tokens::Info(info_token) => {
-                    // Informational message from server
                     info!(?info_token);
                     continue;
                 }
                 Tokens::EnvChange(env_change) => {
-                    // Handle environment changes
                     info!(?env_change);
                     self.execution_context
                         .capture_change_property(&env_change)?;
                     continue;
                 }
                 _ => {
-                    // Unexpected token
                     info!("Unexpected token during bulk load: {:?}", token);
                     return Err(UsageError(format!(
                         "Unexpected token while executing bulk load: {token:?}"
                     )));
                 }
             }
+        }
+
+        if !collected_errors.is_empty() {
+            return Err(crate::error::Error::from_sql_errors(collected_errors));
         }
 
         Ok(rows_affected)
@@ -781,7 +783,10 @@ impl TdsClient {
         Ok(())
     }
 
-    async fn drain_stream(&mut self) -> TdsResult<()> {
+    /// Drains all remaining tokens from the stream until a terminal DONE token.
+    /// Collects any ERROR tokens encountered and returns them.
+    async fn drain_stream(&mut self) -> TdsResult<Vec<SqlErrorInfo>> {
+        let mut collected_errors: Vec<SqlErrorInfo> = Vec::new();
         loop {
             let start = Instant::now();
             let token = self
@@ -802,6 +807,10 @@ impl TdsClient {
                         break;
                     }
                 }
+                Tokens::Error(error_token) => {
+                    info!(?error_token, "Draining ERROR token from stream");
+                    collected_errors.push(SqlErrorInfo::from(&error_token));
+                }
                 Tokens::EnvChange(t1) => {
                     self.execution_context.capture_change_property(&t1)?;
                 }
@@ -817,7 +826,7 @@ impl TdsClient {
                 }
             }
         }
-        Ok(())
+        Ok(collected_errors)
     }
 
     #[instrument(skip(self), level = "debug", name = "move_to_column_metadata")]
@@ -860,6 +869,13 @@ impl TdsClient {
                         "Received Done token with has_more={}",
                         done.has_more()
                     );
+
+                    if done.has_error() {
+                        return Err(crate::error::Error::ProtocolError(
+                            "Server reported error in DONE token without preceding ERROR token"
+                                .to_string(),
+                        ));
+                    }
 
                     let count = self.count_map.entry(done.cur_cmd).or_insert(0);
                     // Use saturating_add to prevent integer overflow from malicious/corrupted TDS responses
@@ -909,17 +925,11 @@ impl TdsClient {
                 }
                 Tokens::Error(error_token) => {
                     info!(?error_token);
-                    self.drain_stream().await?;
-                    // Drain the stream till the done token with no more rows.
-                    return Err(crate::error::Error::SqlServerError {
-                        message: error_token.message.clone(),
-                        state: error_token.state,
-                        class: error_token.severity as i32,
-                        number: error_token.number,
-                        server_name: Some(error_token.server_name.clone()),
-                        proc_name: Some(error_token.proc_name.clone()),
-                        line_number: Some(error_token.line_number as i32),
-                    });
+                    let mut all_errors = vec![SqlErrorInfo::from(&error_token)];
+                    let mut drain_errors = self.drain_stream().await?;
+                    all_errors.append(&mut drain_errors);
+                    self.execution_context.set_has_open_batch(false);
+                    return Err(crate::error::Error::from_sql_errors(all_errors));
                 }
                 Tokens::Info(info_token) => {
                     info!(?info_token);
@@ -992,6 +1002,13 @@ impl TdsClient {
                     Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
                         info!("done while get_next_row: {:?}", done);
 
+                        if done.has_error() {
+                            return Err(crate::error::Error::ProtocolError(
+                                "Server reported error in DONE token without preceding ERROR token"
+                                    .to_string(),
+                            ));
+                        }
+
                         let count = self.count_map.entry(done.cur_cmd).or_insert(0);
                         *count = count.saturating_add(done.row_count);
 
@@ -1019,15 +1036,10 @@ impl TdsClient {
                     }
                     Tokens::Error(error_token) => {
                         info!(?error_token);
-                        return Err(crate::error::Error::SqlServerError {
-                            message: error_token.message.clone(),
-                            state: error_token.state,
-                            class: error_token.severity as i32,
-                            number: error_token.number,
-                            server_name: Some(error_token.server_name.clone()),
-                            proc_name: Some(error_token.proc_name.clone()),
-                            line_number: Some(error_token.line_number as i32),
-                        });
+                        let mut all_errors = vec![SqlErrorInfo::from(&error_token)];
+                        let drain_errors = self.drain_stream().await?;
+                        all_errors.extend(drain_errors);
+                        return Err(crate::error::Error::from_sql_errors(all_errors));
                     }
                     Tokens::ColMetadata(_) => {
                         return Err(crate::error::Error::UsageError(
@@ -1254,6 +1266,7 @@ impl TdsClient {
 
     #[instrument(skip(self), level = "info")]
     pub(crate) async fn consume_transaction_response(&mut self) -> TdsResult<()> {
+        let mut collected_errors: Vec<SqlErrorInfo> = Vec::new();
         loop {
             let start = Instant::now();
             let token = self
@@ -1270,15 +1283,29 @@ impl TdsClient {
                 Tokens::DoneInProc(done) | Tokens::DoneProc(done) | Tokens::Done(done) => {
                     info!("done while consume_transaction_response: {:?}", done);
 
+                    if done.has_error() && collected_errors.is_empty() {
+                        return Err(crate::error::Error::ProtocolError(
+                            "Server reported error in DONE token without preceding ERROR token"
+                                .to_string(),
+                        ));
+                    }
+
                     let count = self.count_map.entry(done.cur_cmd).or_insert(0);
                     // Use saturating_add to prevent integer overflow from malicious/corrupted TDS responses
                     *count = count.saturating_add(done.row_count);
 
                     if !done.has_more() {
-                        // Token stream is terminated. Save this information.
                         info!("No more rows for current command: {:?}", done.cur_cmd);
+                        if !collected_errors.is_empty() {
+                            return Err(crate::error::Error::from_sql_errors(collected_errors));
+                        }
                     }
                     break;
+                }
+                Tokens::Error(error_token) => {
+                    info!(?error_token);
+                    collected_errors.push(SqlErrorInfo::from(&error_token));
+                    continue;
                 }
                 Tokens::EnvChange(env_change) => {
                     info!(?env_change);
