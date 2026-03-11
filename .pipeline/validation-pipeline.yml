@@ -338,6 +338,11 @@ stages:
           osType: Linux
           fuzzDurationSeconds: 300
           fuzzTarget: fuzz_connection_provider_context
+      - template: templates/fuzz-template.yml
+        parameters:
+          osType: Linux
+          fuzzDurationSeconds: 300
+          fuzzTarget: fuzz_bulk_copy
 
 - stage: Build_mssql_python
   dependsOn: []

@@ -308,7 +308,7 @@ impl TdsClient {
         // STEP 2: Send INSERT BULK command and consume response
         // Use the filtered metadata so the command only references mapped columns
         let insert_bulk_command =
-            build_insert_bulk_command(&table_name, &mapped_column_metadata, &options);
+            build_insert_bulk_command(&table_name, &mapped_column_metadata, &options)?;
         self.send_batch_and_consume_response(insert_bulk_command, timeout_sec, cancel_handle)
             .await?;
 
