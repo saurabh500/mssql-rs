@@ -18,6 +18,8 @@
 //! is available through GSSAPI.
 
 mod gssapi_context;
+#[allow(dead_code)]
+// GSSAPI spec-defined constants and FFI types; full set defined for completeness
 mod gssapi_ffi;
 
 pub use gssapi_context::GssapiContext;

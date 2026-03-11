@@ -186,6 +186,7 @@ pub mod sspi_status {
 
 // Common GSSAPI status codes for reference
 #[cfg(unix)]
+#[allow(dead_code)] // GSSAPI spec-defined constants; full set defined for completeness
 pub mod gssapi_status {
     /// The routine completed successfully.
     pub const GSS_S_COMPLETE: u32 = 0;
