@@ -683,7 +683,7 @@ pub(crate) fn build_insert_bulk_command(
     table_name: &str,
     column_metadata: &[BulkCopyColumnMetadata],
     options: &BulkCopyOptions,
-) -> String {
+) -> crate::core::TdsResult<String> {
     let mut command = format!("INSERT BULK {table_name} (");
 
     for (i, col_meta) in column_metadata.iter().enumerate() {
@@ -695,7 +695,7 @@ pub(crate) fn build_insert_bulk_command(
         command.push_str(&format!("[{}] ", col_meta.column_name));
 
         // Type definition
-        let type_def = col_meta.get_sql_type_definition();
+        let type_def = col_meta.get_sql_type_definition()?;
         command.push_str(&type_def);
 
         // Add COLLATE clause if the column needs collation and has a collation name
@@ -733,7 +733,7 @@ pub(crate) fn build_insert_bulk_command(
         command.push(')');
     }
 
-    command
+    Ok(command)
 }
 
 // Include additional unit tests from separate test file
