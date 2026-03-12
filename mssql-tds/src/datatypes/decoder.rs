@@ -116,6 +116,7 @@ pub(crate) struct GenericDecoder {
 }
 
 impl GenericDecoder {
+    #[cfg(test)]
     const SHORTLEN_MAXVALUE: usize = 65535;
     const SQL_PLP_NULL: usize = 0xffffffffffffffff;
     const SQL_PLP_UNKNOWNLEN: usize = 0xfffffffffffffffe;
@@ -1240,16 +1241,9 @@ impl SqlTypeDecode for GenericDecoder {
 }
 
 #[derive(Debug, Default)]
-struct StringDecoder {
-    // TODO: Make this non-optional
-    db_collation: Option<SqlCollation>,
-}
+struct StringDecoder;
 
 impl StringDecoder {
-    fn new() -> Self {
-        StringDecoder { db_collation: None }
-    }
-
     fn is_long_len_type(data_type: TdsDataType) -> bool {
         matches!(data_type, TdsDataType::NText | TdsDataType::Text)
     }
@@ -1852,16 +1846,12 @@ mod test {
 
     #[test]
     fn test_generic_decoder_default() {
-        let decoder = GenericDecoder::default();
-        // Just verify it can be created
-        assert!(std::mem::size_of_val(&decoder) > 0);
+        let _decoder = GenericDecoder::default();
     }
 
     #[test]
     fn test_string_decoder_default() {
-        let decoder = StringDecoder::default();
-        // Just verify it can be created
-        assert!(std::mem::size_of_val(&decoder) > 0);
+        let _decoder = StringDecoder;
     }
 
     #[test]
@@ -2186,12 +2176,6 @@ mod test {
         };
         let result = parts.to_f64();
         assert_eq!(result, -0.0);
-    }
-
-    #[test]
-    fn test_string_decoder_new() {
-        let decoder = StringDecoder::new();
-        assert!(decoder.db_collation.is_none());
     }
 
     #[test]

@@ -87,16 +87,8 @@ pub(crate) const VAR_TDS_MAX_LENGTH: u16 = 8000u16;
 // The length of a NULL value in TDS is 65535 bytes for variable length types.
 pub(crate) const MAX_U16_LENGTH: u16 = 65535u16;
 
-// The length of a NULL value in TDS is 0 bytes.
-pub(crate) const NULL_LENGTH: u8 = 0u8;
-
 // The fixed size for Decimal in TDS is 17 bytes.
 pub(crate) const DECIMAL_FIXED_SIZE: u8 = 17;
-
-// The short data length which signifies that the data is being sent as PLP (Partial Length Packet).
-pub(crate) const MAX_SHORT_DATA_LENGTH: u16 = 0xFFFF;
-
-pub(crate) const PLP_TERMINATOR_CHUNK_LEN: u32 = 0x00000000;
 
 pub(crate) const PLP_UNKNOWN_LENGTH: u64 = 0xFFFF_FFFF_FFFF_FFFE;
 

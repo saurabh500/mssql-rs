@@ -423,28 +423,6 @@ pub struct TypeInfo {
     pub type_info_variant: TypeInfoVariant,
 }
 
-impl TypeInfo {
-    pub(crate) fn get_collation(&self) -> Option<SqlCollation> {
-        match &self.type_info_variant {
-            TypeInfoVariant::VarLenString(_, _, collation) => {
-                if collation.is_some() {
-                    *collation
-                } else {
-                    None
-                }
-            }
-            TypeInfoVariant::PartialLen(_, _, collation, _, _) => {
-                if collation.is_some() {
-                    *collation
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
-}
-
 type Precision = u8;
 type Scale = u8;
 type Length = usize;
@@ -467,6 +445,7 @@ pub enum TypeInfoVariant {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // fields parsed from TDS wire protocol for completeness
 pub struct XmlInfo {
     schema_present: u8,
     db_name: Option<String>,
@@ -475,6 +454,7 @@ pub struct XmlInfo {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // fields parsed from TDS wire protocol for completeness
 pub struct UdtInfoInColMetadata {
     max_byte_size: u16,
     db_name: String,
@@ -486,6 +466,7 @@ pub struct UdtInfoInColMetadata {
 type UdtMetadata = String;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // fields parsed from TDS wire protocol for completeness
 pub struct UdtInfoInRpc {
     db_name: String,
     schema_name: String,

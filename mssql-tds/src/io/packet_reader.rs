@@ -35,9 +35,11 @@ pub(crate) trait TdsPacketReader {
 
     async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize>;
     async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>>;
+    #[allow(dead_code)]
     async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>>;
     async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>>;
     async fn read_varchar_u8_length(&mut self) -> TdsResult<String>;
+    #[allow(dead_code)]
     async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String>;
     async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String>;
     async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()>;
@@ -86,6 +88,7 @@ pub struct PacketReader<'a> {
 impl<'a> PacketReader<'a> {
     pub const LENGTHNULL: u16 = 0xffff;
 
+    #[cfg(test)]
     pub(crate) fn new(network_reader_writer: &'a mut dyn NetworkReaderWriter) -> PacketReader<'a> {
         let packet_size: usize = network_reader_writer.as_writer().packet_size() as usize;
         let packet_storage = packet_size * 2;

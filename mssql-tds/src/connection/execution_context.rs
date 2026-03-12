@@ -13,6 +13,7 @@ pub(crate) struct ExecutionContext {
     transaction_descriptor: u64,
     outstanding_requests: u32,
     has_open_batch: bool,
+    #[cfg(test)]
     has_open_result_set: bool,
     change_properties: EnvChangeProperties,
 }
@@ -23,6 +24,7 @@ impl ExecutionContext {
             transaction_descriptor: 0,
             outstanding_requests: 1,
             has_open_batch: false,
+            #[cfg(test)]
             has_open_result_set: false,
             change_properties: EnvChangeProperties::default(),
         }
@@ -50,6 +52,7 @@ impl ExecutionContext {
         self.has_open_batch
     }
 
+    #[cfg(test)]
     pub fn has_open_result_set(&self) -> bool {
         self.has_open_result_set
     }
@@ -59,6 +62,7 @@ impl ExecutionContext {
         self.has_open_batch = has_open_batch;
     }
 
+    #[cfg(test)]
     #[instrument(skip(self))]
     pub(crate) fn set_has_open_result_set(&mut self, has_open_result_set: bool) {
         self.has_open_result_set = has_open_result_set;
