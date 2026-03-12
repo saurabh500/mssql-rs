@@ -189,27 +189,6 @@ impl TryFrom<TableMetadataResult> for Vec<BulkCopyColumnMetadata> {
     }
 }
 
-impl TryFrom<ColMetadataToken> for Vec<BulkCopyColumnMetadata> {
-    type Error = Error;
-
-    fn try_from(col_metadata_token: ColMetadataToken) -> Result<Self, Self::Error> {
-        if col_metadata_token.columns.is_empty() {
-            return Err(Error::UsageError(
-                "Table not found or has no columns".to_string(),
-            ));
-        }
-
-        // Convert each column using the existing From<&ColumnMetadata> implementation
-        let metadata = col_metadata_token
-            .columns
-            .iter()
-            .map(BulkCopyColumnMetadata::from)
-            .collect();
-
-        Ok(metadata)
-    }
-}
-
 /// Fetch table metadata using SET FMTONLY ON query.
 ///
 /// This function retrieves column metadata for a table by executing a
@@ -442,4 +421,150 @@ EXEC {catalog_for_sproc}sp_tablecollations_100 N'{schema_name}.{table_name_escap
         col_metadata,
         collation_names,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::datatypes::sqldatatypes::{
+        FixedLengthTypes, TdsDataType, TypeInfo, TypeInfoVariant, VariableLengthTypes,
+    };
+    use crate::query::metadata::ColumnMetadata;
+    use crate::token::tokens::SqlCollation;
+
+    fn make_column(name: &str, flags: u16, type_info_variant: TypeInfoVariant) -> ColumnMetadata {
+        let tds_type = match &type_info_variant {
+            TypeInfoVariant::FixedLen(_) => TdsDataType::IntN,
+            TypeInfoVariant::VarLenString(_, _, _) => TdsDataType::NVarChar,
+            _ => TdsDataType::IntN,
+        };
+        ColumnMetadata {
+            user_type: 0,
+            flags,
+            type_info: TypeInfo {
+                tds_type,
+                length: 4,
+                type_info_variant,
+            },
+            data_type: tds_type,
+            column_name: name.to_string(),
+            multi_part_name: None,
+        }
+    }
+
+    fn make_table_metadata(
+        columns: Vec<ColumnMetadata>,
+        collation_names: Vec<Option<String>>,
+    ) -> TableMetadataResult {
+        TableMetadataResult {
+            col_metadata: ColMetadataToken {
+                column_count: columns.len() as u16,
+                columns,
+            },
+            collation_names,
+        }
+    }
+
+    fn nvarchar_variant() -> TypeInfoVariant {
+        TypeInfoVariant::VarLenString(
+            VariableLengthTypes::NVarChar,
+            100,
+            Some(SqlCollation {
+                info: 0,
+                lcid_language_id: 0,
+                col_flags: 0,
+                sort_id: 0,
+            }),
+        )
+    }
+
+    #[test]
+    fn test_try_from_table_metadata_result_empty_columns() {
+        let result = make_table_metadata(vec![], vec![]);
+        let err = Vec::<BulkCopyColumnMetadata>::try_from(result).unwrap_err();
+        assert!(matches!(err, Error::UsageError(msg) if msg.contains("no columns")),);
+    }
+
+    #[test]
+    fn test_try_from_table_metadata_result_with_collations() {
+        let columns = vec![
+            make_column("col1", 0x00, nvarchar_variant()),
+            make_column("col2", 0x00, nvarchar_variant()),
+        ];
+        let collations = vec![
+            Some("Latin1_General_CI_AS".to_string()),
+            Some("SQL_Latin1_General_CP1_CI_AS".to_string()),
+        ];
+        let result = make_table_metadata(columns, collations);
+        let metadata = Vec::<BulkCopyColumnMetadata>::try_from(result).unwrap();
+
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(
+            metadata[0].collation_name.as_deref(),
+            Some("Latin1_General_CI_AS")
+        );
+        assert_eq!(
+            metadata[1].collation_name.as_deref(),
+            Some("SQL_Latin1_General_CP1_CI_AS")
+        );
+    }
+
+    #[test]
+    fn test_try_from_table_metadata_result_collations_shorter_than_columns() {
+        let columns = vec![
+            make_column("col1", 0x00, nvarchar_variant()),
+            make_column("col2", 0x00, nvarchar_variant()),
+            make_column(
+                "col3",
+                0x00,
+                TypeInfoVariant::FixedLen(FixedLengthTypes::Int4),
+            ),
+        ];
+        let collations = vec![Some("Latin1_General_CI_AS".to_string())];
+        let result = make_table_metadata(columns, collations);
+        let metadata = Vec::<BulkCopyColumnMetadata>::try_from(result).unwrap();
+
+        assert_eq!(metadata.len(), 3);
+        assert_eq!(
+            metadata[0].collation_name.as_deref(),
+            Some("Latin1_General_CI_AS")
+        );
+        assert!(metadata[1].collation_name.is_none());
+        assert!(metadata[2].collation_name.is_none());
+    }
+
+    #[test]
+    fn test_try_from_table_metadata_result_no_collations() {
+        let columns = vec![
+            make_column("col1", 0x00, nvarchar_variant()),
+            make_column(
+                "col2",
+                0x00,
+                TypeInfoVariant::FixedLen(FixedLengthTypes::Int4),
+            ),
+        ];
+        let result = make_table_metadata(columns, vec![]);
+        let metadata = Vec::<BulkCopyColumnMetadata>::try_from(result).unwrap();
+
+        assert_eq!(metadata.len(), 2);
+        assert!(metadata[0].collation_name.is_none());
+        assert!(metadata[1].collation_name.is_none());
+    }
+
+    #[test]
+    fn test_try_from_table_metadata_result_preserves_identity_flag() {
+        let columns = vec![
+            make_column(
+                "id",
+                0x10,
+                TypeInfoVariant::FixedLen(FixedLengthTypes::Int4),
+            ),
+            make_column("name", 0x00, nvarchar_variant()),
+        ];
+        let result = make_table_metadata(columns, vec![]);
+        let metadata = Vec::<BulkCopyColumnMetadata>::try_from(result).unwrap();
+
+        assert!(metadata[0].is_identity);
+        assert!(!metadata[1].is_identity);
+    }
 }
