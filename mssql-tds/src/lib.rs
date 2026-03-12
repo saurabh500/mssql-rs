@@ -6,13 +6,13 @@ pub mod connection_provider;
 pub mod core;
 pub mod datatypes;
 pub mod error;
-pub mod handler;
-pub mod io;
+pub(crate) mod handler;
+pub(crate) mod io;
 pub mod message;
 pub mod query;
 pub mod security;
 pub mod sql_identifier;
-pub mod ssrp;
+pub(crate) mod ssrp;
 pub mod token;
 
 // Expose internal APIs for fuzzing
