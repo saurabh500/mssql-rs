@@ -31,12 +31,6 @@ impl<T: SqlTypeDecode + Default> Default for ReturnValueTokenParser<T> {
     }
 }
 
-fn is_null_value_in_column(null_bitmap: &[u8], index: usize) -> bool {
-    let byte_index: usize = index / 8;
-    let bit_index = index % 8;
-    (null_bitmap[byte_index] & (1 << bit_index)) != 0
-}
-
 #[async_trait]
 impl<T: SqlTypeDecode + Sync, P: TdsPacketReader + Send + Sync> TokenParser<P>
     for ReturnValueTokenParser<T>

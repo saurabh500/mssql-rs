@@ -9,10 +9,6 @@
 /// SQL Server service class for SPN.
 const SQL_SERVICE_CLASS: &str = "MSSQLSvc";
 
-/// Maximum length for an SPN.
-/// Based on ODBC's SNI_MAX_COMPOSED_SPN = 9 + NI_MAXHOST + 1 + MAX_INSTANCENAME_LENGTH
-const MAX_SPN_LENGTH: usize = 9 + 1025 + 1 + 256;
-
 /// Generates a Service Principal Name (SPN) for SQL Server.
 ///
 /// The SPN format is: `MSSQLSvc/<hostname>:<port_or_instance>`

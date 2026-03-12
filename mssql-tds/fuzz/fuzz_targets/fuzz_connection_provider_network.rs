@@ -63,12 +63,6 @@ impl TdsPacketReader for FuzzReader {
         Ok(i32::from_be_bytes(buf))
     }
 
-    async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-        let mut buf = [0u8; 8];
-        self.read_bytes(&mut buf).await?;
-        Ok(i64::from_be_bytes(buf))
-    }
-
     async fn read_uint40(&mut self) -> TdsResult<u64> {
         let mut buf = [0u8; 8];
         self.read_bytes(&mut buf[..5]).await?;
@@ -109,12 +103,6 @@ impl TdsPacketReader for FuzzReader {
         let mut buf = [0u8; 2];
         self.read_bytes(&mut buf).await?;
         Ok(i16::from_le_bytes(buf))
-    }
-
-    async fn read_int24(&mut self) -> TdsResult<i32> {
-        let mut buf = [0u8; 4];
-        self.read_bytes(&mut buf[..3]).await?;
-        Ok(i32::from_le_bytes(buf))
     }
 
     async fn read_uint24(&mut self) -> TdsResult<u32> {
@@ -205,21 +193,6 @@ impl TdsPacketReader for FuzzReader {
     async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
         let len = self.read_byte().await? as usize;
         let byte_len = len * 2;
-        const MAX_ALLOC: usize = 1024 * 1024;
-        if byte_len > MAX_ALLOC {
-            return Err(mssql_tds::error::Error::Io(Error::new(
-                ErrorKind::InvalidData,
-                format!("Allocation size {} exceeds max {}", byte_len, MAX_ALLOC),
-            )));
-        }
-        let mut buf = vec![0u8; byte_len];
-        self.read_bytes(&mut buf).await?;
-        String::from_utf16(&buf.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<u16>>())
-            .map_err(|e| mssql_tds::error::Error::Io(Error::new(ErrorKind::InvalidData, e)))
-    }
-
-    async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
-        let byte_len = self.read_byte().await? as usize;
         const MAX_ALLOC: usize = 1024 * 1024;
         if byte_len > MAX_ALLOC {
             return Err(mssql_tds::error::Error::Io(Error::new(

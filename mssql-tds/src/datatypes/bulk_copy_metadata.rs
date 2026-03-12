@@ -578,14 +578,14 @@ impl BulkCopyColumnMetadata {
     ///
     /// ```ignore
     /// let meta = BulkCopyColumnMetadata::new("id", SqlDbType::Int, 0x38);
-    /// assert_eq!(meta.get_sql_type_definition(), "int");
+    /// assert_eq!(meta.get_sql_type_definition().unwrap(), "int");
     ///
     /// let meta = BulkCopyColumnMetadata::new("name", SqlDbType::NVarChar, 0xE7)
     ///     .with_length(100, TypeLength::Variable(100));
-    /// assert_eq!(meta.get_sql_type_definition(), "nvarchar(100)");
+    /// assert_eq!(meta.get_sql_type_definition().unwrap(), "nvarchar(100)");
     /// ```
-    pub fn get_sql_type_definition(&self) -> String {
-        match self.sql_type {
+    pub fn get_sql_type_definition(&self) -> crate::core::TdsResult<String> {
+        Ok(match self.sql_type {
             SqlDbType::Int => "int".to_string(),
             SqlDbType::BigInt => "bigint".to_string(),
             SqlDbType::SmallInt => "smallint".to_string(),
@@ -645,15 +645,10 @@ impl BulkCopyColumnMetadata {
             SqlDbType::Variant => "sql_variant".to_string(),
             SqlDbType::Json => "nvarchar(max)".to_string(),
             SqlDbType::Vector => {
-                let dims = self.vector_dimensions().unwrap_or_else(|e| {
-                    panic!(
-                        "Invalid VECTOR metadata for column '{}': {}",
-                        self.column_name, e
-                    )
-                });
+                let dims = self.vector_dimensions()?;
                 format!("vector({})", dims)
             }
-        }
+        })
     }
 
     /// Compute VECTOR dimensions from total `length` and base type encoded in `scale`.

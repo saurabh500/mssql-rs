@@ -145,14 +145,6 @@ mod tests {
                 server,
             )
         }
-
-        fn handshake_started(&self) -> bool {
-            self.handshake_started.load(Ordering::SeqCst)
-        }
-
-        fn handshake_completed(&self) -> bool {
-            self.handshake_completed.load(Ordering::SeqCst)
-        }
     }
 
     impl AsyncRead for MockStream {

@@ -2761,10 +2761,6 @@ mod test {
                 let b = self.take(3)?;
                 Ok(b[0] as u32 | (b[1] as u32) << 8 | (b[2] as u32) << 16)
             }
-            async fn read_int24(&mut self) -> TdsResult<i32> {
-                let v = self.read_uint24().await?;
-                Ok(v as i32)
-            }
             async fn read_uint40(&mut self) -> TdsResult<u64> {
                 let b = self.take(5)?;
                 Ok(b[0] as u64
@@ -2788,9 +2784,6 @@ mod test {
             async fn read_int32_big_endian(&mut self) -> TdsResult<i32> {
                 unimplemented!()
             }
-            async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-                unimplemented!()
-            }
             async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>> {
                 unimplemented!()
             }
@@ -2801,9 +2794,6 @@ mod test {
                 unimplemented!()
             }
             async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
-                unimplemented!()
-            }
-            async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
                 unimplemented!()
             }
             async fn read_unicode(&mut self, _len: usize) -> TdsResult<String> {
