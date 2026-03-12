@@ -212,6 +212,7 @@ impl<'a> PacketReader<'a> {
     }
 
     /// Skips a specified number of bytes in the packet stream.
+    #[allow(dead_code)]
     pub async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()> {
         let mut length_to_read = skip_count;
         while length_to_read > 0 {
