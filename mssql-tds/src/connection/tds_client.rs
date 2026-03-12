@@ -91,18 +91,6 @@ impl TdsClient {
         self.negotiated_settings.database_collation
     }
 
-    pub(crate) fn get_transport(&self) -> &dyn TdsTransport {
-        self.transport.as_ref()
-    }
-
-    pub(crate) fn get_negotiated_settings(&self) -> &NegotiatedSettings {
-        &self.negotiated_settings
-    }
-
-    pub(crate) fn get_execution_context(&self) -> &ExecutionContext {
-        &self.execution_context
-    }
-
     pub(crate) fn get_current_metadata(&self) -> Option<&ColMetadataToken> {
         self.current_metadata.as_ref()
     }

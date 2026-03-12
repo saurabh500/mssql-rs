@@ -538,15 +538,6 @@ impl NetworkTransport {
         }
     }
 
-    pub(crate) async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
-        self.stream
-            .as_mut()
-            .expect("Stream not available")
-            .write_all(data)
-            .await?;
-        Ok(())
-    }
-
     pub(crate) fn notify_encryption_negotiation(
         &mut self,
         encryption: NegotiatedEncryptionSetting,

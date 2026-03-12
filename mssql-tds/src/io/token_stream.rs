@@ -4,22 +4,33 @@
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::decoder::GenericDecoder;
 use crate::datatypes::row_writer::RowWriter;
-use crate::error::Error::{OperationCancelledError, TimeoutError};
-use crate::error::TimeoutErrorType;
-use crate::io::packet_reader::TdsPacketReader;
-use crate::query::metadata::ColumnMetadata;
 use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
     EnvChangeTokenParser, ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser,
     InfoTokenParser, LoginAckTokenParser, NbcRowTokenParser, OrderTokenParser,
-    ReturnStatusTokenParser, ReturnValueTokenParser, RowTokenParser, SspiTokenParser, TokenParser,
+    ReturnStatusTokenParser, ReturnValueTokenParser, RowTokenParser, SspiTokenParser,
 };
-use crate::token::tokens::{ColMetadataToken, DoneStatus, TokenType, Tokens};
+use crate::token::tokens::{ColMetadataToken, TokenType, Tokens};
 use async_trait::async_trait;
 use core::convert::From;
 use std::collections::HashMap;
 use std::time::Duration;
+
+#[cfg(fuzzing)]
+use crate::error::Error::{OperationCancelledError, TimeoutError};
+#[cfg(fuzzing)]
+use crate::error::TimeoutErrorType;
+#[cfg(fuzzing)]
+use crate::io::packet_reader::TdsPacketReader;
+#[cfg(fuzzing)]
+use crate::query::metadata::ColumnMetadata;
+#[cfg(fuzzing)]
+use crate::token::parsers::TokenParser;
+#[cfg(fuzzing)]
+use crate::token::tokens::DoneStatus;
+#[cfg(fuzzing)]
 use tokio::time::timeout;
+#[cfg(fuzzing)]
 use tracing::event;
 
 /// Result of attempting to read a row directly into a [`RowWriter`].
@@ -76,16 +87,6 @@ pub trait TdsTokenStreamReader {
     ) -> TdsResult<RowReadResult>;
 }
 
-#[cfg(not(fuzzing))]
-pub(crate) struct TokenStreamReader<T, R>
-where
-    T: TdsPacketReader + Send + Sync,
-    R: TokenParserRegistry + Send + Sync,
-{
-    pub(crate) packet_reader: T,
-    pub(crate) parser_registry: Box<R>,
-}
-
 #[cfg(fuzzing)]
 pub struct TokenStreamReader<T, R>
 where
@@ -121,20 +122,12 @@ impl Default for ParserContext {
     }
 }
 
+#[cfg(fuzzing)]
 impl<T, R> TokenStreamReader<T, R>
 where
     T: TdsPacketReader + Send + Sync,
     R: TokenParserRegistry + Send + Sync,
 {
-    #[cfg(not(fuzzing))]
-    pub(crate) fn new(packet_reader: T, parser_registry: Box<R>) -> TokenStreamReader<T, R> {
-        TokenStreamReader {
-            packet_reader,
-            parser_registry,
-        }
-    }
-
-    #[cfg(fuzzing)]
     pub fn new(packet_reader: T, parser_registry: Box<R>) -> TokenStreamReader<T, R> {
         TokenStreamReader {
             packet_reader,
@@ -272,6 +265,7 @@ where
     }
 }
 
+#[cfg(fuzzing)]
 #[async_trait]
 impl<T, R> TdsTokenStreamReader for TokenStreamReader<T, R>
 where

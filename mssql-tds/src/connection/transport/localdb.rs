@@ -22,6 +22,7 @@ use windows::core::{PCWSTR, PWSTR};
 const LOCALDB_MAX_SQLCONNECTION_BUFFER_SIZE: usize = 260;
 
 /// LocalDB API version 11.0 (SQL Server 2012)
+#[allow(dead_code)] // Defined for completeness alongside the LocalDB API bindings
 const LOCALDB_VERSION_11_0: u32 = 0x0B000000;
 
 /// LocalDB instance information structure
@@ -75,6 +76,8 @@ type LocalDBGetInstanceInfoFn = unsafe extern "system" fn(
 
 /// LocalDB API wrapper that manages the DLL handle and function pointers
 pub struct LocalDBApi {
+    #[allow(dead_code)]
+    // Retained to prevent the DLL from being unloaded while function pointers are live
     dll_handle: HMODULE,
     start_instance_fn: LocalDBStartInstanceFn,
     get_instance_info_fn: LocalDBGetInstanceInfoFn,

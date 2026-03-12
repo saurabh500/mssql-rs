@@ -83,8 +83,11 @@ impl HandlerFactory {
 pub(crate) struct NegotiatedSettings {
     pub session_settings: SessionSettings,
     pub database_collation: SqlCollation,
+    #[allow(dead_code)] // populated during login, consumed by future env-change tracking
     pub language: String,
+    #[allow(dead_code)] // populated during login, consumed by future env-change tracking
     pub database: String,
+    #[allow(dead_code)] // populated during login, consumed by future env-change tracking
     pub char_set: Option<String>,
 }
 
@@ -104,34 +107,20 @@ impl NegotiatedSettings {
             char_set,
         }
     }
-
-    fn update_settings(&mut self, change_properties: &EnvChangeProperties) {
-        if change_properties.char_set.is_some() {
-            self.char_set = change_properties.char_set.clone();
-        }
-
-        if change_properties.database_collation.is_some() {
-            self.database_collation = change_properties.database_collation.unwrap();
-        }
-
-        if change_properties.language.is_some() {
-            self.language = change_properties.language.clone().unwrap();
-        }
-
-        if change_properties.database.is_some() {
-            self.database = change_properties.database.clone().unwrap();
-        }
-    }
 }
 
 // The settings of the session that are negotiated during the login process. They dont change after login.
 #[derive(Debug)]
 pub(crate) struct SessionSettings {
     pub packet_size: u32,
+    #[allow(dead_code)] // populated during login, consumed by future session introspection
     pub user_name: String,
     supported_features: Vec<Box<dyn Feature>>,
+    #[allow(dead_code)] // populated during login, consumed by future MARS support
     mars_enabled: bool,
+    #[allow(dead_code)] // populated during login, consumed by future auth flow
     pub pre_login_has_fedauth_supported: bool,
+    #[allow(dead_code)] // populated during login, consumed by future encryption tracking
     pub negotiated_encryption_settings: NegotiatedEncryptionSetting,
 }
 
@@ -189,13 +178,6 @@ pub(crate) struct SessionHandler<'a, 'b> {
 }
 
 impl<'a, 'b> SessionHandler<'a, 'b> {
-    fn new(factory: &'a HandlerFactory, transport_context: &'b TransportContext) -> Self {
-        SessionHandler {
-            factory,
-            transport_context,
-        }
-    }
-
     pub(crate) async fn execute<T: NetworkReaderWriter + TdsTokenStreamReader + TdsPacketReader>(
         &mut self,
         reader_writer: &mut T,
