@@ -331,6 +331,8 @@ pub(crate) struct LoginResponseModel {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum LoginResponseStatus {
+    #[allow(dead_code)]
+    // Not used, but kept for completeness.
     NoResponse = 0x00,
     Success = 0x01,
     Error = 0x02,

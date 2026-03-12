@@ -97,18 +97,6 @@ pub(crate) struct ColMetadataTokenParser {
     pub is_column_encryption_supported: bool,
 }
 
-impl ColMetadataTokenParser {
-    pub fn new(is_column_encryption_supported: bool) -> Self {
-        Self {
-            is_column_encryption_supported,
-        }
-    }
-
-    pub fn is_column_encryption_supported(&self) -> bool {
-        self.is_column_encryption_supported
-    }
-}
-
 #[async_trait]
 impl<T> TokenParser<T> for ColMetadataTokenParser
 where
@@ -487,7 +475,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_column_encryption_not_supported() {
-        let parser = ColMetadataTokenParser::new(true); // Enable encryption support
+        let parser = ColMetadataTokenParser {
+            is_column_encryption_supported: true,
+        }; // Enable encryption support
         let data = vec![0x01, 0x00]; // col_count = 1
         let mut reader = MockReader::new(data);
         let context = ParserContext::default();
@@ -500,17 +490,5 @@ mod tests {
         } else {
             panic!("Expected UnimplementedFeature error");
         }
-    }
-
-    #[tokio::test]
-    async fn test_constructor_methods() {
-        let parser = ColMetadataTokenParser::new(false);
-        assert!(!parser.is_column_encryption_supported());
-
-        let parser = ColMetadataTokenParser::new(true);
-        assert!(parser.is_column_encryption_supported());
-
-        let parser = ColMetadataTokenParser::default();
-        assert!(!parser.is_column_encryption_supported());
     }
 }

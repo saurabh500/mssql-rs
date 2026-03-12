@@ -341,13 +341,11 @@ where
 }
 #[cfg(not(fuzzing))]
 pub(crate) trait TokenParserRegistry: Send + Sync {
-    fn has_parser(&self, token_type: &TokenType) -> bool;
     fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers>;
 }
 
 #[cfg(fuzzing)]
 pub trait TokenParserRegistry: Send + Sync {
-    fn has_parser(&self, token_type: &TokenType) -> bool;
     fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers>;
 }
 
@@ -423,13 +421,7 @@ impl Default for GenericTokenParserRegistry {
 }
 
 impl TokenParserRegistry for GenericTokenParserRegistry {
-    fn has_parser(&self, token_type: &TokenType) -> bool {
-        self.parsers.contains_key(token_type)
-    }
-
     fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers> {
-        // Unwrap will throw an error when the parser is not found.
-        // This would be an implementation error and would need to be fixed with Code change.
         self.parsers.get(token_type)
     }
 }
@@ -503,22 +495,21 @@ mod tests {
     fn test_generic_token_parser_registry_has_all_parsers() {
         let registry = GenericTokenParserRegistry::default();
 
-        // Test that all expected token types have parsers
-        assert!(registry.has_parser(&TokenType::EnvChange));
-        assert!(registry.has_parser(&TokenType::LoginAck));
-        assert!(registry.has_parser(&TokenType::Done));
-        assert!(registry.has_parser(&TokenType::DoneInProc));
-        assert!(registry.has_parser(&TokenType::DoneProc));
-        assert!(registry.has_parser(&TokenType::Info));
-        assert!(registry.has_parser(&TokenType::Error));
-        assert!(registry.has_parser(&TokenType::FeatureExtAck));
-        assert!(registry.has_parser(&TokenType::FedAuthInfo));
-        assert!(registry.has_parser(&TokenType::ColMetadata));
-        assert!(registry.has_parser(&TokenType::Row));
-        assert!(registry.has_parser(&TokenType::Order));
-        assert!(registry.has_parser(&TokenType::ReturnStatus));
-        assert!(registry.has_parser(&TokenType::NbcRow));
-        assert!(registry.has_parser(&TokenType::ReturnValue));
+        assert!(registry.get_parser(&TokenType::EnvChange).is_some());
+        assert!(registry.get_parser(&TokenType::LoginAck).is_some());
+        assert!(registry.get_parser(&TokenType::Done).is_some());
+        assert!(registry.get_parser(&TokenType::DoneInProc).is_some());
+        assert!(registry.get_parser(&TokenType::DoneProc).is_some());
+        assert!(registry.get_parser(&TokenType::Info).is_some());
+        assert!(registry.get_parser(&TokenType::Error).is_some());
+        assert!(registry.get_parser(&TokenType::FeatureExtAck).is_some());
+        assert!(registry.get_parser(&TokenType::FedAuthInfo).is_some());
+        assert!(registry.get_parser(&TokenType::ColMetadata).is_some());
+        assert!(registry.get_parser(&TokenType::Row).is_some());
+        assert!(registry.get_parser(&TokenType::Order).is_some());
+        assert!(registry.get_parser(&TokenType::ReturnStatus).is_some());
+        assert!(registry.get_parser(&TokenType::NbcRow).is_some());
+        assert!(registry.get_parser(&TokenType::ReturnValue).is_some());
     }
 
     #[test]
@@ -538,7 +529,6 @@ mod tests {
         // Test with an unsupported token type (using a type that's not registered)
         // This tests the negative case
         let unsupported_type = TokenType::TabName; // This token type is not registered in the default registry
-        assert!(!registry.has_parser(&unsupported_type));
         assert!(registry.get_parser(&unsupported_type).is_none());
     }
 
@@ -597,10 +587,6 @@ mod tests {
     }
 
     impl TokenParserRegistry for MockTokenParserRegistry {
-        fn has_parser(&self, token_type: &TokenType) -> bool {
-            self.parsers.contains_key(token_type)
-        }
-
         fn get_parser(&self, token_type: &TokenType) -> Option<&TokenParsers> {
             self.parsers.get(token_type)
         }
@@ -610,14 +596,10 @@ mod tests {
     fn test_custom_token_parser_registry() {
         let mut registry = MockTokenParserRegistry::new();
 
-        // Initially empty
-        assert!(!registry.has_parser(&TokenType::Done));
+        assert!(registry.get_parser(&TokenType::Done).is_none());
 
-        // Add a parser
         registry.add_parser(TokenType::Done, TokenParsers::from(DoneTokenParser {}));
 
-        // Now it should have the parser
-        assert!(registry.has_parser(&TokenType::Done));
         assert!(registry.get_parser(&TokenType::Done).is_some());
     }
 
@@ -646,7 +628,7 @@ mod tests {
 
         let count = token_types
             .iter()
-            .filter(|tt| registry.has_parser(tt))
+            .filter(|tt| registry.get_parser(tt).is_some())
             .count();
         assert_eq!(count, expected_count);
     }

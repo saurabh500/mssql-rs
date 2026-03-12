@@ -50,13 +50,6 @@ impl TdsPacketReader for EmptyReader {
         )))
     }
 
-    async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-        Err(mssql_tds::error::Error::Io(Error::new(
-            ErrorKind::UnexpectedEof,
-            "EOF",
-        )))
-    }
-
     async fn read_uint40(&mut self) -> TdsResult<u64> {
         Err(mssql_tds::error::Error::Io(Error::new(
             ErrorKind::UnexpectedEof,
@@ -100,13 +93,6 @@ impl TdsPacketReader for EmptyReader {
     }
 
     async fn read_int16(&mut self) -> TdsResult<i16> {
-        Err(mssql_tds::error::Error::Io(Error::new(
-            ErrorKind::UnexpectedEof,
-            "EOF",
-        )))
-    }
-
-    async fn read_int24(&mut self) -> TdsResult<i32> {
         Err(mssql_tds::error::Error::Io(Error::new(
             ErrorKind::UnexpectedEof,
             "EOF",
@@ -163,13 +149,6 @@ impl TdsPacketReader for EmptyReader {
     }
 
     async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
-        Err(mssql_tds::error::Error::Io(Error::new(
-            ErrorKind::UnexpectedEof,
-            "EOF",
-        )))
-    }
-
-    async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
         Err(mssql_tds::error::Error::Io(Error::new(
             ErrorKind::UnexpectedEof,
             "EOF",
@@ -252,7 +231,7 @@ impl FuzzClientContext {
         // Clamp numeric values to reasonable ranges
         context.connect_retry_count = self.connect_retry_count.min(3);
         context.connect_timeout = self.connect_timeout.min(30);
-        context.packet_size = self.packet_size.clamp(512, 32768) as u16;
+        context.packet_size = self.packet_size.clamp(512, 32767) as u16;
         
         context.tds_authentication_method = match self.auth_method {
             FuzzAuthMethod::Password => TdsAuthenticationMethod::Password,

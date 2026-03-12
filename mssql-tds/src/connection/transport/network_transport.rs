@@ -348,7 +348,9 @@ async fn create_transport_for_version(
             // Enable TLS immediately for TDS 8.0 (before any TDS packets are exchanged)
             info!("Creating NetworkTransport for TDS 8.0 with immediate TLS");
 
-            let encrypted_stream = ssl_handler.enable_ssl_async(stream).await?;
+            let encrypted_stream = ssl_handler
+                .enable_ssl_async(stream, NegotiatedEncryptionSetting::Strict)
+                .await?;
 
             Ok(Box::new(NetworkTransport::new(
                 encrypted_stream,
@@ -611,9 +613,12 @@ impl NetworkTransport {
 
         // Perform TLS handshake (consumes extractable_stream, returns TlsStream)
         // enable_ssl_async will call tls_handshake_starting and tls_handshake_completed internally
+        let negotiated = self
+            .encryption
+            .unwrap_or(NegotiatedEncryptionSetting::Mandatory);
         let encrypted_stream = self
             .ssl_handler
-            .enable_ssl_async(Box::new(extractable_stream))
+            .enable_ssl_async(Box::new(extractable_stream), negotiated)
             .await?;
 
         // Put back the encrypted stream
@@ -1130,15 +1135,6 @@ impl TdsPacketReader for NetworkTransport {
         Ok(result)
     }
 
-    async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-        if !self.tds_read_buffer.do_we_have_enough_data(8) {
-            self.read_tds_packet().await?;
-        }
-        let result = BigEndian::read_i64(self.tds_read_buffer.get_slice());
-        self.tds_read_buffer.consume_bytes(8);
-        Ok(result)
-    }
-
     async fn read_uint40(&mut self) -> TdsResult<u64> {
         if !self.tds_read_buffer.do_we_have_enough_data(5) {
             self.read_tds_packet().await?;
@@ -1179,14 +1175,6 @@ impl TdsPacketReader for NetworkTransport {
         }
         let result = LittleEndian::read_u16(self.tds_read_buffer.get_slice());
         self.tds_read_buffer.consume_bytes(2);
-        Ok(result)
-    }
-    async fn read_int24(&mut self) -> TdsResult<i32> {
-        if !self.tds_read_buffer.do_we_have_enough_data(3) {
-            self.read_tds_packet().await?;
-        }
-        let result = LittleEndian::read_i24(self.tds_read_buffer.get_slice());
-        self.tds_read_buffer.consume_bytes(3);
         Ok(result)
     }
     async fn read_uint24(&mut self) -> TdsResult<u32> {
@@ -1298,11 +1286,6 @@ impl TdsPacketReader for NetworkTransport {
         let string = self
             .read_unicode_with_byte_length((length << 1) as usize)
             .await?;
-        Ok(string)
-    }
-    async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
-        let length: u16 = self.read_uint16().await?;
-        let string = self.read_unicode_with_byte_length(length as usize).await?;
         Ok(string)
     }
     async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String> {
@@ -1485,9 +1468,6 @@ pub(crate) mod tests {
     // The choice of 8192 is large enough for sending data. This stream should have a buffer large enough for send.
     // The test would keep the payload lower than this size to make sure that the duplex stream can handle it.
     pub(crate) const MAX_BUFFER_SIZE: usize = 8192;
-
-    /// A mock SslHandler that simply returns the same stream, no real TLS.
-    pub(crate) struct MockSslHandler;
 
     impl Stream for DuplexStream {
         fn tls_handshake_starting(&mut self) {

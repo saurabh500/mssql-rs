@@ -91,6 +91,7 @@ pub struct MultiPartName {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // For column encryption metadata which is not implemented yet.
 pub(crate) struct ColumnEncryptionMetadata {
     pub key_count: u8,
     pub key_details: Vec<ColumnEncryptionKeyDetails>,
@@ -99,6 +100,7 @@ pub(crate) struct ColumnEncryptionMetadata {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // For column encryption metadata which is not implemented yet.
 pub(crate) struct ColumnEncryptionKeyDetails {
     pub encrypted_cek: Vec<u8>,
     pub algo: String,

@@ -33,6 +33,8 @@ impl VectorFeature {
     /// Returns the negotiated version after successful feature exchange.
     /// The negotiated version is min(client_version, server_version).
     /// Returns 0 if feature has not been acknowledged.
+    #[allow(dead_code)]
+    // This method is not used currently, and exists for completeness.
     pub fn negotiated_version(&self) -> u8 {
         self.negotiated_version
     }

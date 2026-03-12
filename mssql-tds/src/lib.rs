@@ -25,8 +25,8 @@ pub mod fuzz_support {
     pub use crate::connection_provider::tds_connection_provider::TdsConnectionProvider;
     pub use crate::io::packet_reader::TdsPacketReader;
     pub use crate::io::token_stream::{
-        GenericTokenParserRegistry, ParserContext, TdsTokenStreamReader, TokenParserRegistry,
-        TokenStreamReader,
+        GenericTokenParserRegistry, ParserContext, RowReadResult, TdsTokenStreamReader,
+        TokenParserRegistry, TokenStreamReader,
     };
     pub use crate::token::parsers::common::TokenParser;
     pub use crate::token::parsers::{
@@ -34,9 +34,23 @@ pub mod fuzz_support {
     };
     pub use crate::token::tokens::{SqlCollation, Tokens};
 
+    // Re-export bulk copy internals for fuzz targets
+    use crate::connection::bulk_copy::BulkCopyOptions;
+    use crate::datatypes::bulk_copy_metadata::BulkCopyColumnMetadata;
+
+    /// Wrapper around the `pub(crate)` `build_insert_bulk_command` for fuzz targets.
+    pub fn build_insert_bulk_command(
+        table_name: &str,
+        column_metadata: &[BulkCopyColumnMetadata],
+        options: &BulkCopyOptions,
+    ) -> TdsResult<String> {
+        crate::message::bulk_load::build_insert_bulk_command(table_name, column_metadata, options)
+    }
+
     // Import types we need internally
     use crate::connection::transport::tds_transport::TdsTransport;
     use crate::core::NegotiatedEncryptionSetting;
+    use crate::datatypes::row_writer::RowWriter;
     use crate::handler::handler_factory::{NegotiatedSettings, SessionSettings};
     use crate::io::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
 
@@ -204,8 +218,8 @@ pub mod fuzz_support {
             context: &ParserContext,
             remaining_request_timeout: Option<Duration>,
             cancel_handle: Option<&CancelHandle>,
-            writer: &mut (dyn datatypes::row_writer::RowWriter + Send),
-        ) -> TdsResult<io::token_stream::RowReadResult> {
+            writer: &mut (dyn RowWriter + Send),
+        ) -> TdsResult<RowReadResult> {
             self.token_stream_reader
                 .receive_row_into(context, remaining_request_timeout, cancel_handle, writer)
                 .await
@@ -261,13 +275,6 @@ pub mod fuzz_support {
                 .await
         }
 
-        async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-            self.token_stream_reader
-                .packet_reader
-                .read_int64_big_endian()
-                .await
-        }
-
         async fn read_uint40(&mut self) -> TdsResult<u64> {
             self.token_stream_reader.packet_reader.read_uint40().await
         }
@@ -286,10 +293,6 @@ pub mod fuzz_support {
 
         async fn read_uint16(&mut self) -> TdsResult<u16> {
             self.token_stream_reader.packet_reader.read_uint16().await
-        }
-
-        async fn read_int24(&mut self) -> TdsResult<i32> {
-            self.token_stream_reader.packet_reader.read_int24().await
         }
 
         async fn read_uint24(&mut self) -> TdsResult<u32> {
@@ -344,13 +347,6 @@ pub mod fuzz_support {
             self.token_stream_reader
                 .packet_reader
                 .read_varchar_u8_length()
-                .await
-        }
-
-        async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
-            self.token_stream_reader
-                .packet_reader
-                .read_varchar_byte_len()
                 .await
         }
 

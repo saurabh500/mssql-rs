@@ -594,7 +594,7 @@ impl LoginHandler<'_> {
             .await?;
         if response_model.tds_error.is_some() {
             let tds_error = response_model.tds_error.unwrap();
-            Err(Error::SqlServerError {
+            Err(Error::from_sql_error(crate::error::SqlErrorInfo {
                 message: tds_error.get_message(),
                 state: tds_error.error_token.state,
                 class: tds_error.error_token.severity as i32,
@@ -602,7 +602,7 @@ impl LoginHandler<'_> {
                 server_name: None,
                 proc_name: None,
                 line_number: None,
-            })
+            }))
         } else {
             Ok(response_model)
         }
