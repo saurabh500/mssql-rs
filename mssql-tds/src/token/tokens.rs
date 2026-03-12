@@ -100,6 +100,7 @@ pub(crate) enum Tokens {
 
 #[derive(Debug)]
 #[cfg(fuzzing)]
+#[allow(private_interfaces)]
 pub enum Tokens {
     Done(DoneToken),
     DoneInProc(DoneToken),

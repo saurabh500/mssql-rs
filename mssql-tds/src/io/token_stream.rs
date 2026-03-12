@@ -4,6 +4,9 @@
 use crate::core::{CancelHandle, TdsResult};
 use crate::datatypes::decoder::GenericDecoder;
 use crate::datatypes::row_writer::RowWriter;
+use crate::io::packet_reader::TdsPacketReader;
+use crate::query::metadata::ColumnMetadata;
+use crate::token::parsers::TokenParser;
 use crate::token::parsers::{
     ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser, DoneTokenParser,
     EnvChangeTokenParser, ErrorTokenParser, FeatureExtAckTokenParser, FedAuthInfoTokenParser,
@@ -15,23 +18,16 @@ use async_trait::async_trait;
 use core::convert::From;
 use std::collections::HashMap;
 use std::time::Duration;
+use tracing::debug;
 
 #[cfg(fuzzing)]
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 #[cfg(fuzzing)]
 use crate::error::TimeoutErrorType;
 #[cfg(fuzzing)]
-use crate::io::packet_reader::TdsPacketReader;
-#[cfg(fuzzing)]
-use crate::query::metadata::ColumnMetadata;
-#[cfg(fuzzing)]
-use crate::token::parsers::TokenParser;
-#[cfg(fuzzing)]
 use crate::token::tokens::DoneStatus;
 #[cfg(fuzzing)]
 use tokio::time::timeout;
-#[cfg(fuzzing)]
-use tracing::event;
 
 /// Result of attempting to read a row directly into a [`RowWriter`].
 #[cfg(not(fuzzing))]
@@ -111,6 +107,7 @@ pub(crate) enum ParserContext {
 
 #[derive(Debug)]
 #[cfg(fuzzing)]
+#[allow(private_interfaces)]
 pub enum ParserContext {
     ColumnMetadata(ColMetadataToken),
     None(()),
@@ -119,6 +116,107 @@ pub enum ParserContext {
 impl Default for ParserContext {
     fn default() -> Self {
         ParserContext::None(())
+    }
+}
+
+fn extract_column_metadata(context: &ParserContext) -> TdsResult<&[ColumnMetadata]> {
+    match context {
+        ParserContext::ColumnMetadata(metadata) => Ok(&metadata.columns),
+        _ => Err(crate::error::Error::ProtocolError(
+            "Expected ColumnMetadata in context for row decoding".to_string(),
+        )),
+    }
+}
+
+pub(crate) async fn dispatch_token<R: TdsPacketReader + Send + Sync>(
+    reader: &mut R,
+    registry: &impl TokenParserRegistry,
+    token_type: TokenType,
+    context: &ParserContext,
+) -> TdsResult<Tokens> {
+    let parser = match registry.get_parser(&token_type) {
+        Some(parser) => parser,
+        None => {
+            return Err(crate::error::Error::ProtocolError(format!(
+                "No parser implemented for token type: {token_type:?}. This token type is not supported yet."
+            )));
+        }
+    };
+
+    debug!("Parsing token type: {:?}", &token_type);
+
+    match parser {
+        TokenParsers::EnvChange(parser) => parser.parse(reader, context).await,
+        TokenParsers::LoginAck(parser) => parser.parse(reader, context).await,
+        TokenParsers::Done(parser) => parser.parse(reader, context).await,
+        TokenParsers::DoneInProc(parser) => parser.parse(reader, context).await,
+        TokenParsers::DoneProc(parser) => parser.parse(reader, context).await,
+        TokenParsers::Info(parser) => parser.parse(reader, context).await,
+        TokenParsers::Error(parser) => parser.parse(reader, context).await,
+        TokenParsers::FedAuthInfo(parser) => parser.parse(reader, context).await,
+        TokenParsers::FeatureExtAck(parser) => parser.parse(reader, context).await,
+        TokenParsers::ColMetadata(parser) => parser.parse(reader, context).await,
+        TokenParsers::Row(parser) => parser.parse(reader, context).await,
+        TokenParsers::Order(parser) => parser.parse(reader, context).await,
+        TokenParsers::ReturnStatus(parser) => parser.parse(reader, context).await,
+        TokenParsers::NbcRow(parser) => parser.parse(reader, context).await,
+        TokenParsers::ReturnValue(parser) => parser.parse(reader, context).await,
+        TokenParsers::Sspi(parser) => parser.parse(reader, context).await,
+    }
+}
+
+pub(crate) async fn receive_token_internal<R: TdsPacketReader + Send + Sync>(
+    reader: &mut R,
+    registry: &impl TokenParserRegistry,
+    context: &ParserContext,
+) -> TdsResult<Tokens> {
+    let token_type_byte = reader.read_byte().await?;
+    let token_type: TokenType = token_type_byte.try_into()?;
+    debug!(
+        "Received token type: {:?} ({})",
+        token_type, token_type_byte
+    );
+    dispatch_token(reader, registry, token_type, context).await
+}
+
+pub(crate) async fn receive_row_into_internal<R: TdsPacketReader + Send + Sync>(
+    reader: &mut R,
+    registry: &impl TokenParserRegistry,
+    context: &ParserContext,
+    writer: &mut (dyn RowWriter + Send),
+) -> TdsResult<RowReadResult> {
+    let token_type_byte = reader.read_byte().await?;
+    let token_type: TokenType = token_type_byte.try_into()?;
+    debug!("Parsing token type: {:?}", &token_type);
+
+    match token_type {
+        TokenType::Row => {
+            let columns = extract_column_metadata(context)?;
+            let decoder = GenericDecoder::default();
+            for (col, meta) in columns.iter().enumerate() {
+                decoder.decode_into(reader, meta, col, writer).await?;
+            }
+            Ok(RowReadResult::RowWritten)
+        }
+        TokenType::NbcRow => {
+            let columns = extract_column_metadata(context)?;
+            let bitmap_len = columns.len().div_ceil(8);
+            let mut bitmap = vec![0u8; bitmap_len];
+            reader.read_bytes(&mut bitmap).await?;
+            let decoder = GenericDecoder::default();
+            for (col, meta) in columns.iter().enumerate() {
+                if bitmap[col / 8] & (1 << (col % 8)) != 0 {
+                    writer.write_null(col);
+                } else {
+                    decoder.decode_into(reader, meta, col, writer).await?;
+                }
+            }
+            Ok(RowReadResult::RowWritten)
+        }
+        _ => {
+            let token = dispatch_token(reader, registry, token_type, context).await?;
+            Ok(RowReadResult::Token(token))
+        }
     }
 }
 
@@ -135,131 +233,21 @@ where
         }
     }
 
-    async fn receive_token_internal(&mut self, context: &ParserContext) -> TdsResult<Tokens> {
-        let token_type_byte = self.packet_reader.read_byte().await?;
-        let token_type: TokenType = token_type_byte.try_into()?;
-        event!(
-            tracing::Level::DEBUG,
-            "Parsing token type: {:?}",
-            &token_type
-        );
-        self.dispatch_token(token_type, context).await
-    }
-
-    /// Reads the next token; for ROW/NBCROW tokens, decodes directly into the
-    /// writer via `decode_into`, bypassing `RowToken` construction entirely.
-    async fn receive_row_into_internal(
-        &mut self,
-        context: &ParserContext,
-        writer: &mut (dyn RowWriter + Send),
-    ) -> TdsResult<RowReadResult> {
-        let token_type_byte = self.packet_reader.read_byte().await?;
-        let token_type: TokenType = token_type_byte.try_into()?;
-
-        match token_type {
-            TokenType::Row => {
-                let columns = Self::extract_column_metadata(context)?;
-                let decoder = GenericDecoder::default();
-                for (col, meta) in columns.iter().enumerate() {
-                    decoder
-                        .decode_into(&mut self.packet_reader, meta, col, writer)
-                        .await?;
-                }
-                Ok(RowReadResult::RowWritten)
-            }
-            TokenType::NbcRow => {
-                let columns = Self::extract_column_metadata(context)?;
-                let bitmap_len = columns.len().div_ceil(8);
-                let mut bitmap = vec![0u8; bitmap_len];
-                self.packet_reader.read_bytes(&mut bitmap).await?;
-                let decoder = GenericDecoder::default();
-                for (col, meta) in columns.iter().enumerate() {
-                    if bitmap[col / 8] & (1 << (col % 8)) != 0 {
-                        writer.write_null(col);
-                    } else {
-                        decoder
-                            .decode_into(&mut self.packet_reader, meta, col, writer)
-                            .await?;
-                    }
-                }
-                Ok(RowReadResult::RowWritten)
-            }
-            _ => {
-                let token = self.dispatch_token(token_type, context).await?;
-                Ok(RowReadResult::Token(token))
-            }
-        }
-    }
-
-    fn extract_column_metadata(context: &ParserContext) -> TdsResult<&[ColumnMetadata]> {
-        match context {
-            ParserContext::ColumnMetadata(metadata) => Ok(&metadata.columns),
-            _ => Err(crate::error::Error::ProtocolError(
-                "Expected ColumnMetadata in context for row decoding".to_string(),
-            )),
-        }
-    }
-
-    async fn dispatch_token(
-        &mut self,
-        token_type: TokenType,
-        context: &ParserContext,
-    ) -> TdsResult<Tokens> {
-        let parser = match self.parser_registry.get_parser(&token_type) {
-            Some(parser) => parser,
-            None => {
-                return Err(crate::error::Error::ProtocolError(format!(
-                    "No parser implemented for token type: {token_type:?}. This token type is not supported yet."
-                )));
-            }
-        };
-
-        match parser {
-            TokenParsers::EnvChange(parser) => parser.parse(&mut self.packet_reader, context).await,
-            TokenParsers::LoginAck(parser) => parser.parse(&mut self.packet_reader, context).await,
-            TokenParsers::Done(parser) => parser.parse(&mut self.packet_reader, context).await,
-            TokenParsers::DoneInProc(parser) => {
-                parser.parse(&mut self.packet_reader, context).await
-            }
-            TokenParsers::DoneProc(parser) => parser.parse(&mut self.packet_reader, context).await,
-            TokenParsers::Info(parser) => parser.parse(&mut self.packet_reader, context).await,
-            TokenParsers::Error(parser) => parser.parse(&mut self.packet_reader, context).await,
-            TokenParsers::FedAuthInfo(parser) => {
-                parser.parse(&mut self.packet_reader, context).await
-            }
-            TokenParsers::FeatureExtAck(parser) => {
-                parser.parse(&mut self.packet_reader, context).await
-            }
-            TokenParsers::ColMetadata(parser) => {
-                parser.parse(&mut self.packet_reader, context).await
-            }
-            TokenParsers::Row(parser) => parser.parse(&mut self.packet_reader, context).await,
-            TokenParsers::Order(parser) => parser.parse(&mut self.packet_reader, context).await,
-            TokenParsers::ReturnStatus(parser) => {
-                parser.parse(&mut self.packet_reader, context).await
-            }
-            TokenParsers::NbcRow(parser) => parser.parse(&mut self.packet_reader, context).await,
-            TokenParsers::ReturnValue(parser) => {
-                parser.parse(&mut self.packet_reader, context).await
-            }
-            TokenParsers::Sspi(parser) => parser.parse(&mut self.packet_reader, context).await,
-        }
-    }
-
-    /// Tells the server to stop sending tokens for the token stream being read and waits for
-    /// an acknowledgement.
     async fn cancel_read_stream_and_wait(&mut self) -> TdsResult<()> {
         self.packet_reader.cancel_read_stream().await?;
         let dummy_context = ParserContext::None(());
-        // This method is intended to be called from receive_token(). We enforce only one level
-        // of recursion by preventing timeout and cancellation on the internal receive_token() call.
-        while let Ok(token) = self.receive_token_internal(&dummy_context).await {
+        while let Ok(token) = receive_token_internal(
+            &mut self.packet_reader,
+            &*self.parser_registry,
+            &dummy_context,
+        )
+        .await
+        {
             if let Tokens::Done(done_token) = token
                 && done_token.status.contains(DoneStatus::ATTN)
             {
                 break;
             }
-            // Discard any other token.
         }
         Ok(())
     }
@@ -278,8 +266,10 @@ where
         remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<Tokens> {
-        let cancellable_receive_token =
-            CancelHandle::run_until_cancelled(cancel_handle, self.receive_token_internal(context));
+        let cancellable_receive_token = CancelHandle::run_until_cancelled(
+            cancel_handle,
+            receive_token_internal(&mut self.packet_reader, &*self.parser_registry, context),
+        );
         let token_result = match remaining_request_timeout.as_ref() {
             Some(remaining_request_timeout) => {
                 match timeout(*remaining_request_timeout, cancellable_receive_token).await {
@@ -311,7 +301,12 @@ where
     ) -> TdsResult<RowReadResult> {
         let cancellable = CancelHandle::run_until_cancelled(
             cancel_handle,
-            self.receive_row_into_internal(context, writer),
+            receive_row_into_internal(
+                &mut self.packet_reader,
+                &*self.parser_registry,
+                context,
+                writer,
+            ),
         );
         let result = match remaining_request_timeout.as_ref() {
             Some(t) => match timeout(*t, cancellable).await {
@@ -420,6 +415,7 @@ impl TokenParserRegistry for GenericTokenParserRegistry {
     }
 }
 
+#[allow(private_interfaces)]
 pub enum TokenParsers {
     EnvChange(EnvChangeTokenParser),
     LoginAck(LoginAckTokenParser),

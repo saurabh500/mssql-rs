@@ -43,6 +43,7 @@ impl TdsConnectionProvider {
 
     /// Create a client with a custom transport (used for fuzzing)
     #[cfg(fuzzing)]
+    #[allow(private_bounds)]
     pub async fn create_client_with_transport<T>(
         context: ClientContext,
         transport: T,
