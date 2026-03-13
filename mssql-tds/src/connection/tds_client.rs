@@ -478,7 +478,24 @@ impl TdsClient {
         self.consume_done_token().await
     }
 
-    /// Executes a stored procedure with the given name and parameters.
+    /// Executes a stored procedure via the TDS RPC protocol.
+    ///
+    /// Sends an `sp_executesql`-style RPC request for the named procedure.
+    /// Parameters can be supplied positionally, by name, or both. If the
+    /// procedure returns result sets, iterate rows with
+    /// [`move_to_next()`](Self::move_to_next) and
+    /// [`column_value()`](Self::column_value). After all result sets are
+    /// consumed, retrieve output parameters with
+    /// [`get_return_values()`](Self::get_return_values).
+    ///
+    /// Only one batch may be active at a time — calling this while a previous
+    /// result set is unread returns [`Error::UsageError`](crate::error::Error::UsageError).
+    ///
+    /// # Cancel / Timeout
+    ///
+    /// Pass `timeout_sec` to cap server-side execution time, or supply a
+    /// [`CancelHandle`] to cancel the operation cooperatively from another
+    /// task.
     #[instrument(skip(self, positional_parameters, named_parameters), level = "info")]
     pub async fn execute_stored_procedure(
         &mut self,
@@ -1105,7 +1122,12 @@ impl TdsClient {
         }
     }
 
-    /// Gets the return values collected so far.
+    /// Returns a clone of all [`ReturnValue`]s collected during the current
+    /// batch — output parameters and UDF return values.
+    ///
+    /// Values accumulate as the token stream is read; call this after the
+    /// result set is fully consumed (e.g. after [`close_query()`](Self::close_query)
+    /// or after [`move_to_next()`](Self::move_to_next) returns `false`).
     pub fn get_return_values(&self) -> Vec<ReturnValue> {
         self.return_values.clone()
     }
