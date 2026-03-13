@@ -121,7 +121,22 @@ impl TdsClient {
         });
     }
 
-    /// Executes a SQL command (batch) against the server.
+    /// Sends a SQL batch to the server for execution.
+    ///
+    /// Wraps the SQL text in a TDS `SQL_BATCH` message. After this call returns,
+    /// use [`read_row()`](Self::read_row) to consume result rows, then
+    /// [`close_query()`](Self::close_query) to finalize.
+    ///
+    /// # Parameters
+    /// - `sql_command` — raw T-SQL text to execute.
+    /// - `timeout_sec` — per-request timeout in seconds. `None` means no timeout.
+    /// - `cancel_handle` — optional [`CancelHandle`] for cooperative cancellation.
+    ///   A child token is derived so cancelling the handle aborts this request
+    ///   without tearing down the connection.
+    ///
+    /// # Errors
+    /// Returns [`UsageError`](crate::error::Error::UsageError) if a previous
+    /// batch is still open.
     #[instrument(skip(self), level = "info")]
     pub async fn execute(
         &mut self,
@@ -157,8 +172,21 @@ impl TdsClient {
         Ok(())
     }
 
-    // Executes a stored procedure with the given proc_id and parameters.
-    // The parameters can be either positional or named.
+    /// Executes a parameterized query via `sp_executesql`.
+    ///
+    /// The SQL text and parameter declarations are sent as positional RPC
+    /// arguments. Caller-supplied `named_params` are appended as named
+    /// parameters — each [`RpcParameter`] must have a `name` matching the
+    /// declaration in the query (e.g. `@id`).
+    ///
+    /// This is the primary path for parameterized queries; prefer it over
+    /// string interpolation to avoid SQL injection and benefit from plan
+    /// caching on the server.
+    ///
+    /// # Parameters
+    /// - `sql` — parameterized T-SQL statement.
+    /// - `named_params` — parameter values. Build with [`RpcParameter::new`].
+    /// - `timeout_sec` / `cancel_handle` — see [`execute()`](Self::execute).
     #[instrument(skip(self, named_params), level = "info")]
     pub async fn execute_sp_executesql(
         &mut self,
@@ -494,8 +522,16 @@ impl TdsClient {
         Ok(())
     }
 
-    /// Prepares a SQL statement for execution and returns the prepared handle.
-    /// This uses `sp_prepare` under the hood.
+    /// Prepares a parameterized statement via `sp_prepare` and returns the
+    /// server-side handle.
+    ///
+    /// The returned `i32` handle can be passed to
+    /// [`execute_sp_execute()`](Self::execute_sp_execute) for repeated
+    /// execution without re-parsing. Call
+    /// [`execute_sp_unprepare()`](Self::execute_sp_unprepare) when the handle
+    /// is no longer needed.
+    ///
+    /// Drains the token stream internally — no rows are returned.
     #[instrument(skip(self, named_params), level = "info")]
     pub async fn execute_sp_prepare(
         &mut self,
@@ -582,7 +618,11 @@ impl TdsClient {
         }
     }
 
-    /// Unprepares a previously prepared statement using `sp_unprepare`.
+    /// Releases a prepared statement handle via `sp_unprepare`.
+    ///
+    /// Frees server-side resources associated with the handle returned by
+    /// [`execute_sp_prepare()`](Self::execute_sp_prepare) or
+    /// [`execute_sp_prepexec()`](Self::execute_sp_prepexec).
     #[instrument(skip(self), level = "info")]
     pub async fn execute_sp_unprepare(
         &mut self,
@@ -626,8 +666,16 @@ impl TdsClient {
         Ok(())
     }
 
-    /// Executes `sp_prepexec` which will prepare the statement for execution,
-    /// return a result set as well as a prepared handle.
+    /// Prepares and executes a parameterized statement in a single round-trip
+    /// via `sp_prepexec`.
+    ///
+    /// Combines [`execute_sp_prepare()`](Self::execute_sp_prepare) and
+    /// [`execute_sp_execute()`](Self::execute_sp_execute). The prepared handle
+    /// is stored internally and can be retrieved with
+    /// [`get_return_values()`](Self::get_return_values).
+    ///
+    /// Result rows are available through [`read_row()`](Self::read_row) after
+    /// this call returns.
     #[instrument(skip(self, named_params), level = "info")]
     pub async fn execute_sp_prepexec(
         &mut self,
@@ -699,7 +747,13 @@ impl TdsClient {
         Ok(())
     }
 
-    /// Executes a previously prepared statement using `sp_execute`.
+    /// Executes a previously prepared statement by handle via `sp_execute`.
+    ///
+    /// Re-uses the execution plan from an earlier
+    /// [`execute_sp_prepare()`](Self::execute_sp_prepare) or
+    /// [`execute_sp_prepexec()`](Self::execute_sp_prepexec) call.
+    /// Supply fresh parameter values through `positional_parameters` and/or
+    /// `named_parameters`.
     #[instrument(skip(self, positional_parameters, named_parameters), level = "info")]
     pub async fn execute_sp_execute(
         &mut self,
