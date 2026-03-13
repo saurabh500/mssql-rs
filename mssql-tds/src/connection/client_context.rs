@@ -10,10 +10,14 @@ use crate::message::login_options::{ApplicationIntent, TdsVersion};
 use crate::security::{IntegratedAuthConfig, is_loopback_address};
 use hostname;
 
+/// Controls DNS resolution order when connecting to a server.
 #[derive(PartialEq, Copy, Clone)]
 pub enum IPAddressPreference {
+    /// Resolve and attempt IPv4 addresses before IPv6.
     IPv4First = 0,
+    /// Resolve and attempt IPv6 addresses before IPv4.
     IPv6First = 1,
+    /// Use the platform's default resolution order.
     UsePlatformDefault = 2,
 }
 
@@ -81,6 +85,7 @@ pub trait EntraIdTokenFactory: Send + Sync {
         auth_method: TdsAuthenticationMethod,
     ) -> TdsResult<Vec<u8>>;
 }
+/// Object-safe extension of [`EntraIdTokenFactory`] that supports cloning.
 pub trait CloneableEntraIdTokenFactory: EntraIdTokenFactory {
     fn clone_box(&self) -> Box<dyn CloneableEntraIdTokenFactory>;
 }
@@ -94,19 +99,32 @@ where
     }
 }
 
+/// Authentication method for the TDS connection.
 #[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub enum TdsAuthenticationMethod {
+    /// SQL Server authentication with username and password.
     Password,
-    SSPI, // Integrated Authentication with AD.
+    /// Integrated authentication via SSPI (Windows) or GSSAPI (Linux/macOS).
+    SSPI,
+    /// Azure Active Directory password authentication.
     ActiveDirectoryPassword,
+    /// Azure AD interactive (browser-based) authentication.
     ActiveDirectoryInteractive,
+    /// Azure AD device code flow for headless environments.
     ActiveDirectoryDeviceCodeFlow,
+    /// Azure AD service principal (client ID + secret/cert).
     ActiveDirectoryServicePrincipal,
+    /// Azure AD managed identity (system or user-assigned).
     ActiveDirectoryManagedIdentity,
+    /// Azure AD default credential chain.
     ActiveDirectoryDefault,
+    /// Azure AD managed service identity (legacy alias for `ActiveDirectoryManagedIdentity`).
     ActiveDirectoryMSI,
+    /// Azure AD workload identity for Kubernetes workloads.
     ActiveDirectoryWorkloadIdentity,
+    /// Azure AD integrated authentication using current user's Kerberos ticket.
     ActiveDirectoryIntegrated,
+    /// Pre-acquired access token (bearer JWT).
     AccessToken,
 }
 
@@ -140,17 +158,29 @@ impl ClientContextValidator for DefaultClientContextValidator {
 
 use std::collections::HashMap;
 
+/// Connection configuration for a TDS session.
+///
+/// Contains credentials, encryption settings, timeouts, and protocol options.
+/// Construct via [`ClientContext::with_data_source()`] and pass to
+/// [`TdsConnectionProvider::create_client()`](crate::connection_provider::tds_connection_provider::TdsConnectionProvider::create_client).
 pub struct ClientContext {
+    /// Read-write or read-only application intent. Default: `ReadWrite`.
     pub application_intent: ApplicationIntent,
+    /// Application name reported in the TDS login packet.
     pub application_name: String,
+    /// Database file to attach during login (AttachDBFileName).
     pub attach_db_file: String,
+    /// New password to set during login (password change flow).
     pub change_password: String,
+    /// Number of reconnection attempts after an idle connection failure.
     pub connect_retry_count: u32,
     /// Interval in seconds between connection retry attempts.
     /// Default: 10 seconds per SQL Server client defaults.
     /// Note: Not yet implemented internally - this field is reserved for future use.
     pub connect_retry_interval: u32,
+    /// Connection timeout in seconds.
     pub connect_timeout: u32,
+    /// Initial database catalog.
     pub database: String,
     /// The original data source string used to create this connection.
     /// This is a mandatory field - a connection cannot be established without it.
@@ -163,27 +193,46 @@ pub struct ClientContext {
     /// TCP keep-alive interval in milliseconds between subsequent probes.
     /// Default: 1000 (1 second) per SQL Server client defaults.
     pub keep_alive_interval_in_ms: u32,
+    /// Named instance name. Default: `"MSSQLServer"`.
     pub database_instance: String,
+    /// Whether to auto-enlist in the caller's distributed transaction.
     pub enlist: bool,
+    /// TLS/encryption settings for the connection.
     pub encryption_options: EncryptionOptions,
+    /// Failover partner server for database mirroring.
     pub failover_partner: String,
+    /// DNS resolution order preference.
     pub ipaddress_preference: IPAddressPreference,
+    /// Initial language for the session.
     pub language: String,
+    /// Client library name sent in the login packet.
     pub library_name: String,
     /// Driver version used to populate `client_prog_ver` in the TDS Login7 packet.
     /// Defaults to the crate version from Cargo.toml.
     pub driver_version: DriverVersion,
+    /// Token factories keyed by authentication method for Azure AD flows.
     pub auth_method_map: HashMap<TdsAuthenticationMethod, Box<dyn CloneableEntraIdTokenFactory>>,
+    /// Enable Multiple Active Result Sets.
     pub mars_enabled: bool,
+    /// Enable multi-subnet failover for AlwaysOn availability groups.
     pub multi_subnet_failover: bool,
+    /// New password to set (separate from `change_password` flow).
     pub new_password: String,
+    /// TDS packet size in bytes. Valid range: 512–32768.
     pub packet_size: u16,
+    /// Password for SQL Server authentication.
     pub password: String,
+    /// Reserved for connection pooling support.
     pub pooling: bool,
+    /// Enable replication support in the login flags.
     pub replication: bool,
+    /// Authentication method to use.
     pub tds_authentication_method: TdsAuthenticationMethod,
+    /// Connect to a user instance of SQL Server Express.
     pub user_instance: bool,
+    /// Login user name for SQL Server authentication.
     pub user_name: String,
+    /// Workstation name sent in the login packet. Defaults to hostname.
     pub workstation_id: String,
     /// Base64 encoded JWT access token for Azure AD authentication.
     pub access_token: Option<String>,
@@ -192,6 +241,7 @@ pub struct ClientContext {
     /// Format: MSSQLSvc/<hostname>:<port> or MSSQLSvc/<hostname>:<instance>
     pub server_spn: Option<String>,
     pub(crate) transport_context: TransportContext,
+    /// Protocol vector version for feature negotiation.
     pub vector_version: VectorVersion,
 }
 

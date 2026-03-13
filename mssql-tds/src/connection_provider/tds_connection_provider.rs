@@ -27,6 +27,7 @@ use std::sync::LazyLock;
 pub(crate) static PARSER_REGISTRY: LazyLock<GenericTokenParserRegistry> =
     LazyLock::new(GenericTokenParserRegistry::default);
 
+/// Factory for establishing TDS connections and producing [`TdsClient`] instances.
 pub struct TdsConnectionProvider;
 
 impl Default for TdsConnectionProvider {
