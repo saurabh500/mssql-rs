@@ -1,6 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+//! TDS protocol message types.
+//!
+//! Each sub-module corresponds to a TDS message kind: SQL batches, RPC
+//! requests, login/prelogin handshakes, bulk-load streams, and transaction
+//! management envelopes. Messages implement the [`messages::Request`] trait
+//! for serialization into TDS packets.
+
 pub(crate) mod batch;
 pub mod bulk_load;
 pub mod parameters;

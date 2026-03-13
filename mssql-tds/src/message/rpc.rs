@@ -124,6 +124,11 @@ impl<'a> SqlRpc<'a> {
     }
 }
 
+/// Well-known SQL Server system stored-procedure IDs used by the TDS RPC
+/// message.
+///
+/// These correspond to the procedure-ID shortcut in the RPC request header,
+/// avoiding the overhead of sending the procedure name as a string.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 pub enum RpcProcs {

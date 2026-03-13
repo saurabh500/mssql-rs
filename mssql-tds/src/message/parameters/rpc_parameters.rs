@@ -15,6 +15,10 @@ use crate::{
 };
 
 bitflags! {
+    /// TDS RPC parameter status flags.
+    ///
+    /// Controls how the server interprets each parameter value. Use
+    /// [`BY_REF_VALUE`](Self::BY_REF_VALUE) for output parameters.
     #[derive(Debug, Clone, Copy)]
     pub struct StatusFlags: u8 {
         const NONE = 0b0000_0000;
@@ -26,7 +30,12 @@ bitflags! {
     }
 }
 
-/// Represents a parameter in an RPC (Remote Procedure Call) message.
+/// A single parameter in a TDS RPC request.
+///
+/// Construct with [`RpcParameter::new`], supplying an optional name, status
+/// flags, and a [`SqlType`] value. Named parameters (e.g. `Some("@id".into())`)
+/// are matched by name on the server; positional parameters (`None`) are
+/// matched by ordinal.
 #[derive(Debug, Clone)]
 pub struct RpcParameter {
     /// The name of the parameter, if applicable. For positional
@@ -43,6 +52,7 @@ pub struct RpcParameter {
 }
 
 impl RpcParameter {
+    /// Creates a new RPC parameter.
     pub fn new(name: Option<String>, options: StatusFlags, value: SqlType) -> Self {
         Self {
             name,
