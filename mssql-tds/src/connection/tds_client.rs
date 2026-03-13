@@ -44,6 +44,10 @@ use crate::{
 };
 use std::time::{Duration, Instant};
 
+/// Active TDS connection to a SQL Server instance.
+///
+/// Created by [`TdsConnectionProvider::create_client()`](crate::connection_provider::tds_connection_provider::TdsConnectionProvider::create_client).
+/// Provides methods for executing queries, managing transactions, and bulk copy.
 #[derive(Debug)]
 pub struct TdsClient {
     pub(crate) transport: Box<dyn TdsTransport>,
@@ -87,6 +91,7 @@ impl TdsClient {
         }
     }
 
+    /// Returns the database collation negotiated during login.
     pub fn get_collation(&self) -> SqlCollation {
         self.negotiated_settings.database_collation
     }
@@ -1136,6 +1141,7 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Close the underlying transport, ending the TDS session.
     #[instrument(skip(self), level = "info")]
     pub async fn close_connection(&mut self) -> TdsResult<()> {
         self.transport.close_transport().await?;
@@ -1277,6 +1283,9 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Retrieve the DTC (Distributed Transaction Coordinator) network address from the server.
+    ///
+    /// Returns a result set that can be iterated with the normal row-reading API.
     #[instrument(skip(self), level = "info")]
     pub async fn get_dtc_address(&mut self) -> TdsResult<()> {
         if self.execution_context.has_open_batch() {
