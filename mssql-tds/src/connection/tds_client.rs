@@ -1205,6 +1205,10 @@ impl TdsClient {
         self.execution_context.has_active_transaction()
     }
 
+    /// Begin a new transaction with the given isolation level and optional name.
+    ///
+    /// Fails if a batch is currently executing. Use [`has_active_transaction`](Self::has_active_transaction)
+    /// to check whether a transaction is already open.
     #[instrument(skip(self), level = "info")]
     pub async fn begin_transaction(
         &mut self,
@@ -1231,6 +1235,10 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Create a savepoint within the current transaction.
+    ///
+    /// The savepoint `name` can later be passed to
+    /// [`rollback_transaction`](Self::rollback_transaction) to partially undo work.
     #[instrument(skip(self), level = "info")]
     pub async fn save_transaction(&mut self, name: String) -> TdsResult<()> {
         if self.execution_context.has_open_batch() {
@@ -1251,6 +1259,10 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Commit the current transaction.
+    ///
+    /// If `create_txn_params` is provided, a new transaction begins immediately
+    /// after the commit (atomic commit-and-begin).
     #[instrument(skip(self), level = "info")]
     pub async fn commit_transaction(
         &mut self,
@@ -1278,6 +1290,10 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Roll back the current transaction, or roll back to a named savepoint.
+    ///
+    /// If `create_txn_params` is provided, a new transaction begins immediately
+    /// after the rollback.
     #[instrument(skip(self), level = "info")]
     pub async fn rollback_transaction(
         &mut self,
