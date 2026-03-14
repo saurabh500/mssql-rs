@@ -902,7 +902,16 @@ impl GenericDecoder {
                 } else {
                     writer.write_time(
                         col,
-                        self.read_time(reader, length, metadata.get_scale()).await?,
+                        self.read_time(
+                            reader,
+                            length,
+                            metadata.get_scale().ok_or_else(|| {
+                                crate::error::Error::ImplementationError(
+                                    "TimeN type should have scale".to_string(),
+                                )
+                            })?,
+                        )
+                        .await?,
                     );
                 }
             }
@@ -912,7 +921,15 @@ impl GenericDecoder {
                     writer.write_null(col);
                 } else {
                     let cv = self
-                        .read_datetime2(reader, length, metadata.get_scale())
+                        .read_datetime2(
+                            reader,
+                            length,
+                            metadata.get_scale().ok_or_else(|| {
+                                crate::error::Error::ImplementationError(
+                                    "DateTime2N type should have scale".to_string(),
+                                )
+                            })?,
+                        )
                         .await?;
                     if let ColumnValues::DateTime2(dt2) = cv {
                         writer.write_datetime2(col, dt2);
@@ -925,7 +942,15 @@ impl GenericDecoder {
                     writer.write_null(col);
                 } else {
                     let cv = self
-                        .read_datetime_offset(reader, length, metadata.get_scale())
+                        .read_datetime_offset(
+                            reader,
+                            length,
+                            metadata.get_scale().ok_or_else(|| {
+                                crate::error::Error::ImplementationError(
+                                    "DateTimeOffsetN type should have scale".to_string(),
+                                )
+                            })?,
+                        )
                         .await?;
                     if let ColumnValues::DateTimeOffset(dto) = cv {
                         writer.write_datetimeoffset(col, dto);
@@ -1141,7 +1166,16 @@ impl SqlTypeDecode for GenericDecoder {
                     0 => return Ok(ColumnValues::Null),
                     _ => {
                         return Ok(ColumnValues::Time(
-                            self.read_time(reader, length, metadata.get_scale()).await?,
+                            self.read_time(
+                                reader,
+                                length,
+                                metadata.get_scale().ok_or_else(|| {
+                                    crate::error::Error::ImplementationError(
+                                        "TimeN type should have scale".to_string(),
+                                    )
+                                })?,
+                            )
+                            .await?,
                         ));
                     }
                 }
@@ -1151,8 +1185,16 @@ impl SqlTypeDecode for GenericDecoder {
                 match length {
                     0 => Ok(ColumnValues::Null),
                     _ => {
-                        self.read_datetime2(reader, length, metadata.get_scale())
-                            .await
+                        self.read_datetime2(
+                            reader,
+                            length,
+                            metadata.get_scale().ok_or_else(|| {
+                                crate::error::Error::ImplementationError(
+                                    "DateTime2N type should have scale".to_string(),
+                                )
+                            })?,
+                        )
+                        .await
                     }
                 }
             }?,
@@ -1161,8 +1203,16 @@ impl SqlTypeDecode for GenericDecoder {
                 match length {
                     0 => Ok(ColumnValues::Null),
                     _ => {
-                        self.read_datetime_offset(reader, length, metadata.get_scale())
-                            .await
+                        self.read_datetime_offset(
+                            reader,
+                            length,
+                            metadata.get_scale().ok_or_else(|| {
+                                crate::error::Error::ImplementationError(
+                                    "DateTimeOffsetN type should have scale".to_string(),
+                                )
+                            })?,
+                        )
+                        .await
                     }
                 }
             }?,

@@ -43,11 +43,11 @@ impl ColumnMetadata {
             TypeInfoVariant::PartialLen(_, _, _, _, _)
         )
     }
-    pub fn get_scale(&self) -> u8 {
+    pub fn get_scale(&self) -> Option<u8> {
         match self.type_info.type_info_variant {
-            TypeInfoVariant::VarLenScale(_, scale) => scale,
-            TypeInfoVariant::VarLenPrecisionScale(_, _, _, scale) => scale,
-            _ => unreachable!("get_scale called on a type that does not have scale"),
+            TypeInfoVariant::VarLenScale(_, scale) => Some(scale),
+            TypeInfoVariant::VarLenPrecisionScale(_, _, _, scale) => Some(scale),
+            _ => None,
         }
     }
 
@@ -220,7 +220,7 @@ mod tests {
             0x00,
             TypeInfoVariant::VarLenScale(VariableLengthTypes::TimeN, 7),
         );
-        assert_eq!(metadata.get_scale(), 7);
+        assert_eq!(metadata.get_scale(), Some(7));
     }
 
     #[test]
@@ -229,7 +229,14 @@ mod tests {
             0x00,
             TypeInfoVariant::VarLenPrecisionScale(VariableLengthTypes::DecimalN, 18, 38, 4),
         );
-        assert_eq!(metadata.get_scale(), 4);
+        assert_eq!(metadata.get_scale(), Some(4));
+    }
+
+    #[test]
+    fn test_get_scale_none() {
+        let metadata =
+            create_test_column_metadata(0x00, TypeInfoVariant::FixedLen(FixedLengthTypes::Int4));
+        assert_eq!(metadata.get_scale(), None);
     }
 
     #[test]
