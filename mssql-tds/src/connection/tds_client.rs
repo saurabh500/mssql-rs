@@ -1145,6 +1145,11 @@ impl TdsClient {
         }
     }
 
+    /// Drains all remaining result sets and resets the client for the next request.
+    ///
+    /// Any unread rows and result sets are consumed so the TDS stream is left in
+    /// a clean state. Must be called (or the result sets fully iterated) before
+    /// executing another query on the same connection.
     #[instrument(skip(self), level = "info")]
     pub async fn close_query(&mut self) -> TdsResult<()> {
         if !self.execution_context.has_open_batch() {
