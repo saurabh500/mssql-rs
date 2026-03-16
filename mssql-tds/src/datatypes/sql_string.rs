@@ -11,6 +11,7 @@ use super::{
     sqldatatypes::{TypeInfoVariant, is_unicode_type},
 };
 
+/// Character encoding used by a [`SqlString`].
 #[derive(PartialEq, Clone)]
 pub enum EncodingType {
     Utf8,
@@ -21,6 +22,7 @@ pub enum EncodingType {
     DelayedSet,
 }
 
+/// Encoded string value from a TDS character column.
 #[derive(PartialEq, Clone)]
 pub struct SqlString {
     pub bytes: Vec<u8>,
@@ -28,6 +30,7 @@ pub struct SqlString {
 }
 
 impl SqlString {
+    /// Creates a `SqlString` from raw bytes and an encoding type.
     pub fn new(bytes: Vec<u8>, encoding_type: EncodingType) -> Self {
         SqlString {
             bytes,
@@ -35,6 +38,7 @@ impl SqlString {
         }
     }
 
+    /// Creates a UTF-16LE–encoded `SqlString` from a Rust `String`.
     pub fn from_utf8_string(string: String) -> Self {
         let utf16_bytes = string
             .encode_utf16()
@@ -43,6 +47,7 @@ impl SqlString {
         SqlString::new(utf16_bytes, EncodingType::Utf16)
     }
 
+    /// Decodes the stored bytes into a Rust `String` according to the encoding type.
     pub fn to_utf8_string(&self) -> String {
         match self.encoding_type {
             // TODO: Investigation needed. When creating a Utf8 strings from the vector, the string is weirdly encoded.
@@ -145,6 +150,7 @@ impl Display for SqlString {
     }
 }
 
+/// Determines the character encoding for a column from its metadata.
 pub fn get_encoding_type(metadata: &ColumnMetadata) -> EncodingType {
     let collation = match metadata.type_info.type_info_variant {
         TypeInfoVariant::PartialLen(_, _, collation, _, _) => collation,

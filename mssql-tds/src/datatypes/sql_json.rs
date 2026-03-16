@@ -4,6 +4,7 @@
 use core::fmt;
 use std::fmt::Debug;
 
+/// SQL Server `json` column value stored as UTF-8 bytes.
 #[derive(PartialEq, Clone)]
 pub struct SqlJson {
     // Utf-8 encoded bytes representing a JSON string
@@ -11,10 +12,12 @@ pub struct SqlJson {
 }
 
 impl SqlJson {
+    /// Converts the underlying UTF-8 bytes to a Rust `String`.
     pub fn as_string(&self) -> String {
         String::from_utf8(self.bytes.clone()).unwrap()
     }
 
+    /// Creates a `SqlJson` from raw UTF-8 bytes.
     pub fn new(bytes: Vec<u8>) -> Self {
         Self { bytes }
     }

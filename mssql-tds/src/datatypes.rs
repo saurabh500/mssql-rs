@@ -1,6 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+//! TDS data type definitions and serialization.
+//!
+//! Provides Rust representations of SQL Server data types, encoding/decoding
+//! between TDS wire format and Rust values, and metadata structures for
+//! bulk copy operations.
+
 pub mod bulk_copy_metadata;
 pub mod column_values;
 pub mod decoder;
