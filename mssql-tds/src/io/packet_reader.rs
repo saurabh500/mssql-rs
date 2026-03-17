@@ -21,14 +21,12 @@ pub(crate) trait TdsPacketReader {
     async fn read_byte(&mut self) -> TdsResult<u8>;
     async fn read_int16_big_endian(&mut self) -> TdsResult<i16>;
     async fn read_int32_big_endian(&mut self) -> TdsResult<i32>;
-    async fn read_int64_big_endian(&mut self) -> TdsResult<i64>;
     async fn read_uint40(&mut self) -> TdsResult<u64>;
 
     async fn read_float32(&mut self) -> TdsResult<f32>;
     async fn read_float64(&mut self) -> TdsResult<f64>;
     async fn read_int16(&mut self) -> TdsResult<i16>;
     async fn read_uint16(&mut self) -> TdsResult<u16>;
-    async fn read_int24(&mut self) -> TdsResult<i32>;
     async fn read_uint24(&mut self) -> TdsResult<u32>;
     async fn read_int32(&mut self) -> TdsResult<i32>;
     async fn read_uint32(&mut self) -> TdsResult<u32>;
@@ -37,10 +35,11 @@ pub(crate) trait TdsPacketReader {
 
     async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize>;
     async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>>;
+    #[allow(dead_code)]
     async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>>;
     async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>>;
     async fn read_varchar_u8_length(&mut self) -> TdsResult<String>;
-    async fn read_varchar_byte_len(&mut self) -> TdsResult<String>;
+    #[allow(dead_code)]
     async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String>;
     async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String>;
     async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()>;
@@ -48,20 +47,19 @@ pub(crate) trait TdsPacketReader {
     fn reset_reader(&mut self);
 }
 
+/// Low-level TDS packet reading operations (public under `fuzzing` cfg).
 #[async_trait]
 #[cfg(fuzzing)]
 pub trait TdsPacketReader {
     async fn read_byte(&mut self) -> TdsResult<u8>;
     async fn read_int16_big_endian(&mut self) -> TdsResult<i16>;
     async fn read_int32_big_endian(&mut self) -> TdsResult<i32>;
-    async fn read_int64_big_endian(&mut self) -> TdsResult<i64>;
     async fn read_uint40(&mut self) -> TdsResult<u64>;
 
     async fn read_float32(&mut self) -> TdsResult<f32>;
     async fn read_float64(&mut self) -> TdsResult<f64>;
     async fn read_int16(&mut self) -> TdsResult<i16>;
     async fn read_uint16(&mut self) -> TdsResult<u16>;
-    async fn read_int24(&mut self) -> TdsResult<i32>;
     async fn read_uint24(&mut self) -> TdsResult<u32>;
     async fn read_int32(&mut self) -> TdsResult<i32>;
     async fn read_uint32(&mut self) -> TdsResult<u32>;
@@ -73,7 +71,6 @@ pub trait TdsPacketReader {
     async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>>;
     async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>>;
     async fn read_varchar_u8_length(&mut self) -> TdsResult<String>;
-    async fn read_varchar_byte_len(&mut self) -> TdsResult<String>;
     async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String>;
     async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String>;
     async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()>;
@@ -81,6 +78,7 @@ pub trait TdsPacketReader {
     fn reset_reader(&mut self);
 }
 
+/// Buffered reader that reassembles TDS packets from the network stream.
 pub struct PacketReader<'a> {
     network_reader_writer: &'a mut dyn NetworkReaderWriter,
     buffer_position: usize,
@@ -92,6 +90,7 @@ pub struct PacketReader<'a> {
 impl<'a> PacketReader<'a> {
     pub const LENGTHNULL: u16 = 0xffff;
 
+    #[cfg(test)]
     pub(crate) fn new(network_reader_writer: &'a mut dyn NetworkReaderWriter) -> PacketReader<'a> {
         let packet_size: usize = network_reader_writer.as_writer().packet_size() as usize;
         let packet_storage = packet_size * 2;
@@ -215,6 +214,7 @@ impl<'a> PacketReader<'a> {
     }
 
     /// Skips a specified number of bytes in the packet stream.
+    #[allow(dead_code)]
     pub async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()> {
         let mut length_to_read = skip_count;
         while length_to_read > 0 {
@@ -281,15 +281,6 @@ impl TdsPacketReader for PacketReader<'_> {
         Ok(result)
     }
 
-    async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-        if !self.do_we_have_enough_data(8) {
-            self.read_tds_packet().await?;
-        }
-        let result = BigEndian::read_i64(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(8)?;
-        Ok(result)
-    }
-
     async fn read_uint40(&mut self) -> TdsResult<u64> {
         if !self.do_we_have_enough_data(5) {
             self.read_tds_packet().await?;
@@ -333,15 +324,6 @@ impl TdsPacketReader for PacketReader<'_> {
         }
         let result = LittleEndian::read_u16(&self.working_buffer[self.buffer_position..]);
         self.consume_bytes(2)?;
-        Ok(result)
-    }
-
-    async fn read_int24(&mut self) -> TdsResult<i32> {
-        if !self.do_we_have_enough_data(3) {
-            self.read_tds_packet().await?;
-        }
-        let result = LittleEndian::read_i24(&self.working_buffer[self.buffer_position..]);
-        self.consume_bytes(3)?;
         Ok(result)
     }
 
@@ -460,12 +442,6 @@ impl TdsPacketReader for PacketReader<'_> {
         Ok(string)
     }
 
-    async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
-        let length: u16 = self.read_uint16().await?;
-        let string = self.read_unicode_with_byte_length(length as usize).await?;
-        Ok(string)
-    }
-
     async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String> {
         let result = self
             .read_unicode_with_byte_length(string_length * 2)
@@ -534,10 +510,6 @@ impl TdsPacketReader for Box<dyn TdsPacketReader + Send + Sync> {
         (**self).read_int32_big_endian().await
     }
 
-    async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-        (**self).read_int64_big_endian().await
-    }
-
     async fn read_uint40(&mut self) -> TdsResult<u64> {
         (**self).read_uint40().await
     }
@@ -556,10 +528,6 @@ impl TdsPacketReader for Box<dyn TdsPacketReader + Send + Sync> {
 
     async fn read_uint16(&mut self) -> TdsResult<u16> {
         (**self).read_uint16().await
-    }
-
-    async fn read_int24(&mut self) -> TdsResult<i32> {
-        (**self).read_int24().await
     }
 
     async fn read_uint24(&mut self) -> TdsResult<u32> {
@@ -600,10 +568,6 @@ impl TdsPacketReader for Box<dyn TdsPacketReader + Send + Sync> {
 
     async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
         (**self).read_varchar_u8_length().await
-    }
-
-    async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
-        (**self).read_varchar_byte_len().await
     }
 
     async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String> {
@@ -654,7 +618,6 @@ pub(crate) mod tests {
 
     pub(crate) struct TestPacketBuilder {
         data: Vec<u8>,
-        packet_type: PacketType,
         payload_length: u16,
     }
 
@@ -662,7 +625,6 @@ pub(crate) mod tests {
     ///
     /// # Fields
     /// - `data`: A vector of bytes representing the packet data.
-    /// - `packet_type`: The type of the packet.
     /// - `length`: The length of the packet data.
     ///
     /// # Methods
@@ -685,7 +647,6 @@ pub(crate) mod tests {
 
             TestPacketBuilder {
                 data,
-                packet_type, // or any default value
                 payload_length: 0,
             }
         }
@@ -732,11 +693,6 @@ pub(crate) mod tests {
             }
         }
 
-        pub(crate) fn reset(&mut self) {
-            self.position = 0;
-            self.write_data.clear();
-        }
-
         pub(crate) fn get_written_data(&self) -> &[u8] {
             self.write_data.as_slice()
         }
@@ -758,10 +714,6 @@ pub(crate) mod tests {
             todo!()
         }
 
-        async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-            todo!()
-        }
-
         async fn read_uint40(&mut self) -> TdsResult<u64> {
             todo!()
         }
@@ -779,10 +731,6 @@ pub(crate) mod tests {
         }
 
         async fn read_uint16(&mut self) -> TdsResult<u16> {
-            todo!()
-        }
-
-        async fn read_int24(&mut self) -> TdsResult<i32> {
             todo!()
         }
 
@@ -823,10 +771,6 @@ pub(crate) mod tests {
         }
 
         async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
-            todo!()
-        }
-
-        async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
             todo!()
         }
 

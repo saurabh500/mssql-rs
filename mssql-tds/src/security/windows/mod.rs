@@ -19,10 +19,9 @@
 //! - For NTLM: Valid local or domain credentials
 
 mod sspi_context;
-pub mod sspi_ffi;
+mod sspi_ffi;
 
 pub use sspi_context::WindowsSspiContext;
-pub use sspi_ffi::{get_max_token_size, get_sspi_error_message};
 
 /// Checks if SSPI is available on this system.
 pub fn is_available() -> bool {

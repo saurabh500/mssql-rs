@@ -22,9 +22,11 @@ use crate::token::tokens::SqlCollation;
 const NULL_LENGTH: u8 = 0x00;
 const VARNULL: u16 = 0xFFFF;
 
-// PLP (Partial Length Prefix) constants - made public for reuse in bulk_load.rs
+/// PLP sentinel indicating a SQL NULL value.
 pub const PLP_NULL: u64 = 0xFFFFFFFFFFFFFFFF;
-pub const PLP_UNKNOWN_LEN: u64 = 0xFFFFFFFFFFFFFFFE; // -2 in signed i64, used when total length is unknown
+/// PLP sentinel indicating unknown total length.
+pub const PLP_UNKNOWN_LEN: u64 = 0xFFFFFFFFFFFFFFFE;
+/// PLP chunk terminator (zero-length chunk).
 pub const PLP_TERMINATOR: u32 = 0x00000000;
 
 // TDS type byte constants for string types

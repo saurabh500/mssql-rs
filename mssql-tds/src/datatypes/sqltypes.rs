@@ -25,6 +25,11 @@ use crate::{
     token::tokens::SqlCollation,
 };
 
+/// Input parameter type for RPC calls.
+///
+/// Each variant wraps an `Option` to support SQL `NULL`. The inner types
+/// carry the Rust-side value; serialization into TDS wire format is handled
+/// by [`TdsValueSerializer`].
 #[derive(Debug, PartialEq, Clone)]
 pub enum SqlType {
     Bit(Option<bool>),
@@ -87,16 +92,8 @@ pub(crate) const VAR_TDS_MAX_LENGTH: u16 = 8000u16;
 // The length of a NULL value in TDS is 65535 bytes for variable length types.
 pub(crate) const MAX_U16_LENGTH: u16 = 65535u16;
 
-// The length of a NULL value in TDS is 0 bytes.
-pub(crate) const NULL_LENGTH: u8 = 0u8;
-
 // The fixed size for Decimal in TDS is 17 bytes.
 pub(crate) const DECIMAL_FIXED_SIZE: u8 = 17;
-
-// The short data length which signifies that the data is being sent as PLP (Partial Length Packet).
-pub(crate) const MAX_SHORT_DATA_LENGTH: u16 = 0xFFFF;
-
-pub(crate) const PLP_TERMINATOR_CHUNK_LEN: u32 = 0x00000000;
 
 pub(crate) const PLP_UNKNOWN_LENGTH: u64 = 0xFFFF_FFFF_FFFF_FFFE;
 
@@ -954,50 +951,6 @@ pub(crate) fn get_time_length_from_scale(scale: u8) -> TdsResult<u8> {
             "Invalid scale for Time type: {scale}"
         ))),
     }
-}
-
-/// Scale the time value for serialization based on the scale.
-/// The time_nanoseconds field is always in 100-nanosecond units internally,
-/// but SQL Server expects values in units appropriate for the scale:
-/// - Scale 0: seconds (divide by 10^7)
-/// - Scale 1: tenths of seconds (divide by 10^6)
-/// - Scale 2: hundredths of seconds (divide by 10^5)
-/// - Scale 3: milliseconds (divide by 10^4)
-/// - Scale 4: ten-thousandths (divide by 10^3)
-/// - Scale 5: hundred-thousandths (divide by 10^2)
-/// - Scale 6: microseconds (divide by 10^1)
-/// - Scale 7: 100-nanoseconds (no scaling)
-pub(crate) fn scale_time_value_for_serialization(time_nanoseconds: u64, scale: u8) -> u64 {
-    match scale {
-        0 => time_nanoseconds / 10_000_000, // Seconds
-        1 => time_nanoseconds / 1_000_000,  // Tenths
-        2 => time_nanoseconds / 100_000,    // Hundredths
-        3 => time_nanoseconds / 10_000,     // Milliseconds
-        4 => time_nanoseconds / 1_000,      // Ten-thousandths
-        5 => time_nanoseconds / 100,        // Hundred-thousandths
-        6 => time_nanoseconds / 10,         // Microseconds
-        7 => time_nanoseconds,              // 100-nanoseconds (no scaling)
-        _ => time_nanoseconds,              // Fallback
-    }
-}
-
-// We are taking the map from the protocol documentation that defines the scale.
-// However the scale essentially defines the precision of the time and
-// the length of bytes can be computed from the scale. But since
-// this is documented, we will use this map.
-fn get_scale_based_length(time: &SqlTime) -> TdsResult<u8> {
-    get_time_length_from_scale(time.scale)
-}
-
-async fn write_default_scale_and_null(packet_writer: &mut PacketWriter<'_>) -> TdsResult<()> {
-    // Since we dont have a scale, we will send out the default scale.
-    // This doesn't matter, if the following data is NULL.
-    packet_writer
-        .write_byte_async(DEFAULT_VARTIME_SCALE)
-        .await?;
-    // Write 0 length to signify that the data is NULL.
-    packet_writer.write_byte_async(NULL_LENGTH).await?;
-    Ok(())
 }
 
 impl TryFrom<&SqlType> for FixedLengthTypes {

@@ -41,7 +41,7 @@ pub const ATTENTION_TIMEOUT_SECONDS: u64 = 5;
 /// and restored after attention processing. This ensures error information
 /// is not lost during the attention handling sequence.
 #[derive(Debug)]
-pub struct BulkCopyTimeoutState {
+pub(crate) struct BulkCopyTimeoutState {
     /// When the timeout expires (None = infinite timeout)
     deadline: Option<Instant>,
 
@@ -59,8 +59,7 @@ pub struct BulkCopyTimeoutState {
     bulk_copy_write_timeout: bool,
 
     /// Pre-attention errors that need to be preserved during attention processing
-    /// These errors occurred before attention was sent and should be reported after
-    /// attention processing completes
+    #[allow(dead_code)] // wired in upcoming bulk copy attention flow
     pre_attention_errors: Vec<Error>,
 }
 
@@ -132,6 +131,7 @@ impl BulkCopyTimeoutState {
     ///
     /// Returns `None` if no deadline is set (infinite timeout).
     /// Returns `Duration::ZERO` if the deadline has already passed.
+    #[cfg(test)]
     pub fn remaining_duration(&self) -> Option<Duration> {
         self.deadline
             .map(|d| d.saturating_duration_since(Instant::now()))
@@ -155,18 +155,21 @@ impl BulkCopyTimeoutState {
     }
 
     /// Check if attention ACK has been received.
+    #[cfg(test)]
     #[inline]
     pub fn is_attention_received(&self) -> bool {
         self.attention_received
     }
 
     /// Check if we're currently sending attention.
+    #[cfg(test)]
     #[inline]
     pub fn is_attention_sending(&self) -> bool {
         self.attention_sending
     }
 
     /// Check if a bulk copy write timeout occurred.
+    #[cfg(test)]
     #[inline]
     pub fn is_bulk_copy_write_timeout(&self) -> bool {
         self.bulk_copy_write_timeout
@@ -208,6 +211,7 @@ impl BulkCopyTimeoutState {
     /// # Arguments
     ///
     /// * `errors` - The errors to preserve during attention processing
+    #[cfg(test)]
     pub fn store_errors_for_attention(&mut self, errors: Vec<Error>) {
         self.pre_attention_errors = errors;
     }
@@ -216,6 +220,7 @@ impl BulkCopyTimeoutState {
     ///
     /// Returns the errors that were stored before attention processing.
     /// This consumes the stored errors.
+    #[cfg(test)]
     pub fn restore_errors_after_attention(&mut self) -> Vec<Error> {
         std::mem::take(&mut self.pre_attention_errors)
     }
@@ -224,6 +229,7 @@ impl BulkCopyTimeoutState {
     ///
     /// This resets the attention-related flags but preserves the deadline.
     /// Use this after successfully processing an attention ACK.
+    #[cfg(test)]
     pub fn reset_attention_state(&mut self) {
         self.attention_sent = false;
         self.attention_received = false;
@@ -233,6 +239,7 @@ impl BulkCopyTimeoutState {
     }
 
     /// Check if attention handling is complete (sent and received).
+    #[cfg(test)]
     pub fn is_attention_complete(&self) -> bool {
         self.attention_sent && self.attention_received
     }

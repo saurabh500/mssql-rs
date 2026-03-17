@@ -11,12 +11,14 @@ use core::fmt;
 use std::fmt::Debug;
 use uuid::Uuid;
 
+/// SQL Server `xml` column value stored as UTF-16LE bytes.
 #[derive(Debug, PartialOrd, PartialEq, Clone)]
 pub struct SqlXml {
     pub bytes: Vec<u8>,
 }
 
 impl SqlXml {
+    /// Decodes the UTF-16LE bytes into a Rust `String`.
     pub fn as_string(&self) -> String {
         let mut u16_buffer = Vec::with_capacity(self.bytes.len() / 2);
         self.bytes
@@ -27,6 +29,7 @@ impl SqlXml {
         String::from_utf16(&u16_buffer).unwrap()
     }
 
+    /// Returns `true` if a UTF-16LE BOM (0xFFFE) is present.
     pub fn has_bom(&self) -> bool {
         self.bytes.len() >= 2 && (self.bytes[0] == 0xFF && self.bytes[1] == 0xFE)
     }
@@ -42,6 +45,7 @@ impl From<String> for SqlXml {
     }
 }
 
+/// Decoded column value from a TDS result row.
 #[derive(Debug, PartialEq, Clone)]
 pub enum ColumnValues {
     TinyInt(u8),
@@ -70,8 +74,10 @@ pub enum ColumnValues {
     Vector(SqlVector),
 }
 
+/// Default fractional-seconds scale (100 ns) for `time`, `datetime2`, and `datetimeoffset`.
 pub const DEFAULT_VARTIME_SCALE: u8 = 7;
 
+/// TDS `time` value with configurable fractional-seconds precision.
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlTime {
     pub time_nanoseconds: u64,
@@ -84,18 +90,21 @@ impl SqlTime {
     }
 }
 
+/// TDS `datetime2` value combining a day count with a [`SqlTime`].
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlDateTime2 {
     pub days: u32,
     pub time: SqlTime,
 }
 
+/// TDS `datetimeoffset` value: a [`SqlDateTime2`] plus a UTC-offset in minutes.
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlDateTimeOffset {
     pub datetime2: SqlDateTime2,
     pub offset: i16,
 }
 
+/// TDS `smallmoney` value stored as a scaled 32-bit integer (×10⁴).
 #[derive(PartialEq, Clone, Debug)]
 pub struct SqlSmallMoney {
     pub int_val: i32,
@@ -105,7 +114,7 @@ impl From<i32> for SqlSmallMoney {
         SqlSmallMoney { int_val: value }
     }
 }
-// This struct represents the TDS money value.
+/// TDS `money` value stored as two 32-bit integers in mixed-endian layout.
 #[derive(PartialEq, Clone)]
 pub struct SqlMoney {
     pub lsb_part: i32, // LSB
@@ -181,6 +190,7 @@ impl From<&SqlMoney> for TdsResult<f32> {
     }
 }
 
+/// TDS `smalldatetime` value: days since 1900-01-01 and minutes since midnight.
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlSmallDateTime {
     // One 2-byte unsigned integer that represents the number of days since January 1, 1900.
@@ -190,6 +200,7 @@ pub struct SqlSmallDateTime {
     pub time: u16,
 }
 
+/// TDS `datetime` value: days since 1900-01-01 and 1/300-second ticks since midnight.
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlDateTime {
     // One 4-byte signed integer that represents the number of days since January 1, 1900.

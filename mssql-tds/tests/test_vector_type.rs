@@ -95,7 +95,7 @@ mod vector_integration_tests {
         assert_eq!(col0.column_name, "NonNullVec");
         assert_eq!(col0.data_type, TdsDataType::Vector);
         assert_eq!(col0.type_info.length, expected_length);
-        assert_eq!(col0.get_scale(), expected_scale);
+        assert_eq!(col0.get_scale(), Some(expected_scale));
         assert!(!col0.is_plp());
         // Expression columns are generally nullable in SQL Server metadata
         assert!(col0.is_nullable());
@@ -105,7 +105,7 @@ mod vector_integration_tests {
         assert_eq!(col1.column_name, "NullVec");
         assert_eq!(col1.data_type, TdsDataType::Vector);
         assert_eq!(col1.type_info.length, expected_length);
-        assert_eq!(col1.get_scale(), expected_scale);
+        assert_eq!(col1.get_scale(), Some(expected_scale));
         assert!(!col1.is_plp());
         assert!(col1.is_nullable());
     }

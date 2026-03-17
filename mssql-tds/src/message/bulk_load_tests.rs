@@ -190,7 +190,7 @@ mod tests {
         let metadata = vec![col1, col2, col3];
         let options = BulkCopyOptions::default();
 
-        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options);
+        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options).unwrap();
 
         // Verify COLLATE is included for character types
         assert!(
@@ -226,7 +226,7 @@ mod tests {
         let metadata = vec![col1, col2, col3];
         let options = BulkCopyOptions::default();
 
-        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options);
+        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options).unwrap();
 
         // Verify no COLLATE clauses are present
         assert!(
@@ -259,7 +259,7 @@ mod tests {
         let metadata = vec![col1, col2, col3];
         let options = BulkCopyOptions::default();
 
-        let command = build_insert_bulk_command("dbo.MixedTable", &metadata, &options);
+        let command = build_insert_bulk_command("dbo.MixedTable", &metadata, &options).unwrap();
 
         // Verify first column has COLLATE
         assert!(
@@ -303,7 +303,7 @@ mod tests {
             ..BulkCopyOptions::default()
         };
 
-        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options);
+        let command = build_insert_bulk_command("dbo.TestTable", &metadata, &options).unwrap();
 
         // Verify COLLATE clause is present
         assert!(

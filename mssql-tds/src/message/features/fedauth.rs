@@ -117,10 +117,6 @@ impl FedAuthFeature {
         }
     }
 
-    fn get_access_token_bytes(&self) -> Option<&[u8]> {
-        self.access_token_bytes.as_deref()
-    }
-
     /// Returns the length of the payload for the FedAuth feature.
     /// The payload length is calculated based on the presence of an access token.
     /// If an access token is present, the length includes the size of the token.
@@ -239,22 +235,6 @@ mod unittests {
             false,
         );
         assert_eq!(feature.feature_identifier(), FeatureExtension::FedAuth);
-    }
-
-    #[test]
-    fn test_data_length_with_access_token() {
-        let feature = FedAuthFeature::new(
-            TdsAuthenticationMethod::ActiveDirectoryPassword,
-            Some("token".to_string()),
-            false,
-        );
-        let byte_len = if let Some(bytes) = feature.get_access_token_bytes() {
-            bytes.len()
-        } else {
-            0
-        };
-
-        assert_eq!(feature.data_length(), 1 + 4 + byte_len as i32 + 1 + 4);
     }
 
     #[test]

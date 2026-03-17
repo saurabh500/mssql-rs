@@ -6,24 +6,32 @@ use crate::error::Error::OperationCancelledError;
 use std::future::Future;
 use tokio_util::sync::CancellationToken;
 
+/// Alias for `Result<T, crate::error::Error>` used throughout the crate.
 pub type TdsResult<T> = Result<T, Error>;
 
+/// Cooperative cancellation handle backed by a [`CancellationToken`].
+///
+/// Pass to [`TdsConnectionProvider::create_client()`](crate::connection_provider::tds_connection_provider::TdsConnectionProvider::create_client)
+/// to cancel a pending connect, or hold for later query cancellation.
 #[derive(Debug)]
 pub struct CancelHandle {
     pub(crate) cancel_token: CancellationToken,
 }
 
 impl CancelHandle {
+    /// Create a new, uncancelled handle.
     pub fn new() -> Self {
         CancelHandle {
             cancel_token: CancellationToken::new(),
         }
     }
 
+    /// Trigger cancellation, notifying all child handles.
     pub fn cancel(self) {
         self.cancel_token.cancel();
     }
 
+    /// Derive a child handle that is cancelled when this handle is.
     pub fn child_handle(&self) -> Self {
         Self::from(self.cancel_token.child_token())
     }
@@ -59,6 +67,7 @@ impl Default for CancelHandle {
     }
 }
 
+/// SQL Server major-version discriminant derived from the server's reported version.
 #[derive(PartialEq, Debug)]
 pub enum SQLServerVersion {
     SqlServerNotsupported = 0,
@@ -93,6 +102,7 @@ impl From<u8> for SQLServerVersion {
     }
 }
 
+/// Four-part server version reported during the TDS pre-login handshake.
 #[derive(PartialEq, Debug)]
 pub struct Version {
     pub major: u8,
@@ -112,10 +122,14 @@ impl Version {
     }
 }
 
+/// TLS and encryption settings for a TDS connection.
 #[derive(Clone, PartialEq, Debug)]
 pub struct EncryptionOptions {
+    /// Encryption mode negotiated with the server.
     pub mode: EncryptionSetting,
+    /// Skip server certificate chain validation.
     pub trust_server_certificate: bool,
+    /// Expected CN or SAN in the server certificate.
     pub host_name_in_cert: Option<String>,
     /// Path to a DER or PEM encoded X.509 certificate file for certificate pinning.
     /// When specified, the driver performs an exact binary match between the provided
@@ -140,14 +154,17 @@ impl Default for EncryptionOptions {
     }
 }
 
+/// Encryption level requested by the client during the TDS pre-login.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum EncryptionSetting {
-    PreferOff, // Don't use encryption if the server allows this or doesn't support encryption.
-    On,        // Use encryption after prelogin.
-    Required, // Use encryption after prelogin. Note that this is the same as On per the documentation,
-    // but writes a different value in the request. Perhaps On is supposed to keep the connection alive,
-    // but unencrypted if the server returns encryption off/unsupported.
-    Strict, // Encrypt the whole stream, including prelogin.
+    /// Don't encrypt if the server allows it.
+    PreferOff,
+    /// Encrypt the connection after pre-login.
+    On,
+    /// Require encryption after pre-login (semantically identical to `On`).
+    Required,
+    /// Encrypt the entire stream including pre-login (TDS 8.0).
+    Strict,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

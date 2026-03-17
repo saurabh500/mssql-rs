@@ -112,6 +112,7 @@ pub struct PreloginRequestModel {
     pub activity_id: Uuid,
     pub activity_sequence_number: i32,
     pub mars_enabled: bool,
+    #[allow(dead_code)]
     pub thread_id: ThreadId,
     pub encryption_setting: EncryptionSetting,
     pub database_instance: String,
@@ -450,14 +451,12 @@ pub(crate) mod tests {
             async fn read_byte(&mut self) -> TdsResult<u8>;
             async fn read_int16_big_endian(&mut self) -> TdsResult<i16>;
             async fn read_int32_big_endian(&mut self) -> TdsResult<i32>;
-            async fn read_int64_big_endian(&mut self) -> TdsResult<i64>;
             async fn read_uint40(&mut self) -> TdsResult<u64>;
 
             async fn read_float32(&mut self) -> TdsResult<f32>;
             async fn read_float64(&mut self) -> TdsResult<f64>;
             async fn read_int16(&mut self) -> TdsResult<i16>;
             async fn read_uint16(&mut self) -> TdsResult<u16>;
-            async fn read_int24(&mut self) -> TdsResult<i32>;
             async fn read_uint24(&mut self) -> TdsResult<u32>;
             async fn read_int32(&mut self) -> TdsResult<i32>;
             async fn read_uint32(&mut self) -> TdsResult<u32>;
@@ -469,7 +468,6 @@ pub(crate) mod tests {
             async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>>;
             async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>>;
             async fn read_varchar_u8_length(&mut self) -> TdsResult<String>;
-            async fn read_varchar_byte_len(&mut self) -> TdsResult<String>;
             async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String>;
             async fn read_unicode_with_byte_length(&mut self, byte_length: usize) -> TdsResult<String>;
             async fn skip_bytes(&mut self, skip_count: usize) -> TdsResult<()>;

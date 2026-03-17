@@ -8,49 +8,71 @@ use crate::{
 
 use std::fmt;
 
+/// Schema, type, and flag information for a single column in a result set.
+///
+/// Returned as part of the `COLMETADATA` TDS token; one instance per column.
 #[derive(Debug, Clone)]
 pub struct ColumnMetadata {
+    /// SQL Server user-type ordinal (0 for base types, non-zero for aliases/CLR types).
     pub user_type: u32,
+    /// Bitmask of column property flags (nullable, identity, computed, etc.).
     pub flags: u16,
+    /// Wire-level type descriptor including length, precision, and scale.
     pub type_info: TypeInfo,
+    /// High-level SQL Server data type.
     pub data_type: TdsDataType,
+    /// Column name as declared in the query or table definition.
     pub column_name: String,
+    /// Optional four-part name (`server.catalog.schema.table`) when the server
+    /// includes table-name metadata (e.g., browse-mode queries).
     pub multi_part_name: Option<MultiPartName>,
 }
 
 impl ColumnMetadata {
+    /// Column allows `NULL` values.
     pub fn is_nullable(&self) -> bool {
         (self.flags & 0x01) != 0x00
     }
+    /// Column uses a case-sensitive collation.
     pub fn is_case_sensitive(&self) -> bool {
         (self.flags & 0x02) != 0x00
     }
+    /// Column is an identity (auto-increment) column.
     pub fn is_identity(&self) -> bool {
         (self.flags & 0x10) != 0x00
     }
+    /// Column value is computed by the server.
     pub fn is_computed(&self) -> bool {
         (self.flags & 0x20) != 0x00
     }
+    /// Column is a sparse column set (`xml COLUMN_SET FOR ALL_SPARSE_COLUMNS`).
     pub fn is_sparse_column_set(&self) -> bool {
         (self.flags & 0x1000) != 0x00
     }
+    /// Column is protected by Always Encrypted.
     pub fn is_encrypted(&self) -> bool {
         (self.flags & 0x2000) != 0x00
     }
+    /// Column uses Partially Length-prefixed (PLP) encoding (e.g., `varchar(max)`).
     pub fn is_plp(&self) -> bool {
         matches!(
             self.type_info.type_info_variant,
             TypeInfoVariant::PartialLen(_, _, _, _, _)
         )
     }
-    pub fn get_scale(&self) -> u8 {
+    /// Returns the scale for decimal/numeric/time types.
+    ///
+    /// Returns `Some(scale)` for types that include scale information (e.g., `decimal(18,4)`, `time(7)`),
+    /// or `None` for types where scale is not applicable.
+    pub fn get_scale(&self) -> Option<u8> {
         match self.type_info.type_info_variant {
-            TypeInfoVariant::VarLenScale(_, scale) => scale,
-            TypeInfoVariant::VarLenPrecisionScale(_, _, _, scale) => scale,
-            _ => unreachable!("get_scale called on a type that does not have scale"),
+            TypeInfoVariant::VarLenScale(_, scale) => Some(scale),
+            TypeInfoVariant::VarLenPrecisionScale(_, _, _, scale) => Some(scale),
+            _ => None,
         }
     }
 
+    /// Returns the SQL collation for string-typed columns, or `None` for non-string types.
     pub fn get_collation(&self) -> Option<SqlCollation> {
         // Collation is only applicable to string types which are either VarLen strings
         // Or PLP types with a collation.
@@ -82,6 +104,8 @@ impl fmt::Display for ColumnMetadata {
     }
 }
 
+/// Four-part table name (`server.catalog.schema.table`) optionally returned
+/// by the server alongside column metadata in browse-mode queries.
 #[derive(Debug, Default, Clone)]
 pub struct MultiPartName {
     pub(crate) server_name: Option<String>,
@@ -91,6 +115,7 @@ pub struct MultiPartName {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // For column encryption metadata which is not implemented yet.
 pub(crate) struct ColumnEncryptionMetadata {
     pub key_count: u8,
     pub key_details: Vec<ColumnEncryptionKeyDetails>,
@@ -99,6 +124,7 @@ pub(crate) struct ColumnEncryptionMetadata {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // For column encryption metadata which is not implemented yet.
 pub(crate) struct ColumnEncryptionKeyDetails {
     pub encrypted_cek: Vec<u8>,
     pub algo: String,
@@ -218,7 +244,7 @@ mod tests {
             0x00,
             TypeInfoVariant::VarLenScale(VariableLengthTypes::TimeN, 7),
         );
-        assert_eq!(metadata.get_scale(), 7);
+        assert_eq!(metadata.get_scale(), Some(7));
     }
 
     #[test]
@@ -227,7 +253,14 @@ mod tests {
             0x00,
             TypeInfoVariant::VarLenPrecisionScale(VariableLengthTypes::DecimalN, 18, 38, 4),
         );
-        assert_eq!(metadata.get_scale(), 4);
+        assert_eq!(metadata.get_scale(), Some(4));
+    }
+
+    #[test]
+    fn test_get_scale_none() {
+        let metadata =
+            create_test_column_metadata(0x00, TypeInfoVariant::FixedLen(FixedLengthTypes::Int4));
+        assert_eq!(metadata.get_scale(), None);
     }
 
     #[test]

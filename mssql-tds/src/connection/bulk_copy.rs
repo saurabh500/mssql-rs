@@ -1096,14 +1096,6 @@ impl<'a> BulkCopy<'a> {
             .as_ref()
             .and_then(|state| state.remaining_ms())
     }
-
-    /// Get a reference to the current timeout state.
-    ///
-    /// This is useful for advanced scenarios where you need to inspect
-    /// or manage the timeout state directly.
-    pub fn timeout_state(&self) -> Option<&BulkCopyTimeoutState> {
-        self.timeout_state.as_ref()
-    }
 }
 
 /// Zero-copy bulk copy trait for direct serialization to TDS packets.

@@ -39,53 +39,77 @@ pub struct SystemTypeId(pub u8);
 /// It aligns with SQL Server's type system and TDS protocol requirements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SqlDbType {
-    // Integer types
+    /// 64-bit signed integer (`bigint`).
     BigInt,
+    /// 32-bit signed integer (`int`).
     Int,
+    /// 16-bit signed integer (`smallint`).
     SmallInt,
+    /// 8-bit unsigned integer (`tinyint`).
     TinyInt,
+    /// Boolean (`bit`).
     Bit,
 
-    // Floating point types
+    /// Double-precision IEEE 754 (`float`).
     Float,
+    /// Single-precision IEEE 754 (`real`).
     Real,
 
-    // Exact numeric types
+    /// Fixed-precision numeric (`decimal`).
     Decimal,
+    /// Fixed-precision numeric (`numeric`). Functionally identical to `Decimal`.
     Numeric,
+    /// Currency with 4 decimal places, 8 bytes (`money`).
     Money,
+    /// Currency with 4 decimal places, 4 bytes (`smallmoney`).
     SmallMoney,
 
-    // Date and time types
+    /// Date without time component (`date`).
     Date,
+    /// Legacy datetime, ~3.33 ms precision (`datetime`).
     DateTime,
+    /// High-precision datetime, configurable fractional seconds (`datetime2`).
     DateTime2,
+    /// `datetime2` with UTC offset (`datetimeoffset`).
     DateTimeOffset,
+    /// Legacy datetime, 1-minute precision (`smalldatetime`).
     SmallDateTime,
+    /// Time without date component (`time`).
     Time,
 
-    // Character types
+    /// Fixed-length non-Unicode string (`char`).
     Char,
+    /// Variable-length non-Unicode string (`varchar`).
     VarChar,
+    /// Legacy LOB non-Unicode text — prefer `varchar(max)` (`text`).
     Text,
+    /// Fixed-length Unicode string (`nchar`).
     NChar,
+    /// Variable-length Unicode string (`nvarchar`).
     NVarChar,
+    /// Legacy LOB Unicode text — prefer `nvarchar(max)` (`ntext`).
     NText,
 
-    // Binary types
+    /// Fixed-length binary data (`binary`).
     Binary,
+    /// Variable-length binary data (`varbinary`).
     VarBinary,
+    /// Legacy LOB binary — prefer `varbinary(max)` (`image`).
     Image,
 
-    // Other types
+    /// 16-byte GUID (`uniqueidentifier`).
     UniqueIdentifier,
+    /// XML data (`xml`). Transmitted as `nvarchar(max)` during bulk copy.
     Xml,
+    /// Polymorphic type (`sql_variant`).
     Variant,
+    /// CLR user-defined type (`udt`).
     Udt,
 
+    /// JSON data (`json`). Transmitted as `nvarchar(max)` during bulk copy.
     Json,
 
-    // SQL Server 2025+ types
+    /// Fixed-dimensional vector (SQL Server 2025+).
     Vector,
 }
 
@@ -578,14 +602,14 @@ impl BulkCopyColumnMetadata {
     ///
     /// ```ignore
     /// let meta = BulkCopyColumnMetadata::new("id", SqlDbType::Int, 0x38);
-    /// assert_eq!(meta.get_sql_type_definition(), "int");
+    /// assert_eq!(meta.get_sql_type_definition().unwrap(), "int");
     ///
     /// let meta = BulkCopyColumnMetadata::new("name", SqlDbType::NVarChar, 0xE7)
     ///     .with_length(100, TypeLength::Variable(100));
-    /// assert_eq!(meta.get_sql_type_definition(), "nvarchar(100)");
+    /// assert_eq!(meta.get_sql_type_definition().unwrap(), "nvarchar(100)");
     /// ```
-    pub fn get_sql_type_definition(&self) -> String {
-        match self.sql_type {
+    pub fn get_sql_type_definition(&self) -> crate::core::TdsResult<String> {
+        Ok(match self.sql_type {
             SqlDbType::Int => "int".to_string(),
             SqlDbType::BigInt => "bigint".to_string(),
             SqlDbType::SmallInt => "smallint".to_string(),
@@ -645,15 +669,10 @@ impl BulkCopyColumnMetadata {
             SqlDbType::Variant => "sql_variant".to_string(),
             SqlDbType::Json => "nvarchar(max)".to_string(),
             SqlDbType::Vector => {
-                let dims = self.vector_dimensions().unwrap_or_else(|e| {
-                    panic!(
-                        "Invalid VECTOR metadata for column '{}': {}",
-                        self.column_name, e
-                    )
-                });
+                let dims = self.vector_dimensions()?;
                 format!("vector({})", dims)
             }
-        }
+        })
     }
 
     /// Compute VECTOR dimensions from total `length` and base type encoded in `scale`.
