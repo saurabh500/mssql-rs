@@ -360,7 +360,7 @@ impl ClientContext {
         )
     }
 
-    pub fn tds_version(&self) -> TdsVersion {
+    pub(crate) fn tds_version(&self) -> TdsVersion {
         if matches!(self.encryption_options.mode, EncryptionSetting::Strict) {
             TdsVersion::V8_0
         } else {

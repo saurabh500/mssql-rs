@@ -47,6 +47,7 @@ pub(crate) trait TdsPacketReader {
     fn reset_reader(&mut self);
 }
 
+/// Low-level TDS packet reading operations (public under `fuzzing` cfg).
 #[async_trait]
 #[cfg(fuzzing)]
 pub trait TdsPacketReader {
@@ -77,6 +78,7 @@ pub trait TdsPacketReader {
     fn reset_reader(&mut self);
 }
 
+/// Buffered reader that reassembles TDS packets from the network stream.
 pub struct PacketReader<'a> {
     network_reader_writer: &'a mut dyn NetworkReaderWriter,
     buffer_position: usize,

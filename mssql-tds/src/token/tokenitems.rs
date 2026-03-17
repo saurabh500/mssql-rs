@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+/// Status of a TDS `RETURNVALUE` token, indicating whether the value
+/// is an output parameter or a user-defined function return.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReturnValueStatus {
     OutputParam,
