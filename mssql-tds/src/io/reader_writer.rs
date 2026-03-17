@@ -33,6 +33,7 @@ mod tests {
     use crate::connection::transport::network_transport::tests::{
         create_client_server_network_transport, create_readable_network_transport,
     };
+    use crate::io::reader_writer::NetworkWriter;
     use futures::StreamExt;
     use rand::Rng;
     use tokio_util::codec::{BytesCodec, FramedRead};

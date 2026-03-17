@@ -10,7 +10,6 @@ use crate::connection_provider::tds_connection_provider::PARSER_REGISTRY;
 use crate::core::{
     CancelHandle, EncryptionOptions, EncryptionSetting, NegotiatedEncryptionSetting, TdsResult,
 };
-use crate::datatypes::decoder::GenericDecoder;
 use crate::datatypes::row_writer::RowWriter;
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::TimeoutErrorType;
@@ -19,14 +18,13 @@ use crate::io::packet_reader::{PacketReader, TdsPacketReader};
 use crate::io::packet_writer::PacketWriter;
 use crate::io::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
 use crate::io::token_stream::{
-    ParserContext, RowReadResult, TdsTokenStreamReader, TokenParserRegistry, TokenParsers,
+    ParserContext, RowReadResult, TdsTokenStreamReader, receive_row_into_internal,
+    receive_token_internal,
 };
 use crate::message::attention::AttentionRequest;
 use crate::message::login_options::TdsVersion;
 use crate::message::messages::Request;
-use crate::query::metadata::ColumnMetadata;
-use crate::token::parsers::TokenParser;
-use crate::token::tokens::{DoneStatus, TokenType, Tokens};
+use crate::token::tokens::{DoneStatus, Tokens};
 use async_trait::async_trait;
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use std::cmp::min;
@@ -348,7 +346,9 @@ async fn create_transport_for_version(
             // Enable TLS immediately for TDS 8.0 (before any TDS packets are exchanged)
             info!("Creating NetworkTransport for TDS 8.0 with immediate TLS");
 
-            let encrypted_stream = ssl_handler.enable_ssl_async(stream).await?;
+            let encrypted_stream = ssl_handler
+                .enable_ssl_async(stream, NegotiatedEncryptionSetting::Strict)
+                .await?;
 
             Ok(Box::new(NetworkTransport::new(
                 encrypted_stream,
@@ -536,15 +536,6 @@ impl NetworkTransport {
         }
     }
 
-    pub(crate) async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
-        self.stream
-            .as_mut()
-            .expect("Stream not available")
-            .write_all(data)
-            .await?;
-        Ok(())
-    }
-
     pub(crate) fn notify_encryption_negotiation(
         &mut self,
         encryption: NegotiatedEncryptionSetting,
@@ -611,9 +602,12 @@ impl NetworkTransport {
 
         // Perform TLS handshake (consumes extractable_stream, returns TlsStream)
         // enable_ssl_async will call tls_handshake_starting and tls_handshake_completed internally
+        let negotiated = self
+            .encryption
+            .unwrap_or(NegotiatedEncryptionSetting::Mandatory);
         let encrypted_stream = self
             .ssl_handler
-            .enable_ssl_async(Box::new(extractable_stream))
+            .enable_ssl_async(Box::new(extractable_stream), negotiated)
             .await?;
 
         // Put back the encrypted stream
@@ -885,111 +879,6 @@ impl NetworkTransport {
         Ok(packet_size_from_header)
     }
 
-    async fn receive_token_internal(&mut self, context: &ParserContext) -> TdsResult<Tokens> {
-        let token_type_byte = self.read_byte().await?;
-        let token_type: TokenType = token_type_byte.try_into()?;
-        debug!(
-            "Received token type: {:?} ({})",
-            token_type, token_type_byte
-        );
-        self.dispatch_token(token_type, context).await
-    }
-
-    /// Reads the next token; for ROW/NBCROW tokens, decodes directly into the
-    /// writer via `decode_into`, bypassing `RowToken` construction entirely.
-    async fn receive_row_into_internal(
-        &mut self,
-        context: &ParserContext,
-        writer: &mut (dyn RowWriter + Send),
-    ) -> TdsResult<RowReadResult> {
-        let token_type_byte = self.read_byte().await?;
-        let token_type: TokenType = token_type_byte.try_into()?;
-        event!(
-            tracing::Level::DEBUG,
-            "Parsing token type: {:?}",
-            &token_type
-        );
-
-        match token_type {
-            TokenType::Row => {
-                let columns = Self::extract_column_metadata(context)?;
-                let decoder = GenericDecoder::default();
-                for (col, meta) in columns.iter().enumerate() {
-                    decoder.decode_into(self, meta, col, writer).await?;
-                }
-                Ok(RowReadResult::RowWritten)
-            }
-            TokenType::NbcRow => {
-                let columns = Self::extract_column_metadata(context)?;
-                let bitmap_len = columns.len().div_ceil(8);
-                let mut bitmap = vec![0u8; bitmap_len];
-                self.read_bytes(&mut bitmap).await?;
-                let decoder = GenericDecoder::default();
-                for (col, meta) in columns.iter().enumerate() {
-                    if bitmap[col / 8] & (1 << (col % 8)) != 0 {
-                        writer.write_null(col);
-                    } else {
-                        decoder.decode_into(self, meta, col, writer).await?;
-                    }
-                }
-                Ok(RowReadResult::RowWritten)
-            }
-            _ => {
-                let token = self.dispatch_token(token_type, context).await?;
-                Ok(RowReadResult::Token(token))
-            }
-        }
-    }
-
-    fn extract_column_metadata(context: &ParserContext) -> TdsResult<&[ColumnMetadata]> {
-        match context {
-            ParserContext::ColumnMetadata(metadata) => Ok(&metadata.columns),
-            _ => Err(crate::error::Error::ProtocolError(
-                "Expected ColumnMetadata in context for row decoding".to_string(),
-            )),
-        }
-    }
-
-    async fn dispatch_token(
-        &mut self,
-        token_type: TokenType,
-        context: &ParserContext,
-    ) -> TdsResult<Tokens> {
-        let parser = match PARSER_REGISTRY.get_parser(&token_type) {
-            Some(parser) => parser,
-            None => {
-                return Err(crate::error::Error::ProtocolError(format!(
-                    "No parser implemented for token type: {token_type:?}. This token type is not supported yet."
-                )));
-            }
-        };
-
-        event!(
-            tracing::Level::DEBUG,
-            "Parsing token type: {:?}",
-            &token_type
-        );
-
-        match parser {
-            TokenParsers::EnvChange(parser) => parser.parse(self, context).await,
-            TokenParsers::LoginAck(parser) => parser.parse(self, context).await,
-            TokenParsers::Done(parser) => parser.parse(self, context).await,
-            TokenParsers::DoneInProc(parser) => parser.parse(self, context).await,
-            TokenParsers::DoneProc(parser) => parser.parse(self, context).await,
-            TokenParsers::Info(parser) => parser.parse(self, context).await,
-            TokenParsers::Error(parser) => parser.parse(self, context).await,
-            TokenParsers::FedAuthInfo(parser) => parser.parse(self, context).await,
-            TokenParsers::FeatureExtAck(parser) => parser.parse(self, context).await,
-            TokenParsers::ColMetadata(parser) => parser.parse(self, context).await,
-            TokenParsers::Row(parser) => parser.parse(self, context).await,
-            TokenParsers::Order(parser) => parser.parse(self, context).await,
-            TokenParsers::ReturnStatus(parser) => parser.parse(self, context).await,
-            TokenParsers::NbcRow(parser) => parser.parse(self, context).await,
-            TokenParsers::ReturnValue(parser) => parser.parse(self, context).await,
-            TokenParsers::Sspi(parser) => parser.parse(self, context).await,
-        }
-    }
-
     /// Tells the server to stop sending tokens for the token stream being read and waits for
     /// an acknowledgement.
     async fn cancel_read_stream_and_wait(&mut self) -> TdsResult<()> {
@@ -1033,7 +922,12 @@ impl NetworkTransport {
             // Read next token, with timeout if specified
             let token_result = if let Some(timeout_duration) = attention_timeout {
                 let remaining = timeout_duration.saturating_sub(start.elapsed());
-                match timeout(remaining, self.receive_token_internal(&dummy_context)).await {
+                match timeout(
+                    remaining,
+                    receive_token_internal(self, &*PARSER_REGISTRY, &dummy_context),
+                )
+                .await
+                {
                     Ok(result) => result,
                     Err(_elapsed) => {
                         debug!(
@@ -1045,7 +939,7 @@ impl NetworkTransport {
                 }
             } else {
                 // No timeout - wait indefinitely
-                self.receive_token_internal(&dummy_context).await
+                receive_token_internal(self, &*PARSER_REGISTRY, &dummy_context).await
             };
 
             match token_result {
@@ -1130,15 +1024,6 @@ impl TdsPacketReader for NetworkTransport {
         Ok(result)
     }
 
-    async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-        if !self.tds_read_buffer.do_we_have_enough_data(8) {
-            self.read_tds_packet().await?;
-        }
-        let result = BigEndian::read_i64(self.tds_read_buffer.get_slice());
-        self.tds_read_buffer.consume_bytes(8);
-        Ok(result)
-    }
-
     async fn read_uint40(&mut self) -> TdsResult<u64> {
         if !self.tds_read_buffer.do_we_have_enough_data(5) {
             self.read_tds_packet().await?;
@@ -1179,14 +1064,6 @@ impl TdsPacketReader for NetworkTransport {
         }
         let result = LittleEndian::read_u16(self.tds_read_buffer.get_slice());
         self.tds_read_buffer.consume_bytes(2);
-        Ok(result)
-    }
-    async fn read_int24(&mut self) -> TdsResult<i32> {
-        if !self.tds_read_buffer.do_we_have_enough_data(3) {
-            self.read_tds_packet().await?;
-        }
-        let result = LittleEndian::read_i24(self.tds_read_buffer.get_slice());
-        self.tds_read_buffer.consume_bytes(3);
         Ok(result)
     }
     async fn read_uint24(&mut self) -> TdsResult<u32> {
@@ -1300,11 +1177,6 @@ impl TdsPacketReader for NetworkTransport {
             .await?;
         Ok(string)
     }
-    async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
-        let length: u16 = self.read_uint16().await?;
-        let string = self.read_unicode_with_byte_length(length as usize).await?;
-        Ok(string)
-    }
     async fn read_unicode(&mut self, string_length: usize) -> TdsResult<String> {
         let result = self
             .read_unicode_with_byte_length(string_length * 2)
@@ -1369,8 +1241,10 @@ impl TdsTokenStreamReader for NetworkTransport {
         remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<Tokens> {
-        let cancellable_receive_token =
-            CancelHandle::run_until_cancelled(cancel_handle, self.receive_token_internal(context));
+        let cancellable_receive_token = CancelHandle::run_until_cancelled(
+            cancel_handle,
+            receive_token_internal(self, &*PARSER_REGISTRY, context),
+        );
         let token_result = match remaining_request_timeout.as_ref() {
             Some(remaining_request_timeout) => {
                 match timeout(*remaining_request_timeout, cancellable_receive_token).await {
@@ -1402,7 +1276,7 @@ impl TdsTokenStreamReader for NetworkTransport {
     ) -> TdsResult<RowReadResult> {
         let cancellable = CancelHandle::run_until_cancelled(
             cancel_handle,
-            self.receive_row_into_internal(context, writer),
+            receive_row_into_internal(self, &*PARSER_REGISTRY, context, writer),
         );
         let result = match remaining_request_timeout.as_ref() {
             Some(t) => match timeout(*t, cancellable).await {
@@ -1485,9 +1359,6 @@ pub(crate) mod tests {
     // The choice of 8192 is large enough for sending data. This stream should have a buffer large enough for send.
     // The test would keep the payload lower than this size to make sure that the duplex stream can handle it.
     pub(crate) const MAX_BUFFER_SIZE: usize = 8192;
-
-    /// A mock SslHandler that simply returns the same stream, no real TLS.
-    pub(crate) struct MockSslHandler;
 
     impl Stream for DuplexStream {
         fn tls_handshake_starting(&mut self) {

@@ -66,9 +66,11 @@ pub(crate) enum PacketStatusFlags {
     /// Packet/Message to be ignored.
     Ignore = 0x02,
 
+    #[allow(dead_code)] // Not used currently.
     /// Reset connection.
     ResetConnection = 0x08,
 
+    #[allow(dead_code)] // Not used currently.
     /// Reset connection but keep transaction state.
     ResetConnectionSkipTran = 0x10,
 }

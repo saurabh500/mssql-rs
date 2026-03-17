@@ -39,3 +39,12 @@ cd mssql-tds
 cargo nextest archive --archive-file tdslib-nextest.tar.zst
 mv tdslib-nextest.tar.zst /workspace/
 cd ..
+
+# Verify fuzz targets compile (PR builds only)
+if [ "$IS_PR_BUILD" = "true" ]; then
+  echo '==> Installing nightly toolchain for fuzz build check...'
+  rustup toolchain install nightly --profile minimal
+  echo '==> Checking fuzz targets compile...'
+  RUSTFLAGS="--cfg fuzzing" cargo +nightly check --manifest-path mssql-tds/fuzz/Cargo.toml
+  echo '==> Fuzz build check passed.'
+fi

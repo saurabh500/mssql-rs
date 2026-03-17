@@ -5,7 +5,6 @@ use super::reader_writer::NetworkWriter;
 use crate::core::{CancelHandle, TdsResult};
 use crate::error::Error::TimeoutError;
 use crate::error::TimeoutErrorType;
-use crate::io::packet_writer::MessageSendState::{Complete, NotStarted, Partial};
 use crate::message::messages::{PacketStatusFlags, PacketType};
 use async_trait::async_trait;
 use byteorder::{BigEndian, WriteBytesExt};
@@ -34,9 +33,6 @@ pub(crate) trait TdsPacketWriterUnchecked {
 
     /// Writes a f64 without checking overflow (caller must ensure space)
     fn write_f64_unchecked(&mut self, value: f64);
-
-    /// Writes bytes without checking overflow (caller must ensure space)
-    fn write_unchecked(&mut self, content: &[u8]);
 
     /// Checks if there's enough space for n bytes in the current packet.
     /// Returns true if space is available, false otherwise.
@@ -78,15 +74,6 @@ pub(crate) trait TdsPacketWriter {
     /// Writes an i32 value in big-endian format.
     async fn write_i32_be_async(&mut self, value: i32) -> TdsResult<()>;
 
-    /// Writes an i64 value in big-endian format.
-    async fn write_i64_be_async(&mut self, value: i64) -> TdsResult<()>;
-
-    /// Writes a partial u64 value with specified length.
-    async fn write_partial_u64_async(&mut self, value: u64, length: u8) -> TdsResult<()>;
-
-    /// Writes a string in ASCII format.
-    async fn write_string_ascii_async(&mut self, value: &str) -> TdsResult<()>;
-
     /// Writes a string in Unicode (UTF-16LE) format.
     async fn write_string_unicode_async(&mut self, value: &str) -> TdsResult<()>;
 
@@ -94,6 +81,7 @@ pub(crate) trait TdsPacketWriter {
     async fn write_async(&mut self, content: &[u8]) -> TdsResult<()>;
 
     /// Writes an i32 value at a specific index in the buffer.
+    #[allow(dead_code)] // used in tests
     fn write_i32_at_index(&mut self, index: usize, value: i32);
 
     /// Finalizes the packet writer, sending any remaining data in the buffer.
@@ -113,12 +101,6 @@ pub struct PacketWriter<'a> {
     start_time: Instant,
     max_timeout_sec: Option<u32>,
     cancel_handle: Option<CancelHandle>,
-}
-
-pub(crate) enum MessageSendState {
-    NotStarted,
-    Partial,
-    Complete,
 }
 
 impl<'a> PacketWriter<'a> {
@@ -155,18 +137,7 @@ impl<'a> PacketWriter<'a> {
         }
     }
 
-    pub(crate) fn get_message_state(&self) -> MessageSendState {
-        if !self.is_first_packet {
-            if self.payload_cursor.position() == 0 {
-                Complete
-            } else {
-                Partial
-            }
-        } else {
-            NotStarted
-        }
-    }
-
+    #[cfg(test)]
     pub(crate) async fn cancel_current_message(&mut self) -> TdsResult<()> {
         self.populate_header_and_send(true, true).await
     }
@@ -386,22 +357,6 @@ impl TdsPacketWriter for PacketWriter<'_> {
         self.handle_overflow_if_needed().await
     }
 
-    async fn write_i64_be_async(&mut self, value: i64) -> TdsResult<()> {
-        let _ = WriteBytesExt::write_i64::<BigEndian>(&mut self.payload_cursor, value);
-        self.handle_overflow_if_needed().await
-    }
-
-    async fn write_partial_u64_async(&mut self, value: u64, length: u8) -> TdsResult<()> {
-        // Write the value as a little-endian value, but only the first `length` bytes.
-        let bytes = value.to_le_bytes();
-        let _ = std::io::Write::write_all(&mut self.payload_cursor, &bytes[..length as usize]);
-        self.handle_overflow_if_needed().await
-    }
-
-    async fn write_string_ascii_async(&mut self, _value: &str) -> TdsResult<()> {
-        todo!()
-    }
-
     async fn write_string_unicode_async(&mut self, value: &str) -> TdsResult<()> {
         // Streaming UTF-16LE encoding: encodes and writes directly to buffer without intermediate Vec allocation
         let mut utf16_iter = value.encode_utf16();
@@ -521,10 +476,6 @@ impl TdsPacketWriterUnchecked for PacketWriter<'_> {
     fn write_f64_unchecked(&mut self, value: f64) {
         let _ =
             WriteBytesExt::write_f64::<byteorder::LittleEndian>(&mut self.payload_cursor, value);
-    }
-
-    fn write_unchecked(&mut self, content: &[u8]) {
-        let _ = std::io::Write::write_all(&mut self.payload_cursor, content);
     }
 
     fn has_space(&self, bytes_count: usize) -> bool {
@@ -676,6 +627,35 @@ pub(crate) mod tests {
             PacketWriter::PACKET_HEADER_SIZE as u64
         );
         assert_eq!(writer.packet_id, 1);
+    }
+
+    #[test]
+    fn test_get_cursor_returns_payload_cursor() {
+        let mut mock = MockNetworkWriter::new(16);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        block_on(writer.write_byte_async(0xAB)).unwrap();
+
+        assert_eq!(
+            writer.get_cursor().position(),
+            (PacketWriter::PACKET_HEADER_SIZE + 1) as u64
+        );
+    }
+
+    #[test]
+    fn test_cancel_current_message_sends_ignore_packet() {
+        let mut mock = MockNetworkWriter::new(16);
+        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
+
+        block_on(writer.write_byte_async(0xAB)).unwrap();
+        block_on(writer.cancel_current_message()).unwrap();
+
+        // Verify the header was written into the internal cursor with the Eom|Ignore flags.
+        let buf = writer.payload_cursor.get_ref();
+        assert_eq!(
+            buf[1],
+            PacketStatusFlags::Eom as u8 | PacketStatusFlags::Ignore as u8
+        );
     }
 
     #[test]
@@ -840,17 +820,6 @@ pub(crate) mod tests {
             writer.payload_cursor.clone().into_inner()[8..16],
             value.to_le_bytes()
         );
-    }
-
-    #[test]
-    fn test_write_unchecked() {
-        let mut mock = MockNetworkWriter::new(24);
-        let mut writer = PacketWriter::new(PacketType::TabularResult, &mut mock, None, None);
-
-        let data = [0x01, 0x02, 0x03, 0x04, 0x05];
-        writer.write_unchecked(&data);
-
-        assert_eq!(writer.payload_cursor.clone().into_inner()[8..13], data);
     }
 
     #[test]

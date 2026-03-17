@@ -17,23 +17,23 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@js-joda/core": "^5.6.5",
+    "@js-joda/core": "^5.7.0",
     "iconv-lite": "^0.6.3"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
-    "@types/benchmark": "^2",
-    "@types/node": "^24.0.14",
-    "@typescript-eslint/eslint-plugin": "^8.37.0",
-    "@typescript-eslint/parser": "^8.37.0",
-    "ava": "^6.0.1",
+    "@types/benchmark": "^2.1.5",
+    "@types/node": "^24.12.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
+    "ava": "^6.4.1",
     "benchmark": "^2.1.4",
-    "eslint": "^9.31.0",
-    "eslint-config-prettier": "^10.1.5",
-    "eslint-plugin-prettier": "^5.5.1",
-    "prettier": "^3.6.2",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
+    "prettier": "^3.8.1",
     "tap-xunit": "^2.4.1",
-    "typescript": "^5.8.3"
+    "typescript": "^5.9.3"
   },
   "ava": {
     "timeout": "3m"
@@ -55,5 +55,8 @@
     "format:check": "prettier --check \"lib/**/*.ts\" \"__test__/**/*.{js,mjs,ts}\"",
     "lint": "eslint . --ext .ts,.js --max-warnings=0"
   },
-  "packageManager": "yarn@4.9.2"
+  "packageManager": "yarn@4.9.2",
+  "resolutions": {
+    "tar": "7.5.11"
+  }
 }

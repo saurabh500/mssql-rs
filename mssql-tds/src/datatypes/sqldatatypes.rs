@@ -9,7 +9,7 @@ use crate::token::tokens::SqlCollation;
 use std::fmt::format;
 use tracing::trace;
 
-// TdsDataType is a list of all the datatypes in TDS protocol.
+/// Wire-level data type identifiers defined by the TDS protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 #[repr(u8)]
 pub enum TdsDataType {
@@ -279,9 +279,11 @@ impl TryFrom<u8> for VectorBaseType {
     }
 }
 
-// Vector size constants
+/// Maximum number of dimensions in a TDS vector.
 pub const VECTOR_MAX_DIMENSIONS: u16 = 1998;
+/// Size of the vector header in bytes.
 pub const VECTOR_HEADER_SIZE: usize = 8;
+/// Maximum total vector payload size in bytes.
 pub const VECTOR_MAX_SIZE: usize = 8000;
 
 impl_try_from_tdstypes!(
@@ -423,28 +425,6 @@ pub struct TypeInfo {
     pub type_info_variant: TypeInfoVariant,
 }
 
-impl TypeInfo {
-    pub(crate) fn get_collation(&self) -> Option<SqlCollation> {
-        match &self.type_info_variant {
-            TypeInfoVariant::VarLenString(_, _, collation) => {
-                if collation.is_some() {
-                    *collation
-                } else {
-                    None
-                }
-            }
-            TypeInfoVariant::PartialLen(_, _, collation, _, _) => {
-                if collation.is_some() {
-                    *collation
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
-}
-
 type Precision = u8;
 type Scale = u8;
 type Length = usize;
@@ -466,7 +446,9 @@ pub enum TypeInfoVariant {
     ),
 }
 
+/// XML schema metadata parsed from the TYPE_INFO token.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // fields parsed from TDS wire protocol for completeness
 pub struct XmlInfo {
     schema_present: u8,
     db_name: Option<String>,
@@ -474,7 +456,9 @@ pub struct XmlInfo {
     xml_schema_collection: Option<String>,
 }
 
+/// UDT metadata received in COLMETADATA tokens.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // fields parsed from TDS wire protocol for completeness
 pub struct UdtInfoInColMetadata {
     max_byte_size: u16,
     db_name: String,
@@ -485,13 +469,16 @@ pub struct UdtInfoInColMetadata {
 
 type UdtMetadata = String;
 
+/// UDT metadata sent in RPC parameter descriptions.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // fields parsed from TDS wire protocol for completeness
 pub struct UdtInfoInRpc {
     db_name: String,
     schema_name: String,
     type_name: String,
 }
 
+/// UDT type information, varying by token context.
 #[derive(Debug, Clone)]
 pub enum UdtInfo {
     InColMetadata(UdtInfoInColMetadata),
@@ -810,6 +797,7 @@ where
     )
 }
 
+/// Returns `true` if the TDS data type uses Unicode encoding (NVarChar, NChar, NText).
 pub fn is_unicode_type(data_type: TdsDataType) -> bool {
     matches!(
         data_type,

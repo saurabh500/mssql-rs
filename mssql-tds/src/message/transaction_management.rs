@@ -1,6 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+//! TDS transaction management message types.
+//!
+//! Contains the wire-level request structures for `BEGIN`, `COMMIT`,
+//! `ROLLBACK`, `SAVE`, and DTC operations sent via the TDS Transaction
+//! Manager packet type.
+
 use crate::connection::execution_context::ExecutionContext;
 use crate::core::TdsResult;
 use crate::io::packet_writer::{PacketWriter, TdsPacketWriter};
@@ -10,9 +16,12 @@ use crate::message::messages::{PacketType, Request};
 use async_trait::async_trait;
 use std::io::Error;
 
+/// Parameters for creating a new transaction via `BEGIN TRANSACTION`.
 #[derive(Debug, Clone)]
 pub struct CreateTxnParams {
+    /// Isolation level for the new transaction.
     pub level: TransactionIsolationLevel,
+    /// Optional transaction name.
     pub name: Option<String>,
 }
 
@@ -33,31 +42,55 @@ impl CreateTxnParams {
     }
 }
 
+/// TDS transaction manager request type.
+///
+/// Each variant maps to a TDS `TM_*` request ID sent in the
+/// transaction manager payload.
 #[repr(u16)]
 pub enum TransactionManagementType {
+    /// Retrieve the address of the Distributed Transaction Coordinator.
     GetDtcAddress = 0,
+    /// Propagate a distributed transaction to another server.
     Propagate(String) = 1,
+    /// Begin a new local transaction.
     Begin(CreateTxnParams) = 5,
+    /// Promote a local transaction to a distributed transaction.
     Promote = 6,
+    /// Commit the current transaction, optionally starting a new one.
     Commit {
+        /// Name of the transaction to commit.
         name: Option<String>,
+        /// If provided, a new transaction is started immediately after commit.
         create_txn_params: Option<CreateTxnParams>,
     } = 7,
+    /// Roll back the current transaction (or to a savepoint), optionally starting a new one.
     Rollback {
+        /// Savepoint or transaction name to roll back to.
         name: Option<String>,
+        /// If provided, a new transaction is started immediately after rollback.
         create_txn_params: Option<CreateTxnParams>,
     } = 8,
+    /// Create a savepoint within the current transaction.
     Save(String) = 9,
 }
 
+/// SQL Server transaction isolation level.
+///
+/// Maps to the TDS isolation-level byte in `BEGIN TRANSACTION` requests.
 #[repr(u8)]
 #[derive(Debug, Clone)]
 pub enum TransactionIsolationLevel {
+    /// Keep the current isolation level (server default).
     NoChange = 0x00,
+    /// Allows dirty reads.
     ReadUncommitted = 0x01,
+    /// Default level — prevents dirty reads.
     ReadCommitted = 0x02,
+    /// Prevents dirty and non-repeatable reads.
     RepeatableRead = 0x03,
+    /// Full isolation — prevents phantom reads.
     Serializable = 0x04,
+    /// Row-versioning-based isolation.
     Snapshot = 0x05,
 }
 

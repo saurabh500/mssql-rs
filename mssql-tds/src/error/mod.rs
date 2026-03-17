@@ -9,6 +9,60 @@ use crate::security::SecurityError;
 use thiserror::Error;
 use tokio::time::error::Elapsed;
 
+/// A single SQL Server error, analogous to SqlClient's `SqlError`.
+///
+/// SQL Server can return multiple errors for a single batch execution.
+/// This struct represents one error from the stream. The full collection
+/// is available via `Error::SqlServerError { errors }`.
+#[derive(Debug, Clone)]
+pub struct SqlErrorInfo {
+    /// Error message text returned by the server.
+    pub message: String,
+    /// Error state, used by the server to indicate specific error conditions.
+    pub state: u8,
+    /// Severity class of the error (maps to TDS `Class` field).
+    pub class: i32,
+    /// Server-defined error number.
+    pub number: u32,
+    /// Name of the server that generated the error.
+    pub server_name: Option<String>,
+    /// Name of the stored procedure that generated the error.
+    pub proc_name: Option<String>,
+    /// Line number in the batch or procedure where the error occurred.
+    pub line_number: Option<i32>,
+}
+
+impl std::fmt::Display for SqlErrorInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Sql Error: {}: Class {}: State {}: {} on {} in {} at line {}",
+            self.number,
+            self.class,
+            self.state,
+            self.message,
+            self.server_name.as_deref().unwrap_or("Unknown"),
+            self.proc_name.as_deref().unwrap_or("Unknown"),
+            self.line_number.unwrap_or_default()
+        )
+    }
+}
+
+impl From<&crate::token::tokens::ErrorToken> for SqlErrorInfo {
+    fn from(token: &crate::token::tokens::ErrorToken) -> Self {
+        Self {
+            message: token.message.clone(),
+            state: token.state,
+            class: token.severity as i32,
+            number: token.number,
+            server_name: Some(token.server_name.clone()),
+            proc_name: Some(token.proc_name.clone()),
+            line_number: Some(token.line_number as i32),
+        }
+    }
+}
+
+/// The source of a timeout: either a Tokio `Elapsed` or a descriptive string.
 #[derive(Debug, Error)]
 pub enum TimeoutErrorType {
     #[error("Elapsed: {0}")]
@@ -18,6 +72,7 @@ pub enum TimeoutErrorType {
     String(String),
 }
 
+/// All errors produced by the TDS client.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("IO error: {0}")]
@@ -50,17 +105,8 @@ pub enum Error {
     #[error("Operation Cancelled Error: {0}")]
     OperationCancelledError(String),
 
-    #[error("Sql Error: {number}: Class {class}: State {state}: {message} on {} in {} at line {}",
-            server_name.clone().unwrap_or_else(|| "Unknown".into()), proc_name.clone().unwrap_or_else(|| "Unknown".into()), line_number.unwrap_or_default())]
-    SqlServerError {
-        message: String,
-        state: u8,
-        class: i32,
-        number: u32,
-        server_name: Option<String>,
-        proc_name: Option<String>,
-        line_number: Option<i32>,
-    },
+    #[error("{}", SqlServerError::format_errors(errors))]
+    SqlServerError { errors: Vec<SqlErrorInfo> },
 
     #[error("Usage Error: {0}")]
     UsageError(String),
@@ -115,6 +161,37 @@ pub enum Error {
 
     #[error("Security error: {0}")]
     Security(#[from] SecurityError),
+}
+
+/// Helper for `SqlServerError` display formatting.
+struct SqlServerError;
+
+impl SqlServerError {
+    fn format_errors(errors: &[SqlErrorInfo]) -> String {
+        match errors.len() {
+            0 => "Sql Error: (no error details)".to_string(),
+            1 => errors[0].to_string(),
+            _ => errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}
+
+impl Error {
+    /// Create a `SqlServerError` from a single `SqlErrorInfo`.
+    pub fn from_sql_error(error: SqlErrorInfo) -> Self {
+        Error::SqlServerError {
+            errors: vec![error],
+        }
+    }
+
+    /// Create a `SqlServerError` from multiple `SqlErrorInfo`s.
+    pub fn from_sql_errors(errors: Vec<SqlErrorInfo>) -> Self {
+        Error::SqlServerError { errors }
+    }
 }
 
 #[cfg(test)]
@@ -184,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_sql_server_error_full() {
-        let error = Error::SqlServerError {
+        let error = Error::from_sql_error(SqlErrorInfo {
             message: "Login failed".to_string(),
             state: 1,
             class: 14,
@@ -192,7 +269,7 @@ mod tests {
             server_name: Some("SQLSERVER01".to_string()),
             proc_name: Some("sp_login".to_string()),
             line_number: Some(42),
-        };
+        });
         let err_str = error.to_string();
         assert!(err_str.contains("18456"));
         assert!(err_str.contains("Login failed"));
@@ -203,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_sql_server_error_with_none_values() {
-        let error = Error::SqlServerError {
+        let error = Error::from_sql_error(SqlErrorInfo {
             message: "Error occurred".to_string(),
             state: 2,
             class: 16,
@@ -211,11 +288,40 @@ mod tests {
             server_name: None,
             proc_name: None,
             line_number: None,
-        };
+        });
         let err_str = error.to_string();
         assert!(err_str.contains("50000"));
         assert!(err_str.contains("Error occurred"));
         assert!(err_str.contains("Unknown"));
+    }
+
+    #[test]
+    fn test_sql_server_error_multiple() {
+        let error = Error::from_sql_errors(vec![
+            SqlErrorInfo {
+                message: "First error".to_string(),
+                state: 1,
+                class: 16,
+                number: 50000,
+                server_name: Some("SRV".to_string()),
+                proc_name: None,
+                line_number: Some(1),
+            },
+            SqlErrorInfo {
+                message: "Second error".to_string(),
+                state: 1,
+                class: 16,
+                number: 50001,
+                server_name: Some("SRV".to_string()),
+                proc_name: None,
+                line_number: Some(2),
+            },
+        ]);
+        let err_str = error.to_string();
+        assert!(err_str.contains("First error"));
+        assert!(err_str.contains("Second error"));
+        assert!(err_str.contains("50000"));
+        assert!(err_str.contains("50001"));
     }
 
     #[test]

@@ -21,12 +21,8 @@ use tracing::{debug, trace};
 // TDS Token types
 const TOKEN_COLMETADATA: u8 = 0x81;
 const TOKEN_ROW: u8 = 0xD1;
-const TOKEN_NBCROW: u8 = 0xD2; // Null Bitmap Compressed Row
 const TOKEN_DONE: u8 = 0xFD;
 
-// NULL markers for different type classes
-const FIXEDNULL: u8 = 0x00;
-const VARNULL: u16 = 0xFFFF;
 // PLP constants imported from tds_value_serializer
 
 /// Streaming bulk load writer for transmitting bulk copy data row-by-row.
@@ -50,9 +46,6 @@ pub struct StreamingBulkLoadWriter<'a> {
 
     /// Column metadata
     column_metadata: Vec<BulkCopyColumnMetadata>,
-
-    /// Bulk copy options
-    options: BulkCopyOptions,
 
     /// Connection's default collation (used when column metadata doesn't specify collation)
     default_collation: SqlCollation,
@@ -80,20 +73,17 @@ impl<'a> StreamingBulkLoadWriter<'a> {
     /// * `packet_writer` - TDS packet writer
     /// * `table_name` - Destination table name                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
     /// * `column_metadata` - Column metadata for the bulk load
-    /// * `options` - Bulk copy options
     /// * `default_collation` - Connection's default collation (used when column metadata doesn't specify collation)
     pub fn new(
         packet_writer: &'a mut PacketWriter<'a>,
         table_name: String,
         column_metadata: Vec<BulkCopyColumnMetadata>,
-        options: BulkCopyOptions,
         default_collation: SqlCollation,
     ) -> Self {
         Self {
             packet_writer,
             table_name,
             column_metadata,
-            options,
             default_collation,
             metadata_written: false,
             rows_written: 0,
@@ -248,37 +238,6 @@ impl<'a> StreamingBulkLoadWriter<'a> {
     /// Returns an error if network transmission fails.
     pub async fn write_raw_bytes(&mut self, bytes: &[u8]) -> TdsResult<()> {
         self.packet_writer.write_async(bytes).await
-    }
-
-    /// Begin a new row (for zero-copy bulk load).
-    /// Writes the ROW token.
-    pub(crate) async fn begin_row(&mut self) -> TdsResult<()> {
-        if !self.metadata_written {
-            return Err(Error::ProtocolError(
-                "Must call begin() before begin_row()".to_string(),
-            ));
-        }
-
-        // Write ROW token
-        self.packet_writer.write_byte_async(TOKEN_ROW).await?;
-
-        Ok(())
-    }
-
-    /// End the current row (for zero-copy bulk load).
-    /// Increments row counter.
-    pub(crate) fn end_row(&mut self) {
-        self.rows_written += 1;
-
-        trace!(
-            "StreamingBulkLoadWriter: Row {} written (zero-copy)",
-            self.rows_written
-        );
-    }
-
-    /// Get the number of columns in the metadata.
-    pub(crate) fn column_count(&self) -> usize {
-        self.column_metadata.len()
     }
 
     /// Write a single row using zero-copy BulkLoadRow trait.
@@ -684,7 +643,7 @@ pub(crate) fn build_insert_bulk_command(
     table_name: &str,
     column_metadata: &[BulkCopyColumnMetadata],
     options: &BulkCopyOptions,
-) -> String {
+) -> crate::core::TdsResult<String> {
     let mut command = format!("INSERT BULK {table_name} (");
 
     for (i, col_meta) in column_metadata.iter().enumerate() {
@@ -696,7 +655,7 @@ pub(crate) fn build_insert_bulk_command(
         command.push_str(&format!("[{}] ", col_meta.column_name));
 
         // Type definition
-        let type_def = col_meta.get_sql_type_definition();
+        let type_def = col_meta.get_sql_type_definition()?;
         command.push_str(&type_def);
 
         // Add COLLATE clause if the column needs collation and has a collation name
@@ -734,7 +693,7 @@ pub(crate) fn build_insert_bulk_command(
         command.push(')');
     }
 
-    command
+    Ok(command)
 }
 
 // Include additional unit tests from separate test file

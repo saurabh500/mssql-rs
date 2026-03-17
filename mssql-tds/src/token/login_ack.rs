@@ -5,9 +5,11 @@ use crate::core::Version;
 use crate::message::login_options::TdsVersion;
 use crate::token::tokens::{Token, TokenType};
 
+/// SQL interface type reported in the `LOGINACK` token.
 #[repr(u8)]
 #[derive(Debug)]
-pub enum SqlInterfaceType {
+#[allow(dead_code)]
+pub(crate) enum SqlInterfaceType {
     Default = 0,
     TSql = 1,
     Unknown(u8),
@@ -26,7 +28,8 @@ impl TryFrom<u8> for SqlInterfaceType {
 }
 
 impl SqlInterfaceType {
-    pub fn as_u8(&self) -> u8 {
+    #[allow(dead_code)]
+    pub(crate) fn as_u8(&self) -> u8 {
         match self {
             SqlInterfaceType::Default => 0,
             SqlInterfaceType::TSql => 1,
@@ -35,12 +38,14 @@ impl SqlInterfaceType {
     }
 }
 
+/// Server acknowledgment of a successful login, including negotiated TDS version.
 #[derive(Debug)]
-pub struct LoginAckToken {
-    pub interface_type: SqlInterfaceType,
-    pub tds_version: TdsVersion,
-    pub prog_name: String,
-    pub prog_version: Version,
+#[allow(dead_code)]
+pub(crate) struct LoginAckToken {
+    pub(crate) interface_type: SqlInterfaceType,
+    pub(crate) tds_version: TdsVersion,
+    pub(crate) prog_name: String,
+    pub(crate) prog_version: Version,
 }
 
 impl Token for LoginAckToken {

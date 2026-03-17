@@ -26,8 +26,14 @@ pub(crate) const PROC_ID_SWITCH: u16 = 0xffff;
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ProcOptions {
     None = 0x00,
+    #[allow(dead_code)]
+    // This option is not implemented yet, but may be used in the future for forcing metadata recompile on the server.
     WithRecompile = 0x01,
+    #[allow(dead_code)]
+    // This option is not implemented yet, but may be used in the future for RPCs that do not require metadata to be sent.
     NoMetadata = 0x02,
+    #[allow(dead_code)]
+    // This option is not implemented yet, but may be used in the future for RPCs that can reuse metadata from a previous RPC.
     ReuseMetadata = 0x04,
 }
 
@@ -56,10 +62,6 @@ impl<'a> SqlRpc<'a> {
             db_collation,
             proc_options: ProcOptions::None,
         }
-    }
-
-    pub fn set_proc_options(&mut self, proc_options: ProcOptions) {
-        self.proc_options = proc_options;
     }
 
     async fn write_positional_parameters(
@@ -122,6 +124,11 @@ impl<'a> SqlRpc<'a> {
     }
 }
 
+/// Well-known SQL Server system stored-procedure IDs used by the TDS RPC
+/// message.
+///
+/// These correspond to the procedure-ID shortcut in the RPC request header,
+/// avoiding the overhead of sending the procedure name as a string.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 pub enum RpcProcs {

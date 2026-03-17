@@ -286,7 +286,7 @@ mod client_based_iterators {
         assert_eq!(time_col.column_name, "time_col");
         assert_eq!(time_col.type_info.length, 5, "TIME(7) should have length 5");
         let time_scale = time_col.get_scale();
-        assert_eq!(time_scale, 7, "TIME(7) should have scale 7");
+        assert_eq!(time_scale, Some(7), "TIME(7) should have scale 7");
 
         // Verify DATE metadata - should have length 3
         let date_col = &metadata[1];
@@ -309,7 +309,7 @@ mod client_based_iterators {
             "DATETIME2(7) should have length 8"
         );
         let datetime2_scale = datetime2_col.get_scale();
-        assert_eq!(datetime2_scale, 7, "DATETIME2(7) should have scale 7");
+        assert_eq!(datetime2_scale, Some(7), "DATETIME2(7) should have scale 7");
 
         // Verify SMALLDATETIME metadata - should have length 4
         let smalldatetime_col = &metadata[4];
@@ -328,7 +328,8 @@ mod client_based_iterators {
         );
         let datetimeoffset_scale = datetimeoffset_col.get_scale();
         assert_eq!(
-            datetimeoffset_scale, 7,
+            datetimeoffset_scale,
+            Some(7),
             "DATETIMEOFFSET(7) should have scale 7"
         );
 
@@ -500,6 +501,175 @@ mod client_based_iterators {
         }
         assert_eq!(count, 1);
         client.close_query().await?;
+
+        Ok(())
+    }
+
+    /// SQL Server can return multiple ERROR tokens in a single batch execution.
+    /// For example, `RAISERROR` at severity <= 18 doesn't abort the batch, so
+    /// two consecutive RAISERRORs produce two ERROR tokens in the stream.
+    /// This test verifies that:
+    /// 1. The first error is properly surfaced to the caller
+    /// 2. The remaining error tokens and DONE(ERROR) tokens are fully drained
+    /// 3. The connection remains usable for subsequent queries
+    #[tokio::test]
+    async fn test_multiple_errors_in_single_batch() -> Result<(), Box<dyn std::error::Error>> {
+        let context = create_context();
+
+        let provider = TdsConnectionProvider {};
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
+
+        // Two RAISERRORs at severity 16 — SQL Server sends:
+        //   ERROR("First error") → DONE(ERROR,MORE) → ERROR("Second error") → DONE(ERROR)
+        let query = "RAISERROR('First error', 16, 1); RAISERROR('Second error', 16, 1)";
+
+        let result = client.execute(query.to_string(), None, None).await;
+        assert!(
+            result.is_err(),
+            "Expected error from batch with multiple RAISERRORs"
+        );
+        let err = result.unwrap_err();
+        let err_msg = format!("{err}");
+        assert!(
+            err_msg.contains("First error"),
+            "Expected first error to be surfaced, got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("Second error"),
+            "Expected second error to be surfaced, got: {err_msg}"
+        );
+
+        // Verify multiple errors are collected in the error variant
+        if let mssql_tds::error::Error::SqlServerError { errors } = &err {
+            assert_eq!(
+                errors.len(),
+                2,
+                "Expected 2 errors in collection, got {}",
+                errors.len()
+            );
+            assert!(errors[0].message.contains("First error"));
+            assert!(errors[1].message.contains("Second error"));
+        } else {
+            panic!("Expected SqlServerError variant, got: {err:?}");
+        }
+
+        // Connection must remain usable after multiple errors
+        client.execute("SELECT 1".to_string(), None, None).await?;
+        let mut row_count = 0;
+        while client.next_row().await?.is_some() {
+            row_count += 1;
+        }
+        client.close_query().await?;
+        assert_eq!(
+            row_count, 1,
+            "Expected 1 row from SELECT 1 after error recovery"
+        );
+
+        Ok(())
+    }
+
+    /// Referencing multiple nonexistent tables in a batch produces multiple errors.
+    /// Verifies the stream is properly drained and the connection survives.
+    #[tokio::test]
+    async fn test_multiple_invalid_object_errors() -> Result<(), Box<dyn std::error::Error>> {
+        let context = create_context();
+
+        let provider = TdsConnectionProvider {};
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
+
+        let query = "SELECT * FROM nonexistent_table_abc_1; SELECT * FROM nonexistent_table_abc_2";
+
+        let result = client.execute(query.to_string(), None, None).await;
+        assert!(
+            result.is_err(),
+            "Expected error from referencing nonexistent tables"
+        );
+
+        // SQL Server may abort batch after first object-resolution failure,
+        // so we may get 1 or 2 errors depending on server behavior.
+        if let mssql_tds::error::Error::SqlServerError { errors } = result.unwrap_err() {
+            assert!(!errors.is_empty(), "Expected at least one error");
+            assert!(
+                errors[0].message.contains("nonexistent_table_abc_1"),
+                "Expected first error to reference table_abc_1, got: {}",
+                errors[0].message
+            );
+        } else {
+            panic!("Expected SqlServerError variant");
+        }
+
+        // Connection must remain usable
+        client
+            .execute("SELECT 42 AS val".to_string(), None, None)
+            .await?;
+        let mut row_count = 0;
+        while let Some(row) = client.next_row().await? {
+            row_count += 1;
+            match &row[0] {
+                mssql_tds::datatypes::column_values::ColumnValues::Int(v) => {
+                    assert_eq!(*v, 42);
+                }
+                _ => panic!("Expected Int value"),
+            }
+        }
+        client.close_query().await?;
+        assert_eq!(
+            row_count, 1,
+            "Expected 1 row from SELECT 42 after error recovery"
+        );
+
+        Ok(())
+    }
+
+    /// A batch mixing valid DML with errors: the error must be surfaced and
+    /// the connection must survive for a follow-up query.
+    #[tokio::test]
+    async fn test_error_after_successful_statement_in_batch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let context = create_context();
+
+        let provider = TdsConnectionProvider {};
+        let mut client = provider
+            .create_client(context, &build_tcp_datasource(), None)
+            .await?;
+
+        // First statement succeeds (SELECT 1 produces a result set),
+        // second statement fails with an error
+        let query = "SELECT 1; RAISERROR('Batch error after success', 16, 1)";
+
+        client.execute(query.to_string(), None, None).await?;
+
+        // Consume the first result set
+        let mut row_count = 0;
+        while client.next_row().await?.is_some() {
+            row_count += 1;
+        }
+        assert_eq!(row_count, 1, "Expected 1 row from SELECT 1");
+
+        // Advancing to the next result should hit the error
+        let next_result = client.move_to_next().await;
+        assert!(
+            next_result.is_err(),
+            "Expected error from RAISERROR after SELECT"
+        );
+
+        // Connection must remain usable
+        client
+            .execute("SELECT 99 AS val".to_string(), None, None)
+            .await?;
+        let mut row_count2 = 0;
+        while client.next_row().await?.is_some() {
+            row_count2 += 1;
+        }
+        client.close_query().await?;
+        assert_eq!(
+            row_count2, 1,
+            "Expected 1 row from SELECT 99 after error recovery"
+        );
 
         Ok(())
     }

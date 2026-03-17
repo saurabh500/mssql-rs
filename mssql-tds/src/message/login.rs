@@ -107,6 +107,9 @@ pub(crate) trait Feature: Send + Sync + Debug {
     fn data_length(&self) -> i32;
     async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()>;
     fn deserialize(&mut self, data: &[u8]) -> TdsResult<()>;
+
+    #[allow(dead_code)]
+    // This method is not used currently, and exists for completeness.
     fn is_acknowledged(&self) -> bool;
     fn set_acknowledged(&mut self, _acknowledged: bool);
     fn clone_box(&self) -> Box<dyn Feature>;
@@ -166,6 +169,8 @@ impl FeaturesRequest {
         FeaturesRequest { features }
     }
 
+    #[allow(dead_code)]
+    // This method is not used currently, and exists for completeness.
     pub fn features(&self) -> Vec<&dyn Feature> {
         self.features
             .values()
@@ -173,6 +178,8 @@ impl FeaturesRequest {
             .collect::<Vec<&dyn Feature>>()
     }
 
+    #[allow(dead_code)]
+    // This method is not used currently, and exists for completeness.
     pub fn is_acknowledged(&self, _feature_extension: FeatureExtension) -> Option<&dyn Feature> {
         let feature = self.features.get(&_feature_extension);
         match feature {
@@ -225,6 +232,8 @@ impl FeaturesRequest {
             .collect()
     }
 
+    #[allow(dead_code)]
+    // This method is not used currently, and exists for completeness.
     pub fn get_acknowledged_features(&self) -> Vec<&dyn Feature> {
         self.features
             .values()
@@ -331,6 +340,8 @@ pub(crate) struct LoginResponseModel {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum LoginResponseStatus {
+    #[allow(dead_code)]
+    // Not used, but kept for completeness.
     NoResponse = 0x00,
     Success = 0x01,
     Error = 0x02,

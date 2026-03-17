@@ -49,21 +49,9 @@ pub(crate) mod test_utils {
             Self { data, position: 0 }
         }
 
-        pub(crate) fn from_u16(value: u16) -> Self {
-            let mut buf = vec![0u8; 2];
-            LittleEndian::write_u16(&mut buf, value);
-            Self::new(buf)
-        }
-
         pub(crate) fn from_i32(value: i32) -> Self {
             let mut buf = vec![0u8; 4];
             LittleEndian::write_i32(&mut buf, value);
-            Self::new(buf)
-        }
-
-        pub(crate) fn from_u64(value: u64) -> Self {
-            let mut buf = vec![0u8; 8];
-            LittleEndian::write_u64(&mut buf, value);
             Self::new(buf)
         }
 
@@ -173,9 +161,6 @@ pub(crate) mod test_utils {
         async fn read_int32_big_endian(&mut self) -> TdsResult<i32> {
             unimplemented!()
         }
-        async fn read_int64_big_endian(&mut self) -> TdsResult<i64> {
-            unimplemented!()
-        }
         async fn read_uint40(&mut self) -> TdsResult<u64> {
             unimplemented!()
         }
@@ -183,9 +168,6 @@ pub(crate) mod test_utils {
             unimplemented!()
         }
         async fn read_float64(&mut self) -> TdsResult<f64> {
-            unimplemented!()
-        }
-        async fn read_int24(&mut self) -> TdsResult<i32> {
             unimplemented!()
         }
         async fn read_uint24(&mut self) -> TdsResult<u32> {
@@ -220,9 +202,6 @@ pub(crate) mod test_utils {
             Ok(bytes)
         }
         async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
-            unimplemented!()
-        }
-        async fn read_varchar_byte_len(&mut self) -> TdsResult<String> {
             unimplemented!()
         }
         async fn read_unicode(&mut self, _string_length: usize) -> TdsResult<String> {
