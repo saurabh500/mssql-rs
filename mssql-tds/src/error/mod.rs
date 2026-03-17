@@ -16,12 +16,19 @@ use tokio::time::error::Elapsed;
 /// is available via `Error::SqlServerError { errors }`.
 #[derive(Debug, Clone)]
 pub struct SqlErrorInfo {
+    /// Error message text returned by the server.
     pub message: String,
+    /// Error state, used by the server to indicate specific error conditions.
     pub state: u8,
+    /// Severity class of the error (maps to TDS `Class` field).
     pub class: i32,
+    /// Server-defined error number.
     pub number: u32,
+    /// Name of the server that generated the error.
     pub server_name: Option<String>,
+    /// Name of the stored procedure that generated the error.
     pub proc_name: Option<String>,
+    /// Line number in the batch or procedure where the error occurred.
     pub line_number: Option<i32>,
 }
 
@@ -55,6 +62,7 @@ impl From<&crate::token::tokens::ErrorToken> for SqlErrorInfo {
     }
 }
 
+/// The source of a timeout: either a Tokio `Elapsed` or a descriptive string.
 #[derive(Debug, Error)]
 pub enum TimeoutErrorType {
     #[error("Elapsed: {0}")]
@@ -64,6 +72,7 @@ pub enum TimeoutErrorType {
     String(String),
 }
 
+/// All errors produced by the TDS client.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("IO error: {0}")]

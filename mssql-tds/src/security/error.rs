@@ -152,6 +152,7 @@ impl std::error::Error for SecurityError {}
 
 // Common SSPI status codes for reference
 #[cfg(windows)]
+#[allow(dead_code)] // SSPI spec-defined constants; full set defined for completeness
 pub mod sspi_status {
     /// The function completed successfully.
     pub const SEC_E_OK: i32 = 0x00000000_u32 as i32;

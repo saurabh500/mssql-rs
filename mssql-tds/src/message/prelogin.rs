@@ -112,6 +112,7 @@ pub struct PreloginRequestModel {
     pub activity_id: Uuid,
     pub activity_sequence_number: i32,
     pub mars_enabled: bool,
+    #[allow(dead_code)]
     pub thread_id: ThreadId,
     pub encryption_setting: EncryptionSetting,
     pub database_instance: String,

@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(dead_code)]
 //! SQL Server Resolution Protocol (SSRP) stub implementation
 //!
 //! This module provides stub implementations for SSRP functionality,

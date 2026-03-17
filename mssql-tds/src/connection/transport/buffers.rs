@@ -1,14 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::connection::transport::network_transport::PRE_NEGOTIATED_PACKET_SIZE;
-use crate::core::CancelHandle;
-use crate::io::packet_writer::PacketWriter;
-use crate::message::messages::PacketType;
 use std::fmt::Debug;
-use std::io::Cursor;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
-use std::time::Instant;
 
 pub(crate) struct TdsReadBuffer {
     pub(crate) buffer_position: usize,
@@ -142,56 +136,6 @@ impl Deref for TdsReadBuffer {
 impl DerefMut for TdsReadBuffer {
     fn deref_mut(&mut self) -> &mut Vec<u8> {
         &mut self.working_buffer
-    }
-}
-
-struct TdsWriteBuffer {
-    packet_type: PacketType,
-    max_payload_size: usize,
-    packet_id: u8,
-    payload_cursor: Cursor<Vec<u8>>,
-    packet_size: usize,
-    is_first_packet: bool, // Note: Cannot just use packet_id because its value can rollover.
-    start_time: Instant,
-    max_timeout_sec: Option<u32>,
-    cancel_handle: Option<CancelHandle>,
-}
-
-impl TdsWriteBuffer {
-    fn new(packet_size: usize) -> Self {
-        // Add additional space for the numeric types.
-        let buffer: Vec<u8> = Vec::with_capacity(packet_size + size_of::<u64>());
-        let mut buffer_cursor = Cursor::new(buffer);
-
-        // Position the cursor at the end of the header. The header will be populated later.
-        buffer_cursor.set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
-
-        Self {
-            packet_type: PacketType::PreLogin,
-            max_payload_size: 0,
-            packet_id: 1,
-            payload_cursor: buffer_cursor,
-            packet_size: PRE_NEGOTIATED_PACKET_SIZE as usize,
-            is_first_packet: true,
-            start_time: Instant::now(),
-            max_timeout_sec: None,
-            cancel_handle: None,
-        }
-    }
-
-    pub(crate) fn change_packet_size(&mut self, packet_size: u32) {
-        self.packet_size = packet_size as usize;
-        self.payload_cursor
-            .get_mut()
-            .resize(packet_size as usize, 0);
-        self.payload_cursor
-            .set_position(PacketWriter::PACKET_HEADER_SIZE as u64);
-        self.is_first_packet = true;
-        self.start_time = Instant::now();
-    }
-
-    pub(crate) fn set_packet_type(&mut self, packet_type: PacketType) {
-        self.packet_type = packet_type;
     }
 }
 

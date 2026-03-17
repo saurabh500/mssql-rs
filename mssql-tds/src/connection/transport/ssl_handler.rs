@@ -310,10 +310,6 @@ impl<S: Stream> TlsOverTdsStream<S> {
         Self::new_with_handshake_state(wrapped_stream, true)
     }
 
-    pub(crate) fn new_for_handshake(wrapped_stream: S) -> Self {
-        Self::new_with_handshake_state(wrapped_stream, false)
-    }
-
     fn new_with_handshake_state(wrapped_stream: S, has_completed_tls_handshake: bool) -> Self {
         TlsOverTdsStream {
             wrapped_stream,
@@ -324,11 +320,6 @@ impl<S: Stream> TlsOverTdsStream<S> {
             packet_write_buffer: Some(vec![0; PacketWriter::PACKET_HEADER_SIZE]),
             write_state: None,
         }
-    }
-
-    /// Mark the TLS handshake as completed, switching to passthrough mode
-    pub fn mark_handshake_completed(&mut self) {
-        self.has_completed_tls_handshake = true;
     }
 
     fn read_requested(

@@ -15,6 +15,7 @@ use crate::{
     query::metadata::ColumnMetadata,
 };
 
+/// TDS token type identifiers as defined by the protocol specification.
 #[derive(Eq, PartialEq, Hash, Debug)]
 #[repr(u8)]
 pub enum TokenType {
@@ -74,6 +75,7 @@ impl TryFrom<u8> for TokenType {
     }
 }
 
+/// A parsed TDS token.
 pub trait Token {
     fn token_type(&self) -> TokenType;
 }
@@ -98,8 +100,10 @@ pub(crate) enum Tokens {
     ReturnValue(ReturnValueToken),
 }
 
+/// Union of all parsed TDS tokens (public under `fuzzing` cfg).
 #[derive(Debug)]
 #[cfg(fuzzing)]
+#[allow(private_interfaces)]
 pub enum Tokens {
     Done(DoneToken),
     DoneInProc(DoneToken),
@@ -282,11 +286,16 @@ impl Token for OrderToken {
     }
 }
 
+/// SQL Server collation metadata (LCID, flags, and sort ID).
 #[derive(Clone, Default, PartialEq, Eq, Copy)]
 pub struct SqlCollation {
+    /// Raw 32-bit collation info value.
     pub info: u32,
+    /// LCID language identifier (lower 20 bits of `info`).
     pub lcid_language_id: i32,
+    /// Collation flags (bits 20–27 of `info`).
     pub col_flags: u8,
+    /// Sort ID from the fifth collation byte.
     pub sort_id: u8,
 }
 
@@ -341,35 +350,42 @@ impl SqlCollation {
         self.sort_id
     }
 
+    /// Returns the collation version nibble (bits 28–31).
     pub fn version(&self) -> u8 {
         (self.info >> 28) as u8
     }
 
-    // fIgnoreCase fIgnoreAccent fIgnoreKana fIgnoreWidth fBinary fBinary2 fUTF8
+    /// Returns `true` if the `fIgnoreCase` flag is set.
     pub fn ignore_case(&self) -> bool {
         (self.col_flags & 0x1) != 0
     }
 
+    /// Returns `true` if the `fIgnoreAccent` flag is set.
     pub fn ignore_accent(&self) -> bool {
         (self.col_flags & 0x2) != 0
     }
 
+    /// Returns `true` if the `fIgnoreKana` flag is set.
     pub fn ignore_kana(&self) -> bool {
         (self.col_flags & 0x4) != 0
     }
 
+    /// Returns `true` if the `fIgnoreWidth` flag is set.
     pub fn ignore_width(&self) -> bool {
         (self.col_flags & 0x8) != 0
     }
 
+    /// Returns `true` if the `fBinary` flag is set.
     pub fn binary(&self) -> bool {
         (self.col_flags & 0x10) != 0
     }
 
+    /// Returns `true` if the `fBinary2` flag is set.
     pub fn binary2(&self) -> bool {
         (self.col_flags & 0x20) != 0
     }
 
+    /// Returns `true` if the `fUTF8` flag is set.
     pub fn utf8(&self) -> bool {
         (self.col_flags & 0x40) != 0
     }

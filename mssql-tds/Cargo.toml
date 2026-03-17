@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 description = "Rust implementation of the TDS (Tabular Data Stream) protocol for SQL Server"
 license = "MIT"
+readme = "README.md"
+keywords = ["sql-server", "tds", "mssql", "database", "async"]
+categories = ["database", "network-programming"]
 
 [features]
 default = ["integrated-auth"]
