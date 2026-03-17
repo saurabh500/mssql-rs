@@ -1,10 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+//! TDS LOGIN7 message options and flag types.
+
 use crate::connection::client_context::ClientContext;
 
+/// TDS protocol version negotiated during login.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TdsVersion {
+pub(crate) enum TdsVersion {
     V7_4,
     V8_0,
     Unknown(i32),
@@ -27,7 +30,7 @@ impl From<i32> for TdsVersion {
 }
 
 impl TdsVersion {
-    pub fn as_u32(&self) -> u32 {
+    pub(crate) fn as_u32(&self) -> u32 {
         match self {
             TdsVersion::V7_4 => 0x74000004,
             TdsVersion::V8_0 => 0x08000000,
@@ -36,22 +39,14 @@ impl TdsVersion {
     }
 }
 
-pub struct LoginOptions {
-    pub tds_version: TdsVersion,
-    pub packet_size: u32,
-    pub client_prog_ver: u32,
-    pub client_pid: u32,
-    pub connection_id: u32,
-    pub client_time_zone: i32,
-    pub client_lcid: u32,
-}
-
+#[allow(clippy::upper_case_acronyms)]
 #[derive(PartialEq)]
-pub enum OptionSqlType {
+pub(crate) enum OptionSqlType {
     Default,
     TSQL,
 }
 
+/// Requested application intent (read-write or read-only routing).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ApplicationIntent {
     ReadWrite,
@@ -59,12 +54,13 @@ pub enum ApplicationIntent {
 }
 
 #[derive(PartialEq)]
-pub enum OptionOleDb {
+pub(crate) enum OptionOleDb {
     Off,
     On,
 }
 
-pub struct TypeFlags {
+/// LOGIN7 type-flags byte (SQL type, OLE DB, access intent).
+pub(crate) struct TypeFlags {
     pub(crate) sql_type: OptionSqlType,
     pub(crate) ole_db: OptionOleDb,
     pub(crate) access_intent: ApplicationIntent,
@@ -121,44 +117,53 @@ impl From<&ClientContext> for TypeFlags {
 }
 
 #[derive(PartialEq)]
-pub enum OptionEndian {
+enum OptionEndian {
     LittleEndian,
+    #[allow(dead_code)]
     BigEndian,
 }
 
 #[derive(PartialEq)]
-pub enum OptionCharset {
+enum OptionCharset {
     Ascii,
+    #[allow(dead_code)]
     Ebcdic,
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(PartialEq)]
-pub enum OptionFloat {
+enum OptionFloat {
     IEEE,
+    #[allow(dead_code)]
     VAX,
+    #[allow(dead_code)]
     ND5000,
 }
 
 #[derive(PartialEq)]
-pub enum OptionBcpDumpload {
+enum OptionBcpDumpload {
     On,
+    #[allow(dead_code)]
     Off,
 }
 
 #[derive(PartialEq)]
-pub enum OptionUseDb {
+enum OptionUseDb {
+    #[allow(dead_code)]
     Off,
     On,
 }
 
 #[derive(PartialEq)]
-pub enum OptionInitDb {
+enum OptionInitDb {
+    #[allow(dead_code)]
     Warn,
     Fatal,
 }
 
 #[derive(PartialEq)]
-pub enum OptionLangWarn {
+enum OptionLangWarn {
+    #[allow(dead_code)]
     Off,
     On,
 }
@@ -167,7 +172,8 @@ pub(crate) trait OptionsValue {
     fn value(&self) -> u8;
 }
 
-pub struct OptionFlags1 {
+/// LOGIN7 option-flags-1 byte.
+pub(crate) struct OptionFlags1 {
     endian: OptionEndian,
     charset: OptionCharset,
     float: OptionFloat,
@@ -281,21 +287,25 @@ impl OptionsValue for OptionFlags1 {
 }
 
 #[derive(PartialEq)]
-pub enum OptionInitLang {
+pub(crate) enum OptionInitLang {
+    #[allow(dead_code)]
     Warn,
     Fatal,
 }
 
 #[derive(PartialEq)]
-pub enum OptionOdbc {
+pub(crate) enum OptionOdbc {
+    #[allow(dead_code)]
     Off,
     On,
 }
 
 #[derive(PartialEq)]
-pub enum OptionUser {
+pub(crate) enum OptionUser {
     Normal,
+    #[allow(dead_code)]
     Reserved,
+    #[allow(dead_code)]
     RemUser,
     ReplicationLogin,
 }
@@ -310,7 +320,7 @@ impl From<&ClientContext> for OptionUser {
 }
 
 #[derive(PartialEq)]
-pub enum OptionIntegratedSecurity {
+pub(crate) enum OptionIntegratedSecurity {
     Off,
     On,
 }
@@ -325,7 +335,8 @@ impl From<&ClientContext> for OptionIntegratedSecurity {
     }
 }
 
-pub struct OptionFlags2 {
+/// LOGIN7 option-flags-2 byte.
+pub(crate) struct OptionFlags2 {
     pub(crate) init_lang: OptionInitLang,
     pub(crate) odbc: OptionOdbc,
     pub(crate) user: OptionUser,
@@ -409,7 +420,7 @@ impl OptionsValue for OptionFlags2 {
 }
 
 #[derive(PartialEq)]
-pub enum OptionChangePassword {
+pub(crate) enum OptionChangePassword {
     No,
     Yes,
 }
@@ -423,7 +434,8 @@ impl From<&ClientContext> for OptionChangePassword {
     }
 }
 
-pub struct OptionFlags3 {
+/// LOGIN7 option-flags-3 byte.
+pub(crate) struct OptionFlags3 {
     pub(crate) change_password: OptionChangePassword,
     pub(crate) binary_xml: bool,
     pub(crate) spawn_user_instance: bool,

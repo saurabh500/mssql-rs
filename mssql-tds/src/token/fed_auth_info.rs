@@ -3,6 +3,7 @@
 
 use crate::token::tokens::{Token, TokenType};
 
+/// Identifies a piece of federated-authentication info from the server.
 pub enum FedAuthInfoId {
     SPN,
     STSUrl,
@@ -10,6 +11,7 @@ pub enum FedAuthInfoId {
 }
 
 impl FedAuthInfoId {
+    /// Returns the wire byte value of this identifier.
     pub fn as_u8(&self) -> u8 {
         match self {
             FedAuthInfoId::SPN => 0x02,
@@ -32,9 +34,12 @@ impl From<u8> for FedAuthInfoId {
     }
 }
 
+/// Federated-authentication info returned by the server.
 #[derive(Debug)]
 pub struct FedAuthInfoToken {
+    /// Service Principal Name for the target resource.
     pub spn: String,
+    /// Security Token Service URL for token acquisition.
     pub sts_url: String,
 }
 
@@ -44,8 +49,10 @@ impl Token for FedAuthInfoToken {
     }
 }
 
+/// Raw SSPI authentication token received from the server.
 #[derive(Debug)]
 pub struct SspiToken {
+    /// Opaque SSPI blob bytes.
     pub data: Vec<u8>,
 }
 
