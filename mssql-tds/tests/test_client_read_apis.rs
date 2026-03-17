@@ -286,7 +286,7 @@ mod client_based_iterators {
         assert_eq!(time_col.column_name, "time_col");
         assert_eq!(time_col.type_info.length, 5, "TIME(7) should have length 5");
         let time_scale = time_col.get_scale();
-        assert_eq!(time_scale, 7, "TIME(7) should have scale 7");
+        assert_eq!(time_scale, Some(7), "TIME(7) should have scale 7");
 
         // Verify DATE metadata - should have length 3
         let date_col = &metadata[1];
@@ -309,7 +309,7 @@ mod client_based_iterators {
             "DATETIME2(7) should have length 8"
         );
         let datetime2_scale = datetime2_col.get_scale();
-        assert_eq!(datetime2_scale, 7, "DATETIME2(7) should have scale 7");
+        assert_eq!(datetime2_scale, Some(7), "DATETIME2(7) should have scale 7");
 
         // Verify SMALLDATETIME metadata - should have length 4
         let smalldatetime_col = &metadata[4];
@@ -328,7 +328,8 @@ mod client_based_iterators {
         );
         let datetimeoffset_scale = datetimeoffset_col.get_scale();
         assert_eq!(
-            datetimeoffset_scale, 7,
+            datetimeoffset_scale,
+            Some(7),
             "DATETIMEOFFSET(7) should have scale 7"
         );
 

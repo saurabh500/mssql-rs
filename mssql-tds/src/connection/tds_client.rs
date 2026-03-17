@@ -44,6 +44,10 @@ use crate::{
 };
 use std::time::{Duration, Instant};
 
+/// Active TDS connection to a SQL Server instance.
+///
+/// Created by [`TdsConnectionProvider::create_client()`](crate::connection_provider::tds_connection_provider::TdsConnectionProvider::create_client).
+/// Provides methods for executing queries, managing transactions, and bulk copy.
 #[derive(Debug)]
 pub struct TdsClient {
     pub(crate) transport: Box<dyn TdsTransport>,
@@ -87,20 +91,9 @@ impl TdsClient {
         }
     }
 
+    /// Returns the database collation negotiated during login.
     pub fn get_collation(&self) -> SqlCollation {
         self.negotiated_settings.database_collation
-    }
-
-    pub(crate) fn get_transport(&self) -> &dyn TdsTransport {
-        self.transport.as_ref()
-    }
-
-    pub(crate) fn get_negotiated_settings(&self) -> &NegotiatedSettings {
-        &self.negotiated_settings
-    }
-
-    pub(crate) fn get_execution_context(&self) -> &ExecutionContext {
-        &self.execution_context
     }
 
     pub(crate) fn get_current_metadata(&self) -> Option<&ColMetadataToken> {
@@ -133,7 +126,22 @@ impl TdsClient {
         });
     }
 
-    /// Executes a SQL command (batch) against the server.
+    /// Sends a SQL batch to the server for execution.
+    ///
+    /// Wraps the SQL text in a TDS `SQL_BATCH` message. After this call returns,
+    /// use [`read_row()`](Self::read_row) to consume result rows, then
+    /// [`close_query()`](Self::close_query) to finalize.
+    ///
+    /// # Parameters
+    /// - `sql_command` — raw T-SQL text to execute.
+    /// - `timeout_sec` — per-request timeout in seconds. `None` means no timeout.
+    /// - `cancel_handle` — optional [`CancelHandle`] for cooperative cancellation.
+    ///   A child token is derived so cancelling the handle aborts this request
+    ///   without tearing down the connection.
+    ///
+    /// # Errors
+    /// Returns [`UsageError`](crate::error::Error::UsageError) if a previous
+    /// batch is still open.
     #[instrument(skip(self), level = "info")]
     pub async fn execute(
         &mut self,
@@ -169,8 +177,21 @@ impl TdsClient {
         Ok(())
     }
 
-    // Executes a stored procedure with the given proc_id and parameters.
-    // The parameters can be either positional or named.
+    /// Executes a parameterized query via `sp_executesql`.
+    ///
+    /// The SQL text and parameter declarations are sent as positional RPC
+    /// arguments. Caller-supplied `named_params` are appended as named
+    /// parameters — each [`RpcParameter`] must have a `name` matching the
+    /// declaration in the query (e.g. `@id`).
+    ///
+    /// This is the primary path for parameterized queries; prefer it over
+    /// string interpolation to avoid SQL injection and benefit from plan
+    /// caching on the server.
+    ///
+    /// # Parameters
+    /// - `sql` — parameterized T-SQL statement.
+    /// - `named_params` — parameter values. Build with [`RpcParameter::new`].
+    /// - `timeout_sec` / `cancel_handle` — see [`execute()`](Self::execute).
     #[instrument(skip(self, named_params), level = "info")]
     pub async fn execute_sp_executesql(
         &mut self,
@@ -457,7 +478,24 @@ impl TdsClient {
         self.consume_done_token().await
     }
 
-    /// Executes a stored procedure with the given name and parameters.
+    /// Executes a stored procedure via the TDS RPC protocol.
+    ///
+    /// Sends an `sp_executesql`-style RPC request for the named procedure.
+    /// Parameters can be supplied positionally, by name, or both. If the
+    /// procedure returns result sets, iterate rows with
+    /// [`move_to_next()`](Self::move_to_next) and
+    /// [`column_value()`](Self::column_value). After all result sets are
+    /// consumed, retrieve output parameters with
+    /// [`get_return_values()`](Self::get_return_values).
+    ///
+    /// Only one batch may be active at a time — calling this while a previous
+    /// result set is unread returns [`Error::UsageError`](crate::error::Error::UsageError).
+    ///
+    /// # Cancel / Timeout
+    ///
+    /// Pass `timeout_sec` to cap server-side execution time, or supply a
+    /// [`CancelHandle`] to cancel the operation cooperatively from another
+    /// task.
     #[instrument(skip(self, positional_parameters, named_parameters), level = "info")]
     pub async fn execute_stored_procedure(
         &mut self,
@@ -506,8 +544,16 @@ impl TdsClient {
         Ok(())
     }
 
-    /// Prepares a SQL statement for execution and returns the prepared handle.
-    /// This uses `sp_prepare` under the hood.
+    /// Prepares a parameterized statement via `sp_prepare` and returns the
+    /// server-side handle.
+    ///
+    /// The returned `i32` handle can be passed to
+    /// [`execute_sp_execute()`](Self::execute_sp_execute) for repeated
+    /// execution without re-parsing. Call
+    /// [`execute_sp_unprepare()`](Self::execute_sp_unprepare) when the handle
+    /// is no longer needed.
+    ///
+    /// Drains the token stream internally — no rows are returned.
     #[instrument(skip(self, named_params), level = "info")]
     pub async fn execute_sp_prepare(
         &mut self,
@@ -594,7 +640,11 @@ impl TdsClient {
         }
     }
 
-    /// Unprepares a previously prepared statement using `sp_unprepare`.
+    /// Releases a prepared statement handle via `sp_unprepare`.
+    ///
+    /// Frees server-side resources associated with the handle returned by
+    /// [`execute_sp_prepare()`](Self::execute_sp_prepare) or
+    /// [`execute_sp_prepexec()`](Self::execute_sp_prepexec).
     #[instrument(skip(self), level = "info")]
     pub async fn execute_sp_unprepare(
         &mut self,
@@ -638,8 +688,16 @@ impl TdsClient {
         Ok(())
     }
 
-    /// Executes `sp_prepexec` which will prepare the statement for execution,
-    /// return a result set as well as a prepared handle.
+    /// Prepares and executes a parameterized statement in a single round-trip
+    /// via `sp_prepexec`.
+    ///
+    /// Combines [`execute_sp_prepare()`](Self::execute_sp_prepare) and
+    /// [`execute_sp_execute()`](Self::execute_sp_execute). The prepared handle
+    /// is stored internally and can be retrieved with
+    /// [`get_return_values()`](Self::get_return_values).
+    ///
+    /// Result rows are available through [`read_row()`](Self::read_row) after
+    /// this call returns.
     #[instrument(skip(self, named_params), level = "info")]
     pub async fn execute_sp_prepexec(
         &mut self,
@@ -711,7 +769,13 @@ impl TdsClient {
         Ok(())
     }
 
-    /// Executes a previously prepared statement using `sp_execute`.
+    /// Executes a previously prepared statement by handle via `sp_execute`.
+    ///
+    /// Re-uses the execution plan from an earlier
+    /// [`execute_sp_prepare()`](Self::execute_sp_prepare) or
+    /// [`execute_sp_prepexec()`](Self::execute_sp_prepexec) call.
+    /// Supply fresh parameter values through `positional_parameters` and/or
+    /// `named_parameters`.
     #[instrument(skip(self, positional_parameters, named_parameters), level = "info")]
     pub async fn execute_sp_execute(
         &mut self,
@@ -1058,7 +1122,12 @@ impl TdsClient {
         }
     }
 
-    /// Gets the return values collected so far.
+    /// Returns a clone of all [`ReturnValue`]s collected during the current
+    /// batch — output parameters and UDF return values.
+    ///
+    /// Values accumulate as the token stream is read; call this after the
+    /// result set is fully consumed (e.g. after [`close_query()`](Self::close_query)
+    /// or after [`move_to_next()`](Self::move_to_next) returns `false`).
     pub fn get_return_values(&self) -> Vec<ReturnValue> {
         self.return_values.clone()
     }
@@ -1076,6 +1145,11 @@ impl TdsClient {
         }
     }
 
+    /// Drains all remaining result sets and resets the client for the next request.
+    ///
+    /// Any unread rows and result sets are consumed so the TDS stream is left in
+    /// a clean state. Must be called (or the result sets fully iterated) before
+    /// executing another query on the same connection.
     #[instrument(skip(self), level = "info")]
     pub async fn close_query(&mut self) -> TdsResult<()> {
         if !self.execution_context.has_open_batch() {
@@ -1094,6 +1168,7 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Close the underlying transport, ending the TDS session.
     #[instrument(skip(self), level = "info")]
     pub async fn close_connection(&mut self) -> TdsResult<()> {
         self.transport.close_transport().await?;
@@ -1135,6 +1210,10 @@ impl TdsClient {
         self.execution_context.has_active_transaction()
     }
 
+    /// Begin a new transaction with the given isolation level and optional name.
+    ///
+    /// Fails if a batch is currently executing. Use [`has_active_transaction`](Self::has_active_transaction)
+    /// to check whether a transaction is already open.
     #[instrument(skip(self), level = "info")]
     pub async fn begin_transaction(
         &mut self,
@@ -1161,6 +1240,10 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Create a savepoint within the current transaction.
+    ///
+    /// The savepoint `name` can later be passed to
+    /// [`rollback_transaction`](Self::rollback_transaction) to partially undo work.
     #[instrument(skip(self), level = "info")]
     pub async fn save_transaction(&mut self, name: String) -> TdsResult<()> {
         if self.execution_context.has_open_batch() {
@@ -1181,6 +1264,10 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Commit the current transaction.
+    ///
+    /// If `create_txn_params` is provided, a new transaction begins immediately
+    /// after the commit (atomic commit-and-begin).
     #[instrument(skip(self), level = "info")]
     pub async fn commit_transaction(
         &mut self,
@@ -1208,6 +1295,10 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Roll back the current transaction, or roll back to a named savepoint.
+    ///
+    /// If `create_txn_params` is provided, a new transaction begins immediately
+    /// after the rollback.
     #[instrument(skip(self), level = "info")]
     pub async fn rollback_transaction(
         &mut self,
@@ -1235,6 +1326,9 @@ impl TdsClient {
         Ok(())
     }
 
+    /// Retrieve the DTC (Distributed Transaction Coordinator) network address from the server.
+    ///
+    /// Returns a result set that can be iterated with the normal row-reading API.
     #[instrument(skip(self), level = "info")]
     pub async fn get_dtc_address(&mut self) -> TdsResult<()> {
         if self.execution_context.has_open_batch() {

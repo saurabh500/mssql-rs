@@ -27,6 +27,7 @@ use std::sync::LazyLock;
 pub(crate) static PARSER_REGISTRY: LazyLock<GenericTokenParserRegistry> =
     LazyLock::new(GenericTokenParserRegistry::default);
 
+/// Factory for establishing TDS connections and producing [`TdsClient`] instances.
 pub struct TdsConnectionProvider;
 
 impl Default for TdsConnectionProvider {
@@ -43,6 +44,7 @@ impl TdsConnectionProvider {
 
     /// Create a client with a custom transport (used for fuzzing)
     #[cfg(fuzzing)]
+    #[allow(private_bounds)]
     pub async fn create_client_with_transport<T>(
         context: ClientContext,
         transport: T,

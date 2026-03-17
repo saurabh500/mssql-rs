@@ -10,7 +10,6 @@ use crate::connection_provider::tds_connection_provider::PARSER_REGISTRY;
 use crate::core::{
     CancelHandle, EncryptionOptions, EncryptionSetting, NegotiatedEncryptionSetting, TdsResult,
 };
-use crate::datatypes::decoder::GenericDecoder;
 use crate::datatypes::row_writer::RowWriter;
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::TimeoutErrorType;
@@ -19,14 +18,13 @@ use crate::io::packet_reader::{PacketReader, TdsPacketReader};
 use crate::io::packet_writer::PacketWriter;
 use crate::io::reader_writer::{NetworkReader, NetworkReaderWriter, NetworkWriter};
 use crate::io::token_stream::{
-    ParserContext, RowReadResult, TdsTokenStreamReader, TokenParserRegistry, TokenParsers,
+    ParserContext, RowReadResult, TdsTokenStreamReader, receive_row_into_internal,
+    receive_token_internal,
 };
 use crate::message::attention::AttentionRequest;
 use crate::message::login_options::TdsVersion;
 use crate::message::messages::Request;
-use crate::query::metadata::ColumnMetadata;
-use crate::token::parsers::TokenParser;
-use crate::token::tokens::{DoneStatus, TokenType, Tokens};
+use crate::token::tokens::{DoneStatus, Tokens};
 use async_trait::async_trait;
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use std::cmp::min;
@@ -538,15 +536,6 @@ impl NetworkTransport {
         }
     }
 
-    pub(crate) async fn send(&mut self, data: &[u8]) -> TdsResult<()> {
-        self.stream
-            .as_mut()
-            .expect("Stream not available")
-            .write_all(data)
-            .await?;
-        Ok(())
-    }
-
     pub(crate) fn notify_encryption_negotiation(
         &mut self,
         encryption: NegotiatedEncryptionSetting,
@@ -890,111 +879,6 @@ impl NetworkTransport {
         Ok(packet_size_from_header)
     }
 
-    async fn receive_token_internal(&mut self, context: &ParserContext) -> TdsResult<Tokens> {
-        let token_type_byte = self.read_byte().await?;
-        let token_type: TokenType = token_type_byte.try_into()?;
-        debug!(
-            "Received token type: {:?} ({})",
-            token_type, token_type_byte
-        );
-        self.dispatch_token(token_type, context).await
-    }
-
-    /// Reads the next token; for ROW/NBCROW tokens, decodes directly into the
-    /// writer via `decode_into`, bypassing `RowToken` construction entirely.
-    async fn receive_row_into_internal(
-        &mut self,
-        context: &ParserContext,
-        writer: &mut (dyn RowWriter + Send),
-    ) -> TdsResult<RowReadResult> {
-        let token_type_byte = self.read_byte().await?;
-        let token_type: TokenType = token_type_byte.try_into()?;
-        event!(
-            tracing::Level::DEBUG,
-            "Parsing token type: {:?}",
-            &token_type
-        );
-
-        match token_type {
-            TokenType::Row => {
-                let columns = Self::extract_column_metadata(context)?;
-                let decoder = GenericDecoder::default();
-                for (col, meta) in columns.iter().enumerate() {
-                    decoder.decode_into(self, meta, col, writer).await?;
-                }
-                Ok(RowReadResult::RowWritten)
-            }
-            TokenType::NbcRow => {
-                let columns = Self::extract_column_metadata(context)?;
-                let bitmap_len = columns.len().div_ceil(8);
-                let mut bitmap = vec![0u8; bitmap_len];
-                self.read_bytes(&mut bitmap).await?;
-                let decoder = GenericDecoder::default();
-                for (col, meta) in columns.iter().enumerate() {
-                    if bitmap[col / 8] & (1 << (col % 8)) != 0 {
-                        writer.write_null(col);
-                    } else {
-                        decoder.decode_into(self, meta, col, writer).await?;
-                    }
-                }
-                Ok(RowReadResult::RowWritten)
-            }
-            _ => {
-                let token = self.dispatch_token(token_type, context).await?;
-                Ok(RowReadResult::Token(token))
-            }
-        }
-    }
-
-    fn extract_column_metadata(context: &ParserContext) -> TdsResult<&[ColumnMetadata]> {
-        match context {
-            ParserContext::ColumnMetadata(metadata) => Ok(&metadata.columns),
-            _ => Err(crate::error::Error::ProtocolError(
-                "Expected ColumnMetadata in context for row decoding".to_string(),
-            )),
-        }
-    }
-
-    async fn dispatch_token(
-        &mut self,
-        token_type: TokenType,
-        context: &ParserContext,
-    ) -> TdsResult<Tokens> {
-        let parser = match PARSER_REGISTRY.get_parser(&token_type) {
-            Some(parser) => parser,
-            None => {
-                return Err(crate::error::Error::ProtocolError(format!(
-                    "No parser implemented for token type: {token_type:?}. This token type is not supported yet."
-                )));
-            }
-        };
-
-        event!(
-            tracing::Level::DEBUG,
-            "Parsing token type: {:?}",
-            &token_type
-        );
-
-        match parser {
-            TokenParsers::EnvChange(parser) => parser.parse(self, context).await,
-            TokenParsers::LoginAck(parser) => parser.parse(self, context).await,
-            TokenParsers::Done(parser) => parser.parse(self, context).await,
-            TokenParsers::DoneInProc(parser) => parser.parse(self, context).await,
-            TokenParsers::DoneProc(parser) => parser.parse(self, context).await,
-            TokenParsers::Info(parser) => parser.parse(self, context).await,
-            TokenParsers::Error(parser) => parser.parse(self, context).await,
-            TokenParsers::FedAuthInfo(parser) => parser.parse(self, context).await,
-            TokenParsers::FeatureExtAck(parser) => parser.parse(self, context).await,
-            TokenParsers::ColMetadata(parser) => parser.parse(self, context).await,
-            TokenParsers::Row(parser) => parser.parse(self, context).await,
-            TokenParsers::Order(parser) => parser.parse(self, context).await,
-            TokenParsers::ReturnStatus(parser) => parser.parse(self, context).await,
-            TokenParsers::NbcRow(parser) => parser.parse(self, context).await,
-            TokenParsers::ReturnValue(parser) => parser.parse(self, context).await,
-            TokenParsers::Sspi(parser) => parser.parse(self, context).await,
-        }
-    }
-
     /// Tells the server to stop sending tokens for the token stream being read and waits for
     /// an acknowledgement.
     async fn cancel_read_stream_and_wait(&mut self) -> TdsResult<()> {
@@ -1038,7 +922,12 @@ impl NetworkTransport {
             // Read next token, with timeout if specified
             let token_result = if let Some(timeout_duration) = attention_timeout {
                 let remaining = timeout_duration.saturating_sub(start.elapsed());
-                match timeout(remaining, self.receive_token_internal(&dummy_context)).await {
+                match timeout(
+                    remaining,
+                    receive_token_internal(self, &*PARSER_REGISTRY, &dummy_context),
+                )
+                .await
+                {
                     Ok(result) => result,
                     Err(_elapsed) => {
                         debug!(
@@ -1050,7 +939,7 @@ impl NetworkTransport {
                 }
             } else {
                 // No timeout - wait indefinitely
-                self.receive_token_internal(&dummy_context).await
+                receive_token_internal(self, &*PARSER_REGISTRY, &dummy_context).await
             };
 
             match token_result {
@@ -1352,8 +1241,10 @@ impl TdsTokenStreamReader for NetworkTransport {
         remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<Tokens> {
-        let cancellable_receive_token =
-            CancelHandle::run_until_cancelled(cancel_handle, self.receive_token_internal(context));
+        let cancellable_receive_token = CancelHandle::run_until_cancelled(
+            cancel_handle,
+            receive_token_internal(self, &*PARSER_REGISTRY, context),
+        );
         let token_result = match remaining_request_timeout.as_ref() {
             Some(remaining_request_timeout) => {
                 match timeout(*remaining_request_timeout, cancellable_receive_token).await {
@@ -1385,7 +1276,7 @@ impl TdsTokenStreamReader for NetworkTransport {
     ) -> TdsResult<RowReadResult> {
         let cancellable = CancelHandle::run_until_cancelled(
             cancel_handle,
-            self.receive_row_into_internal(context, writer),
+            receive_row_into_internal(self, &*PARSER_REGISTRY, context, writer),
         );
         let result = match remaining_request_timeout.as_ref() {
             Some(t) => match timeout(*t, cancellable).await {

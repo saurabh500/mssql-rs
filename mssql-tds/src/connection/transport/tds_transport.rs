@@ -27,6 +27,7 @@ pub(crate) trait TdsTransport: TdsTokenStreamReader + Send + Sync + std::fmt::De
     fn reset_reader(&mut self);
 
     /// Get the configured packet size for this transport.
+    #[allow(dead_code)]
     fn packet_size(&self) -> u32;
 
     /// Close the transport connection.

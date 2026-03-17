@@ -26,6 +26,7 @@ const MAX_BINARY_LEN: usize = 1024;
 
 /// Fuzzed SQL type for encoding tests
 #[derive(Debug, Arbitrary)]
+#[allow(dead_code)]
 enum FuzzSqlValue {
     Bit(Option<bool>),
     TinyInt(Option<u8>),

@@ -68,6 +68,7 @@ pub(crate) struct SspiAuthHandler {
     /// Current authentication state
     state: SspiAuthState,
     /// Target SPN (for debugging/logging)
+    #[allow(dead_code)] // read via target_spn() in tests
     target_spn: String,
 }
 
@@ -189,16 +190,19 @@ impl SspiAuthHandler {
     }
 
     /// Returns true if authentication is complete.
+    #[cfg(test)]
     pub(crate) fn is_complete(&self) -> bool {
         self.state == SspiAuthState::Complete
     }
 
     /// Returns the current authentication state.
+    #[cfg(test)]
     pub(crate) fn state(&self) -> SspiAuthState {
         self.state
     }
 
     /// Returns the target SPN being used for authentication.
+    #[cfg(test)]
     pub(crate) fn target_spn(&self) -> &str {
         &self.target_spn
     }

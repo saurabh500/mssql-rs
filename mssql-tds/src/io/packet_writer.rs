@@ -81,6 +81,7 @@ pub(crate) trait TdsPacketWriter {
     async fn write_async(&mut self, content: &[u8]) -> TdsResult<()>;
 
     /// Writes an i32 value at a specific index in the buffer.
+    #[allow(dead_code)] // used in tests
     fn write_i32_at_index(&mut self, index: usize, value: i32);
 
     /// Finalizes the packet writer, sending any remaining data in the buffer.
@@ -136,6 +137,7 @@ impl<'a> PacketWriter<'a> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn cancel_current_message(&mut self) -> TdsResult<()> {
         self.populate_header_and_send(true, true).await
     }

@@ -116,6 +116,7 @@ pub(crate) struct GenericDecoder {
 }
 
 impl GenericDecoder {
+    #[cfg(test)]
     const SHORTLEN_MAXVALUE: usize = 65535;
     const SQL_PLP_NULL: usize = 0xffffffffffffffff;
     const SQL_PLP_UNKNOWNLEN: usize = 0xfffffffffffffffe;
@@ -901,7 +902,16 @@ impl GenericDecoder {
                 } else {
                     writer.write_time(
                         col,
-                        self.read_time(reader, length, metadata.get_scale()).await?,
+                        self.read_time(
+                            reader,
+                            length,
+                            metadata.get_scale().ok_or_else(|| {
+                                crate::error::Error::ImplementationError(
+                                    "TimeN type should have scale".to_string(),
+                                )
+                            })?,
+                        )
+                        .await?,
                     );
                 }
             }
@@ -911,7 +921,15 @@ impl GenericDecoder {
                     writer.write_null(col);
                 } else {
                     let cv = self
-                        .read_datetime2(reader, length, metadata.get_scale())
+                        .read_datetime2(
+                            reader,
+                            length,
+                            metadata.get_scale().ok_or_else(|| {
+                                crate::error::Error::ImplementationError(
+                                    "DateTime2N type should have scale".to_string(),
+                                )
+                            })?,
+                        )
                         .await?;
                     if let ColumnValues::DateTime2(dt2) = cv {
                         writer.write_datetime2(col, dt2);
@@ -924,7 +942,15 @@ impl GenericDecoder {
                     writer.write_null(col);
                 } else {
                     let cv = self
-                        .read_datetime_offset(reader, length, metadata.get_scale())
+                        .read_datetime_offset(
+                            reader,
+                            length,
+                            metadata.get_scale().ok_or_else(|| {
+                                crate::error::Error::ImplementationError(
+                                    "DateTimeOffsetN type should have scale".to_string(),
+                                )
+                            })?,
+                        )
                         .await?;
                     if let ColumnValues::DateTimeOffset(dto) = cv {
                         writer.write_datetimeoffset(col, dto);
@@ -1140,7 +1166,16 @@ impl SqlTypeDecode for GenericDecoder {
                     0 => return Ok(ColumnValues::Null),
                     _ => {
                         return Ok(ColumnValues::Time(
-                            self.read_time(reader, length, metadata.get_scale()).await?,
+                            self.read_time(
+                                reader,
+                                length,
+                                metadata.get_scale().ok_or_else(|| {
+                                    crate::error::Error::ImplementationError(
+                                        "TimeN type should have scale".to_string(),
+                                    )
+                                })?,
+                            )
+                            .await?,
                         ));
                     }
                 }
@@ -1150,8 +1185,16 @@ impl SqlTypeDecode for GenericDecoder {
                 match length {
                     0 => Ok(ColumnValues::Null),
                     _ => {
-                        self.read_datetime2(reader, length, metadata.get_scale())
-                            .await
+                        self.read_datetime2(
+                            reader,
+                            length,
+                            metadata.get_scale().ok_or_else(|| {
+                                crate::error::Error::ImplementationError(
+                                    "DateTime2N type should have scale".to_string(),
+                                )
+                            })?,
+                        )
+                        .await
                     }
                 }
             }?,
@@ -1160,8 +1203,16 @@ impl SqlTypeDecode for GenericDecoder {
                 match length {
                     0 => Ok(ColumnValues::Null),
                     _ => {
-                        self.read_datetime_offset(reader, length, metadata.get_scale())
-                            .await
+                        self.read_datetime_offset(
+                            reader,
+                            length,
+                            metadata.get_scale().ok_or_else(|| {
+                                crate::error::Error::ImplementationError(
+                                    "DateTimeOffsetN type should have scale".to_string(),
+                                )
+                            })?,
+                        )
+                        .await
                     }
                 }
             }?,
@@ -1240,16 +1291,9 @@ impl SqlTypeDecode for GenericDecoder {
 }
 
 #[derive(Debug, Default)]
-struct StringDecoder {
-    // TODO: Make this non-optional
-    db_collation: Option<SqlCollation>,
-}
+struct StringDecoder;
 
 impl StringDecoder {
-    fn new() -> Self {
-        StringDecoder { db_collation: None }
-    }
-
     fn is_long_len_type(data_type: TdsDataType) -> bool {
         matches!(data_type, TdsDataType::NText | TdsDataType::Text)
     }
@@ -1852,16 +1896,12 @@ mod test {
 
     #[test]
     fn test_generic_decoder_default() {
-        let decoder = GenericDecoder::default();
-        // Just verify it can be created
-        assert!(std::mem::size_of_val(&decoder) > 0);
+        let _decoder = GenericDecoder::default();
     }
 
     #[test]
     fn test_string_decoder_default() {
-        let decoder = StringDecoder::default();
-        // Just verify it can be created
-        assert!(std::mem::size_of_val(&decoder) > 0);
+        let _decoder = StringDecoder;
     }
 
     #[test]
@@ -2186,12 +2226,6 @@ mod test {
         };
         let result = parts.to_f64();
         assert_eq!(result, -0.0);
-    }
-
-    #[test]
-    fn test_string_decoder_new() {
-        let decoder = StringDecoder::new();
-        assert!(decoder.db_collation.is_none());
     }
 
     #[test]
