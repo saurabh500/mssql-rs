@@ -14,9 +14,13 @@ use super::{
 /// Character encoding used by a [`SqlString`].
 #[derive(PartialEq, Clone)]
 pub enum EncodingType {
+    /// UTF-8 encoding.
     Utf8,
+    /// UTF-16LE encoding.
     Utf16,
+    /// Encoding derived from SQL collation LCID.
     LcidBased(SqlCollation),
+    /// Placeholder set before the connection collation is known.
     // This is to be used when we want to have an empty encoding, which
     // is later written over the protocol by getting the collation from the connection.
     DelayedSet,
@@ -25,6 +29,7 @@ pub enum EncodingType {
 /// Encoded string value from a TDS character column.
 #[derive(PartialEq, Clone)]
 pub struct SqlString {
+    /// Raw encoded bytes.
     pub bytes: Vec<u8>,
     encoding_type: EncodingType,
 }

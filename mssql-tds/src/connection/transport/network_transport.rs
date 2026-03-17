@@ -411,14 +411,20 @@ pub(crate) async fn create_transport(
     .await
 }
 
+/// SSL/TLS lifecycle callbacks for a transport.
 #[async_trait]
 pub trait TransportSslHandler {
+    /// Enables SSL on the transport.
     async fn enable_ssl(&mut self) -> TdsResult<()>;
+    /// Disables SSL on the transport.
     async fn disable_ssl(&mut self) -> TdsResult<()>;
 }
 
+/// Async read/write stream with TLS handshake hooks.
 pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync {
+    /// Called when a TLS handshake is about to begin.
     fn tls_handshake_starting(&mut self);
+    /// Called after TLS handshake completes.
     fn tls_handshake_completed(&mut self);
 }
 

@@ -11,9 +11,13 @@ use super::odbc_supported_auth_keywords::auth_method_from_keyword;
 /// wherever they are needed.
 #[derive(Debug, Clone)]
 pub struct TransformedAuth {
+    /// Resolved authentication method.
     pub method: TdsAuthenticationMethod,
+    /// User name (may be empty if not applicable).
     pub user_name: String,
+    /// Password (may be empty if not applicable).
     pub password: String,
+    /// Pre-acquired access token, if any.
     pub access_token: Option<String>,
 }
 

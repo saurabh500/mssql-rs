@@ -3,8 +3,10 @@
 
 //! TDS token types, parsers, and related data structures.
 
-pub mod fed_auth_info;
-pub mod login_ack;
-pub mod parsers;
+pub(crate) mod fed_auth_info;
+pub(crate) mod login_ack;
+pub(crate) mod parsers;
+/// Return value status and other token item types.
 pub mod tokenitems;
+/// Token type definitions, collation, and environment change types.
 pub mod tokens;

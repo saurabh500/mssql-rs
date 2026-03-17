@@ -3,6 +3,7 @@
 
 //! Connection action chain for SQL Server connections
 //!
+#![allow(dead_code)]
 //! This module implements an action-based approach to connection establishment,
 //! converting parsed data sources into executable action sequences.
 

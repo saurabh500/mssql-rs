@@ -1445,9 +1445,13 @@ impl SqlTypeDecode for StringDecoder {
 /// TDS representation of Decimal and Numeric types.
 #[derive(Clone)]
 pub struct DecimalParts {
+    /// `true` for non-negative values.
     pub is_positive: bool,
+    /// Number of digits after the decimal point.
     pub scale: u8,
+    /// Total number of significant digits.
     pub precision: u8,
+    /// 32-bit integer parts of the value (little-endian order).
     pub int_parts: Vec<i32>,
 }
 

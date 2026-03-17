@@ -131,6 +131,7 @@ impl<'a> SqlRpc<'a> {
 /// avoiding the overhead of sending the procedure name as a string.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub enum RpcProcs {
     Cursor = 1,
     CursorOpen = 2,

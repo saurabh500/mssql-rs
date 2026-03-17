@@ -18,7 +18,8 @@ use crate::{
 /// TDS token type identifiers as defined by the protocol specification.
 #[derive(Eq, PartialEq, Hash, Debug)]
 #[repr(u8)]
-pub enum TokenType {
+#[allow(clippy::upper_case_acronyms)]
+pub(crate) enum TokenType {
     AltMetadata = 0x88,
     AltRow = 0xD3,
     ColMetadata = 0x81,
@@ -76,7 +77,7 @@ impl TryFrom<u8> for TokenType {
 }
 
 /// A parsed TDS token.
-pub trait Token {
+pub(crate) trait Token {
     fn token_type(&self) -> TokenType;
 }
 
@@ -462,7 +463,8 @@ mod sql_collation_tests {
 }
 
 /// Static lookup table for code pages by SortID
-pub static CODE_PAGE_FROM_SORT_ID: [Option<u16>; 256] = [
+#[allow(dead_code)]
+pub(crate) static CODE_PAGE_FROM_SORT_ID: [Option<u16>; 256] = [
     None,       // 0
     None,       // 1
     None,       // 2
@@ -983,7 +985,8 @@ impl Token for ReturnValueToken {
 }
 
 #[derive(Debug)]
-pub struct RowToken {
+pub(crate) struct RowToken {
+    #[allow(dead_code)]
     pub all_values: Vec<ColumnValues>,
 }
 
@@ -1033,7 +1036,7 @@ impl From<u16> for DoneStatus {
 
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CurrentCommand {
+pub(crate) enum CurrentCommand {
     None = 0x00,
     Select = 0xc1,
     Insert = 0xc3,
@@ -1070,7 +1073,7 @@ impl TryFrom<u16> for CurrentCommand {
 
 /// Represents the different sub-types of environment change tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EnvChangeTokenSubType {
+pub(crate) enum EnvChangeTokenSubType {
     Database,
     Language,
     CharacterSet,
@@ -1123,6 +1126,7 @@ impl TryFrom<u8> for EnvChangeTokenSubType {
 }
 
 impl EnvChangeTokenSubType {
+    #[allow(dead_code)]
     pub fn as_u8(&self) -> u8 {
         match self {
             EnvChangeTokenSubType::Database => 1,
@@ -1186,7 +1190,7 @@ mod env_change_tests {
 
 /// A generic struct that stores the old/new values of an environment change.
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
-pub struct EnvChangeTokenValuePairs<T> {
+pub(crate) struct EnvChangeTokenValuePairs<T> {
     old_value: T,
     new_value: T,
 }
@@ -1201,6 +1205,7 @@ impl<T> EnvChangeTokenValuePairs<T> {
     }
 
     /// Gets a reference to the old value.
+    #[allow(dead_code)]
     pub fn old_value(&self) -> &T {
         &self.old_value
     }

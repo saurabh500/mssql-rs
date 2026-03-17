@@ -65,9 +65,11 @@ impl From<&crate::token::tokens::ErrorToken> for SqlErrorInfo {
 /// The source of a timeout: either a Tokio `Elapsed` or a descriptive string.
 #[derive(Debug, Error)]
 pub enum TimeoutErrorType {
+    /// Wrapper around a Tokio `Elapsed` error.
     #[error("Elapsed: {0}")]
     Elapsed(Elapsed),
 
+    /// Freeform timeout description.
     #[error("{0}")]
     String(String),
 }
@@ -75,90 +77,143 @@ pub enum TimeoutErrorType {
 /// All errors produced by the TDS client.
 #[derive(Debug, Error)]
 pub enum Error {
+    /// Underlying I/O failure.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Server requested a connection redirect.
     #[error("Server redirected the connection: {host}:{port} times")]
-    Redirection { host: String, port: u16 },
+    Redirection {
+        /// Target hostname.
+        host: String,
+        /// Target port.
+        port: u16,
+    },
 
+    /// Failed to establish a connection.
     #[error("Connection Error: {0}")]
     ConnectionError(String),
 
+    /// TDS protocol violation or unexpected server response.
     #[error("Protocol Error: {0}")]
     ProtocolError(String),
 
+    /// TLS/SSL library error.
     #[error("TLS Error: {0}")]
     TlsError(#[from] native_tls::Error),
 
+    /// TLS handshake failed with host/SAN details.
     #[error(
         "TLS handshake failed while connecting to '{expected_host}': {source}. Certificate SANs: {cert_sans}"
     )]
     TlsHandshakeError {
+        /// Inner TLS error.
         source: native_tls::Error,
+        /// Hostname the client tried to connect to.
         expected_host: String,
+        /// Subject Alternative Names found on the certificate.
         cert_sans: String,
     },
 
+    /// Operation exceeded its deadline.
     #[error("Timeout Error: {0}")]
     TimeoutError(TimeoutErrorType),
 
+    /// Operation was cancelled via a `CancelHandle`.
     #[error("Operation Cancelled Error: {0}")]
     OperationCancelledError(String),
 
+    /// One or more errors returned by SQL Server.
     #[error("{}", SqlServerError::format_errors(errors))]
-    SqlServerError { errors: Vec<SqlErrorInfo> },
+    SqlServerError {
+        /// Ordered list of server-reported errors.
+        errors: Vec<SqlErrorInfo>,
+    },
 
+    /// Caller misused the API (e.g., invalid parameter combination).
     #[error("Usage Error: {0}")]
     UsageError(String),
 
+    /// Internal logic error that should not occur.
     #[error("Unexpected Implementation Error: {0}")]
     ImplementationError(String),
 
+    /// Feature recognized but not yet implemented.
     #[error("Unimplemented Feature: {feature} - {context}")]
-    UnimplementedFeature { feature: String, context: String },
+    UnimplementedFeature {
+        /// Name of the unimplemented feature.
+        feature: String,
+        /// Additional context.
+        context: String,
+    },
 
+    /// Value could not be converted to the target SQL type.
     #[error("Type Conversion Error: {0}")]
     TypeConversionError(String),
 
+    /// Connection was closed by server or transport.
     #[error("Connection closed: {0}")]
     ConnectionClosed(String),
 
+    /// Code page / LCID has no mapped encoding.
     #[error(
         "Unsupported Encoding: LCID {lcid} (0x{lcid:04X}). Consider using NVARCHAR instead of VARCHAR/TEXT for better compatibility."
     )]
-    UnsupportedEncoding { lcid: u32 },
+    UnsupportedEncoding {
+        /// Windows locale ID that has no available encoding.
+        lcid: u32,
+    },
 
+    /// Certificate file does not exist on disk.
     #[error(
         "Certificate file not found: {path}. Verify the ServerCertificate path is correct and the file exists."
     )]
-    CertificateNotFound { path: String },
+    CertificateNotFound {
+        /// File path that was looked up.
+        path: String,
+    },
 
+    /// Certificate file is present but cannot be parsed.
     #[error(
         "Invalid certificate format in file: {path}. Ensure the file contains a valid DER or PEM encoded X.509 certificate."
     )]
-    InvalidCertificateFormat { path: String },
+    InvalidCertificateFormat {
+        /// File path with the invalid certificate.
+        path: String,
+    },
 
+    /// Server certificate has passed its validity period.
     #[error(
         "Server certificate has expired. The server's certificate is no longer valid. Contact your administrator."
     )]
     CertificateExpired,
 
+    /// Server presented a certificate that does not match expectations.
     #[error(
         "Server certificate validation failed: Certificate mismatch. The server presented a different certificate than expected. Verify you are connecting to the correct server."
     )]
     CertificateMismatch,
 
+    /// I/O error while reading a certificate file.
     #[error(
         "Failed to read certificate file: {path}. Error: {error}. Check file permissions and ensure the file is not locked by another process."
     )]
-    CertificateFileIoError { path: String, error: String },
+    CertificateFileIoError {
+        /// File path that could not be read.
+        path: String,
+        /// Underlying I/O error message.
+        error: String,
+    },
 
+    /// TLS handshake completed but server did not provide a certificate.
     #[error("No server certificate available during TLS handshake.")]
     NoServerCertificate,
 
+    /// Error from a bulk copy operation.
     #[error("Bulk Copy Error: {0}")]
     BulkCopyError(#[from] BulkCopyError),
 
+    /// Authentication / security subsystem error.
     #[error("Security error: {0}")]
     Security(#[from] SecurityError),
 }

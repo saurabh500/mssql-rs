@@ -21,11 +21,17 @@ bitflags! {
     /// [`BY_REF_VALUE`](Self::BY_REF_VALUE) for output parameters.
     #[derive(Debug, Clone, Copy)]
     pub struct StatusFlags: u8 {
+        /// No flags set.
         const NONE = 0b0000_0000;
+        /// Parameter is passed by reference (output parameter).
         const BY_REF_VALUE = 0b0000_0001;
+        /// Use the parameter's default value.
         const DEFAULT_VALUE = 0b0000_0010;
+        /// Reserved by the TDS protocol.
         const RESERVED_BIT_1 = 0b0000_0100;
+        /// Parameter value is encrypted.
         const ENCRYPTED = 0b0000_1000;
+        /// Reserved by the TDS protocol.
         const RESERVED_BIT_4 = 0b0001_0000;
     }
 }

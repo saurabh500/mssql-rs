@@ -14,6 +14,7 @@ use uuid::Uuid;
 /// SQL Server `xml` column value stored as UTF-16LE bytes.
 #[derive(Debug, PartialOrd, PartialEq, Clone)]
 pub struct SqlXml {
+    /// UTF-16LE encoded XML bytes.
     pub bytes: Vec<u8>,
 }
 
@@ -48,29 +49,53 @@ impl From<String> for SqlXml {
 /// Decoded column value from a TDS result row.
 #[derive(Debug, PartialEq, Clone)]
 pub enum ColumnValues {
+    /// `tinyint` (0–255).
     TinyInt(u8),
+    /// `smallint`.
     SmallInt(i16),
+    /// `int`.
     Int(i32),
+    /// `bigint`.
     BigInt(i64),
+    /// `real` (single-precision float).
     Real(f32),
+    /// `float` (double-precision float).
     Float(f64),
+    /// `decimal`.
     Decimal(DecimalParts),
+    /// `numeric`.
     Numeric(DecimalParts),
+    /// `bit`.
     Bit(bool),
+    /// Character string (`varchar`, `nvarchar`, `char`, `nchar`, `text`, `ntext`).
     String(SqlString),
+    /// `datetime`.
     DateTime(SqlDateTime),
+    /// `date`.
     Date(SqlDate),
+    /// `time`.
     Time(SqlTime),
+    /// `datetime2`.
     DateTime2(SqlDateTime2),
+    /// `datetimeoffset`.
     DateTimeOffset(SqlDateTimeOffset),
+    /// `smalldatetime`.
     SmallDateTime(SqlSmallDateTime),
+    /// `smallmoney`.
     SmallMoney(SqlSmallMoney),
+    /// `money`.
     Money(SqlMoney),
+    /// Binary data (`binary`, `varbinary`, `image`).
     Bytes(Vec<u8>),
+    /// `xml`.
     Xml(SqlXml),
+    /// SQL `NULL`.
     Null,
+    /// `uniqueidentifier`.
     Uuid(Uuid),
+    /// `json`.
     Json(SqlJson),
+    /// `vector`.
     Vector(SqlVector),
 }
 
@@ -80,7 +105,9 @@ pub const DEFAULT_VARTIME_SCALE: u8 = 7;
 /// TDS `time` value with configurable fractional-seconds precision.
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlTime {
+    /// Nanoseconds since midnight.
     pub time_nanoseconds: u64,
+    /// Fractional-seconds scale (0–7).
     pub scale: u8,
 }
 
@@ -93,20 +120,25 @@ impl SqlTime {
 /// TDS `datetime2` value combining a day count with a [`SqlTime`].
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlDateTime2 {
+    /// Days since 0001-01-01.
     pub days: u32,
+    /// Time component.
     pub time: SqlTime,
 }
 
 /// TDS `datetimeoffset` value: a [`SqlDateTime2`] plus a UTC-offset in minutes.
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlDateTimeOffset {
+    /// Date-time component.
     pub datetime2: SqlDateTime2,
+    /// UTC offset in minutes.
     pub offset: i16,
 }
 
 /// TDS `smallmoney` value stored as a scaled 32-bit integer (×10⁴).
 #[derive(PartialEq, Clone, Debug)]
 pub struct SqlSmallMoney {
+    /// Scaled integer value (÷10⁴ for actual amount).
     pub int_val: i32,
 }
 impl From<i32> for SqlSmallMoney {
@@ -117,7 +149,9 @@ impl From<i32> for SqlSmallMoney {
 /// TDS `money` value stored as two 32-bit integers in mixed-endian layout.
 #[derive(PartialEq, Clone)]
 pub struct SqlMoney {
+    /// Lower 32 bits in mixed-endian layout.
     pub lsb_part: i32, // LSB
+    /// Upper 32 bits (0 for `smallmoney`).
     pub msb_part: i32, // MSB - Only populated for Money, 0 for SmallMoney
 }
 impl Debug for SqlMoney {
@@ -193,9 +227,11 @@ impl From<&SqlMoney> for TdsResult<f32> {
 /// TDS `smalldatetime` value: days since 1900-01-01 and minutes since midnight.
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlSmallDateTime {
+    /// Days since 1900-01-01.
     // One 2-byte unsigned integer that represents the number of days since January 1, 1900.
     pub days: u16,
 
+    /// Minutes since midnight.
     // One 2-byte unsigned integer that represents the number of minutes elapsed since 12 AM that day.
     pub time: u16,
 }
@@ -203,10 +239,12 @@ pub struct SqlSmallDateTime {
 /// TDS `datetime` value: days since 1900-01-01 and 1/300-second ticks since midnight.
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlDateTime {
+    /// Signed days since 1900-01-01 (negative for dates back to 1753).
     // One 4-byte signed integer that represents the number of days since January 1, 1900.
     // Negative numbers are allowed to represent dates since January 1, 1753.
     pub days: i32,
 
+    /// 1/300-second ticks since midnight.
     // One 4-byte unsigned integer that represents the number of one
     // three-hundredths of a second (300 counts per second) elapsed since 12 AM that day.
     pub time: u32,
@@ -229,6 +267,7 @@ impl SqlDate {
     const MIN_DAYS: u32 = 0; // 0001-01-01
     const MAX_DAYS: u32 = 3_652_058; // 9999-12-31
 
+    /// Creates a validated `SqlDate` from the number of days since 0001-01-01.
     pub fn create(days: u32) -> TdsResult<SqlDate> {
         if days <= Self::MAX_DAYS {
             Ok(SqlDate {
@@ -254,6 +293,7 @@ impl SqlDate {
         }
     }
 
+    /// Returns the number of days since 0001-01-01.
     pub fn get_days(&self) -> u32 {
         self.days_since_01_01_0001
     }

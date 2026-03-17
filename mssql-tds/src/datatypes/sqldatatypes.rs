@@ -13,58 +13,103 @@ use tracing::trace;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 #[repr(u8)]
 pub enum TdsDataType {
+    /// Placeholder for absent data (`0x1F`).
     Void = 0x1F,
+    /// Legacy large binary object (`0x22`).
     Image = 0x22,
+    /// Legacy variable-length non-Unicode string (`0x23`).
     Text = 0x23,
+    /// 16-byte GUID (`0x24`).
     Guid = 0x24,
+    /// Legacy variable-length binary (`0x25`).
     VarBinary = 0x25,
+    /// Nullable integer of 1/2/4/8 bytes (`0x26`).
     IntN = 0x26,
+    /// Legacy variable-length non-Unicode string (`0x27`).
     VarChar = 0x27,
+    /// Nullable date (`0x28`).
     DateN = 0x28,
+    /// Nullable time with fractional seconds (`0x29`).
     TimeN = 0x29,
+    /// Nullable datetime2 with fractional seconds (`0x2A`).
     DateTime2N = 0x2A,
+    /// Nullable datetimeoffset (`0x2B`).
     DateTimeOffsetN = 0x2B,
+    /// Legacy fixed-length binary (`0x2D`).
     Binary = 0x2D,
+    /// Legacy fixed-length non-Unicode string (`0x2F`).
     Char = 0x2F,
+    /// 1-byte unsigned integer (`0x30`).
     Int1 = 0x30,
+    /// Fixed-width bit (`0x32`).
     Bit = 0x32,
+    /// 2-byte signed integer (`0x34`).
     Int2 = 0x34,
+    /// Fixed decimal (`0x37`).
     Decimal = 0x37,
+    /// 4-byte signed integer (`0x38`).
     Int4 = 0x38,
+    /// 4-byte small datetime (`0x3A`).
     DateTim4 = 0x3A,
+    /// 4-byte IEEE float (`0x3B`).
     Flt4 = 0x3B,
+    /// 8-byte currency (`0x3C`).
     Money = 0x3C,
+    /// 8-byte datetime (`0x3D`).
     DateTime = 0x3D,
+    /// 8-byte IEEE double (`0x3E`).
     Flt8 = 0x3E,
+    /// Fixed numeric (`0x3F`).
     Numeric = 0x3F,
+    /// Sql_variant container (`0x62`).
     SsVariant = 0x62,
+    /// Legacy variable-length Unicode string (`0x63`).
     NText = 0x63,
+    /// Nullable bit (`0x68`).
     BitN = 0x68,
+    /// Nullable decimal (`0x6A`).
     DecimalN = 0x6A,
+    /// Nullable numeric (`0x6C`).
     NumericN = 0x6C,
+    /// Nullable float of 4/8 bytes (`0x6D`).
     FltN = 0x6D,
+    /// Nullable money of 4/8 bytes (`0x6E`).
     MoneyN = 0x6E,
+    /// Nullable datetime of 4/8 bytes (`0x6F`).
     DateTimeN = 0x6F,
+    /// 4-byte currency (`0x7A`).
     Money4 = 0x7A,
+    /// 8-byte signed integer (`0x7F`).
     Int8 = 0x7F,
+    /// Variable-length binary up to 8000 bytes (`0xA5`).
     BigVarBinary = 0xA5,
+    /// Variable-length non-Unicode string up to 8000 bytes (`0xA7`).
     BigVarChar = 0xA7,
+    /// Fixed-length binary up to 8000 bytes (`0xAD`).
     BigBinary = 0xAD,
+    /// Fixed-length non-Unicode string up to 8000 bytes (`0xAF`).
     BigChar = 0xAF,
+    /// Variable-length Unicode string up to 4000 chars (`0xE7`).
     NVarChar = 0xE7,
+    /// Fixed-length Unicode string up to 4000 chars (`0xEF`).
     NChar = 0xEF,
+    /// CLR user-defined type (`0xF0`).
     Udt = 0xF0,
+    /// XML data (`0xF1`).
     Xml = 0xF1,
+    /// JSON data (`0xF4`).
     Json = 0xF4,
+    /// Fixed-dimension float vector (`0xF5`).
     Vector = 0xF5,
 
+    /// Sentinel for uninitialized type.
     #[default]
     None = 0x00,
 }
 
 impl TdsDataType {
-    // Function to return the T-SQL name for the datatype.
-    // Will be used to construct the @parameters parameter of the stored procedures.
+    /// Returns the T-SQL type name (e.g. `"bigint"`, `"nvarchar"`) used in
+    /// stored-procedure `@parameters` metadata.
     pub fn get_meta_type_name(&self) -> &'static str {
         match self {
             TdsDataType::Int8 => "bigint",
@@ -178,13 +223,13 @@ macro_rules! impl_try_from_tdstypes {
         $(#[doc = $doc:literal])*
         #[repr(u8)]
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        pub enum $enum_name:ident {
+        pub(crate) enum $enum_name:ident {
             $($variant:ident = $tds_type:expr_2021),* $(,)?
         }
     ) => {
         #[repr(u8)]
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        pub enum $enum_name {
+        pub(crate) enum $enum_name {
             $($variant = $tds_type),*
         }
 
@@ -280,17 +325,17 @@ impl TryFrom<u8> for VectorBaseType {
 }
 
 /// Maximum number of dimensions in a TDS vector.
-pub const VECTOR_MAX_DIMENSIONS: u16 = 1998;
+pub(crate) const VECTOR_MAX_DIMENSIONS: u16 = 1998;
 /// Size of the vector header in bytes.
 pub const VECTOR_HEADER_SIZE: usize = 8;
 /// Maximum total vector payload size in bytes.
-pub const VECTOR_MAX_SIZE: usize = 8000;
+pub(crate) const VECTOR_MAX_SIZE: usize = 8000;
 
 impl_try_from_tdstypes!(
     /// The subset of TdsDataTypes which are categorized as Fixed Length Types.
     #[repr(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum FixedLengthTypes {
+    pub(crate) enum FixedLengthTypes {
         Int1 = TdsDataType::Int1 as u8,
         Bit = TdsDataType::Bit as u8,
         Int2 = TdsDataType::Int2 as u8,
@@ -328,7 +373,7 @@ impl_try_from_tdstypes!(
     /// The subset of TdsDataTypes which are categorized as Variable Length Types.
     #[repr(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum VariableLengthTypes {
+    pub(crate) enum VariableLengthTypes {
         Guid = TdsDataType::Guid as u8,
         IntN = TdsDataType::IntN as u8,
         BitN = TdsDataType::BitN as u8,
@@ -407,7 +452,7 @@ impl_try_from_tdstypes!(
     /// to be specified before the actual data is streamed out.
     #[repr(u8)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum PartialLengthType {
+    pub(crate) enum PartialLengthType {
         Xml = TdsDataType::Xml as u8,
         BigVarChar = TdsDataType::BigVarChar as u8,
         BigVarBinary = TdsDataType::BigVarBinary as u8,
@@ -420,9 +465,12 @@ impl_try_from_tdstypes!(
 /// Represents the TYPE_INFO in the tds spec
 #[derive(Debug, Clone)]
 pub struct TypeInfo {
+    /// Wire-level data type identifier.
     pub tds_type: TdsDataType,
+    /// Byte length of the data on the wire.
     pub length: Length,
-    pub type_info_variant: TypeInfoVariant,
+    /// Category-specific metadata (fixed, variable, partial-length, etc.).
+    pub(crate) type_info_variant: TypeInfoVariant,
 }
 
 type Precision = u8;
@@ -431,7 +479,7 @@ type Length = usize;
 
 /// Represents one of the variants of the TypeInfo from TDS Spec.
 #[derive(Debug, Clone)]
-pub enum TypeInfoVariant {
+pub(crate) enum TypeInfoVariant {
     FixedLen(FixedLengthTypes),
     VarLenString(VariableLengthTypes, Length, Option<SqlCollation>),
     VarLenPrecisionScale(VariableLengthTypes, Length, Precision, Scale),
@@ -449,7 +497,7 @@ pub enum TypeInfoVariant {
 /// XML schema metadata parsed from the TYPE_INFO token.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // fields parsed from TDS wire protocol for completeness
-pub struct XmlInfo {
+pub(crate) struct XmlInfo {
     schema_present: u8,
     db_name: Option<String>,
     owning_schema: Option<String>,
@@ -459,7 +507,7 @@ pub struct XmlInfo {
 /// UDT metadata received in COLMETADATA tokens.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // fields parsed from TDS wire protocol for completeness
-pub struct UdtInfoInColMetadata {
+pub(crate) struct UdtInfoInColMetadata {
     max_byte_size: u16,
     db_name: String,
     schema_name: String,
@@ -472,7 +520,7 @@ type UdtMetadata = String;
 /// UDT metadata sent in RPC parameter descriptions.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // fields parsed from TDS wire protocol for completeness
-pub struct UdtInfoInRpc {
+pub(crate) struct UdtInfoInRpc {
     db_name: String,
     schema_name: String,
     type_name: String,
@@ -480,7 +528,8 @@ pub struct UdtInfoInRpc {
 
 /// UDT type information, varying by token context.
 #[derive(Debug, Clone)]
-pub enum UdtInfo {
+#[allow(dead_code)]
+pub(crate) enum UdtInfo {
     InColMetadata(UdtInfoInColMetadata),
     InRpc(UdtInfoInRpc),
 }
@@ -798,7 +847,7 @@ where
 }
 
 /// Returns `true` if the TDS data type uses Unicode encoding (NVarChar, NChar, NText).
-pub fn is_unicode_type(data_type: TdsDataType) -> bool {
+pub(crate) fn is_unicode_type(data_type: TdsDataType) -> bool {
     matches!(
         data_type,
         TdsDataType::NVarChar | TdsDataType::NChar | TdsDataType::NText

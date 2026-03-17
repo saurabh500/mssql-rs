@@ -4,6 +4,7 @@
 use crate::token::tokens::{Token, TokenType};
 
 /// Identifies a piece of federated-authentication info from the server.
+#[allow(clippy::upper_case_acronyms)]
 pub enum FedAuthInfoId {
     SPN,
     STSUrl,
@@ -12,6 +13,7 @@ pub enum FedAuthInfoId {
 
 impl FedAuthInfoId {
     /// Returns the wire byte value of this identifier.
+    #[allow(dead_code)]
     pub fn as_u8(&self) -> u8 {
         match self {
             FedAuthInfoId::SPN => 0x02,

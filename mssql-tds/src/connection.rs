@@ -9,14 +9,19 @@
 //! - [`bulk_copy::BulkCopy`] — bulk data loading
 
 pub mod bulk_copy;
-pub mod bulk_copy_state;
+pub(crate) mod bulk_copy_state;
+/// Client connection context and authentication factories.
 pub mod client_context;
-pub mod connection_actions;
-pub mod datasource_parser;
+pub(crate) mod connection_actions;
+pub(crate) mod datasource_parser;
 pub(crate) mod execution_context;
-pub mod metadata_retriever;
+pub(crate) mod metadata_retriever;
+/// ODBC-style authentication keyword transform.
 pub mod odbc_authentication_transformer;
+/// ODBC-style authentication keyword validation.
 pub mod odbc_authentication_validator;
-pub mod odbc_supported_auth_keywords;
+pub(crate) mod odbc_supported_auth_keywords;
+/// Primary client type and result set traits.
 pub mod tds_client;
+/// Transport layer (TCP, Named Pipes, Shared Memory).
 pub mod transport;
