@@ -7,8 +7,10 @@ use crate::io::packet_writer::PacketWriter;
 use crate::message::messages::PacketType;
 use byteorder::{BigEndian, ByteOrder};
 use native_tls::TlsConnector as NativeTlsConnector;
+use std::collections::HashMap;
 use std::io::{Error, IoSlice};
 use std::pin::Pin;
+use std::sync::RwLock;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_native_tls::TlsStream;
@@ -19,10 +21,41 @@ use crate::core::{EncryptionOptions, EncryptionSetting, NegotiatedEncryptionSett
 #[cfg(target_os = "macos")]
 use std::io::{ErrorKind, Write};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct TlsValidationConfig {
     pub accept_invalid_certs: bool,
     pub accept_invalid_hostnames: bool,
+}
+
+/// Cache of pre-built `NativeTlsConnector` instances keyed by validation config.
+/// Building a connector is expensive (~50ms on Linux) because `native-tls` loads
+/// and parses the system CA certificate store via OpenSSL on every call to
+/// `builder().build()`. Caching avoids this cost on subsequent connections.
+static CONNECTOR_CACHE: std::sync::LazyLock<
+    RwLock<HashMap<TlsValidationConfig, NativeTlsConnector>>,
+> = std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
+fn get_or_build_connector(
+    validation: &TlsValidationConfig,
+) -> Result<NativeTlsConnector, native_tls::Error> {
+    if let Some(connector) = CONNECTOR_CACHE.read().unwrap().get(validation) {
+        return Ok(connector.clone());
+    }
+
+    let mut builder = NativeTlsConnector::builder();
+    if validation.accept_invalid_certs {
+        builder.danger_accept_invalid_certs(true);
+    }
+    if validation.accept_invalid_hostnames {
+        builder.danger_accept_invalid_hostnames(true);
+    }
+    let connector = builder.build()?;
+
+    CONNECTOR_CACHE
+        .write()
+        .unwrap()
+        .insert(validation.clone(), connector.clone());
+    Ok(connector)
 }
 
 #[derive(Debug)]
@@ -100,16 +133,8 @@ impl SslHandler {
             );
         }
 
-        let mut builder = NativeTlsConnector::builder();
-
         let validation =
             Self::resolve_tls_validation(&self.encryption_options, negotiated_encryption);
-        if validation.accept_invalid_certs {
-            builder.danger_accept_invalid_certs(true);
-        }
-        if validation.accept_invalid_hostnames {
-            builder.danger_accept_invalid_hostnames(true);
-        }
 
         let host_name = self
             .encryption_options
@@ -136,7 +161,7 @@ impl SslHandler {
             self.server_host_name,
         );
 
-        let connector = builder.build()?;
+        let connector = get_or_build_connector(&validation)?;
 
         info!(
             "Starting TLS handshake to {} using host {}",
