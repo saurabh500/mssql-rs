@@ -428,6 +428,25 @@ impl PyCoreConnection {
         context.ipaddress_preference = ipaddress_preference;
         context.keep_alive_in_ms = keep_alive_in_ms;
         context.keep_alive_interval_in_ms = keep_alive_interval_in_ms;
+        // Block authentication methods not yet supported through py-core.
+        // ActiveDirectoryIntegrated requires Kerberos ticket forwarding via
+        // Entra ID which has no token-provider wired up yet.
+        // ActiveDirectoryPassword requires an Entra ID token provider callback
+        // that py-core does not register.
+        match &transformed.method {
+            mssql_tds::connection::client_context::TdsAuthenticationMethod::ActiveDirectoryIntegrated => {
+                return Err(PyRuntimeError::new_err(
+                    "Authentication method 'ActiveDirectoryIntegrated' is not currently supported by mssql-py-core."
+                ));
+            }
+            mssql_tds::connection::client_context::TdsAuthenticationMethod::ActiveDirectoryPassword => {
+                return Err(PyRuntimeError::new_err(
+                    "Authentication method 'ActiveDirectoryPassword' is not currently supported by mssql-py-core."
+                ));
+            }
+            _ => {}
+        }
+
         context.tds_authentication_method = transformed.method;
         context.access_token = transformed.access_token;
 

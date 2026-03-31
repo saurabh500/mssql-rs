@@ -1061,3 +1061,86 @@ class TestConnectRetryParameters:
 
         warnings = connect_and_capture_warnings(context)
         assert_no_warning_for(warnings, "connect_retry_interval")
+
+
+class TestUnsupportedAuthenticationMethods:
+    """ActiveDirectoryIntegrated and ActiveDirectoryPassword are not yet
+    supported by mssql-py-core. Attempting to connect must raise a clear
+    error instead of panicking in the Rust core."""
+
+    def test_active_directory_integrated_raises(self):
+        context = {
+            "server": "localhost",
+            "trust_server_certificate": "yes",
+            "authentication": "ActiveDirectoryIntegrated",
+        }
+        with pytest.raises(RuntimeError, match="ActiveDirectoryIntegrated.*not currently supported by mssql-py-core"):
+            mssql_py_core.PyCoreConnection(context)
+
+    def test_active_directory_password_raises(self):
+        context = {
+            "server": "localhost",
+            "trust_server_certificate": "yes",
+            "authentication": "ActiveDirectoryPassword",
+            "user_name": "user",
+            "password": "pass",
+        }
+        with pytest.raises(RuntimeError, match="ActiveDirectoryPassword.*not currently supported by mssql-py-core"):
+            mssql_py_core.PyCoreConnection(context)
+
+
+class TestAccessTokenConflictEnforcement:
+    """validate_auth enforces strict ODBC-parity: access_token must be the
+    sole credential. The Python layer (cursor.py) is responsible for
+    stripping stale fields before calling PyCoreConnection.
+
+    These tests verify the validator catches leaked fields — ensuring
+    regressions in cursor.py don't silently pass through.
+    """
+
+    def test_token_plus_auth_keyword_rejected(self):
+        """access_token + authentication keyword must raise."""
+        context = {
+            "server": "localhost",
+            "trust_server_certificate": "yes",
+            "access_token": "fake-jwt",
+            "authentication": "ActiveDirectoryDefault",
+        }
+        with pytest.raises(RuntimeError, match="Access Token"):
+            mssql_py_core.PyCoreConnection(context)
+
+    def test_token_plus_uid_pwd_rejected(self):
+        """access_token + UID + PWD must raise."""
+        context = {
+            "server": "localhost",
+            "trust_server_certificate": "yes",
+            "access_token": "fake-jwt",
+            "user_name": "user@domain.com",
+            "password": "old-password",
+        }
+        with pytest.raises(RuntimeError, match="Access Token"):
+            mssql_py_core.PyCoreConnection(context)
+
+    def test_token_plus_tc_yes_rejected(self):
+        """access_token + Trusted_Connection=Yes must raise."""
+        context = {
+            "server": "localhost",
+            "trust_server_certificate": "yes",
+            "access_token": "fake-jwt",
+            "trusted_connection": "Yes",
+        }
+        with pytest.raises(RuntimeError, match="Access Token"):
+            mssql_py_core.PyCoreConnection(context)
+
+    def test_token_alone_accepted(self):
+        """access_token alone should pass validation (server may still reject)."""
+        context = {
+            "server": "localhost",
+            "trust_server_certificate": "yes",
+            "access_token": "fake-jwt",
+        }
+        try:
+            conn = mssql_py_core.PyCoreConnection(context)
+            conn.close()
+        except RuntimeError as e:
+            assert "Access Token cannot be used" not in str(e)

@@ -439,6 +439,20 @@ impl ClientContext {
     pub fn validate_with<V: ClientContextValidator>(&self, validator: &V) -> TdsResult<()> {
         validator.validate(self)
     }
+
+    /// Looks up the Entra ID token factory for the current authentication method.
+    pub(crate) fn entra_id_token_factory(&self) -> TdsResult<&dyn CloneableEntraIdTokenFactory> {
+        self.auth_method_map
+            .get(&self.tds_authentication_method)
+            .map(|f| f.as_ref())
+            .ok_or_else(|| {
+                Error::ConnectionError(format!(
+                    "Authentication method '{:?}' is not supported. \
+                     No token provider was registered for this method.",
+                    self.tds_authentication_method
+                ))
+            })
+    }
 }
 
 impl Default for ClientContext {
@@ -1448,5 +1462,16 @@ mod tests {
     fn test_default_library_name() {
         let ctx = ClientContext::new();
         assert_eq!(ctx.library_name, "mssql-tds");
+    }
+
+    #[test]
+    fn entra_id_token_factory_missing_returns_error() {
+        let mut ctx = ClientContext::with_data_source("localhost");
+        ctx.tds_authentication_method = TdsAuthenticationMethod::ActiveDirectoryIntegrated;
+        let result = ctx.entra_id_token_factory();
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(err.contains("ActiveDirectoryIntegrated"));
+        assert!(err.contains("not supported"));
     }
 }

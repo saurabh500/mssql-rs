@@ -473,10 +473,7 @@ impl LoginHandler<'_> {
                 }
             };
             let context = &self.factory.context;
-            let entra_id_token_factory = context
-                .auth_method_map
-                .get(&context.tds_authentication_method)
-                .expect("There was no callback registered for the authentication method");
+            let entra_id_token_factory = context.entra_id_token_factory()?;
 
             let token = entra_id_token_factory
                 .create_token(
