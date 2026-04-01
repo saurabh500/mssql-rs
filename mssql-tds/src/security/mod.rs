@@ -65,6 +65,7 @@ pub fn create_security_context(
     )?))
 }
 
+/// Creates a platform-specific security context for integrated authentication.
 #[cfg(unix)]
 pub fn create_security_context(
     config: &IntegratedAuthConfig,

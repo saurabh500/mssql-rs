@@ -49,7 +49,9 @@ pub(crate) enum OptionSqlType {
 /// Requested application intent (read-write or read-only routing).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ApplicationIntent {
+    /// Read-write (default).
     ReadWrite,
+    /// Read-only routing.
     ReadOnly,
 }
 

@@ -70,16 +70,27 @@ impl Default for CancelHandle {
 /// SQL Server major-version discriminant derived from the server's reported version.
 #[derive(PartialEq, Debug)]
 pub enum SQLServerVersion {
+    /// Unsupported or unknown server version.
     SqlServerNotsupported = 0,
+    /// SQL Server 2000.
     SqlServer2000 = 8,
+    /// SQL Server 2005.
     SqlServer2005 = 9,
-    SqlServer2008 = 10, // This also represents 2008R2.
+    /// SQL Server 2008 / 2008 R2.
+    SqlServer2008 = 10,
+    /// SQL Server 2012.
     SqlServer2012 = 11,
+    /// SQL Server 2014.
     SqlServer2014 = 12,
+    /// SQL Server 2016.
     SqlServer2016 = 13,
+    /// SQL Server 2017.
     SqlServer2017 = 14,
+    /// SQL Server 2019.
     SqlServer2019 = 15,
+    /// SQL Server 2022.
     SqlServer2022 = 16,
+    /// SQL Server 2022+ (version 17).
     SqlServer2022lus = 17,
 }
 
@@ -105,13 +116,18 @@ impl From<u8> for SQLServerVersion {
 /// Four-part server version reported during the TDS pre-login handshake.
 #[derive(PartialEq, Debug)]
 pub struct Version {
+    /// Major version number.
     pub major: u8,
+    /// Minor version number.
     pub minor: u8,
+    /// Build number.
     pub build: u16,
+    /// Revision number.
     pub revision: u16,
 }
 
 impl Version {
+    /// Creates a new `Version`.
     pub fn new(major: u8, minor: u8, build: u16, revision: u16) -> Self {
         Version {
             major,
@@ -138,6 +154,7 @@ pub struct EncryptionOptions {
 }
 
 impl EncryptionOptions {
+    /// Creates encryption options defaulting to `Strict` mode.
     pub fn new() -> Self {
         EncryptionOptions {
             mode: EncryptionSetting::Strict,

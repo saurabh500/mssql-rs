@@ -17,30 +17,55 @@ use uuid::Uuid;
 /// enabling consumers (Arrow writers, N-API binary encoders, etc.) to
 /// receive values without going through the intermediate `ColumnValues` enum.
 pub trait RowWriter {
+    /// Writes a SQL `NULL` for column `col`.
     fn write_null(&mut self, col: usize);
+    /// Writes a `bit` value.
     fn write_bool(&mut self, col: usize, val: bool);
+    /// Writes a `tinyint` value.
     fn write_u8(&mut self, col: usize, val: u8);
+    /// Writes a `smallint` value.
     fn write_i16(&mut self, col: usize, val: i16);
+    /// Writes an `int` value.
     fn write_i32(&mut self, col: usize, val: i32);
+    /// Writes a `bigint` value.
     fn write_i64(&mut self, col: usize, val: i64);
+    /// Writes a `real` value.
     fn write_f32(&mut self, col: usize, val: f32);
+    /// Writes a `float` value.
     fn write_f64(&mut self, col: usize, val: f64);
+    /// Writes a character string value.
     fn write_string(&mut self, col: usize, val: SqlString);
+    /// Writes a binary value.
     fn write_bytes(&mut self, col: usize, val: Vec<u8>);
+    /// Writes a `decimal` value.
     fn write_decimal(&mut self, col: usize, val: DecimalParts);
+    /// Writes a `numeric` value.
     fn write_numeric(&mut self, col: usize, val: DecimalParts);
+    /// Writes a `date` value.
     fn write_date(&mut self, col: usize, val: SqlDate);
+    /// Writes a `time` value.
     fn write_time(&mut self, col: usize, val: SqlTime);
+    /// Writes a `datetime` value.
     fn write_datetime(&mut self, col: usize, val: SqlDateTime);
+    /// Writes a `smalldatetime` value.
     fn write_smalldatetime(&mut self, col: usize, val: SqlSmallDateTime);
+    /// Writes a `datetime2` value.
     fn write_datetime2(&mut self, col: usize, val: SqlDateTime2);
+    /// Writes a `datetimeoffset` value.
     fn write_datetimeoffset(&mut self, col: usize, val: SqlDateTimeOffset);
+    /// Writes a `money` value.
     fn write_money(&mut self, col: usize, val: SqlMoney);
+    /// Writes a `smallmoney` value.
     fn write_smallmoney(&mut self, col: usize, val: SqlSmallMoney);
+    /// Writes a `uniqueidentifier` value.
     fn write_uuid(&mut self, col: usize, val: Uuid);
+    /// Writes an `xml` value.
     fn write_xml(&mut self, col: usize, val: SqlXml);
+    /// Writes a `json` value.
     fn write_json(&mut self, col: usize, val: SqlJson);
+    /// Writes a `vector` value.
     fn write_vector(&mut self, col: usize, val: SqlVector);
+    /// Signals the end of the current row.
     fn end_row(&mut self);
 }
 
@@ -51,6 +76,7 @@ pub struct DefaultRowWriter {
 }
 
 impl DefaultRowWriter {
+    /// Creates a writer pre-allocated for `col_count` columns.
     pub fn new(col_count: usize) -> Self {
         Self {
             row: Vec::with_capacity(col_count),

@@ -13,6 +13,7 @@ use crate::error::Error;
 /// such as Float16, Int32, etc.
 #[derive(Debug, PartialEq, Clone)]
 pub enum VectorData {
+    /// Single-precision float vector.
     Float32(Vec<f32>),
 }
 
@@ -23,7 +24,9 @@ pub enum VectorData {
 /// and a total size limit of 8000 bytes.
 #[derive(Debug, PartialEq, Clone)]
 pub struct SqlVector {
+    /// Base element type (e.g., float32).
     pub base_type: VectorBaseType, // Preserves original type from SQL Server
+    /// Typed dimension data.
     pub data: VectorData,
 }
 

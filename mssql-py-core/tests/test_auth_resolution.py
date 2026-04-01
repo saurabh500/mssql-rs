@@ -201,26 +201,17 @@ class TestHappyPaths:
         ctx["authentication"] = "SqlPassword"
         _connect_ok(ctx)
 
-    # #8 — ADPassword + UID + PWD → AAD Password
-    #     (will fail against local SQL Server — that's fine, validates pipeline)
+    # #8 — ADPassword + UID + PWD → blocked (not supported by mssql-py-core)
     def test_08_ad_password_uid_pwd(self):
         ctx = _base_ctx()
         ctx["authentication"] = "ActiveDirectoryPassword"
-        try:
-            _connect_ok(ctx)
-        except RuntimeError as e:
-            assert "Unsupported Authentication" not in str(e)
-            assert "Both User and Password" not in str(e)
+        _expect_validation_error(ctx, "not currently supported by mssql-py-core")
 
-    # #9 — ADIntegrated, no creds
+    # #9 — ADIntegrated, no creds → blocked (not supported by mssql-py-core)
     def test_09_ad_integrated_alone(self):
         ctx = _bare_ctx()
         ctx["authentication"] = "ActiveDirectoryIntegrated"
-        try:
-            _connect_ok(ctx)
-        except RuntimeError as e:
-            assert "Unsupported Authentication" not in str(e)
-            assert "User or Password" not in str(e)
+        _expect_validation_error(ctx, "not currently supported by mssql-py-core")
 
     # #10 — ADInteractive + UID (as hint)
     def test_10_ad_interactive_with_hint(self):
@@ -354,39 +345,27 @@ class TestSilentClears:
         except RuntimeError as e:
             assert "Both User and Password" not in str(e)
 
-    # #21 — ADIntegrated + UID → UID silently cleared (ODBC dialog behavior)
+    # #21 — ADIntegrated + UID → blocked (not supported by mssql-py-core)
     def test_21_ad_integrated_clears_uid(self):
         ctx = _bare_ctx()
         ctx["authentication"] = "ActiveDirectoryIntegrated"
         ctx["user_name"] = "user@domain.com"
-        try:
-            _connect_ok(ctx)
-        except RuntimeError as e:
-            assert "ActiveDirectoryIntegrated" not in str(e)
-            assert "User or Password" not in str(e)
+        _expect_validation_error(ctx, "not currently supported by mssql-py-core")
 
-    # #22 — ADIntegrated + PWD → PWD silently cleared
+    # #22 — ADIntegrated + PWD → blocked (not supported by mssql-py-core)
     def test_22_ad_integrated_clears_pwd(self):
         ctx = _bare_ctx()
         ctx["authentication"] = "ActiveDirectoryIntegrated"
         ctx["password"] = "secret"
-        try:
-            _connect_ok(ctx)
-        except RuntimeError as e:
-            assert "ActiveDirectoryIntegrated" not in str(e)
-            assert "User or Password" not in str(e)
+        _expect_validation_error(ctx, "not currently supported by mssql-py-core")
 
-    # #23 — ADIntegrated + UID + PWD → both silently cleared
+    # #23 — ADIntegrated + UID + PWD → blocked (not supported by mssql-py-core)
     def test_23_ad_integrated_clears_both(self):
         ctx = _bare_ctx()
         ctx["authentication"] = "ActiveDirectoryIntegrated"
         ctx["user_name"] = "user@domain.com"
         ctx["password"] = "secret"
-        try:
-            _connect_ok(ctx)
-        except RuntimeError as e:
-            assert "ActiveDirectoryIntegrated" not in str(e)
-            assert "User or Password" not in str(e)
+        _expect_validation_error(ctx, "not currently supported by mssql-py-core")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -521,7 +500,13 @@ class TestPartialCredentials:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestAccessTokenClashes:
-    """ODBC conflict matrix §3.5: rows #39–#43."""
+    """ODBC conflict matrix §3.5: rows #39–#43.
+
+    validate_auth enforces strict ODBC-parity: access_token must be
+    the sole credential — any auth keyword, UID, or PWD is a conflict.
+    The Python layer (cursor.py) is responsible for stripping the
+    authentication keyword after acquiring a token, before calling py-core.
+    """
 
     # #39 — Access Token + TC=Yes
     def test_39_token_tc(self):
@@ -671,10 +656,7 @@ class TestEdgeCases:
     def test_case_insensitive_ad_password(self):
         ctx = _base_ctx()
         ctx["authentication"] = "activedirectorypassword"
-        try:
-            _connect_ok(ctx)
-        except RuntimeError as e:
-            assert "Unsupported Authentication" not in str(e)
+        _expect_validation_error(ctx, "not currently supported by mssql-py-core")
 
     # Bogus auth keyword
     def test_bogus_auth_keyword_rejected(self):
@@ -754,7 +736,11 @@ class TestAuthTcClashesExtended:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestAccessTokenClashesExtended:
-    """Access Token conflicts with each AD auth keyword."""
+    """Access Token conflicts with each AD auth keyword.
+
+    validate_auth rejects access_token combined with any other credential.
+    Python's cursor.py must strip stale fields before calling py-core.
+    """
 
     def test_token_ad_password(self):
         ctx = _bare_ctx()
@@ -790,3 +776,49 @@ class TestAccessTokenClashesExtended:
         ctx = _base_ctx()
         ctx["access_token"] = "fake-jwt"
         _expect_validation_error(ctx, "Access Token")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Bulkcopy Entra ID: validator enforces clean token-only input
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestBulkcopyTokenValidation:
+    """Documents the contract between cursor.py and py-core for bulkcopy auth.
+
+    When Python acquires a token via azure-identity, it MUST strip the
+    authentication keyword, user_name, and password before passing the dict
+    to PyCoreConnection. validate_auth enforces this — access_token must
+    arrive alone (except server/TLS params).
+
+    These tests verify the validator correctly rejects stale fields,
+    ensuring the Python layer cleans up properly.
+    """
+
+    def test_token_plus_ad_default_rejected(self):
+        """cursor.py must strip authentication before calling py-core."""
+        ctx = _bare_ctx()
+        ctx["authentication"] = "ActiveDirectoryDefault"
+        ctx["access_token"] = "fake-jwt-default"
+        _expect_validation_error(ctx, "Access Token")
+
+    def test_token_plus_login_hint_rejected(self):
+        """cursor.py must strip user_name (login hint) when token is set."""
+        ctx = _bare_ctx()
+        ctx["access_token"] = "fake-jwt-interactive"
+        ctx["user_name"] = "user@domain.com"
+        _expect_validation_error(ctx, "Access Token")
+
+    def test_token_plus_auth_plus_uid_pwd_rejected(self):
+        """All stale fields must be stripped — validator catches any leak."""
+        ctx = _bare_ctx()
+        ctx["authentication"] = "ActiveDirectoryPassword"
+        ctx["user_name"] = "user@domain.com"
+        ctx["password"] = "old-password"
+        ctx["access_token"] = "fake-jwt"
+        _expect_validation_error(ctx, "Access Token")
+
+    def test_token_alone_accepted(self):
+        """Clean input: only access_token — passes validation."""
+        ctx = _bare_ctx()
+        ctx["access_token"] = "fake-jwt"
+        _expect_no_validation_error(ctx)

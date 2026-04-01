@@ -5,8 +5,11 @@
 /// is an output parameter or a user-defined function return.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReturnValueStatus {
+    /// Output parameter.
     OutputParam,
+    /// User-defined function return.
     Udf,
+    /// Unrecognized status byte.
     Unknown(u8),
 }
 

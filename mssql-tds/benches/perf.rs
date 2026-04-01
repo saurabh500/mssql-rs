@@ -82,5 +82,11 @@ pub fn create_context() -> ClientContext {
     context
 }
 
-criterion_group!(benches, connect_fetch_multiple_packets);
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .measurement_time(std::time::Duration::from_secs(20))
+        .sample_size(20);
+    targets = connect_fetch_multiple_packets
+}
 criterion_main!(benches);

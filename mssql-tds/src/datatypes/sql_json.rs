@@ -7,7 +7,7 @@ use std::fmt::Debug;
 /// SQL Server `json` column value stored as UTF-8 bytes.
 #[derive(PartialEq, Clone)]
 pub struct SqlJson {
-    // Utf-8 encoded bytes representing a JSON string
+    /// UTF-8 encoded bytes representing a JSON string.
     pub bytes: Vec<u8>,
 }
 

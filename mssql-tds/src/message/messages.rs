@@ -9,6 +9,7 @@ use crate::{
 use async_trait::async_trait;
 
 #[derive(Copy, Clone)]
+#[allow(dead_code, clippy::upper_case_acronyms)]
 pub enum PacketType {
     Unknown = 0x00,
     SqlBatch = 0x01,
@@ -108,8 +109,10 @@ impl TdsError {
     }
 }
 
+#[allow(dead_code)]
 pub struct TdsInfo {}
 
+#[allow(dead_code)]
 pub struct TokenResponse {}
 
 impl TokenResponse {

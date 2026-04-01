@@ -14,5 +14,7 @@
 //! [`ResultSetClient`](crate::ResultSetClient) traits implemented on
 //! [`TdsClient`](crate::TdsClient).
 
+/// Per-column type and flag metadata from COLMETADATA tokens.
 pub mod metadata;
+/// Output parameters and return status from stored procedures.
 pub mod result;

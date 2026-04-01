@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![warn(missing_docs)]
+
 //! Async Rust implementation of the TDS (Tabular Data Stream) protocol for SQL Server
 //! and Azure SQL Database.
 //!
@@ -70,24 +72,23 @@
 //!   [`core::CancelHandle`].
 //! - [`datatypes`] — SQL Server data types and column value representations.
 //! - [`error`] — Error definitions.
-//! - [`io`] — Packet-level TDS I/O (framing, readers, writers).
 //! - [`message`] — TDS message types (prelogin, login7, etc.).
 //! - [`query`] — Query metadata and column descriptors.
-//! - [`security`] — TLS negotiation and authentication providers.
-//! - [`ssrp`] — SQL Server Resolution Protocol for instance discovery.
 //! - [`token`] — TDS token stream parsing (COLMETADATA, ROW, DONE, etc.).
 
 pub mod connection;
 pub mod connection_provider;
+/// Shared types: result aliases, encryption settings, and cancellation.
 pub mod core;
 pub mod datatypes;
+/// Error definitions for TDS operations.
 pub mod error;
 pub(crate) mod handler;
 pub(crate) mod io;
 pub mod message;
 pub mod query;
 pub mod security;
-pub mod sql_identifier;
+pub(crate) mod sql_identifier;
 pub(crate) mod ssrp;
 pub mod token;
 

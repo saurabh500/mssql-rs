@@ -1505,6 +1505,7 @@ impl ResultSetClient for TdsClient {
     }
 }
 
+/// Async result set iteration.
 #[async_trait]
 pub trait ResultSet {
     /// Returns the metadata of the result set.
@@ -1519,6 +1520,7 @@ pub trait ResultSet {
     /// a row was written or `false` when the result set is exhausted.
     async fn next_row_into(&mut self, writer: &mut (dyn RowWriter + Send)) -> TdsResult<bool>;
 
+    /// Returns `true` if the result set may still contain unread rows.
     fn maybe_has_unread_rows(&self) -> bool;
 
     /// Iterates over the result set, and marks it as closed. After calling close, the next_row method,
@@ -1526,6 +1528,7 @@ pub trait ResultSet {
     async fn close(&mut self) -> TdsResult<()>;
 }
 
+/// Navigation across multiple result sets.
 #[async_trait]
 pub trait ResultSetClient<T = TdsClient> {
     /// Returns the current result set on the client.

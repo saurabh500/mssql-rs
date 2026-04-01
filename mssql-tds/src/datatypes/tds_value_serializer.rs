@@ -68,12 +68,14 @@ pub struct TdsTypeContext {
     pub precision: Option<u8>,
 
     /// For Decimal/Numeric/Time/DateTime2/DateTimeOffset: scale
+    #[allow(dead_code)]
     pub scale: Option<u8>,
 
     /// Collation for string types (CHAR/VARCHAR/NCHAR/NVARCHAR/TEXT/NTEXT)
     pub collation: Option<SqlCollation>,
 
     /// Whether the type is nullable (affects NULL encoding)
+    #[allow(dead_code)]
     pub is_nullable: bool,
 }
 

@@ -32,23 +32,40 @@ use crate::{
 /// by [`TdsValueSerializer`].
 #[derive(Debug, PartialEq, Clone)]
 pub enum SqlType {
+    /// Boolean value (`bit`).
     Bit(Option<bool>),
+    /// Unsigned 8-bit integer (`tinyint`).
     TinyInt(Option<u8>),
+    /// Signed 16-bit integer (`smallint`).
     SmallInt(Option<i16>),
+    /// Signed 32-bit integer (`int`).
     Int(Option<i32>),
+    /// Signed 64-bit integer (`bigint`).
     BigInt(Option<i64>),
+    /// 32-bit IEEE float (`real`).
     Real(Option<f32>),
+    /// 64-bit IEEE float (`float`).
     Float(Option<f64>),
+    /// Exact numeric with configurable precision/scale (`decimal`).
     Decimal(Option<DecimalParts>),
+    /// Exact numeric with configurable precision/scale (`numeric`).
     Numeric(Option<DecimalParts>),
+    /// 8-byte currency (`money`).
     Money(Option<SqlMoney>),
+    /// 4-byte currency (`smallmoney`).
     SmallMoney(Option<SqlSmallMoney>),
 
+    /// Time-of-day with configurable fractional-second precision.
     Time(Option<SqlTime>),
+    /// Date and time with configurable fractional-second precision.
     DateTime2(Option<SqlDateTime2>),
+    /// Date, time, and UTC offset.
     DateTimeOffset(Option<SqlDateTimeOffset>),
+    /// Date-time with 1-minute accuracy.
     SmallDateTime(Option<SqlSmallDateTime>),
+    /// Date-time with 1/300-second accuracy.
     DateTime(Option<SqlDateTime>),
+    /// Calendar date only.
     Date(Option<SqlDate>),
 
     /// Represents a Varchar with a specifiied length.
@@ -57,22 +74,34 @@ pub enum SqlType {
     /// Represents a Varchar with MAX length.
     NVarcharMax(Option<SqlString>),
 
+    /// Variable-length non-Unicode string with specified max length.
     Varchar(Option<SqlString>, u16),
+    /// Variable-length non-Unicode string with MAX length.
     VarcharMax(Option<SqlString>),
 
+    /// Variable-length binary with specified max length.
     VarBinary(Option<Vec<u8>>, u16),
+    /// Variable-length binary with MAX length.
     VarBinaryMax(Option<Vec<u8>>),
 
+    /// Fixed-length binary.
     Binary(Option<Vec<u8>>, u16),
+    /// Fixed-length non-Unicode string.
     Char(Option<SqlString>, u16),
+    /// Fixed-length Unicode string.
     NChar(Option<SqlString>, u16),
 
+    /// Legacy variable-length non-Unicode string (`text`).
     Text(Option<SqlString>),
+    /// Legacy variable-length Unicode string (`ntext`).
     NText(Option<SqlString>),
 
+    /// JSON document.
     Json(Option<SqlJson>),
 
+    /// XML document.
     Xml(Option<SqlXml>),
+    /// 16-byte GUID (`uniqueidentifier`).
     Uuid(Option<Uuid>),
 
     /// Parameters: (data, dimensions, base_type)

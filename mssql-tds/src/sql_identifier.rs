@@ -9,6 +9,7 @@
 use crate::core::TdsResult;
 
 /// Indices for multipart identifier array
+#[allow(dead_code)]
 pub const SERVER_INDEX: usize = 0;
 pub const CATALOG_INDEX: usize = 1;
 pub const SCHEMA_INDEX: usize = 2;

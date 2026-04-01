@@ -130,7 +130,6 @@ where
 }
 
 /// Parser for DONEPROC token (0xFE) - signals completion of a stored procedure
-/// Parser for DONEPROC token (0xFE) - signals completion of a stored procedure
 #[derive(Debug, Default)]
 pub(crate) struct DoneProcTokenParser {
     // fields omitted

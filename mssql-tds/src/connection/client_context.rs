@@ -27,8 +27,11 @@ pub enum IPAddressPreference {
 /// Encoding: `[major (8 bits)][minor (8 bits)][build (16 bits)]`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DriverVersion {
+    /// Major version number.
     pub major: u8,
+    /// Minor version number.
     pub minor: u8,
+    /// Build number.
     pub build: u16,
 }
 
@@ -78,6 +81,7 @@ pub enum VectorVersion {
 /// Provides a trait for creating Entra ID tokens.
 #[async_trait]
 pub trait EntraIdTokenFactory: Send + Sync {
+    /// Creates an access token for the given SPN, STS URL, and auth method.
     async fn create_token(
         &self,
         spn: String,
@@ -87,6 +91,7 @@ pub trait EntraIdTokenFactory: Send + Sync {
 }
 /// Object-safe extension of [`EntraIdTokenFactory`] that supports cloning.
 pub trait CloneableEntraIdTokenFactory: EntraIdTokenFactory {
+    /// Returns a boxed clone of this factory.
     fn clone_box(&self) -> Box<dyn CloneableEntraIdTokenFactory>;
 }
 
@@ -353,6 +358,7 @@ impl ClientContext {
         }
     }
 
+    /// Returns `true` if SSPI integrated authentication is configured.
     pub fn integrated_security(&self) -> bool {
         matches!(
             self.tds_authentication_method,
@@ -432,6 +438,20 @@ impl ClientContext {
     /// Ok(()) if validation passes, or an Error if validation fails.
     pub fn validate_with<V: ClientContextValidator>(&self, validator: &V) -> TdsResult<()> {
         validator.validate(self)
+    }
+
+    /// Looks up the Entra ID token factory for the current authentication method.
+    pub(crate) fn entra_id_token_factory(&self) -> TdsResult<&dyn CloneableEntraIdTokenFactory> {
+        self.auth_method_map
+            .get(&self.tds_authentication_method)
+            .map(|f| f.as_ref())
+            .ok_or_else(|| {
+                Error::ConnectionError(format!(
+                    "Authentication method '{:?}' is not supported. \
+                     No token provider was registered for this method.",
+                    self.tds_authentication_method
+                ))
+            })
     }
 }
 
@@ -579,27 +599,35 @@ pub enum Protocol {
     SharedMemory,
 }
 
+/// Transport protocol and endpoint for the connection.
 #[derive(PartialEq, Clone, Debug)]
 pub enum TransportContext {
-    /// TCP/IP connection with host and port
-    /// - `host`: Network hostname for TCP connection (hostname part only, no instance name)
-    /// - `port`: TCP port number
-    /// - `instance_name`: Optional SQL Server instance name (e.g., "SQLEXPRESS").
-    ///   Used for redirected connections where the routing token contains "host\instance"
+    /// TCP/IP connection.
     Tcp {
+        /// Network hostname.
         host: String,
+        /// TCP port number.
         port: u16,
+        /// Optional SQL Server instance name (e.g., "SQLEXPRESS").
         instance_name: Option<String>,
     },
-    /// Named Pipe connection with pipe path
-    /// Format: \\server\pipe\sql\query or \\server\pipe\MSSQL$INSTANCE\sql\query
-    NamedPipe { pipe_name: String },
-    /// Shared Memory connection (local only) with optional instance name
-    SharedMemory { instance_name: String },
+    /// Named Pipe connection (`\\server\pipe\sql\query`).
+    NamedPipe {
+        /// Full UNC pipe path.
+        pipe_name: String,
+    },
+    /// Shared Memory connection (local only).
+    SharedMemory {
+        /// SQL Server instance name.
+        instance_name: String,
+    },
     /// LocalDB connection (Windows only) with instance name
     /// Format: (localdb)\InstanceName
     #[cfg(windows)]
-    LocalDB { instance_name: String },
+    LocalDB {
+        /// LocalDB instance name.
+        instance_name: String,
+    },
 }
 
 impl TransportContext {
@@ -1434,5 +1462,16 @@ mod tests {
     fn test_default_library_name() {
         let ctx = ClientContext::new();
         assert_eq!(ctx.library_name, "mssql-tds");
+    }
+
+    #[test]
+    fn entra_id_token_factory_missing_returns_error() {
+        let mut ctx = ClientContext::with_data_source("localhost");
+        ctx.tds_authentication_method = TdsAuthenticationMethod::ActiveDirectoryIntegrated;
+        let result = ctx.entra_id_token_factory();
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(err.contains("ActiveDirectoryIntegrated"));
+        assert!(err.contains("not supported"));
     }
 }
