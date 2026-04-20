@@ -866,4 +866,72 @@ mod mock_server_tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_user_agent_interception() -> Result<(), Box<dyn std::error::Error>> {
+        init_tracing();
+
+        let server_addr = "127.0.0.1:0";
+        let server = MockTdsServer::new(server_addr).await?;
+        let bound_addr = server.local_addr();
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server_handle =
+            tokio::spawn(async move { server.run_with_shutdown(shutdown_rx).await });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let datasource = format!("tcp:{},{}", bound_addr.ip(), bound_addr.port());
+        let mut context = ClientContext::default();
+        context.user_name = "sa".to_string();
+        context.password = generate_test_password();
+        context.database = "master".to_string();
+        context.library_name = "ShortDriver".to_string();
+        context.encryption_options = EncryptionOptions {
+            mode: EncryptionSetting::PreferOff,
+            trust_server_certificate: true,
+            host_name_in_cert: None,
+            server_certificate: None,
+        };
+
+        let provider = TdsConnectionProvider {};
+        let mut client = provider.create_client(context, &datasource, None).await?;
+
+        client
+            .execute("SELECT @@USERAGENT".to_string(), None, None)
+            .await?;
+
+        let mut row_count = 0;
+        let mut returned_agent = String::new();
+        if let Some(resultset) = client.get_current_resultset() {
+            while let Some(row) = resultset.next_row().await? {
+                row_count += 1;
+                use mssql_tds::datatypes::column_values::ColumnValues;
+                if let ColumnValues::String(sql_string) = row.first().unwrap() {
+                    returned_agent = sql_string.to_utf8_string();
+                } else {
+                    panic!("Expected string column type");
+                }
+            }
+        }
+
+        assert_eq!(
+            row_count, 1,
+            "Expected exactly 1 row from SELECT @@USERAGENT"
+        );
+        assert!(
+            returned_agent.contains("ShortDriver"),
+            "Expected '{}' to contain 'ShortDriver'",
+            returned_agent
+        );
+
+        client.close_query().await?;
+        client.close_connection().await?;
+
+        // Cleanup
+        let _ = shutdown_tx.send(());
+        let _ = tokio::time::timeout(tokio::time::Duration::from_secs(2), server_handle).await;
+
+        Ok(())
+    }
 }

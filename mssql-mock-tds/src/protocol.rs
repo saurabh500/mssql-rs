@@ -160,6 +160,7 @@ pub enum TokenType {
 pub const FEATURE_EXT_FEDAUTH: u8 = 0x02;
 /// FedAuth terminator
 pub const FEATURE_EXT_TERMINATOR: u8 = 0xFF;
+pub const FEATURE_EXT_USER_AGENT: u8 = 0x10;
 
 /// Parsed Login7 authentication info
 #[derive(Debug, Clone, Default)]
@@ -172,6 +173,8 @@ pub struct Login7AuthInfo {
     pub fedauth_library: u8,
     /// Server name from Login7 packet (the data source string sent by client)
     pub server_name: Option<String>,
+    /// User Agent string from Login7 packet (if present)
+    pub user_agent: Option<String>,
 }
 
 /// Parse Login7 packet to extract FedAuth feature extension with access token
@@ -322,7 +325,16 @@ pub fn parse_login7_auth(packet_data: &[u8]) -> Login7AuthInfo {
                     }
                 }
             }
-            break;
+        } else if feature_id == FEATURE_EXT_USER_AGENT && i + 5 + feat_len <= data.len() {
+            let feat_data = &data[i + 5..i + 5 + feat_len];
+            let u16_chars: Vec<u16> = feat_data
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect();
+            if let Ok(user_agent) = String::from_utf16(&u16_chars) {
+                debug!("Parsed UserAgent from Login7: '{}'", user_agent);
+                auth_info.user_agent = Some(user_agent);
+            }
         }
 
         // Skip to next feature entry
@@ -607,8 +619,15 @@ pub fn build_query_result(response: &crate::query_response::QueryResponse) -> By
     for col in &response.columns {
         result.put_u32_le(0); // UserType
         result.put_u16_le(0x0000); // Flags: not nullable, no special flags
-        result.put_u8(col.data_type.tds_type_code()); // Type code
-        result.put_u8(col.data_type.max_length()); // Max length
+        result.put_u8(col.data_type.tds_type_code());
+        if col.data_type == crate::query_response::SqlDataType::NVarChar {
+            // Required to support string responses (e.g., @@USERAGENT).
+            // TDS ColMetadata mandates a 5-byte collation suffix for variable-length types.
+            result.put_u16_le(8000); // NVARCHAR(4000) max byte capacity
+            result.put_slice(&[0x09, 0x04, 0xD0, 0x00, 0x34]); // SQL_Latin1_General_CP1_CI_AS
+        } else {
+            result.put_u8(col.data_type.max_length());
+        }
 
         // Column name (UTF-16LE)
         let name_len = col.name.chars().count() as u8;

@@ -2,8 +2,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::sync::OnceLock;
 use async_trait::async_trait;
+use std::sync::OnceLock;
 
 use crate::connection::client_context::ClientContext;
 use crate::core::TdsResult;
@@ -177,9 +177,13 @@ impl Feature for UserAgentFeature {
     async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()> {
         // Each UTF-16 character is 2 bytes, so multiply the u16 count by 2 to get the total byte length
         let utf16_len = self.payload.encode_utf16().count() * 2;
-        packet_writer.write_byte_async(self.feature_identifier().as_u8()).await?;
+        packet_writer
+            .write_byte_async(self.feature_identifier().as_u8())
+            .await?;
         packet_writer.write_i32_async(utf16_len as i32).await?;
-        packet_writer.write_string_unicode_async(&self.payload).await?;
+        packet_writer
+            .write_string_unicode_async(&self.payload)
+            .await?;
         Ok(())
     }
 

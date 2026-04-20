@@ -17,6 +17,8 @@ pub enum SqlDataType {
     Int,
     /// BigInt - 8 byte integer
     BigInt,
+    /// NVarChar - UTF16 string
+    NVarChar,
 }
 
 impl SqlDataType {
@@ -27,6 +29,7 @@ impl SqlDataType {
             SqlDataType::SmallInt => 0x26, // IntN with length 2
             SqlDataType::Int => 0x26,      // IntN with length 4
             SqlDataType::BigInt => 0x26,   // IntN with length 8
+            SqlDataType::NVarChar => 0xE7, // NVarCharType
         }
     }
 
@@ -37,6 +40,7 @@ impl SqlDataType {
             SqlDataType::SmallInt => 2,
             SqlDataType::Int => 4,
             SqlDataType::BigInt => 8,
+            SqlDataType::NVarChar => 255, // Handled specially
         }
     }
 }
@@ -48,6 +52,7 @@ pub enum ColumnValue {
     SmallInt(i16),
     Int(i32),
     BigInt(i64),
+    NVarChar(String),
     Null,
 }
 
@@ -59,6 +64,7 @@ impl ColumnValue {
             ColumnValue::SmallInt(_) => SqlDataType::SmallInt,
             ColumnValue::Int(_) => SqlDataType::Int,
             ColumnValue::BigInt(_) => SqlDataType::BigInt,
+            ColumnValue::NVarChar(_) => SqlDataType::NVarChar,
             ColumnValue::Null => SqlDataType::Int, // Default to Int for NULL
         }
     }
@@ -81,6 +87,11 @@ impl ColumnValue {
             ColumnValue::BigInt(v) => {
                 buf.put_u8(8); // Length indicator
                 buf.put_i64_le(*v);
+            }
+            ColumnValue::NVarChar(v) => {
+                let utf16_bytes: Vec<u8> = v.encode_utf16().flat_map(|ch| ch.to_le_bytes().into_iter()).collect();
+                buf.put_u16_le(utf16_bytes.len() as u16);
+                buf.put_slice(&utf16_bytes);
             }
             ColumnValue::Null => {
                 buf.put_u8(0); // Length 0 means NULL for IntN

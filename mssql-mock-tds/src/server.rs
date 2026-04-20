@@ -53,6 +53,8 @@ pub struct ConnectionProcessor {
     is_authenticated: bool,
     /// Access token received during FedAuth authentication (if any)
     received_token: Option<Vec<u8>>,
+    /// User Agent received during authentication (if any)
+    pub user_agent: Option<String>,
     /// Reference to the shared query registry
     query_registry: Arc<Mutex<QueryRegistry>>,
     /// Packet buffer for this connection
@@ -68,6 +70,7 @@ impl ConnectionProcessor {
             addr,
             is_authenticated: false,
             received_token: None,
+            user_agent: None,
             query_registry,
             buffer: BytesMut::with_capacity(4096),
             redirection: None,
@@ -84,6 +87,7 @@ impl ConnectionProcessor {
             addr,
             is_authenticated: false,
             received_token: None,
+            user_agent: None,
             query_registry,
             buffer: BytesMut::with_capacity(4096),
             redirection,
@@ -166,6 +170,7 @@ impl ConnectionProcessor {
                 // Parse Login7 packet body (skip header) for authentication info
                 let packet_body = &packet_data[PACKET_HEADER_SIZE..];
                 let auth_info = parse_login7_auth(packet_body);
+                self.user_agent = auth_info.user_agent.clone();
 
                 // Log the server name sent by client (important for verifying redirection behavior)
                 if let Some(ref server_name) = auth_info.server_name {
@@ -254,6 +259,16 @@ impl ConnectionProcessor {
                     match parse_sql_batch(packet_body) {
                         Ok(sql) => {
                             info!("Executing SQL from {}: {}", self.addr, sql);
+
+                            if sql.trim().eq_ignore_ascii_case("SELECT @@USERAGENT") {
+                                let ua_str = self.user_agent.clone().unwrap_or_else(|| "Unknown".to_string());
+                                use crate::query_response::{QueryResponse, ColumnDefinition, SqlDataType, ColumnValue, Row};
+                                let ua_resp = QueryResponse::new(
+                                    vec![ColumnDefinition::new("user_agent", SqlDataType::NVarChar)],
+                                    vec![Row::new(vec![ColumnValue::NVarChar(ua_str)])]
+                                );
+                                return Ok(Some(build_query_result(&ua_resp)));
+                            }
 
                             // Look up query in registry
                             let registry = self.query_registry.lock().await;
@@ -959,6 +974,7 @@ async fn handle_connection(
 ) -> Result<(), ProtocolError> {
     let mut buffer = BytesMut::with_capacity(4096);
     let mut is_authenticated = false;
+    let mut user_agent: Option<String> = None;
 
     loop {
         // Read data from socket
@@ -1007,6 +1023,9 @@ async fn handle_connection(
 
                 PacketType::Login7 => {
                     debug!("Handling Login7");
+                    let packet_body = &packet_data[PACKET_HEADER_SIZE..];
+                    let auth_info = parse_login7_auth(packet_body);
+                    user_agent = auth_info.user_agent.clone();
                     is_authenticated = true;
 
                     // Build response with LoginAck + EnvChange + Done
@@ -1040,7 +1059,15 @@ async fn handle_connection(
 
                                 // Look up query in registry
                                 let registry = query_registry.lock().await;
-                                if let Some(response) = registry.get(&sql) {
+                                if sql.trim().eq_ignore_ascii_case("SELECT @@USERAGENT") {
+                                    let ua_str = user_agent.clone().unwrap_or_else(|| "Unknown".to_string());
+                                    use crate::query_response::{QueryResponse, ColumnDefinition, SqlDataType, ColumnValue, Row};
+                                    let ua_resp = QueryResponse::new(
+                                        vec![ColumnDefinition::new("user_agent", SqlDataType::NVarChar)],
+                                        vec![Row::new(vec![ColumnValue::NVarChar(ua_str)])]
+                                    );
+                                    Some(build_query_result(&ua_resp))
+                                } else if let Some(response) = registry.get(&sql) {
                                     Some(build_query_result(response))
                                 } else if sql.to_uppercase().starts_with("SELECT") {
                                     // Return empty result set with DONE for unknown SELECT queries

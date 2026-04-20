@@ -902,7 +902,12 @@ impl<'a, 'n, 'context> Serializer<'a, 'n, 'context> {
     async fn write_feature_extension_data(&mut self) -> TdsResult<()> {
         // According to useragent specifications, it should be sent first.
         // By pulling it out of the HashMap explicitly, we guarantee order.
-        if let Some(user_agent) = self.features_request.features.get(&FeatureExtension::UserAgent).filter(|f| f.is_requested()) {
+        if let Some(user_agent) = self
+            .features_request
+            .features
+            .get(&FeatureExtension::UserAgent)
+            .filter(|f| f.is_requested())
+        {
             user_agent.serialize(self.payload_writer).await?;
         }
 
@@ -1610,8 +1615,3 @@ mod tests {
         assert_eq!(model.get_status(), LoginResponseStatus::Rerouting);
     }
 }
-
-
-
-
-
