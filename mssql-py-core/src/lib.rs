@@ -19,7 +19,10 @@ pub use python_logger_adapter::{init_tracing_bridge, scoped_tracing_bridge};
 
 /// Module-level driver version, set once by the host Python package.
 /// Falls back to mssql-tds crate version if never set.
-static DRIVER_VERSION: OnceLock<DriverVersion> = OnceLock::new();
+pub(crate) static DRIVER_VERSION: OnceLock<DriverVersion> = OnceLock::new();
+
+/// Module-level runtime details, set once by the host Python package.
+pub(crate) static RUNTIME_DETAILS: OnceLock<String> = OnceLock::new();
 
 /// Returns the driver version, falling back to the mssql-tds crate version.
 pub(crate) fn get_driver_version() -> DriverVersion {
@@ -41,6 +44,13 @@ fn set_driver_version(major: u8, minor: u8, build: u16) {
     let _ = DRIVER_VERSION.set(DriverVersion::new(major, minor, build));
 }
 
+/// Python function to set the runtime details once at module init.
+/// Called by the host package (e.g. mssql-python) before creating any connections.
+#[pyfunction]
+fn set_runtime_details(details: String) {
+    let _ = RUNTIME_DETAILS.set(details);
+}
+
 /// Python module for Core TDS connectivity
 #[pymodule(name = "mssql_py_core")]
 fn mssql_py_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -48,6 +58,7 @@ fn mssql_py_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     tracing_init::init_tracing();
 
     m.add_function(wrap_pyfunction!(set_driver_version, m)?)?;
+    m.add_function(wrap_pyfunction!(set_runtime_details, m)?)?;
     m.add_class::<connection::PyCoreConnection>()?;
     m.add_class::<cursor::PyCoreCursor>()?;
     Ok(())

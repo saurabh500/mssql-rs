@@ -450,11 +450,58 @@ impl PyCoreConnection {
         context.tds_authentication_method = transformed.method;
         context.access_token = transformed.access_token;
 
-        // Set library_name to "mssql-python" for Python driver
-        context.library_name = "mssql-python".to_string();
+        // Set library_name to "MS-PYTHON" for Python driver as per user-agent spec
+        context.library_name = "MS-PYTHON".to_string();
 
-        // Use the module-level driver version (set once by mssql-python at import time)
-        context.driver_version = crate::get_driver_version();
+        // Extract runtime_details (like Python version, OS platform specifics) for the user agent
+        let runtime_details = if let Some(dict_details) = dict
+            .get_item("runtime_details")?
+            .and_then(|v| v.extract::<String>().ok())
+        {
+            dict_details
+        } else if let Some(global_details) = crate::RUNTIME_DETAILS.get() {
+            global_details.clone()
+        } else {
+            let py_version = dict.py().version();
+            format!("Python {}", py_version)
+        };
+        context.set_runtime_details(runtime_details);
+
+        // Fetch driver version natively:
+        // 1. If Python proactively called mssql_py_core.set_driver_version(), use it directly.
+        if let Some(explicit_version) = crate::DRIVER_VERSION.get().copied() {
+            context.driver_version = explicit_version;
+        } else {
+            // 2. Otherwise, attempt to extract it dynamically from the mssql_python package.
+            let py_driver_version = dict
+                .py()
+                .import("mssql_python")
+                .and_then(|m| m.getattr("__version__"))
+                .and_then(|v| v.extract::<String>());
+
+            if let Ok(ver_str) = py_driver_version {
+                let parts: Vec<&str> = ver_str.split('.').collect();
+                if parts.len() >= 3 {
+                    if let (Ok(major), Ok(minor), Ok(build)) = (
+                        parts[0].parse::<u8>(),
+                        parts[1].parse::<u8>(),
+                        parts[2].parse::<u16>(),
+                    ) {
+                        context.driver_version =
+                            mssql_tds::connection::client_context::DriverVersion::new(
+                                major, minor, build,
+                            );
+                    } else {
+                        // 3. Fallback to Cargo package version
+                        context.driver_version = crate::get_driver_version();
+                    }
+                } else {
+                    context.driver_version = crate::get_driver_version();
+                }
+            } else {
+                context.driver_version = crate::get_driver_version();
+            }
+        }
 
         Ok(context)
     }
