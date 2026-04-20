@@ -54,7 +54,6 @@ fn get_os_type_from_name(os_name: &str) -> &'static str {
         "macos" => "macOS",
         "freebsd" => "FreeBSD",
         "android" => "Android",
-        "ios" => "iOS",
         _ => UNKNOWN_VAL,
     }
 }
@@ -279,7 +278,7 @@ mod tests {
         assert_eq!(get_os_type_from_name("macos"), "macOS");
         assert_eq!(get_os_type_from_name("freebsd"), "FreeBSD");
         assert_eq!(get_os_type_from_name("android"), "Android");
-        assert_eq!(get_os_type_from_name("ios"), "iOS");
+        assert_eq!(get_os_type_from_name("ios"), "Unknown");
         assert_eq!(get_os_type_from_name("solaris"), "Unknown");
     }
 
