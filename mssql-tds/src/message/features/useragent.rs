@@ -3,8 +3,12 @@
 // Licensed under the MIT License.
 
 use std::sync::OnceLock;
+use async_trait::async_trait;
 
 use crate::connection::client_context::ClientContext;
+use crate::core::TdsResult;
+use crate::io::packet_writer::{PacketWriter, TdsPacketWriter};
+use crate::message::login::{Feature, FeatureExtension};
 
 const UNKNOWN_VAL: &str = "Unknown";
 const FORMAT_VERSION: &str = "1";
@@ -149,6 +153,42 @@ impl UserAgentFeature {
         // Because 152 <= 255 (the SQL Server limit) and `sanitize_field` strips out all '|'
         // from the inputs, we are guaranteed to never truncate delimiters or exceed limits.
         UserAgentFeature { payload }
+    }
+}
+
+#[async_trait]
+impl Feature for UserAgentFeature {
+    fn feature_identifier(&self) -> FeatureExtension {
+        FeatureExtension::UserAgent
+    }
+
+    fn is_requested(&self) -> bool {
+        true
+    }
+
+    fn data_length(&self) -> i32 {
+        (1 + 4 + self.payload.len()) as i32
+    }
+
+    async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()> {
+        packet_writer.write_byte_async(self.feature_identifier().as_u8()).await?;
+        packet_writer.write_i32_async(self.payload.len() as i32).await?;
+        packet_writer.write_async(self.payload.as_bytes()).await?;
+        Ok(())
+    }
+
+    fn deserialize(&mut self, _data: &[u8]) -> TdsResult<()> {
+        Ok(())
+    }
+
+    fn is_acknowledged(&self) -> bool {
+        false
+    }
+
+    fn set_acknowledged(&mut self, _acknowledged: bool) {}
+
+    fn clone_box(&self) -> Box<dyn Feature> {
+        Box::new(self.clone())
     }
 }
 
