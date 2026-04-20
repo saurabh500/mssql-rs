@@ -54,6 +54,8 @@ fn get_os_type_from_name(os_name: &str) -> &'static str {
         "macos" => "macOS",
         "freebsd" => "FreeBSD",
         "android" => "Android",
+        // The specification strictly limits OS types to Windows, Linux, macOS, FreeBSD, Android, and Unknown.
+        // Any unsupported OS, such as iOS, must explicitly fallback to "Unknown".
         _ => UNKNOWN_VAL,
     }
 }
@@ -281,7 +283,8 @@ mod tests {
         assert_eq!(get_os_type_from_name("macos"), "macOS");
         assert_eq!(get_os_type_from_name("freebsd"), "FreeBSD");
         assert_eq!(get_os_type_from_name("android"), "Android");
-        assert_eq!(get_os_type_from_name("ios"), "iOS");
+        // iOS is intentionally mapped to Unknown as per strict spec constraints
+        assert_eq!(get_os_type_from_name("ios"), "Unknown");
         assert_eq!(get_os_type_from_name("solaris"), "Unknown");
     }
 
