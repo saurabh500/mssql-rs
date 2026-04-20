@@ -248,9 +248,15 @@ pub struct ClientContext {
     pub(crate) transport_context: TransportContext,
     /// Protocol vector version for feature negotiation.
     pub vector_version: VectorVersion,
+    /// Custom runtime details typically injected by FFI wrappers (e.g., Python, Node.js).
+    pub(crate) runtime_details: Option<String>,
 }
 
 impl ClientContext {
+    /// Injects custom runtime details (such as the specific FFI wrapper environment).
+    pub fn set_runtime_details(&mut self, details: String) {
+        self.runtime_details = Some(details);
+    }
     /// Creates a new ClientContext with the specified data source.
     /// The data source is mandatory for establishing a connection.
     ///
@@ -302,6 +308,7 @@ impl ClientContext {
                 instance_name: None,
             },
             vector_version: VectorVersion::V1,
+            runtime_details: None,
         }
     }
 
@@ -355,6 +362,7 @@ impl ClientContext {
                 instance_name: None,
             },
             vector_version: VectorVersion::V1,
+            runtime_details: None,
         }
     }
 
@@ -584,6 +592,7 @@ impl Clone for ClientContext {
             access_token: self.access_token.clone(),
             transport_context: self.transport_context.clone(),
             vector_version: self.vector_version,
+            runtime_details: self.runtime_details.clone(),
         }
     }
 }
