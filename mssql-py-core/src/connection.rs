@@ -458,10 +458,14 @@ impl PyCoreConnection {
             .get_item("runtime_details")?
             .and_then(|v| v.extract::<String>().ok())
         {
+            // 1. First, check if connection properties directly injected an explicit runtime_details string
+            // (e.g., passed by mssql-python via connection kwargs containing OS and Python info)
             dict_details
         } else if let Some(global_details) = crate::RUNTIME_DETAILS.get() {
+            // 2. Second, fallback to global RUNTIME_DETAILS set via mssql_py_core.set_runtime_details()
             global_details.clone()
         } else {
+            // 3. Otherwise, dynamically extract PyO3's dict.py().version() as a conservative final fallback
             let py_version = dict.py().version();
             format!("Python {}", py_version)
         };

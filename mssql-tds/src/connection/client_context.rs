@@ -286,7 +286,7 @@ impl ClientContext {
             failover_partner: "".to_string(),
             ipaddress_preference: IPAddressPreference::UsePlatformDefault,
             language: "us_english".to_string(),
-            library_name: "mssql-tds".to_string(),
+            library_name: "MS-TDS".to_string(),
             driver_version: DriverVersion::from_cargo_version(),
             auth_method_map: HashMap::new(),
             mars_enabled: false,
@@ -340,7 +340,7 @@ impl ClientContext {
             failover_partner: "".to_string(),
             ipaddress_preference: IPAddressPreference::UsePlatformDefault,
             language: "us_english".to_string(),
-            library_name: "mssql-tds".to_string(),
+            library_name: "MS-TDS".to_string(),
             driver_version: DriverVersion::from_cargo_version(),
             auth_method_map: HashMap::new(),
             mars_enabled: false,
@@ -1470,7 +1470,7 @@ mod tests {
     #[test]
     fn test_default_library_name() {
         let ctx = ClientContext::new();
-        assert_eq!(ctx.library_name, "mssql-tds");
+        assert_eq!(ctx.library_name, "MS-TDS");
     }
 
     #[test]

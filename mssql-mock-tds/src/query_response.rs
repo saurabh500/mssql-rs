@@ -89,7 +89,10 @@ impl ColumnValue {
                 buf.put_i64_le(*v);
             }
             ColumnValue::NVarChar(v) => {
-                let utf16_bytes: Vec<u8> = v.encode_utf16().flat_map(|ch| ch.to_le_bytes().into_iter()).collect();
+                let utf16_bytes: Vec<u8> = v
+                    .encode_utf16()
+                    .flat_map(|ch| ch.to_le_bytes().into_iter())
+                    .collect();
                 buf.put_u16_le(utf16_bytes.len() as u16);
                 buf.put_slice(&utf16_bytes);
             }

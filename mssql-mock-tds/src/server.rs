@@ -261,11 +261,19 @@ impl ConnectionProcessor {
                             info!("Executing SQL from {}: {}", self.addr, sql);
 
                             if sql.trim().eq_ignore_ascii_case("SELECT @@USERAGENT") {
-                                let ua_str = self.user_agent.clone().unwrap_or_else(|| "Unknown".to_string());
-                                use crate::query_response::{QueryResponse, ColumnDefinition, SqlDataType, ColumnValue, Row};
+                                let ua_str = self
+                                    .user_agent
+                                    .clone()
+                                    .unwrap_or_else(|| "Unknown".to_string());
+                                use crate::query_response::{
+                                    ColumnDefinition, ColumnValue, QueryResponse, Row, SqlDataType,
+                                };
                                 let ua_resp = QueryResponse::new(
-                                    vec![ColumnDefinition::new("user_agent", SqlDataType::NVarChar)],
-                                    vec![Row::new(vec![ColumnValue::NVarChar(ua_str)])]
+                                    vec![ColumnDefinition::new(
+                                        "user_agent",
+                                        SqlDataType::NVarChar,
+                                    )],
+                                    vec![Row::new(vec![ColumnValue::NVarChar(ua_str)])],
                                 );
                                 return Ok(Some(build_query_result(&ua_resp)));
                             }
@@ -1060,11 +1068,18 @@ async fn handle_connection(
                                 // Look up query in registry
                                 let registry = query_registry.lock().await;
                                 if sql.trim().eq_ignore_ascii_case("SELECT @@USERAGENT") {
-                                    let ua_str = user_agent.clone().unwrap_or_else(|| "Unknown".to_string());
-                                    use crate::query_response::{QueryResponse, ColumnDefinition, SqlDataType, ColumnValue, Row};
+                                    let ua_str =
+                                        user_agent.clone().unwrap_or_else(|| "Unknown".to_string());
+                                    use crate::query_response::{
+                                        ColumnDefinition, ColumnValue, QueryResponse, Row,
+                                        SqlDataType,
+                                    };
                                     let ua_resp = QueryResponse::new(
-                                        vec![ColumnDefinition::new("user_agent", SqlDataType::NVarChar)],
-                                        vec![Row::new(vec![ColumnValue::NVarChar(ua_str)])]
+                                        vec![ColumnDefinition::new(
+                                            "user_agent",
+                                            SqlDataType::NVarChar,
+                                        )],
+                                        vec![Row::new(vec![ColumnValue::NVarChar(ua_str)])],
                                     );
                                     Some(build_query_result(&ua_resp))
                                 } else if let Some(response) = registry.get(&sql) {

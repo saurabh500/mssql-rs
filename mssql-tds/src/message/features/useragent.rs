@@ -305,7 +305,7 @@ mod tests {
         );
 
         assert_eq!(parts[0], "1");
-        assert_eq!(parts[1], "mssql-tds");
+        assert_eq!(parts[1], "MS-TDS");
 
         // Assert that at least some known environment values appeared.
         assert!(!parts[3].is_empty()); // Arch
