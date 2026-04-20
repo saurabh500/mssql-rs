@@ -167,13 +167,15 @@ impl Feature for UserAgentFeature {
     }
 
     fn data_length(&self) -> i32 {
-        (1 + 4 + self.payload.len()) as i32
+        let utf16_len = self.payload.encode_utf16().count() * 2;
+        (1 + 4 + utf16_len) as i32
     }
 
     async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()> {
+        let utf16_len = self.payload.encode_utf16().count() * 2;
         packet_writer.write_byte_async(self.feature_identifier().as_u8()).await?;
-        packet_writer.write_i32_async(self.payload.len() as i32).await?;
-        packet_writer.write_async(self.payload.as_bytes()).await?;
+        packet_writer.write_i32_async(utf16_len as i32).await?;
+        packet_writer.write_string_unicode_async(&self.payload).await?;
         Ok(())
     }
 
