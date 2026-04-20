@@ -166,11 +166,14 @@ impl Feature for UserAgentFeature {
     }
 
     fn data_length(&self) -> i32 {
+        // Each UTF-16 character is 2 bytes, so multiply the u16 count by 2 to get the total byte length
         let utf16_len = self.payload.encode_utf16().count() * 2;
-        (1 + 4 + utf16_len) as i32
+        // 1 byte for feature identifier, 4 bytes for length, utf16_len bytes for payload
+        (size_of::<u8>() + size_of::<i32>() + utf16_len) as i32
     }
 
     async fn serialize(&self, packet_writer: &mut PacketWriter) -> TdsResult<()> {
+        // Each UTF-16 character is 2 bytes, so multiply the u16 count by 2 to get the total byte length
         let utf16_len = self.payload.encode_utf16().count() * 2;
         packet_writer.write_byte_async(self.feature_identifier().as_u8()).await?;
         packet_writer.write_i32_async(utf16_len as i32).await?;
@@ -278,7 +281,7 @@ mod tests {
         assert_eq!(get_os_type_from_name("macos"), "macOS");
         assert_eq!(get_os_type_from_name("freebsd"), "FreeBSD");
         assert_eq!(get_os_type_from_name("android"), "Android");
-        assert_eq!(get_os_type_from_name("ios"), "Unknown");
+        assert_eq!(get_os_type_from_name("ios"), "iOS");
         assert_eq!(get_os_type_from_name("solaris"), "Unknown");
     }
 
