@@ -62,4 +62,3 @@ def test_no_driver_version():
     except RuntimeError:
         # Connection failure is expected, but parameter should be optional
         pass
-
