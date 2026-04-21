@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use super::features::fedauth::FedAuthFeature;
+use super::features::useragent::UserAgentFeature;
 use super::features::utf8::Utf8Feature;
 use super::features::vectorfeature::VectorFeature;
 use crate::core::TdsResult;
@@ -144,7 +145,7 @@ impl FeaturesRequest {
         access_token: Option<String>,
         prelogin_fedauth_response: bool,
         vector_version: VectorVersion,
-        user_agent_feature: crate::message::features::useragent::UserAgentFeature,
+        user_agent_feature: UserAgentFeature,
     ) -> Self {
         let mut features: HashMap<FeatureExtension, Box<dyn Feature>> = HashMap::new();
         features.insert(
@@ -256,7 +257,7 @@ impl From<(&ClientContext, bool)> for FeaturesRequest {
             context.access_token.clone(),
             context_and_prelogin_fedauth_flag.1,
             context.vector_version,
-            crate::message::features::useragent::UserAgentFeature::new(context),
+            UserAgentFeature::new(context),
         )
     }
 }

@@ -158,9 +158,9 @@ pub enum TokenType {
 
 /// FedAuth feature extension ID
 pub const FEATURE_EXT_FEDAUTH: u8 = 0x02;
+pub const FEATURE_EXT_USER_AGENT: u8 = 0x10;
 /// FedAuth terminator
 pub const FEATURE_EXT_TERMINATOR: u8 = 0xFF;
-pub const FEATURE_EXT_USER_AGENT: u8 = 0x10;
 
 /// Parsed Login7 authentication info
 #[derive(Debug, Clone, Default)]
@@ -327,13 +327,20 @@ pub fn parse_login7_auth(packet_data: &[u8]) -> Login7AuthInfo {
             }
         } else if feature_id == FEATURE_EXT_USER_AGENT && i + 5 + feat_len <= data.len() {
             let feat_data = &data[i + 5..i + 5 + feat_len];
-            let u16_chars: Vec<u16> = feat_data
-                .chunks_exact(2)
-                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-                .collect();
-            if let Ok(user_agent) = String::from_utf16(&u16_chars) {
-                debug!("Parsed UserAgent from Login7: '{}'", user_agent);
-                auth_info.user_agent = Some(user_agent);
+            if feat_data.len().is_multiple_of(2) {
+                let u16_chars: Vec<u16> = feat_data
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .collect();
+                if let Ok(user_agent) = String::from_utf16(&u16_chars) {
+                    debug!("Parsed UserAgent from Login7 (len: {})", user_agent.len());
+                    auth_info.user_agent = Some(user_agent);
+                }
+            } else {
+                debug!(
+                    "Skipping UserAgent FeatureExtension due to odd data length: {}",
+                    feat_len
+                );
             }
         }
 

@@ -12,7 +12,7 @@ use crate::message::login::{Feature, FeatureExtension};
 
 const UNKNOWN_VAL: &str = "Unknown";
 const FORMAT_VERSION: &str = "1";
-const DEFAULT_DRIVER_NAME: &str = "MS-RUST";
+const DEFAULT_DRIVER_NAME: &str = "MS-TDS";
 
 // Field length limits following MS driver standards
 const MAX_ARCH_LEN: usize = 10;

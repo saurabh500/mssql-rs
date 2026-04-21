@@ -32,33 +32,36 @@ pub(crate) fn get_driver_version() -> DriverVersion {
         .unwrap_or_else(DriverVersion::from_cargo_version)
 }
 
-/// Python function to set the driver version once at module init.
-/// Called by the host package (e.g. mssql-python) before creating any connections.
-///
-/// # Arguments
-/// * `major` - Major version number (0-255)
-/// * `minor` - Minor version number (0-255)
-/// * `build` - Build number (0-65535)
-#[pyfunction]
-fn set_driver_version(major: u8, minor: u8, build: u16) {
-    let _ = DRIVER_VERSION.set(DriverVersion::new(major, minor, build));
-}
-
-/// Python function to set the runtime details once at module init.
-/// Called by the host package (e.g. mssql-python) before creating any connections.
-#[pyfunction]
-fn set_runtime_details(details: String) {
-    let _ = RUNTIME_DETAILS.set(details);
-}
-
 /// Python module for Core TDS connectivity
 #[pymodule(name = "mssql_py_core")]
 fn mssql_py_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Initialize tracing on module load (via MSSQL_TDS_TRACE env var)
     tracing_init::init_tracing();
 
-    m.add_function(wrap_pyfunction!(set_driver_version, m)?)?;
-    m.add_function(wrap_pyfunction!(set_runtime_details, m)?)?;
+    // Statically capture the Python version once during module initialization
+    let py_version = m.py().version();
+    let _ = RUNTIME_DETAILS.set(format!("Python {}", py_version));
+
+    // Statically capture the mssql_python driver version during module initialization
+    if let Ok(ver_str) = m
+        .py()
+        .import("mssql_python")
+        .and_then(|module| module.getattr("__version__"))
+        .and_then(|v| v.extract::<String>())
+    {
+        let parts: Vec<&str> = ver_str.split('.').collect();
+        if parts.len() >= 3 {
+            #[allow(clippy::collapsible_if)]
+            if let (Ok(major), Ok(minor), Ok(build)) = (
+                parts[0].parse::<u8>(),
+                parts[1].parse::<u8>(),
+                parts[2].parse::<u16>(),
+            ) {
+                let _ = DRIVER_VERSION.set(DriverVersion::new(major, minor, build));
+            }
+        }
+    }
+
     m.add_class::<connection::PyCoreConnection>()?;
     m.add_class::<cursor::PyCoreCursor>()?;
     Ok(())

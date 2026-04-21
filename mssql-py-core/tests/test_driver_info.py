@@ -63,33 +63,3 @@ def test_no_driver_version():
         # Connection failure is expected, but parameter should be optional
         pass
 
-def test_runtime_details_telemetry_priority():
-    import mssql_py_core
-    
-    # 1. Test setting the global lock works (will not complain)
-    mssql_py_core.set_runtime_details('Global Override Config')
-    
-    # 2. Test Connection Dictionary takes precedence and doesn't throw errors
-    context_with_override = {
-        'server': 'localhost',
-        'user_name': 'test_user',
-        'password': 'test_password',
-        'runtime_details': 'Connection Level Config'
-    }
-    
-    try:
-        conn = mssql_py_core.PyCoreConnection(context_with_override)
-    except RuntimeError as e:
-        assert 'runtime_details' not in str(e).lower(), 'runtime_details parameter should be accepted'
-
-    # 3. Test that omitting it also doesn't throw errors
-    context_without_override = {
-        'server': 'localhost',
-        'user_name': 'test_user',
-        'password': 'test_password',
-    }
-    
-    try:
-        conn = mssql_py_core.PyCoreConnection(context_without_override)
-    except RuntimeError as e:
-        assert 'runtime_details' not in str(e).lower(), 'Should fallback gracefully'

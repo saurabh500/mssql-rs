@@ -874,6 +874,7 @@ mod mock_server_tests {
         let server_addr = "127.0.0.1:0";
         let server = MockTdsServer::new(server_addr).await?;
         let bound_addr = server.local_addr();
+        let connection_store = server.connection_store();
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let server_handle =
@@ -886,7 +887,6 @@ mod mock_server_tests {
         context.user_name = "sa".to_string();
         context.password = generate_test_password();
         context.database = "master".to_string();
-        context.library_name = "ShortDriver".to_string();
         context.encryption_options = EncryptionOptions {
             mode: EncryptionSetting::PreferOff,
             trust_server_certificate: true,
@@ -897,36 +897,25 @@ mod mock_server_tests {
         let provider = TdsConnectionProvider {};
         let mut client = provider.create_client(context, &datasource, None).await?;
 
-        client
-            .execute("SELECT @@USERAGENT".to_string(), None, None)
-            .await?;
+        client.close_connection().await?;
+        drop(client);
 
-        let mut row_count = 0;
-        let mut returned_agent = String::new();
-        if let Some(resultset) = client.get_current_resultset() {
-            while let Some(row) = resultset.next_row().await? {
-                row_count += 1;
-                use mssql_tds::datatypes::column_values::ColumnValues;
-                if let ColumnValues::String(sql_string) = row.first().unwrap() {
-                    returned_agent = sql_string.to_utf8_string();
-                } else {
-                    panic!("Expected string column type");
-                }
-            }
-        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        assert_eq!(
-            row_count, 1,
-            "Expected exactly 1 row from SELECT @@USERAGENT"
-        );
+        let store = connection_store.lock().await;
+        let conn_info = store
+            .all()
+            .values()
+            .next()
+            .expect("Should have at least one connection");
+
+        let returned_agent = conn_info.received_user_agent().unwrap_or_default();
+        println!("Intercepted User Agent: {}", returned_agent);
         assert!(
-            returned_agent.contains("ShortDriver"),
-            "Expected '{}' to contain 'ShortDriver'",
+            returned_agent.contains("MS-TDS"),
+            "Expected formatted MS-TDS, got {}",
             returned_agent
         );
-
-        client.close_query().await?;
-        client.close_connection().await?;
 
         // Cleanup
         let _ = shutdown_tx.send(());
