@@ -327,6 +327,25 @@ mod tests {
     }
 
     #[test]
+    fn test_user_agent_feature_serialization() {
+        let context = ClientContext::with_data_source("tcp:test");
+        let mut feature = UserAgentFeature::new(&context);
+        
+        assert_eq!(feature.is_requested(), true);
+        assert_eq!(feature.is_acknowledged(), false);
+        feature.set_acknowledged(true);
+        
+        let mut writer = PacketWriter::new(0, 8192);
+        futures_executor::block_on(feature.serialize(&mut writer)).unwrap();
+        
+        let box_clone = feature.clone_box();
+        assert_eq!(box_clone.feature_identifier(), FeatureExtension::UserAgent);
+        
+        // deserialize is a no-op
+        feature.deserialize(&[]).unwrap();
+    }
+
+    #[test]
     fn test_system_environment_info_detection() {
         // Validates that probing the host metrics (like `uname` running or FFI syscalls)
         // won't panic and gracefully produces strings internally.

@@ -210,3 +210,46 @@ impl Default for QueryRegistry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sql_data_types() {
+        assert_eq!(SqlDataType::TinyInt.tds_type_code(), 0x26);
+        assert_eq!(SqlDataType::SmallInt.tds_type_code(), 0x26);
+        assert_eq!(SqlDataType::Int.tds_type_code(), 0x26);
+        assert_eq!(SqlDataType::BigInt.tds_type_code(), 0x26);
+        assert_eq!(SqlDataType::NVarChar.tds_type_code(), 0xE7);
+
+        assert_eq!(SqlDataType::TinyInt.max_length(), 1);
+        assert_eq!(SqlDataType::SmallInt.max_length(), 2);
+        assert_eq!(SqlDataType::Int.max_length(), 4);
+        assert_eq!(SqlDataType::BigInt.max_length(), 8);
+        assert_eq!(SqlDataType::NVarChar.max_length(), 255);
+    }
+
+    #[test]
+    fn test_column_value_write() {
+        let mut buf = bytes::BytesMut::new();
+        
+        let null_val = ColumnValue::Null;
+        assert_eq!(null_val.data_type(), SqlDataType::Int);
+        null_val.write_to_buffer(&mut buf);
+        assert_eq!(&buf[..], &[0]);
+        buf.clear();
+
+        let nvarchar_val = ColumnValue::NVarChar("test".to_string());
+        assert_eq!(nvarchar_val.data_type(), SqlDataType::NVarChar);
+        nvarchar_val.write_to_buffer(&mut buf);
+        // length is 4 u16 chars => 8 bytes, so 0x08 0x00 is the length followed by the utf16 LE bytes
+        assert_eq!(&buf[0..2], &[8, 0]);
+        buf.clear();
+        
+        let int_val = ColumnValue::Int(1);
+        assert_eq!(int_val.data_type(), SqlDataType::Int);
+        int_val.write_to_buffer(&mut buf);
+        assert_eq!(&buf[..], &[4, 1, 0, 0, 0]);
+    }
+}

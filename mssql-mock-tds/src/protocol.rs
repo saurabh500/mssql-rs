@@ -909,4 +909,37 @@ mod tests {
         // After header, should have EnvChange token (0xE3)
         assert_eq!(response[PACKET_HEADER_SIZE], TokenType::EnvChange as u8);
     }
+
+    #[test]
+    fn test_parse_login7_user_agent() {
+        let user_agent = "TestAgent";
+        let utf16_bytes: Vec<u8> = user_agent
+            .encode_utf16()
+            .flat_map(|ch| ch.to_le_bytes().into_iter())
+            .collect();
+        
+        let mut payload = BytesMut::zeroed(100);
+        
+        // OptionFlags3 at byte 27: set FeatureExt bit (0x10)
+        payload[27] = 0x10;
+        
+        // FeatureExt table entry at bytes 56-57 (points to offset 60)
+        payload[56] = 60;
+        payload[57] = 0;
+        
+        // DWORD at byte 60 pointing to the actual feature data at byte 64
+        payload[60..64].copy_from_slice(&64u32.to_le_bytes());
+        
+        // Truncate the buffer at 64 so we can append the feature bytes directly
+        payload.truncate(64);
+        
+        // Append UserAgent feature
+        payload.put_u8(FEATURE_EXT_USER_AGENT); // 0x10
+        payload.put_u32_le(utf16_bytes.len() as u32);
+        payload.put_slice(&utf16_bytes);
+        payload.put_u8(FEATURE_EXT_TERMINATOR); // 0xFF
+
+        let result = parse_login7_auth(&payload);
+        assert_eq!(result.user_agent.unwrap(), "TestAgent");
+    }
 }
