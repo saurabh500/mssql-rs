@@ -250,18 +250,20 @@ pub struct ClientContext {
     pub vector_version: VectorVersion,
     /// Custom runtime details typically injected by FFI wrappers (e.g., Python, Node.js).
     pub(crate) runtime_details: Option<String>,
-    /// Explicit overrides specifically for the User-Agent telemetry payload.
-    /// If not defined, fallback logic will use the standard `library_name` and `driver_version`.
-    pub(crate) user_agent_overrides: Option<UserAgentOverrides>,
+    /// User-Agent telemetry payload fields.
+    /// Defaults to `library_name` and `driver_version` from this context;
+    /// FFI wrappers override these to present driver-specific values.
+    pub(crate) user_agent: UserAgent,
 }
 
-/// A grouping of telemetry-specific fields to isolate them from legacy TDS behavior.
+/// User-Agent telemetry fields sent as a feature extension during login.
+/// Constructed with sensible defaults; FFI drivers replace individual fields as needed.
 #[derive(Clone, Debug)]
-pub struct UserAgentOverrides {
-    /// Custom library name for User-Agent payload (e.g., `MS-PYTHON`).
-    pub library_name: Option<String>,
-    /// Custom driver version string for User-Agent payload (e.g., `1.2.3rc1`).
-    pub driver_version: Option<String>,
+pub struct UserAgent {
+    /// Library name for User-Agent payload (e.g., `MS-TDS`, `MS-PYTHON`).
+    pub library_name: String,
+    /// Driver version string for User-Agent payload (e.g., `0.1.0`, `1.2.3rc1`).
+    pub driver_version: String,
 }
 
 impl ClientContext {
@@ -269,33 +271,14 @@ impl ClientContext {
     pub fn set_runtime_details(&mut self, details: String) {
         self.runtime_details = Some(details);
     }
-    /// Overrides the library name exclusively for the User-Agent feature.
-    /// Used by FFI drivers to present distinct values to telemetry (e.g. `MS-PYTHON`)
-    /// without mutating the primary TDS library name (`mssql-python`).
+    /// Sets the library name for the User-Agent telemetry payload.
     pub fn set_user_agent_library_name(&mut self, name: String) {
-        let mut overrides =
-            self.user_agent_overrides
-                .take()
-                .unwrap_or(UserAgentOverrides {
-                    library_name: None,
-                    driver_version: None,
-                });
-        overrides.library_name = Some(name);
-        self.user_agent_overrides = Some(overrides);
+        self.user_agent.library_name = name;
     }
 
-    /// Overrides the driver version exclusively for the User-Agent feature.
-    /// Allows FFI drivers to send flexible strings (like `1.3b1`) instead of the TDS binary format.
+    /// Sets the driver version for the User-Agent telemetry payload.
     pub fn set_user_agent_driver_version(&mut self, version: String) {
-        let mut overrides =
-            self.user_agent_overrides
-                .take()
-                .unwrap_or(UserAgentOverrides {
-                    library_name: None,
-                    driver_version: None,
-                });
-        overrides.driver_version = Some(version);
-        self.user_agent_overrides = Some(overrides);
+        self.user_agent.driver_version = version;
     }
     /// Creates a new ClientContext with the specified data source.
     /// The data source is mandatory for establishing a connection.
@@ -349,7 +332,10 @@ impl ClientContext {
             },
             vector_version: VectorVersion::V1,
             runtime_details: None,
-            user_agent_overrides: None,
+            user_agent: UserAgent {
+                library_name: "MS-TDS".to_string(),
+                driver_version: DriverVersion::from_cargo_version().to_string(),
+            },
         }
     }
 
@@ -404,7 +390,10 @@ impl ClientContext {
             },
             vector_version: VectorVersion::V1,
             runtime_details: None,
-            user_agent_overrides: None,
+            user_agent: UserAgent {
+                library_name: "MS-TDS".to_string(),
+                driver_version: DriverVersion::from_cargo_version().to_string(),
+            },
         }
     }
 
@@ -635,7 +624,7 @@ impl Clone for ClientContext {
             transport_context: self.transport_context.clone(),
             vector_version: self.vector_version,
             runtime_details: self.runtime_details.clone(),
-            user_agent_overrides: self.user_agent_overrides.clone(),
+            user_agent: self.user_agent.clone(),
         }
     }
 }
