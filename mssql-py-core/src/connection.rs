@@ -452,8 +452,15 @@ impl PyCoreConnection {
         context.tds_authentication_method = transformed.method;
         context.access_token = transformed.access_token;
 
-        // Set library_name for Python driver as per user-agent spec
-        context.library_name = DEFAULT_LIBRARY_NAME.to_string();
+        // Set library_name to "mssql-python" for Python driver
+        context.library_name = "mssql-python".to_string();
+        
+        // Exclusively override the driver name for the User-Agent payload
+        context.set_user_agent_library_name(DEFAULT_LIBRARY_NAME.to_string());
+
+        if let Some(raw_version) = crate::get_raw_driver_version() {
+            context.set_user_agent_driver_version(raw_version);
+        }
 
         if let Some(global_details) = crate::RUNTIME_DETAILS.get() {
             context.set_runtime_details(global_details.clone());

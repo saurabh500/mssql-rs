@@ -309,6 +309,7 @@ class TestMockServerFedAuth:
             # The library_name statically defined in connection.rs must be the second field
             parts = user_agent.split("|")
             assert len(parts) == 7, "User agent must match strict Microsoft format"
+            print(f"\n\n---> CAPTURED USER-AGENT STRING:\n{user_agent}\n")
             assert parts[1] == "MS-PYTHON", f"Expected MS-PYTHON but got {parts[1]}"
             assert parts[6].startswith("Python "), f"Expected Python globally cached runtime details, but got {parts[6]}"
 

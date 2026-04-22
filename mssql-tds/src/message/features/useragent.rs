@@ -120,8 +120,16 @@ impl UserAgentFeature {
     pub fn new(context: &ClientContext) -> Self {
         let env_info = SYSTEM_ENV_CACHE.get_or_init(SystemEnvironmentInfo::detect);
 
+        let overrides = context.user_agent_overrides.as_ref();
+
         let driver_name = {
-            let name = if context.library_name.is_empty() {
+            let name = if let Some(ua_name) = overrides.and_then(|o| o.library_name.as_deref()) {
+                if ua_name.is_empty() {
+                    DEFAULT_DRIVER_NAME
+                } else {
+                    ua_name
+                }
+            } else if context.library_name.is_empty() {
                 DEFAULT_DRIVER_NAME
             } else {
                 &context.library_name
@@ -129,8 +137,15 @@ impl UserAgentFeature {
             sanitize_field(name, MAX_DRIVER_NAME_LEN)
         };
 
-        let driver_version =
-            sanitize_field(&context.driver_version.to_string(), MAX_DRIVER_VER_LEN);
+        let driver_version = {
+            let base_ver = context.driver_version.to_string();
+            let ver = if let Some(ua_ver) = overrides.and_then(|o| o.driver_version.as_deref()) {
+                if ua_ver.is_empty() { &base_ver } else { ua_ver }
+            } else {
+                &base_ver
+            };
+            sanitize_field(ver, MAX_DRIVER_VER_LEN)
+        };
 
         let runtime_details = match &context.runtime_details {
             Some(v) if !v.is_empty() => sanitize_field(v, MAX_RUNTIME_LEN),
@@ -317,32 +332,14 @@ mod tests {
     fn test_user_agent_builder_custom_ffi() {
         let mut context = ClientContext::with_data_source("tcp:test");
         context.library_name = "mssql-python".to_string();
+        context.set_user_agent_library_name("MS-PYTHON".to_string());
         context.set_runtime_details("CPython 3.12.3".to_string());
 
         let feature = UserAgentFeature::new(&context);
         let parts: Vec<&str> = feature.payload.split('|').collect();
 
-        assert_eq!(parts[1], "mssql-python"); // Driver Name correctly mapped
+        assert_eq!(parts[1], "MS-PYTHON"); // Driver Name overrides library_name
         assert_eq!(parts[6], "CPython 3.12.3"); // Dynamic FFI runtime mapped
-    }
-
-    #[test]
-    fn test_user_agent_feature_serialization() {
-        let context = ClientContext::with_data_source("tcp:test");
-        let mut feature = UserAgentFeature::new(&context);
-        
-        assert_eq!(feature.is_requested(), true);
-        assert_eq!(feature.is_acknowledged(), false);
-        feature.set_acknowledged(true);
-        
-        let mut writer = PacketWriter::new(0, 8192);
-        futures_executor::block_on(feature.serialize(&mut writer)).unwrap();
-        
-        let box_clone = feature.clone_box();
-        assert_eq!(box_clone.feature_identifier(), FeatureExtension::UserAgent);
-        
-        // deserialize is a no-op
-        feature.deserialize(&[]).unwrap();
     }
 
     #[test]

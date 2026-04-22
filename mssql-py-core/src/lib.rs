@@ -21,6 +21,9 @@ pub use python_logger_adapter::{init_tracing_bridge, scoped_tracing_bridge};
 /// Falls back to mssql-tds crate version if never set.
 pub(crate) static DRIVER_VERSION: OnceLock<DriverVersion> = OnceLock::new();
 
+/// Unparsed raw module-level driver version string for User-Agent telemetry.
+pub(crate) static RAW_DRIVER_VERSION: OnceLock<String> = OnceLock::new();
+
 /// Module-level runtime details, set once by the host Python package.
 pub(crate) static RUNTIME_DETAILS: OnceLock<String> = OnceLock::new();
 
@@ -30,6 +33,11 @@ pub(crate) fn get_driver_version() -> DriverVersion {
         .get()
         .copied()
         .unwrap_or_else(DriverVersion::from_cargo_version)
+}
+
+/// Returns the unparsed driver version string if set.
+pub(crate) fn get_raw_driver_version() -> Option<String> {
+    RAW_DRIVER_VERSION.get().cloned()
 }
 
 /// Python module for Core TDS connectivity
@@ -51,15 +59,23 @@ fn mssql_py_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     {
         let parts: Vec<&str> = ver_str.split('.').collect();
         if parts.len() >= 3 {
+            // Helper to solidly extract only leading digits from parts like "3rc1" or "12dev"
+            let parse_part = |s: &str| {
+                let digits_only: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+                digits_only
+            };
+            
             #[allow(clippy::collapsible_if)]
             if let (Ok(major), Ok(minor), Ok(build)) = (
-                parts[0].parse::<u8>(),
-                parts[1].parse::<u8>(),
-                parts[2].parse::<u16>(),
+                parse_part(parts[0]).parse::<u8>(),
+                parse_part(parts[1]).parse::<u8>(),
+                parse_part(parts[2]).parse::<u16>(),
             ) {
                 let _ = DRIVER_VERSION.set(DriverVersion::new(major, minor, build));
             }
         }
+        
+        let _ = RAW_DRIVER_VERSION.set(ver_str);
     }
 
     m.add_class::<connection::PyCoreConnection>()?;
