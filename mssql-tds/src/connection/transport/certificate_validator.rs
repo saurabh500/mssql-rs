@@ -9,14 +9,13 @@
 
 use crate::core::TdsResult;
 use crate::error::Error;
-use native_tls::Certificate;
 use std::fs;
 use std::path::Path;
 use tracing::{debug, info};
 
 /// Load a certificate from a file path and convert to DER format.
 /// Supports both DER and PEM encoded X.509 certificates.
-/// Uses native-tls Certificate API for automatic format detection and conversion.
+/// PEM files are decoded to their DER payload; DER files are parsed before use.
 ///
 /// # Arguments
 /// * `path` - Path to the certificate file
@@ -40,23 +39,18 @@ pub fn load_certificate_from_file(path: &Path) -> TdsResult<Vec<u8>> {
         error: e.to_string(),
     })?;
 
-    // Try to parse as PEM first, fall back to DER
-    // native-tls handles the format detection and parsing
-    let certificate = Certificate::from_pem(&cert_data)
-        .or_else(|_| {
+    let der_data = match x509_parser::pem::parse_x509_pem(&cert_data) {
+        Ok((_, pem)) => pem.contents,
+        Err(_) => {
             debug!("Not PEM format, trying DER");
-            Certificate::from_der(&cert_data)
-        })
-        .map_err(|_| Error::InvalidCertificateFormat {
-            path: path.to_path_buf(),
-        })?;
-
-    // Convert to DER format for binary comparison
-    let der_data = certificate
-        .to_der()
-        .map_err(|_| Error::InvalidCertificateFormat {
-            path: path.to_path_buf(),
-        })?;
+            x509_parser::parse_x509_certificate(&cert_data).map_err(|_| {
+                Error::InvalidCertificateFormat {
+                    path: path.to_path_buf(),
+                }
+            })?;
+            cert_data
+        }
+    };
 
     info!(
         "Successfully loaded certificate from: {path:?} ({} bytes)",

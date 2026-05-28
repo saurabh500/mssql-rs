@@ -100,17 +100,38 @@ pub enum Error {
     #[error("Protocol Error: {0}")]
     ProtocolError(String),
 
-    /// TLS/SSL library error.
+    /// TLS/SSL library error (native-tls backend).
+    #[cfg(feature = "native-tls-backend")]
     #[error("TLS Error: {0}")]
     TlsError(#[from] native_tls::Error),
 
-    /// TLS handshake failed with host/SAN details.
+    /// TLS handshake failed with host/SAN details (native-tls backend).
+    #[cfg(feature = "native-tls-backend")]
     #[error(
         "TLS handshake failed while connecting to '{expected_host}': {source}. Certificate SANs: {cert_sans}"
     )]
     TlsHandshakeError {
         /// Inner TLS error.
         source: native_tls::Error,
+        /// Hostname the client tried to connect to.
+        expected_host: String,
+        /// Subject Alternative Names found on the certificate.
+        cert_sans: String,
+    },
+
+    /// TLS/SSL library error (rustls backend).
+    #[cfg(feature = "rustls-backend")]
+    #[error("TLS Error (rustls): {0}")]
+    RustlsError(#[from] rustls::Error),
+
+    /// TLS handshake failed with host/SAN details (rustls backend).
+    #[cfg(feature = "rustls-backend")]
+    #[error(
+        "TLS handshake failed (rustls) while connecting to '{expected_host}': {source}. Certificate SANs: {cert_sans}"
+    )]
+    RustlsHandshakeError {
+        /// Inner TLS I/O error.
+        source: std::io::Error,
         /// Hostname the client tried to connect to.
         expected_host: String,
         /// Subject Alternative Names found on the certificate.

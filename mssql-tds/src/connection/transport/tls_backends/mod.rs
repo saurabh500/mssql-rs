@@ -1,22 +1,45 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Concrete TLS backend implementations.
-//!
-//! The active backend is exposed as [`SelectedTlsBackend`] and is selected at
-//! compile time. With only the `native-tls` backend present today this is a
-//! plain alias; once additional backends (e.g. `rustls`) are added each will
-//! be cfg-gated and the alias will resolve to whichever was chosen.
+#[cfg(not(any(feature = "native-tls-backend", feature = "rustls-backend")))]
+compile_error!(
+    "mssql-tds requires exactly one TLS backend feature: enable `native-tls-backend` or `rustls-backend`."
+);
 
+// The workspace clippy alias uses --all-features; real builds still reject both.
+#[cfg(all(
+    feature = "native-tls-backend",
+    feature = "rustls-backend",
+    not(clippy)
+))]
+compile_error!(
+    "mssql-tds TLS backend features are mutually exclusive: enable only one of `native-tls-backend` or `rustls-backend`."
+);
+
+#[cfg(feature = "native-tls-backend")]
 pub(crate) mod native_tls;
+#[cfg(all(
+    feature = "rustls-backend",
+    any(not(feature = "native-tls-backend"), not(clippy))
+))]
+pub(crate) mod rustls;
 
-pub(crate) use self::native_tls::NativeTlsBackend;
+#[cfg(all(
+    feature = "native-tls-backend",
+    any(not(feature = "rustls-backend"), clippy)
+))]
+pub(crate) type SelectedTlsBackend = self::native_tls::NativeTlsBackend;
+#[cfg(all(feature = "rustls-backend", not(feature = "native-tls-backend")))]
+pub(crate) type SelectedTlsBackend = self::rustls::RustlsBackend;
 
-/// The TLS backend used for all handshakes in this build.
-pub(crate) type SelectedTlsBackend = NativeTlsBackend;
-
-/// Returns a fresh instance of the selected backend. Backends are unit structs
-/// so this is essentially free.
+#[cfg(all(
+    feature = "native-tls-backend",
+    any(not(feature = "rustls-backend"), clippy)
+))]
 pub(crate) fn selected_backend() -> SelectedTlsBackend {
-    NativeTlsBackend
+    self::native_tls::NativeTlsBackend
+}
+#[cfg(all(feature = "rustls-backend", not(feature = "native-tls-backend")))]
+pub(crate) fn selected_backend() -> SelectedTlsBackend {
+    self::rustls::RustlsBackend
 }
