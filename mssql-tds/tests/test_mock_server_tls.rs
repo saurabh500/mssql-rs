@@ -37,7 +37,7 @@ mod mock_server_tls_tests {
 
     /// Helper function to load test certificates.
     /// Returns an error with instructions if certificates don't exist.
-    fn load_test_identity() -> Result<native_tls::Identity, Box<dyn std::error::Error>> {
+    fn load_test_identity() -> Result<mssql_mock_tds::TlsIdentity, Box<dyn std::error::Error>> {
         // On Windows, use the pre-generated .pfx file
         #[cfg(windows)]
         {

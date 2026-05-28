@@ -25,6 +25,7 @@ pub mod server;
 pub mod tds_tls_wrapper;
 pub mod tls_helper;
 
+pub use native_tls::Identity as TlsIdentity;
 pub use query_response::{
     ColumnDefinition, ColumnValue, InfoMessage, QueryRegistry, QueryResponse, Row, SqlDataType,
 };
