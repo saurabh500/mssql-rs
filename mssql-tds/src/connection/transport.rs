@@ -16,3 +16,9 @@ pub mod parallel_connect;
 pub mod ssl_handler;
 /// High-level TDS transport abstraction.
 pub mod tds_transport;
+/// TLS backend abstraction (trait + outcome types).
+pub(crate) mod tls_backend;
+/// Concrete TLS backend implementations.
+pub(crate) mod tls_backends;
+/// TDS framing used during the TLS 7.4 handshake.
+pub(crate) mod tls_over_tds;

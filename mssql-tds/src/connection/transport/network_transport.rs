@@ -614,15 +614,17 @@ impl NetworkTransport {
                 // separate poll_write calls for ClientKeyExchange, ChangeCipherSpec, and
                 // Finished messages, but SQL Server expects them as a single TDS packet.
                 let tls_over_tds =
-                    crate::connection::transport::ssl_handler::TlsOverTdsStream::new(base_stream);
+                    crate::connection::transport::tls_over_tds::TlsOverTdsStream::new(base_stream);
                 Box::new(
-                    crate::connection::transport::ssl_handler::BufferedTdsStream::new(tls_over_tds),
+                    crate::connection::transport::tls_over_tds::BufferedTdsStream::new(
+                        tls_over_tds,
+                    ),
                 )
             }
             #[cfg(not(target_os = "macos"))]
             {
                 Box::new(
-                    crate::connection::transport::ssl_handler::TlsOverTdsStream::new(base_stream),
+                    crate::connection::transport::tls_over_tds::TlsOverTdsStream::new(base_stream),
                 )
             }
         } else {
