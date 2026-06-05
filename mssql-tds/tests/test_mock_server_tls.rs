@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![cfg(feature = "native-tls-backend")]
+
 //! Tests for Mock TDS Server TLS capabilities
 //!
 //! These tests validate the TLS/SSL functionality of the mock TDS server,

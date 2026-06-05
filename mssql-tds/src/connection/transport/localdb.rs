@@ -107,7 +107,7 @@ impl LocalDBApi {
             let result = RegOpenKeyExW(
                 HKEY_LOCAL_MACHINE,
                 PCWSTR(key_name.as_ptr()),
-                0,
+                Some(0),
                 KEY_ENUMERATE_SUB_KEYS | KEY_QUERY_VALUE,
                 &mut hkey,
             );
@@ -133,10 +133,10 @@ impl LocalDBApi {
                 let result = RegEnumKeyExW(
                     hkey,
                     index,
-                    windows::core::PWSTR(name_buffer.as_mut_ptr()),
+                    Some(windows::core::PWSTR(name_buffer.as_mut_ptr())),
                     &mut name_len,
                     None,
-                    windows::core::PWSTR::null(),
+                    None,
                     None,
                     None,
                 );
@@ -178,7 +178,7 @@ impl LocalDBApi {
             let result = RegOpenKeyExW(
                 hkey,
                 PCWSTR(version_key_name.as_ptr()),
-                0,
+                Some(0),
                 KEY_QUERY_VALUE,
                 &mut version_hkey,
             );
