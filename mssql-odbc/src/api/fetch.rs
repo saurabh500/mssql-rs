@@ -5,6 +5,7 @@
 
 use tracing::{debug, error};
 
+use super::exec_common::{return_client_idle, store_cursor_client, take_cursor_client};
 use super::sqlstate::*;
 use crate::api::odbc_types::{
     SQL_ERROR, SQL_INVALID_HANDLE, SQL_NO_DATA, SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SqlHandle,
@@ -60,7 +61,7 @@ fn fetch_rows_next(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlReturn 
     let dbc = stmt.parent_dbc();
 
     let mut client = {
-        let Ok(mut dbc_state) = dbc.inner.lock() else {
+        let Ok(dbc_state) = dbc.inner.lock() else {
             error!("SQLFetch: dbc mutex poisoned");
             return SQL_ERROR;
         };
@@ -85,11 +86,10 @@ fn fetch_rows_next(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlReturn 
             return SQL_NO_DATA;
         }
 
-        let Some(client) = dbc_state.client.take() else {
+        drop(dbc_state);
+
+        let Some(client) = take_cursor_client(dbc, stmt) else {
             error!("SQLFetch: no active TDS client");
-            // Keep active_stmt unchanged here. If this statement is in-flight,
-            // clearing it would briefly hide the busy state from other statements.
-            drop(dbc_state);
             if let Ok(mut ss) = stmt.inner.lock() {
                 post_diag(&mut ss, ERR_NO_ACTIVE_TDS_CLIENT);
             }
@@ -111,9 +111,7 @@ fn fetch_rows_next(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlReturn 
             Ok(ss) => ss.column_metadata.is_empty(),
             Err(_) => {
                 error!("SQLFetch: stmt mutex poisoned checking no-row result");
-                if let Ok(mut ds) = dbc.inner.lock() {
-                    ds.client = Some(client);
-                }
+                return_client_idle(dbc, statement_handle, client);
                 return SQL_ERROR;
             }
         };
@@ -121,9 +119,7 @@ fn fetch_rows_next(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlReturn 
             error!("SQLFetch: current result has no columns (no-row statement)");
             // Restore the client so the connection stays busy on this statement;
             // the application can still call SQLMoreResults to advance.
-            if let Ok(mut ds) = dbc.inner.lock() {
-                ds.client = Some(client);
-            }
+            store_cursor_client(dbc, stmt, client);
             if let Ok(mut ss) = stmt.inner.lock() {
                 post_diag(&mut ss, ERR_INVALID_CURSOR_STATE);
             }
@@ -143,12 +139,7 @@ fn fetch_rows_next(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlReturn 
         Ok(true) => {
             let Ok(mut stmt_state) = stmt.inner.lock() else {
                 error!("SQLFetch: stmt mutex poisoned storing row");
-                if let Ok(mut ds) = dbc.inner.lock() {
-                    ds.client = Some(client);
-                    if ds.active_stmt == Some(statement_handle) {
-                        ds.active_stmt = None;
-                    }
-                }
+                return_client_idle(dbc, statement_handle, client);
                 return SQL_ERROR;
             };
             stmt_state.begin_row(); // clears per-row state and marks positioned
@@ -158,10 +149,7 @@ fn fetch_rows_next(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlReturn 
             let has_server_info = post_tds_info_messages(&mut stmt_state, &info_messages);
             drop(stmt_state);
 
-            if let Ok(mut dbc_state) = dbc.inner.lock() {
-                dbc_state.client = Some(client);
-                dbc_state.active_stmt = Some(statement_handle);
-            }
+            store_cursor_client(dbc, stmt, client);
 
             debug!("SQLFetch: row fetched");
             if has_server_info {
@@ -202,18 +190,14 @@ fn fetch_rows_next(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlReturn 
             // with this statement.
             let Ok(mut stmt_state) = stmt.inner.lock() else {
                 error!("SQLFetch: stmt mutex poisoned at end of rowset");
-                if let Ok(mut ds) = dbc.inner.lock() {
-                    ds.client = Some(client);
-                }
+                return_client_idle(dbc, statement_handle, client);
                 return SQL_ERROR;
             };
             stmt_state.reset_row_stream();
             // Don't clear CURSOR_OPEN here: the cursor stays open until
             // SQLMoreResults / SQLCloseCursor / SQLFreeStmt(SQL_CLOSE).
             drop(stmt_state);
-            if let Ok(mut dbc_state) = dbc.inner.lock() {
-                dbc_state.client = Some(client);
-            }
+            store_cursor_client(dbc, stmt, client);
 
             debug!("SQLFetch: no more rows in current result set");
             SQL_NO_DATA
@@ -227,12 +211,7 @@ fn fetch_rows_next(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlReturn 
                 let info_messages = client.take_info_messages();
                 post_tds_info_messages(&mut stmt_state, &info_messages);
             }
-            if let Ok(mut dbc_state) = dbc.inner.lock() {
-                dbc_state.client = Some(client);
-                if dbc_state.active_stmt == Some(statement_handle) {
-                    dbc_state.active_stmt = None;
-                }
-            }
+            return_client_idle(dbc, statement_handle, client);
             SQL_ERROR
         }
     }
@@ -352,9 +331,11 @@ mod tests {
         assert_eq!(stmt_state.diag_records[0].sql_state, SQLSTATE_24000);
         drop(stmt_state);
 
-        // The client is restored and the connection stays busy on this statement.
+        // The client remains with the statement and the connection stays busy.
         let dbc_state = dbc_handle.inner.lock().unwrap();
-        assert!(dbc_state.client.is_some());
+        assert!(dbc_state.client.is_none());
         assert_eq!(dbc_state.active_stmt, Some(h.stmt));
+        drop(dbc_state);
+        assert!(stmt_handle.inner.lock().unwrap().active_client.is_some());
     }
 }
