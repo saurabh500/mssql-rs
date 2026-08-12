@@ -7,14 +7,17 @@ pub use crate::connection::tds_client::TdsClient;
 pub use crate::connection_provider::tds_connection_provider::TdsConnectionProvider;
 pub use crate::io::packet_reader::TdsPacketReader;
 pub use crate::io::token_stream::{
-    GenericTokenParserRegistry, ParserContext, RowReadResult, TdsTokenStreamReader,
-    TokenParserRegistry, TokenStreamReader,
+    ColumnPolicy, GenericTokenParserRegistry, ParserContext, PlpPauseState, RowHeader,
+    RowPauseState, RowReadResult, TdsTokenStreamReader, TokenParserRegistry, TokenStreamReader,
 };
 pub use crate::token::parsers::common::TokenParser;
 pub use crate::token::parsers::{
     FuzzDoneTokenParser as DoneTokenParser, FuzzEnvChangeTokenParser as EnvChangeTokenParser,
 };
 pub use crate::token::tokens::{SqlCollation, Tokens};
+
+// Re-export the DER/PEM framing fuzz entry point.
+pub use crate::security::crypto::fuzz_der_framing;
 
 // Re-export bulk copy internals for fuzz targets
 use crate::connection::bulk_copy::BulkCopyOptions;
@@ -463,11 +466,6 @@ impl MockTransport {
 
 #[async_trait]
 impl NetworkReader for MockTransport {
-    async fn receive(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
-        buffer.fill(0);
-        Ok(buffer.len())
-    }
-
     fn packet_size(&self) -> u32 {
         self.packet_size
     }
@@ -530,10 +528,59 @@ impl TdsTokenStreamReader for MockTransport {
         context: &ParserContext,
         remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
+        plan: ColumnPolicy,
         writer: &mut (dyn RowWriter + Send),
     ) -> TdsResult<RowReadResult> {
         self.token_stream_reader
-            .receive_row_into(context, remaining_request_timeout, cancel_handle, writer)
+            .receive_row_into(
+                context,
+                remaining_request_timeout,
+                cancel_handle,
+                plan,
+                writer,
+            )
+            .await
+    }
+
+    async fn receive_row_header(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<RowHeader> {
+        self.token_stream_reader
+            .receive_row_header(context, remaining_request_timeout, cancel_handle)
+            .await
+    }
+
+    async fn resume_row_into(
+        &mut self,
+        pause_state: RowPauseState,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+        plan: ColumnPolicy,
+        writer: &mut (dyn RowWriter + Send),
+    ) -> TdsResult<RowReadResult> {
+        self.token_stream_reader
+            .resume_row_into(
+                pause_state,
+                remaining_request_timeout,
+                cancel_handle,
+                plan,
+                writer,
+            )
+            .await
+    }
+
+    async fn read_active_plp_bytes(
+        &mut self,
+        plp_state: &mut PlpPauseState,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+        out: &mut [u8],
+    ) -> TdsResult<usize> {
+        self.token_stream_reader
+            .read_active_plp_bytes(plp_state, remaining_request_timeout, cancel_handle, out)
             .await
     }
 }
