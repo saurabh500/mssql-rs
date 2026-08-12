@@ -517,7 +517,10 @@ fn odbc_glue(c: &mut Criterion<CpuTime>) {
         // `fetch_getdata_<name>` splits each number's cost across the boundary.
         for (name, nquery) in number_queries() {
             let rows = rt.block_on(drain_tds(&mut client, &nquery, true));
-            assert_eq!(rows, ROWS, "expected {ROWS} TDS {name} rows, drained {rows}");
+            assert_eq!(
+                rows, ROWS,
+                "expected {ROWS} TDS {name} rows, drained {rows}"
+            );
             group.bench_function(format!("tds_fetch_column_{name}"), |b| {
                 b.iter(|| rt.block_on(drain_tds(&mut client, &nquery, true)));
             });
