@@ -390,28 +390,10 @@ fn resume_row_to_column(
     column_number: usize,
 ) -> SqlReturn {
     let dbc = stmt.parent_dbc();
-
-    {
-        // validate row is positioned before resuming
-        let Ok(stmt_state) = stmt.inner.lock() else {
-            error!("SQLGetData: stmt mutex poisoned while preparing row resume");
-            return SQL_ERROR;
-        };
-        if !stmt_state.row_positioned {
-            // Unreachable today — the `!row_positioned` check in the caller
-            // fires first — but return a diagnostic rather than a bare
-            // SQL_ERROR so a future guard reorder can't yield an empty
-            // SQLGetDiagRec.
-            let mut stmt_state = stmt_state;
-            post_sql_error(
-                &mut stmt_state,
-                SQLSTATE_24000,
-                0,
-                "Statement is not positioned on a row",
-            );
-            return SQL_ERROR;
-        }
-    };
+    // `sql_get_data_safe` validates `row_positioned` while holding the statement
+    // lock immediately before calling this helper. Rechecking it here added a
+    // mutex transition to every first-column SQLGetData call without protecting
+    // any state that can change while the connection is being resumed.
 
     let mut client = {
         let Ok(mut dbc_state) = dbc.inner.lock() else {
