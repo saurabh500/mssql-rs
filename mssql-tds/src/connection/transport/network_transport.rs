@@ -12,6 +12,7 @@ use crate::core::{
 };
 use crate::datatypes::decoder::GenericDecoder;
 use crate::datatypes::row_writer::RowWriter;
+use crate::datatypes::sqldatatypes::TdsDataType;
 use crate::error::Error::{OperationCancelledError, TimeoutError};
 use crate::error::TimeoutErrorType;
 use crate::handler::handler_factory::SessionSettings;
@@ -1351,6 +1352,107 @@ impl TdsPacketReader for NetworkTransport {
     }
 }
 
+fn try_decode_scalar_buffered(
+    read_buffer: &mut TdsReadBuffer,
+    metadata: &ColumnMetadata,
+    col: usize,
+    writer: &mut (dyn RowWriter + Send),
+) -> bool {
+    let bytes = &read_buffer.get_slice()[..read_buffer.get_remaining_byte_count()];
+    let consumed = match metadata.data_type {
+        TdsDataType::Int1 if !bytes.is_empty() => {
+            writer.write_u8(col, bytes[0]);
+            1
+        }
+        TdsDataType::Int2 if bytes.len() >= 2 => {
+            writer.write_i16(col, LittleEndian::read_i16(bytes));
+            2
+        }
+        TdsDataType::Int4 if bytes.len() >= 4 => {
+            writer.write_i32(col, LittleEndian::read_i32(bytes));
+            4
+        }
+        TdsDataType::Int8 if bytes.len() >= 8 => {
+            writer.write_i64(col, LittleEndian::read_i64(bytes));
+            8
+        }
+        TdsDataType::Flt4 if bytes.len() >= 4 => {
+            writer.write_f32(col, LittleEndian::read_f32(bytes));
+            4
+        }
+        TdsDataType::Flt8 if bytes.len() >= 8 => {
+            writer.write_f64(col, LittleEndian::read_f64(bytes));
+            8
+        }
+        TdsDataType::Bit if !bytes.is_empty() => {
+            writer.write_bool(col, bytes[0] == 1);
+            1
+        }
+        TdsDataType::DecimalN | TdsDataType::NumericN => {
+            let Some(&length) = bytes.first() else {
+                return false;
+            };
+            let length = usize::from(length);
+            if bytes.len() < length + 1 {
+                return false;
+            }
+            if length == 0 {
+                writer.write_null(col);
+                1
+            } else {
+                let (Some(precision), Some(scale)) =
+                    (metadata.get_precision(), metadata.get_scale())
+                else {
+                    return false;
+                };
+                let part_count = (length - 1) / 4;
+                let mut int_parts = Vec::with_capacity(part_count);
+                for offset in (0..part_count).map(|part| 2 + part * 4) {
+                    int_parts.push(LittleEndian::read_i32(&bytes[offset..]));
+                }
+                let decimal = crate::datatypes::decoder::DecimalParts {
+                    is_positive: bytes[1] == 1,
+                    scale,
+                    precision,
+                    int_parts,
+                };
+                if metadata.data_type == TdsDataType::DecimalN {
+                    writer.write_decimal(col, decimal);
+                } else {
+                    writer.write_numeric(col, decimal);
+                }
+                length + 1
+            }
+        }
+        TdsDataType::IntN | TdsDataType::FltN | TdsDataType::BitN => {
+            let Some(&length) = bytes.first() else {
+                return false;
+            };
+            let length = usize::from(length);
+            if bytes.len() < length + 1 {
+                return false;
+            }
+            let value = &bytes[1..];
+            match (metadata.data_type, length) {
+                (_, 0) => writer.write_null(col),
+                (TdsDataType::IntN, 1) => writer.write_u8(col, value[0]),
+                (TdsDataType::IntN, 2) => writer.write_i16(col, LittleEndian::read_i16(value)),
+                (TdsDataType::IntN, 4) => writer.write_i32(col, LittleEndian::read_i32(value)),
+                (TdsDataType::IntN, 8) => writer.write_i64(col, LittleEndian::read_i64(value)),
+                (TdsDataType::FltN, 4) => writer.write_f32(col, LittleEndian::read_f32(value)),
+                (TdsDataType::FltN, 8) => writer.write_f64(col, LittleEndian::read_f64(value)),
+                (TdsDataType::BitN, 1) => writer.write_bool(col, value[0] == 1),
+                _ => return false,
+            }
+            length + 1
+        }
+        _ => return false,
+    };
+
+    read_buffer.consume_bytes(consumed);
+    true
+}
+
 #[async_trait]
 impl TdsTokenStreamReader for NetworkTransport {
     async fn receive_token(
@@ -1527,6 +1629,10 @@ impl TdsTokenStreamReader for NetworkTransport {
         let available = self.tds_read_buffer.get_remaining_byte_count();
         if available == 0 {
             return false;
+        }
+
+        if try_decode_scalar_buffered(&mut self.tds_read_buffer, metadata, col, writer) {
+            return true;
         }
 
         // The decoder runs against a slice of the current packet. It never

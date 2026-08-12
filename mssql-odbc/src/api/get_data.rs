@@ -1081,12 +1081,13 @@ fn column_value_to_text_in<'a>(
 
     scratch.len = 0;
     let rendered = match v {
-        ColumnValues::TinyInt(x) => write!(scratch, "{x}"),
-        ColumnValues::SmallInt(x) => write!(scratch, "{x}"),
-        ColumnValues::Int(x) => write!(scratch, "{x}"),
-        ColumnValues::BigInt(x) => write!(scratch, "{x}"),
+        ColumnValues::TinyInt(x) => scratch.write_str(itoa::Buffer::new().format(*x)),
+        ColumnValues::SmallInt(x) => scratch.write_str(itoa::Buffer::new().format(*x)),
+        ColumnValues::Int(x) => scratch.write_str(itoa::Buffer::new().format(*x)),
+        ColumnValues::BigInt(x) => scratch.write_str(itoa::Buffer::new().format(*x)),
         ColumnValues::Real(x) => write!(scratch, "{x}"),
         ColumnValues::Float(x) => write!(scratch, "{x}"),
+        ColumnValues::Decimal(x) | ColumnValues::Numeric(x) => write!(scratch, "{x}"),
         ColumnValues::Uuid(u) => write!(scratch, "{u}"),
         ColumnValues::String(s) => {
             let text = s.as_utf8_str();
