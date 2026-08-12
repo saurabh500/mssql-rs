@@ -3,6 +3,8 @@
 
 //! SQLGetData implementation with incremental row materialization.
 
+use std::borrow::Cow;
+
 use tracing::{debug, error};
 
 use super::odbc_types::{
@@ -299,7 +301,8 @@ fn write_captured_column(
         return rc;
     }
 
-    let as_text = match column_value_to_text(value) {
+    let mut scratch = TextScratch::new();
+    let as_text = match column_value_to_text_in(value, &mut scratch) {
         Ok(t) => t,
         Err(TextError::Malformed) => {
             // The server payload could not be decoded. Leave the value resident;
@@ -1000,6 +1003,76 @@ fn xml_to_text(bytes: &[u8]) -> Result<String, TextError> {
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     String::from_utf16(&units).map_err(|_| TextError::Malformed)
+}
+
+/// Stack buffer that renders fixed-width values without touching the allocator.
+///
+/// 64 bytes clears every fixed-width form by a wide margin — the longest is a
+/// 36-character GUID — so the overflow path exists only for soundness.
+struct TextScratch {
+    buf: [u8; 64],
+    len: usize,
+}
+
+impl TextScratch {
+    fn new() -> Self {
+        Self {
+            buf: [0; 64],
+            len: 0,
+        }
+    }
+
+    fn as_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.buf[..self.len]).ok()
+    }
+}
+
+impl std::fmt::Write for TextScratch {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let end = self.len + s.len();
+        if end > self.buf.len() {
+            return Err(std::fmt::Error);
+        }
+        self.buf[self.len..end].copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
+/// Allocation-free overlay on [`column_value_to_text`] for the types whose
+/// rendered length is bounded.
+///
+/// `SQLGetData` renders one value per row, so the `String` those types used to
+/// return was a heap allocation and free per row to carry at most 20 digits.
+///
+/// Every other type — and any fixed-width value that somehow overflows the
+/// scratch buffer — falls through to `column_value_to_text`, so the two agree
+/// by construction.
+fn column_value_to_text_in<'s>(
+    v: &ColumnValues,
+    scratch: &'s mut TextScratch,
+) -> Result<Cow<'s, str>, TextError> {
+    use std::fmt::Write as _;
+
+    scratch.len = 0;
+    let rendered = match v {
+        ColumnValues::TinyInt(x) => write!(scratch, "{x}"),
+        ColumnValues::SmallInt(x) => write!(scratch, "{x}"),
+        ColumnValues::Int(x) => write!(scratch, "{x}"),
+        ColumnValues::BigInt(x) => write!(scratch, "{x}"),
+        ColumnValues::Real(x) => write!(scratch, "{x}"),
+        ColumnValues::Float(x) => write!(scratch, "{x}"),
+        ColumnValues::Uuid(u) => write!(scratch, "{u}"),
+        ColumnValues::Bit(x) => return Ok(Cow::Borrowed(if *x { "1" } else { "0" })),
+        ColumnValues::Null => return Ok(Cow::Borrowed("")),
+        _ => return column_value_to_text(v).map(Cow::Owned),
+    };
+    if rendered.is_ok()
+        && let Some(s) = scratch.as_str()
+    {
+        return Ok(Cow::Borrowed(s));
+    }
+    column_value_to_text(v).map(Cow::Owned)
 }
 
 fn column_value_to_text(v: &ColumnValues) -> Result<String, TextError> {
