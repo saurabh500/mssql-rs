@@ -12,7 +12,7 @@ use super::odbc_types::{
 };
 use super::sqlstate::*;
 use crate::api::odbc_types::SqlWChar;
-use crate::api::util::{copy_with_nul, write_if_some};
+use crate::api::util::{copy_with_nul, drive_read, write_if_some};
 use crate::error::{free_errors, post_sql_error};
 use crate::handles::stmt::{ActivePlpStream, STMT_STATE_CURSOR_OPEN};
 use crate::handles::{HandleType, StmtHandle, handle_from_raw};
@@ -426,7 +426,7 @@ fn resume_row_to_column(
     };
 
     let target = column_number - 1; // 0-based
-    let cursor_result = dbc.runtime.block_on(client.read_row_column(target));
+    let cursor_result = drive_read(&dbc.runtime, client.read_row_column(target));
 
     let Ok(mut dbc_state) = dbc.inner.lock() else {
         error!("SQLGetData: dbc mutex poisoned after row resume");
@@ -659,9 +659,7 @@ fn stream_active_plp_chunk(
         client
     };
 
-    let read_result = dbc
-        .runtime
-        .block_on(client.read_active_plp_chunk(&mut payload));
+    let read_result = drive_read(&dbc.runtime, client.read_active_plp_chunk(&mut payload));
 
     let Ok(mut dbc_state) = dbc.inner.lock() else {
         error!("SQLGetData: dbc mutex poisoned after PLP read");
