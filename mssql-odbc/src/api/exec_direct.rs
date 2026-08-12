@@ -298,10 +298,13 @@ mod tests {
         assert!(ss.column_metadata.is_empty());
         drop(ss);
 
-        // Connection stays busy on this statement with the client returned.
+        // Connection stays busy on this statement with the client owned by its
+        // active execution context.
         let ds = dbc.inner.lock().unwrap();
         assert_eq!(ds.active_stmt, Some(h.stmt));
-        assert!(ds.client.is_some());
+        assert!(ds.client.is_none());
+        drop(ds);
+        assert!(stmt.inner.lock().unwrap().active_client.is_some());
     }
 
     /// A no-row statement that also produced a message surfaces its diagnostics

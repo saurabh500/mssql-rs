@@ -7,6 +7,7 @@ use std::borrow::Cow;
 
 use tracing::{debug, error};
 
+use super::exec_common::{return_client_idle, store_cursor_client, take_cursor_client};
 use super::odbc_types::{
     SQL_C_CHAR, SQL_C_GUID, SQL_C_WCHAR, SQL_ERROR, SQL_INVALID_HANDLE, SQL_NO_DATA, SQL_NO_TOTAL,
     SQL_NULL_DATA, SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SqlHandle, SqlLen, SqlPointer, SqlReturn,
@@ -390,31 +391,13 @@ fn resume_row_to_column(
     column_number: usize,
 ) -> SqlReturn {
     let dbc = stmt.parent_dbc();
-
-    {
-        // validate row is positioned before resuming
-        let Ok(stmt_state) = stmt.inner.lock() else {
-            error!("SQLGetData: stmt mutex poisoned while preparing row resume");
-            return SQL_ERROR;
-        };
-        if !stmt_state.row_positioned {
-            // Unreachable today — the `!row_positioned` check in the caller
-            // fires first — but return a diagnostic rather than a bare
-            // SQL_ERROR so a future guard reorder can't yield an empty
-            // SQLGetDiagRec.
-            let mut stmt_state = stmt_state;
-            post_sql_error(
-                &mut stmt_state,
-                SQLSTATE_24000,
-                0,
-                "Statement is not positioned on a row",
-            );
-            return SQL_ERROR;
-        }
-    };
+    // `sql_get_data_safe` validates `row_positioned` while holding the statement
+    // lock immediately before calling this helper. Rechecking it here added a
+    // mutex transition to every first-column SQLGetData call without protecting
+    // any state that can change while the connection is being resumed.
 
     let mut client = {
-        let Ok(mut dbc_state) = dbc.inner.lock() else {
+        let Ok(dbc_state) = dbc.inner.lock() else {
             error!("SQLGetData: dbc mutex poisoned while resuming row");
             return SQL_ERROR;
         };
@@ -429,8 +412,9 @@ fn resume_row_to_column(
             return SQL_ERROR;
         }
 
-        let Some(client) = dbc_state.client.take() else {
-            drop(dbc_state);
+        drop(dbc_state);
+
+        let Some(client) = take_cursor_client(dbc, stmt) else {
             if let Ok(mut stmt_state) = stmt.inner.lock() {
                 post_diag(&mut stmt_state, ERR_NO_ACTIVE_TDS_CLIENT);
             }
@@ -443,16 +427,9 @@ fn resume_row_to_column(
     let target = column_number - 1; // 0-based
     let cursor_result = drive_read(&dbc.runtime, pin!(client.read_row_column(target)));
 
-    let Ok(mut dbc_state) = dbc.inner.lock() else {
-        error!("SQLGetData: dbc mutex poisoned after row resume");
-        return SQL_ERROR;
-    };
-    dbc_state.client = Some(client);
-    dbc_state.active_stmt = Some(statement_handle);
-    drop(dbc_state);
-
     match cursor_result {
         Ok(CursorColumn::Value(value)) => {
+            store_cursor_client(dbc, stmt, client);
             if let Ok(mut stmt_state) = stmt.inner.lock() {
                 stmt_state.last_captured = Some((column_number, value));
                 stmt_state.row_exhausted = false;
@@ -462,6 +439,7 @@ fn resume_row_to_column(
             SQL_ERROR
         }
         Ok(CursorColumn::PlpStreaming { .. }) => {
+            store_cursor_client(dbc, stmt, client);
             // Target is a PLP column: leave last_captured empty so the caller
             // switches to chunked streaming via stream_active_plp_chunk.
             if let Ok(mut stmt_state) = stmt.inner.lock() {
@@ -472,6 +450,7 @@ fn resume_row_to_column(
             SQL_ERROR
         }
         Ok(CursorColumn::AlreadyConsumed) => {
+            store_cursor_client(dbc, stmt, client);
             // Forward-only violation. The caller's own last-column guard should
             // catch this first; treat any residual case as no-data.
             if let Ok(mut stmt_state) = stmt.inner.lock() {
@@ -481,6 +460,7 @@ fn resume_row_to_column(
             SQL_ERROR
         }
         Ok(CursorColumn::RowEnded) => {
+            store_cursor_client(dbc, stmt, client);
             if let Ok(mut stmt_state) = stmt.inner.lock() {
                 stmt_state.last_captured = None;
                 stmt_state.row_exhausted = true;
@@ -494,6 +474,7 @@ fn resume_row_to_column(
             SQL_ERROR
         }
         Err(e) => {
+            return_client_idle(dbc, statement_handle, client);
             if let Ok(mut stmt_state) = stmt.inner.lock() {
                 stmt_state.reset_row_stream();
                 stmt_state.clear_state(STMT_STATE_CURSOR_OPEN);
@@ -648,7 +629,7 @@ fn stream_active_plp_chunk(
     let mut payload = vec![0u8; max_read];
     let dbc = stmt.parent_dbc();
     let mut client = {
-        let Ok(mut dbc_state) = dbc.inner.lock() else {
+        let Ok(dbc_state) = dbc.inner.lock() else {
             error!("SQLGetData: dbc mutex poisoned while reading PLP stream");
             return SQL_ERROR;
         };
@@ -663,8 +644,9 @@ fn stream_active_plp_chunk(
             return SQL_ERROR;
         }
 
-        let Some(client) = dbc_state.client.take() else {
-            drop(dbc_state);
+        drop(dbc_state);
+
+        let Some(client) = take_cursor_client(dbc, stmt) else {
             if let Ok(mut s) = stmt.inner.lock() {
                 post_diag(&mut s, ERR_NO_ACTIVE_TDS_CLIENT);
             }
@@ -679,22 +661,18 @@ fn stream_active_plp_chunk(
         pin!(client.read_active_plp_chunk(&mut payload)),
     );
 
-    let Ok(mut dbc_state) = dbc.inner.lock() else {
-        error!("SQLGetData: dbc mutex poisoned after PLP read");
-        return SQL_ERROR;
-    };
-    dbc_state.client = Some(client);
-    dbc_state.active_stmt = Some(statement_handle);
-    drop(dbc_state);
-
     let PlpChunk {
         read,
         reached_end,
         known_total,
         total_read,
     } = match read_result {
-        Ok(chunk) => chunk,
+        Ok(chunk) => {
+            store_cursor_client(dbc, stmt, client);
+            chunk
+        }
         Err(e) => {
+            return_client_idle(dbc, statement_handle, client);
             if let Ok(mut s) = stmt.inner.lock() {
                 s.clear_state(STMT_STATE_CURSOR_OPEN);
                 post_tds_error(&mut s, &e, SQLSTATE_HY000);

@@ -10,6 +10,7 @@ use super::{DbcHandle, HandleType, HasObjectType, free_handle, handle_to_raw};
 use crate::api::odbc_types::{SqlULen, SqlUSmallInt};
 use crate::error::{DiagRecord, HasDiagnostics};
 use crate::params::BoundParam;
+use mssql_tds::connection::tds_client::TdsClient;
 use mssql_tds::datatypes::column_values::ColumnValues;
 use mssql_tds::query::metadata::{ColumnMetadata, PlpEncoding};
 
@@ -64,6 +65,10 @@ pub(crate) struct StmtHandle {
 #[derive(Debug)]
 pub(crate) struct StmtState {
     pub(crate) diag_records: Vec<DiagRecord>,
+    /// TDS client owned by this statement while its cursor is open. Keeping
+    /// the client with the active execution context avoids a DBC lock
+    /// transition between SQLFetch and SQLGetData calls.
+    pub(crate) active_client: Option<TdsClient>,
     /// Column metadata from the most recent execution.
     pub(crate) column_metadata: Vec<ColumnMetadata>,
     /// SQL text stored by `SQLPrepare`, awaiting execution. The server-side
@@ -208,6 +213,7 @@ impl StmtHandle {
             ipd: handle_to_raw(Box::new(DescHandle::new(DescKind::ImpParam))),
             inner: Mutex::new(StmtState {
                 diag_records: Vec::new(),
+                active_client: None,
                 column_metadata: Vec::new(),
                 prepared_sql: None,
                 bound_params: Vec::new(),

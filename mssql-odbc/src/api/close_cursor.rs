@@ -9,6 +9,7 @@
 
 use tracing::{debug, error};
 
+use super::exec_common::{return_client_idle, take_cursor_client};
 use super::sqlstate::*;
 use crate::api::odbc_types::{
     SQL_ERROR, SQL_INVALID_HANDLE, SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SqlHandle, SqlReturn,
@@ -158,13 +159,15 @@ pub(super) enum DrainOutcome {
 pub(super) fn drain_and_release(stmt: &StmtHandle, statement_handle: SqlHandle) -> DrainOutcome {
     let dbc = stmt.parent_dbc();
 
-    // Take the client; intentionally leave active_stmt set while draining.
+    // Take the client from the statement-local execution context; intentionally
+    // leave active_stmt set while draining.
     let client = {
-        let Ok(mut dbc_state) = dbc.inner.lock() else {
+        let Ok(dbc_state) = dbc.inner.lock() else {
             error!("drain_and_release: dbc mutex poisoned");
             return DrainOutcome::Failed;
         };
-        dbc_state.client.take()
+        drop(dbc_state);
+        take_cursor_client(dbc, stmt)
     };
 
     let Some(mut client) = client else {
@@ -184,12 +187,7 @@ pub(super) fn drain_and_release(stmt: &StmtHandle, statement_handle: SqlHandle) 
         if let Ok(mut stmt_state) = stmt.inner.lock() {
             post_tds_error(&mut stmt_state, &e, SQLSTATE_HY000);
         }
-        if let Ok(mut ds) = dbc.inner.lock() {
-            ds.client = Some(client);
-            if ds.active_stmt == Some(statement_handle) {
-                ds.active_stmt = None;
-            }
-        }
+        return_client_idle(dbc, statement_handle, client);
         return DrainOutcome::Failed;
     }
 
@@ -202,24 +200,14 @@ pub(super) fn drain_and_release(stmt: &StmtHandle, statement_handle: SqlHandle) 
         }
         Err(_) => {
             error!("drain_and_release: stmt mutex poisoned while posting info messages");
-            if let Ok(mut dbc_state) = dbc.inner.lock() {
-                dbc_state.client = Some(client);
-                if dbc_state.active_stmt == Some(statement_handle) {
-                    dbc_state.active_stmt = None;
-                }
-            }
+            return_client_idle(dbc, statement_handle, client);
             return DrainOutcome::Failed;
         }
     };
 
     // Drain complete: return client and release busy claim atomically.
     super::exec_common::capture_prepared_handle(stmt, &mut client);
-    if let Ok(mut dbc_state) = dbc.inner.lock() {
-        dbc_state.client = Some(client);
-        if dbc_state.active_stmt == Some(statement_handle) {
-            dbc_state.active_stmt = None;
-        }
-    }
+    return_client_idle(dbc, statement_handle, client);
 
     if has_server_info {
         DrainOutcome::InfoPosted

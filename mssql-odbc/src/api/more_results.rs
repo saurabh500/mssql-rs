@@ -13,6 +13,7 @@ use tracing::{debug, error};
 use mssql_tds::connection::tds_client::{ResultSet, StatementResult};
 
 use super::close_cursor::reset_cursor_state;
+use super::exec_common::{return_client_idle, store_cursor_client, take_cursor_client};
 use crate::api::odbc_types::{
     SQL_ERROR, SQL_INVALID_HANDLE, SQL_NO_DATA, SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SqlHandle,
     SqlReturn,
@@ -74,7 +75,7 @@ fn sql_more_results_safe(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlR
     // Take the client; keep active_stmt set so concurrent statements continue
     // to see the connection as busy throughout the advance.
     let mut client = {
-        let Ok(mut dbc_state) = dbc.inner.lock() else {
+        let Ok(dbc_state) = dbc.inner.lock() else {
             error!("SQLMoreResults: dbc mutex poisoned");
             return SQL_ERROR;
         };
@@ -88,9 +89,9 @@ fn sql_more_results_safe(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlR
             }
             return SQL_ERROR;
         }
-        let Some(client) = dbc_state.client.take() else {
+        drop(dbc_state);
+        let Some(client) = take_cursor_client(dbc, stmt) else {
             error!("SQLMoreResults: no active TDS client");
-            drop(dbc_state);
             if let Ok(mut ss) = stmt.inner.lock() {
                 post_diag(&mut ss, ERR_NO_ACTIVE_TDS_CLIENT);
             }
@@ -106,9 +107,7 @@ fn sql_more_results_safe(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlR
             let metadata = client.get_metadata().clone();
             let Ok(mut stmt_state) = stmt.inner.lock() else {
                 error!("SQLMoreResults: stmt mutex poisoned advancing result set");
-                if let Ok(mut ds) = dbc.inner.lock() {
-                    ds.client = Some(client);
-                }
+                store_cursor_client(dbc, stmt, client);
                 return SQL_ERROR;
             };
             stmt_state.column_metadata = metadata;
@@ -119,10 +118,7 @@ fn sql_more_results_safe(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlR
             let info_messages = client.take_info_messages();
             let has_server_info = post_tds_info_messages(&mut stmt_state, &info_messages);
             drop(stmt_state);
-            if let Ok(mut dbc_state) = dbc.inner.lock() {
-                dbc_state.client = Some(client);
-                // active_stmt remains set — cursor still open on this statement.
-            }
+            store_cursor_client(dbc, stmt, client);
             debug!("SQLMoreResults: advanced to next result set");
             if has_server_info {
                 SQL_SUCCESS_WITH_INFO
@@ -138,9 +134,7 @@ fn sql_more_results_safe(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlR
             // SQLMoreResults can advance past it. Matches msodbcsql.
             let Ok(mut stmt_state) = stmt.inner.lock() else {
                 error!("SQLMoreResults: stmt mutex poisoned on no-row result");
-                if let Ok(mut ds) = dbc.inner.lock() {
-                    ds.client = Some(client);
-                }
+                store_cursor_client(dbc, stmt, client);
                 return SQL_ERROR;
             };
             stmt_state.column_metadata.clear();
@@ -151,10 +145,7 @@ fn sql_more_results_safe(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlR
             let info_messages = client.take_info_messages();
             let has_server_info = post_tds_info_messages(&mut stmt_state, &info_messages);
             drop(stmt_state);
-            if let Ok(mut dbc_state) = dbc.inner.lock() {
-                dbc_state.client = Some(client);
-                // active_stmt remains set — still positioned on this statement.
-            }
+            store_cursor_client(dbc, stmt, client);
             debug!("SQLMoreResults: advanced to a no-row statement result");
             if has_server_info {
                 SQL_SUCCESS_WITH_INFO
@@ -166,12 +157,7 @@ fn sql_more_results_safe(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlR
             // Batch exhausted. Close cursor state and release the connection.
             let Ok(mut stmt_state) = stmt.inner.lock() else {
                 error!("SQLMoreResults: stmt mutex poisoned at batch end");
-                if let Ok(mut ds) = dbc.inner.lock() {
-                    ds.client = Some(client);
-                    if ds.active_stmt == Some(statement_handle) {
-                        ds.active_stmt = None;
-                    }
-                }
+                return_client_idle(dbc, statement_handle, client);
                 return SQL_ERROR;
             };
             reset_cursor_state(&mut stmt_state);
@@ -185,12 +171,7 @@ fn sql_more_results_safe(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlR
             super::exec_common::capture_prepared_handle(stmt, &mut client);
             // TODO: surface output-param availability here once output
             // params land.
-            if let Ok(mut dbc_state) = dbc.inner.lock() {
-                dbc_state.client = Some(client);
-                if dbc_state.active_stmt == Some(statement_handle) {
-                    dbc_state.active_stmt = None;
-                }
-            }
+            return_client_idle(dbc, statement_handle, client);
             debug!("SQLMoreResults: no more result sets");
             SQL_NO_DATA
         }
@@ -203,12 +184,7 @@ fn sql_more_results_safe(statement_handle: SqlHandle, stmt: &StmtHandle) -> SqlR
                 let info_messages = client.take_info_messages();
                 post_tds_info_messages(&mut stmt_state, &info_messages);
             }
-            if let Ok(mut dbc_state) = dbc.inner.lock() {
-                dbc_state.client = Some(client);
-                if dbc_state.active_stmt == Some(statement_handle) {
-                    dbc_state.active_stmt = None;
-                }
-            }
+            return_client_idle(dbc, statement_handle, client);
             SQL_ERROR
         }
     }

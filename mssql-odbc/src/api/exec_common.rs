@@ -121,12 +121,52 @@ pub(super) fn try_claim_idle_client(
     Some(client)
 }
 
-/// Returns `client` to the DBC but **keeps** the busy claim — used when a
-/// cursor is left open for `SQLFetch`.
+/// Returns `client` to the DBC but **keeps** the busy claim.
+///
+/// This is the fallback for error recovery and for callers handling a
+/// statement whose active execution context could not be locked.
 pub(super) fn return_client_busy(dbc: &DbcHandle, client: TdsClient) {
     if let Ok(mut dbc_state) = dbc.inner.lock() {
         dbc_state.client = Some(client);
     }
+}
+
+/// Moves a result-bearing execution context into the statement that owns its
+/// open cursor. The DBC remains busy via `active_stmt`, but no longer needs to
+/// be locked for each row operation.
+pub(super) fn store_cursor_client(dbc: &DbcHandle, stmt: &StmtHandle, client: TdsClient) {
+    let Ok(mut stmt_state) = stmt.inner.lock() else {
+        error!("could not store active cursor client: stmt mutex poisoned");
+        return_client_busy(dbc, client);
+        return;
+    };
+    if stmt_state.active_client.is_none() {
+        stmt_state.active_client = Some(client);
+    } else {
+        error!("could not store active cursor client: statement already owns a client");
+        drop(stmt_state);
+        return_client_busy(dbc, client);
+    }
+}
+
+/// Takes the active cursor client from statement-local execution context.
+///
+/// The DBC fallback keeps unit-test and recovery states created before the
+/// statement-local ownership invariant was established working without adding
+/// a DBC transition to the normal fetch/get-data path.
+pub(super) fn take_cursor_client(dbc: &DbcHandle, stmt: &StmtHandle) -> Option<TdsClient> {
+    let Ok(mut stmt_state) = stmt.inner.lock() else {
+        return None;
+    };
+    if let Some(client) = stmt_state.active_client.take() {
+        return Some(client);
+    }
+    drop(stmt_state);
+
+    let Ok(mut dbc_state) = dbc.inner.lock() else {
+        return None;
+    };
+    dbc_state.client.take()
 }
 
 /// Restores the client to idle, posts a TDS error to `stmt`, clears
@@ -272,7 +312,7 @@ pub(super) fn finish_execute(
         let info_messages = client.take_info_messages();
         let Ok(mut stmt_state) = stmt.inner.lock() else {
             error!("{op}: stmt mutex poisoned on no-row result");
-            return_client_busy(dbc, client);
+            store_cursor_client(dbc, stmt, client);
             return SQL_ERROR;
         };
         stmt_state.column_metadata = metadata; // empty (0 columns)
@@ -284,7 +324,7 @@ pub(super) fn finish_execute(
         stmt_state.clear_state(STMT_STATE_EXEC_STARTED);
         let has_server_info = post_tds_info_messages(&mut stmt_state, &info_messages);
         drop(stmt_state);
-        return_client_busy(dbc, client);
+        store_cursor_client(dbc, stmt, client);
         return if has_server_info {
             SQL_SUCCESS_WITH_INFO
         } else {
@@ -331,7 +371,7 @@ pub(super) fn finish_execute(
     let info_messages = client.take_info_messages();
     let Ok(mut stmt_state) = stmt.inner.lock() else {
         error!("{op}: stmt mutex poisoned");
-        return_client_busy(dbc, client);
+        store_cursor_client(dbc, stmt, client);
         return SQL_ERROR;
     };
     stmt_state.column_metadata = metadata;
@@ -341,7 +381,7 @@ pub(super) fn finish_execute(
     stmt_state.clear_state(STMT_STATE_EXEC_STARTED);
     let has_server_info = post_tds_info_messages(&mut stmt_state, &info_messages);
     drop(stmt_state);
-    return_client_busy(dbc, client);
+    store_cursor_client(dbc, stmt, client);
     if has_server_info {
         SQL_SUCCESS_WITH_INFO
     } else {
