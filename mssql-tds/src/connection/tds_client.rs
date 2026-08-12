@@ -3419,7 +3419,7 @@ impl TdsClient {
 
     /// Reads and discards all remaining bytes of an active PLP stream.
     async fn drain_active_plp(&mut self, plp_state: &mut PlpPauseState) -> TdsResult<()> {
-        let mut buffer = [0u8; 8192];
+        let mut buffer = vec![0u8; 8192];
         while !plp_state.reached_end() {
             let start = Instant::now();
             let read = self
@@ -4464,6 +4464,33 @@ mod tests {
             execution_context,
             client_context,
         )
+    }
+
+    /// Keeps the PLP drain scratch buffer out of every cursor future that can
+    /// await it. A stack buffer would be stored inline and inflate this chain.
+    #[test]
+    fn row_fetch_futures_stay_small() {
+        const MAX: usize = 4096;
+
+        let mut client = create_test_client();
+        let mut sink = DiscardRowWriter;
+
+        let next_row_cursor = std::mem::size_of_val(&client.next_row_cursor());
+        let read_row_column = std::mem::size_of_val(&client.read_row_column(0));
+        let drain_rows = std::mem::size_of_val(&client.drain_rows());
+        let get_next_row_into = std::mem::size_of_val(&client.get_next_row_into(&mut sink));
+
+        for (name, size) in [
+            ("next_row_cursor", next_row_cursor),
+            ("read_row_column", read_row_column),
+            ("drain_rows", drain_rows),
+            ("get_next_row_into", get_next_row_into),
+        ] {
+            assert!(
+                size <= MAX,
+                "{name} future is {size} B, expected <= {MAX} B"
+            );
+        }
     }
 
     #[test]

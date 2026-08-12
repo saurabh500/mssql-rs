@@ -776,6 +776,7 @@ mod tests {
     #[test]
     fn apply_params_leaves_unset_fields_at_defaults() {
         let mut ctx = ClientContext::default();
+        let before_packet = ctx.packet_size;
         let before_retry = ctx.connect_retry_count;
         apply_connection_params(&mut ctx, &ConnectionParams::default());
         assert_eq!(ctx.packet_size, before_packet);
