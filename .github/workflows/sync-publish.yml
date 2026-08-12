@@ -1,0 +1,148 @@
+name: Sync & Publish
+
+on:
+  schedule:
+    # Check upstream daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: 'Force publish even if no upstream changes'
+        type: boolean
+        default: false
+      preview_bump:
+        description: 'Preview number to publish (e.g. 2 for 0.1.0-preview.2). Leave empty to auto-increment.'
+        type: string
+        default: ''
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  sync-and-publish:
+    name: Sync upstream & publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fork
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "saurabh500"
+          git config user.email "saurabh500@gmail.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/microsoft/mssql-rs.git || true
+          git fetch upstream main
+          git fetch origin main
+
+      - name: Sync main branch
+        run: |
+          git checkout -B main origin/main
+          git merge upstream/main --no-edit
+          git push origin main
+
+      - name: Merge main into fork
+        id: merge
+        run: |
+          git checkout fork
+          BEFORE=$(git rev-parse HEAD)
+          
+          # Merge main, auto-resolve Cargo.toml conflicts by keeping fork's version
+          if git merge main --no-edit; then
+            echo "merge=clean" >> $GITHUB_OUTPUT
+          else
+            # Only Cargo.toml should conflict (name/version fields)
+            for f in $(git diff --name-only --diff-filter=U); do
+              if [[ "$f" == *"Cargo.toml" ]]; then
+                # Keep our (fork) version for package name/version, take theirs for everything else
+                git checkout --theirs "$f"
+                # Re-apply our name and lib section
+                sed -i 's/^name = "mssql-tds"/name = "mssql-tds-preview"/' mssql-tds/Cargo.toml
+                git add "$f"
+              elif [[ "$f" == .github/workflows/* ]]; then
+                # Keep fork's version of workflow files
+                git checkout --ours "$f"
+                git add "$f"
+              else
+                echo "::error::Unexpected conflict in $f"
+                exit 1
+              fi
+            done
+            git commit --no-edit
+            echo "merge=resolved" >> $GITHUB_OUTPUT
+          fi
+          
+          AFTER=$(git rev-parse HEAD)
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine version
+        id: version
+        run: |
+          # Get upstream version
+          UPSTREAM_VER=$(grep '^version' mssql-tds/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/' | sed 's/-preview\..*//')
+          echo "upstream=$UPSTREAM_VER" >> $GITHUB_OUTPUT
+          
+          # Get current preview number
+          CURRENT_FULL=$(grep '^version' mssql-tds/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          CURRENT_PREVIEW=$(echo "$CURRENT_FULL" | grep -oP 'preview\.\K[0-9]+' || echo "0")
+          
+          # Determine next preview number
+          if [ -n "${{ inputs.preview_bump }}" ]; then
+            NEXT_PREVIEW="${{ inputs.preview_bump }}"
+          else
+            NEXT_PREVIEW=$((CURRENT_PREVIEW + 1))
+          fi
+          
+          NEW_VER="${UPSTREAM_VER}-preview.${NEXT_PREVIEW}"
+          echo "new=$NEW_VER" >> $GITHUB_OUTPUT
+          echo "Version: $NEW_VER"
+
+      - name: Update version
+        if: steps.merge.outputs.changed == 'true' || inputs.force_publish
+        run: |
+          NEW_VER="${{ steps.version.outputs.new }}"
+          sed -i "0,/^version = \".*\"/{s/^version = \".*\"/version = \"$NEW_VER\"/}" mssql-tds/Cargo.toml
+          
+          # Ensure name and lib section are correct
+          grep -q 'name = "mssql-tds-preview"' mssql-tds/Cargo.toml || \
+            sed -i 's/^name = "mssql-tds"/name = "mssql-tds-preview"/' mssql-tds/Cargo.toml
+          grep -q '^\[lib\]' mssql-tds/Cargo.toml || \
+            sed -i '/^\[features\]/i [lib]\nname = "mssql_tds"\n' mssql-tds/Cargo.toml
+          
+          git add -A
+          git commit -m "Bump to $NEW_VER" || true
+          git push origin fork
+
+      - name: Install Rust
+        if: steps.merge.outputs.changed == 'true' || inputs.force_publish
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system deps
+        if: steps.merge.outputs.changed == 'true' || inputs.force_publish
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config libkrb5-dev
+
+      - name: Verify build
+        if: steps.merge.outputs.changed == 'true' || inputs.force_publish
+        run: cargo check -p mssql-tds-preview
+
+      - name: Publish to crates.io
+        if: steps.merge.outputs.changed == 'true' || inputs.force_publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd mssql-tds
+          cargo publish --allow-dirty
+          echo "Published mssql-tds-preview ${{ steps.version.outputs.new }}"
+
+      - name: No changes
+        if: steps.merge.outputs.changed == 'false' && !inputs.force_publish
+        run: echo "No upstream changes. Skipping publish."

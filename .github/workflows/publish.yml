@@ -1,0 +1,66 @@
+name: Publish to crates.io
+
+on:
+  workflow_dispatch:
+    inputs:
+      preview_number:
+        description: 'Preview number (e.g. 1 for 0.1.0-preview.1). Leave empty to auto-detect from Cargo.toml.'
+        type: string
+        default: ''
+      dry_run:
+        description: 'Dry run (validate but do not publish)'
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish mssql-tds-preview
+    runs-on: ubuntu-latest
+    # Only repo owner can trigger
+    if: github.actor == github.repository_owner
+    environment: crates-io
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fork
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config libkrb5-dev
+
+      - name: Set version
+        id: version
+        run: |
+          if [ -n "${{ inputs.preview_number }}" ]; then
+            BASE_VER=$(grep '^version' mssql-tds/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/' | sed 's/-preview\..*//')
+            NEW_VER="${BASE_VER}-preview.${{ inputs.preview_number }}"
+            sed -i "s/^version = \".*\"/version = \"$NEW_VER\"/" mssql-tds/Cargo.toml
+          fi
+          FULL_VER=$(grep '^version' mssql-tds/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$FULL_VER" >> $GITHUB_OUTPUT
+          echo "Publishing version: $FULL_VER"
+
+      - name: Verify build
+        run: cargo check -p mssql-tds-preview
+
+      - name: Dry run
+        if: inputs.dry_run
+        run: |
+          cd mssql-tds
+          cargo publish --dry-run --allow-dirty
+          echo "✅ Dry run passed for ${{ steps.version.outputs.version }}"
+
+      - name: Publish
+        if: "!inputs.dry_run"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd mssql-tds
+          cargo publish --allow-dirty
+          echo "✅ Published mssql-tds-preview ${{ steps.version.outputs.version }}"
