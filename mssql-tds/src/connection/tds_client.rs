@@ -6,7 +6,9 @@ use crate::connection::bulk_copy_state::ATTENTION_TIMEOUT_SECONDS;
 use crate::connection::client_context::{ClientContext, ExecutionColumnEncryptionSetting};
 use crate::connection::session_recovery::RecoveryContext;
 use crate::datatypes::bulk_copy_metadata::BulkCopyColumnMetadata;
-use crate::datatypes::row_writer::{DefaultRowWriter, DiscardRowWriter, RowWriter};
+use crate::datatypes::row_writer::{
+    DefaultRowWriter, DiscardRowWriter, RowWriter, SingleValueWriter,
+};
 use crate::datatypes::sql_string::SqlString;
 use crate::datatypes::sqltypes::SqlType;
 use crate::error::Error::UsageError;
@@ -80,7 +82,7 @@ enum ActiveRowReadState {
     Idle,
     /// A row is positioned and partially read; `next_column_index` columns have
     /// been consumed and more remain on the wire.
-    RowPaused(Box<RowPauseState>),
+    RowPaused(RowPauseState),
     /// A row is positioned with an active PLP column stream mid-flight.
     PlpPaused(Box<PlpPauseState>),
 }
@@ -147,6 +149,12 @@ pub struct TdsClient {
     /// the metadata it was built for so it is rebuilt when the result set
     /// changes. `None` until the first encrypted result set is seen.
     current_decryptor: Option<MemoizedCellDecryptor>,
+    /// Memoized row-loop [`ParserContext`] for `current_metadata`. Rebuilding it
+    /// per row costs an `Arc` clone/drop pair plus a `resolve_cell_decryptor`
+    /// await in the cursor hot path, and none of it changes within a result set.
+    /// Validated by `Arc::ptr_eq` against `current_metadata`, so every
+    /// reassignment of that field invalidates this automatically.
+    cached_row_parser_context: Option<ParserContext>,
     count_map: HashMap<CurrentCommand, u64>,
     /// Rows affected by the most recent statement; see [`last_rows_affected`](Self::last_rows_affected).
     last_rows_affected: i64,
@@ -245,6 +253,7 @@ impl TdsClient {
             recovery_context: Box::new(recovery_context),
             current_metadata: None,
             current_decryptor: None,
+            cached_row_parser_context: None,
             count_map: HashMap::new(),
             last_rows_affected: -1,
             dml_result_counts: Vec::new(),
@@ -3156,7 +3165,6 @@ impl TdsClient {
     /// After this returns `true`, individual columns are pulled with
     /// [`read_row_column`](Self::read_row_column). Any previously positioned row
     /// is drained first (allocation-free).
-    #[instrument(skip(self), level = "info")]
     pub async fn next_row_cursor(&mut self) -> TdsResult<bool> {
         if self.current_metadata.is_none() {
             return Err(UsageError(
@@ -3174,15 +3182,41 @@ impl TdsClient {
 
         self.drain_active_row().await?;
 
-        let metadata = Arc::clone(self.current_metadata.as_ref().unwrap());
-        let decryptor = self.resolve_cell_decryptor(&metadata).await?;
-        let parser_context = ParserContext::ColumnMetadata(metadata, decryptor);
+        // Rebuild only when the result set changed: `Arc::ptr_eq` against
+        // `current_metadata` means any reassignment of that field invalidates
+        // this, so the per-row path is a pointer compare instead of an `Arc`
+        // clone plus a `resolve_cell_decryptor` await.
+        let cache_hit = matches!(
+            (&self.cached_row_parser_context, &self.current_metadata),
+            (Some(ParserContext::ColumnMetadata(cached, _)), Some(current))
+                if Arc::ptr_eq(cached, current)
+        );
+        if !cache_hit {
+            let metadata = Arc::clone(self.current_metadata.as_ref().unwrap());
+            let decryptor = self.resolve_cell_decryptor(&metadata).await?;
+            self.cached_row_parser_context =
+                Some(ParserContext::ColumnMetadata(metadata, decryptor));
+        }
+
+        // Fast path: a ROW token is a single byte, and after the first packet
+        // refill it is essentially always already buffered. Reading it here
+        // skips the boxed `receive_row_header` future and the per-call
+        // cancellation/timeout composition. Anything else — a short buffer or a
+        // non-row token such as DONE — falls through with the stream untouched.
+        if let Some(RowHeader::Positioned(pause_state)) = self
+            .transport
+            .try_receive_row_header_buffered(self.cached_row_parser_context.as_ref().unwrap())
+        {
+            self.active_row_read_state = ActiveRowReadState::RowPaused(pause_state);
+            return Ok(true);
+        }
+
         loop {
             let start = Instant::now();
             let header = self
                 .transport
                 .receive_row_header(
-                    &parser_context,
+                    self.cached_row_parser_context.as_ref().unwrap(),
                     self.remaining_request_timeout,
                     self.cancel_handle.as_ref(),
                 )
@@ -3194,8 +3228,7 @@ impl TdsClient {
                     // Positioned before column 0; columns are pulled lazily via
                     // `read_row_column`. A zero-column row parks here too and
                     // drains as a no-op on the next advance.
-                    self.active_row_read_state =
-                        ActiveRowReadState::RowPaused(Box::new(pause_state));
+                    self.active_row_read_state = ActiveRowReadState::RowPaused(pause_state);
                     return Ok(true);
                 }
                 RowHeader::Token(token) => {
@@ -3239,12 +3272,11 @@ impl TdsClient {
     /// guarantee `read_row_column(0)` yields a value: a zero-column row is
     /// positioned with a column count of 0, so `read_row_column(0)` is
     /// out-of-range and returns `UsageError`.
-    #[instrument(skip(self), level = "info")]
     pub async fn read_row_column(&mut self, target: usize) -> TdsResult<CursorColumn> {
         match std::mem::replace(&mut self.active_row_read_state, ActiveRowReadState::Idle) {
             ActiveRowReadState::Idle => Ok(CursorColumn::RowEnded),
             ActiveRowReadState::RowPaused(pause_state) => {
-                self.resume_to_column(*pause_state, target).await
+                self.resume_to_column(pause_state, target).await
             }
             ActiveRowReadState::PlpPaused(mut plp_state) => {
                 self.drain_active_plp(&mut plp_state).await?;
@@ -3259,15 +3291,15 @@ impl TdsClient {
         pause_state: RowPauseState,
         target: usize,
     ) -> TdsResult<CursorColumn> {
-        if target >= pause_state.columns.len() {
+        if target >= pause_state.columns().len() {
             // Out-of-range: decoding with ColumnPolicy::DecodeOne(target) would skip
             // every remaining column and report RowWritten, silently consuming
             // the row. Reject without touching the transport and keep the
             // cursor positioned so valid pulls still work. ODBC validates the
             // column index first, so this guards the public API against other
             // callers.
-            let column_count = pause_state.columns.len();
-            self.active_row_read_state = ActiveRowReadState::RowPaused(Box::new(pause_state));
+            let column_count = pause_state.columns().len();
+            self.active_row_read_state = ActiveRowReadState::RowPaused(pause_state);
             return Err(UsageError(format!(
                 "read_row_column target column {target} is out of range (row has {column_count} columns)"
             )));
@@ -3276,11 +3308,46 @@ impl TdsClient {
         if target < pause_state.next_column_index {
             // Forward-only: the target column's bytes are already gone. Keep the
             // cursor where it is so later (valid) pulls still work.
-            self.active_row_read_state = ActiveRowReadState::RowPaused(Box::new(pause_state));
+            self.active_row_read_state = ActiveRowReadState::RowPaused(pause_state);
             return Ok(CursorColumn::AlreadyConsumed);
         }
 
-        let mut capture = DefaultRowWriter::new(1);
+        // Fast path: the target is the next column in order, the row carries no
+        // NBCROW null bitmap or Always Encrypted decryptor to consult, and the
+        // bytes are already in the transport's buffer. Decoding here skips the
+        // boxed `resume_row_into` future, the per-call cancellation/timeout
+        // composition, and — on the final column — the pause-state box.
+        if target == pause_state.next_column_index
+            && pause_state.nbc_null_bitmap.is_none()
+            && pause_state.decryptor.is_none()
+        {
+            let mut capture = SingleValueWriter::default();
+            let decoded = {
+                let column = &pause_state.columns()[target];
+                self.transport
+                    .try_decode_column_buffered(column, target, &mut capture)
+            };
+
+            if decoded {
+                let value = capture.take_value().ok_or_else(|| {
+                    crate::error::Error::ProtocolError(format!(
+                        "Decoder produced no value for non-null column {target}"
+                    ))
+                })?;
+                // Mirrors the `RowWritten` / `RowPaused` bookkeeping below.
+                if target + 1 == pause_state.columns().len() {
+                    self.active_row_read_state = ActiveRowReadState::Idle;
+                } else {
+                    self.active_row_read_state = ActiveRowReadState::RowPaused(RowPauseState {
+                        next_column_index: target + 1,
+                        ..pause_state
+                    });
+                }
+                return Ok(CursorColumn::Value(value));
+            }
+        }
+
+        let mut capture = SingleValueWriter::default();
         let start = Instant::now();
         let result = self
             .transport
@@ -3296,8 +3363,8 @@ impl TdsClient {
 
         match result {
             RowReadResult::RowPaused(next_pause) => {
-                self.active_row_read_state = ActiveRowReadState::RowPaused(Box::new(next_pause));
-                let value = capture.take_row().into_iter().next().ok_or_else(|| {
+                self.active_row_read_state = ActiveRowReadState::RowPaused(next_pause);
+                let value = capture.take_value().ok_or_else(|| {
                     crate::error::Error::ProtocolError(format!(
                         "Decoder produced no value for non-null column {target}"
                     ))
@@ -3310,7 +3377,7 @@ impl TdsClient {
                 // pull reports `RowEnded`. Callers needing to distinguish a
                 // rewind from "no row positioned" track the column themselves.
                 self.active_row_read_state = ActiveRowReadState::Idle;
-                let value = capture.take_row().into_iter().next().ok_or_else(|| {
+                let value = capture.take_value().ok_or_else(|| {
                     crate::error::Error::ProtocolError(format!(
                         "Decoder produced no value for non-null column {target}"
                     ))
@@ -3336,7 +3403,7 @@ impl TdsClient {
             ActiveRowReadState::Idle => Ok(()),
             ActiveRowReadState::RowPaused(pause_state) => {
                 let mut sink = DiscardRowWriter;
-                self.resume_row_loop(*pause_state, ColumnPolicy::SkipAll, &mut sink)
+                self.resume_row_loop(pause_state, ColumnPolicy::SkipAll, &mut sink)
                     .await?;
                 Ok(())
             }
@@ -3352,7 +3419,7 @@ impl TdsClient {
 
     /// Reads and discards all remaining bytes of an active PLP stream.
     async fn drain_active_plp(&mut self, plp_state: &mut PlpPauseState) -> TdsResult<()> {
-        let mut buffer = [0u8; 8192];
+        let mut buffer = vec![0u8; 8192];
         while !plp_state.reached_end() {
             let start = Instant::now();
             let read = self
@@ -3397,11 +3464,10 @@ impl TdsClient {
         match result {
             RowReadResult::RowWritten => {
                 writer.end_row();
-                info!("Row Received");
                 Ok(true)
             }
             RowReadResult::RowPaused(next_pause) => {
-                self.active_row_read_state = ActiveRowReadState::RowPaused(Box::new(next_pause));
+                self.active_row_read_state = ActiveRowReadState::RowPaused(next_pause);
                 Ok(true)
             }
             RowReadResult::PlpPaused(plp_state) => {
@@ -4400,6 +4466,33 @@ mod tests {
         )
     }
 
+    /// Keeps the PLP drain scratch buffer out of every cursor future that can
+    /// await it. A stack buffer would be stored inline and inflate this chain.
+    #[test]
+    fn row_fetch_futures_stay_small() {
+        const MAX: usize = 4096;
+
+        let mut client = create_test_client();
+        let mut sink = DiscardRowWriter;
+
+        let next_row_cursor = std::mem::size_of_val(&client.next_row_cursor());
+        let read_row_column = std::mem::size_of_val(&client.read_row_column(0));
+        let drain_rows = std::mem::size_of_val(&client.drain_rows());
+        let get_next_row_into = std::mem::size_of_val(&client.get_next_row_into(&mut sink));
+
+        for (name, size) in [
+            ("next_row_cursor", next_row_cursor),
+            ("read_row_column", read_row_column),
+            ("drain_rows", drain_rows),
+            ("get_next_row_into", get_next_row_into),
+        ] {
+            assert!(
+                size <= MAX,
+                "{name} future is {size} B, expected <= {MAX} B"
+            );
+        }
+    }
+
     #[test]
     fn prepare_reset_connection_routes_mode_to_transport() {
         let mut client = create_test_client();
@@ -4741,7 +4834,10 @@ mod tests {
             .unwrap();
         let inner_pause_state = RowPauseState {
             next_column_index: 1,
-            columns: vec![metadata.clone()],
+            metadata: Arc::new(ColMetadataToken {
+                columns: vec![metadata.clone()],
+                ..Default::default()
+            }),
             nbc_null_bitmap: None,
             decryptor: None,
         };
@@ -4757,12 +4853,15 @@ mod tests {
             }));
 
         let mut client = create_test_client_with_transport(transport);
-        client.active_row_read_state = ActiveRowReadState::RowPaused(Box::new(RowPauseState {
+        client.active_row_read_state = ActiveRowReadState::RowPaused(RowPauseState {
             next_column_index: 0,
-            columns: vec![metadata],
+            metadata: Arc::new(ColMetadataToken {
+                columns: vec![metadata],
+                ..Default::default()
+            }),
             nbc_null_bitmap: None,
             decryptor: None,
-        }));
+        });
 
         let outcome = client.read_row_column(0).await.unwrap();
         assert_eq!(
@@ -4777,12 +4876,12 @@ mod tests {
     #[test]
     fn plp_helpers_treat_non_plp_row_pause_as_no_active_stream() {
         let mut client = create_test_client();
-        client.active_row_read_state = ActiveRowReadState::RowPaused(Box::new(RowPauseState {
+        client.active_row_read_state = ActiveRowReadState::RowPaused(RowPauseState {
             next_column_index: 1,
-            columns: Vec::new(),
+            metadata: Arc::new(ColMetadataToken::default()),
             nbc_null_bitmap: None,
             decryptor: None,
-        }));
+        });
 
         assert!(client.active_plp_reached_end());
     }
@@ -4796,12 +4895,12 @@ mod tests {
         let mut client = create_test_client();
         client.current_metadata = Some(stale_metadata());
         client.current_result_set_has_been_read_till_end = false;
-        client.active_row_read_state = ActiveRowReadState::RowPaused(Box::new(RowPauseState {
+        client.active_row_read_state = ActiveRowReadState::RowPaused(RowPauseState {
             next_column_index: 1,
-            columns: Vec::new(),
+            metadata: Arc::new(ColMetadataToken::default()),
             nbc_null_bitmap: None,
             decryptor: None,
-        }));
+        });
 
         let mut sink = DiscardRowWriter;
         let err = client

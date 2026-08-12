@@ -3,6 +3,8 @@
 
 //! SQLGetData implementation with incremental row materialization.
 
+use std::borrow::Cow;
+
 use tracing::{debug, error};
 
 use super::odbc_types::{
@@ -12,7 +14,7 @@ use super::odbc_types::{
 };
 use super::sqlstate::*;
 use crate::api::odbc_types::SqlWChar;
-use crate::api::util::{copy_with_nul, write_if_some};
+use crate::api::util::{copy_with_nul, drive_read, write_if_some};
 use crate::error::{free_errors, post_sql_error};
 use crate::handles::stmt::{ActivePlpStream, STMT_STATE_CURSOR_OPEN};
 use crate::handles::{HandleType, StmtHandle, handle_from_raw};
@@ -24,7 +26,9 @@ use super::fetch_convert::{
     is_integer_c_target, sql_string_to_text,
 };
 use mssql_tds::datatypes::column_values::ColumnValues;
+use mssql_tds::datatypes::sql_string::EncodingType;
 use mssql_tds::query::metadata::PlpEncoding;
+use std::pin::pin;
 
 /// Implements SQLGetData for current-row retrieval.
 ///
@@ -299,8 +303,53 @@ fn write_captured_column(
         return rc;
     }
 
-    let as_text = match column_value_to_text(value) {
-        Ok(t) => t,
+    let mut scratch = TextScratch::new();
+    // `as_text` may borrow the captured value, so perform the copy before
+    // mutating statement state or posting diagnostics.
+    let outcome = match column_value_to_text_in(value, &mut scratch) {
+        Ok(as_text) => {
+            // Resume from where a prior truncated read of this column left off.
+            // The offset unit matches the target C type (bytes for CHAR, UTF-16
+            // code units for WCHAR); a single column's chunk loop uses one
+            // target type throughout.
+            let offset = stmt_state
+                .partial_text_offset
+                .filter(|(c, _)| *c == col_index)
+                .map(|(_, o)| o)
+                .unwrap_or(0);
+
+            Ok(if target_type == SQL_C_WCHAR {
+                let utf16: Vec<u16> = as_text.encode_utf16().skip(offset).collect();
+                let consumed = buf_elements.saturating_sub(1).min(utf16.len());
+                let truncated = unsafe {
+                    copy_string_out(
+                        &utf16,
+                        target_value_ptr as *mut SqlWChar,
+                        buf_elements,
+                        strlen_or_ind_ptr,
+                    )
+                };
+                (truncated, offset, consumed, utf16.len())
+            } else {
+                let all = as_text.as_bytes();
+                let bytes = &all[offset.min(all.len())..];
+                let consumed = buf_elements.saturating_sub(1).min(bytes.len());
+                let truncated = unsafe {
+                    copy_string_out(
+                        bytes,
+                        target_value_ptr as *mut u8,
+                        buf_elements,
+                        strlen_or_ind_ptr,
+                    )
+                };
+                (truncated, offset, consumed, bytes.len())
+            })
+        }
+        Err(error) => Err(error),
+    };
+
+    let (truncated, offset, consumed, remaining) = match outcome {
+        Ok(result) => result,
         Err(TextError::Malformed) => {
             // The server payload could not be decoded. Leave the value resident;
             // a retry with SQL_C_BINARY can still read the raw bytes.
@@ -320,41 +369,7 @@ fn write_captured_column(
             return SQL_ERROR;
         }
     };
-    // `value` borrow ends here — `as_text` is owned.
-
-    // Resume from where a prior truncated read of this column left off. The
-    // offset unit matches the target C type (bytes for CHAR, UTF-16 code units
-    // for WCHAR); a single column's chunk loop uses one target type throughout.
-    let offset = stmt_state
-        .partial_text_offset
-        .filter(|(c, _)| *c == col_index)
-        .map(|(_, o)| o)
-        .unwrap_or(0);
-
-    let (rc, consumed, remaining) = if target_type == SQL_C_WCHAR {
-        let utf16: Vec<u16> = as_text.encode_utf16().skip(offset).collect();
-        let consumed = buf_elements.saturating_sub(1).min(utf16.len());
-        let rc = write_string_result(
-            stmt_state,
-            &utf16,
-            target_value_ptr as *mut SqlWChar,
-            buf_elements,
-            strlen_or_ind_ptr,
-        );
-        (rc, consumed, utf16.len())
-    } else {
-        let all = as_text.as_bytes();
-        let bytes = &all[offset.min(all.len())..];
-        let consumed = buf_elements.saturating_sub(1).min(bytes.len());
-        let rc = write_string_result(
-            stmt_state,
-            bytes,
-            target_value_ptr as *mut u8,
-            buf_elements,
-            strlen_or_ind_ptr,
-        );
-        (rc, consumed, bytes.len())
-    };
+    let rc = finish_string_result(stmt_state, truncated);
 
     if rc == SQL_SUCCESS_WITH_INFO && consumed < remaining {
         // Truncated: remember where to resume and keep the column addressable —
@@ -426,7 +441,7 @@ fn resume_row_to_column(
     };
 
     let target = column_number - 1; // 0-based
-    let cursor_result = dbc.runtime.block_on(client.read_row_column(target));
+    let cursor_result = drive_read(&dbc.runtime, pin!(client.read_row_column(target)));
 
     let Ok(mut dbc_state) = dbc.inner.lock() else {
         error!("SQLGetData: dbc mutex poisoned after row resume");
@@ -659,9 +674,10 @@ fn stream_active_plp_chunk(
         client
     };
 
-    let read_result = dbc
-        .runtime
-        .block_on(client.read_active_plp_chunk(&mut payload));
+    let read_result = drive_read(
+        &dbc.runtime,
+        pin!(client.read_active_plp_chunk(&mut payload)),
+    );
 
     let Ok(mut dbc_state) = dbc.inner.lock() else {
         error!("SQLGetData: dbc mutex poisoned after PLP read");
@@ -869,16 +885,26 @@ fn utf16le_chunk_to_utf8(
     out
 }
 
-fn write_string_result<T: Copy + Default>(
-    stmt_state: &mut crate::handles::stmt::StmtState,
+/// Copies `src` into the caller's buffer and reports whether it was truncated.
+///
+/// # Safety
+/// `target_value_ptr` must be valid for `buf_elements` writes of `T`, and
+/// `strlen_or_ind_ptr` must be null or valid for a `SqlLen` write.
+unsafe fn copy_string_out<T: Copy + Default>(
     src: &[T],
     target_value_ptr: *mut T,
     buf_elements: usize,
     strlen_or_ind_ptr: *mut SqlLen,
-) -> SqlReturn {
+) -> bool {
     let byte_len = std::mem::size_of_val(src) as SqlLen;
     unsafe { write_if_some(strlen_or_ind_ptr, byte_len) };
-    let truncated = unsafe { copy_with_nul(target_value_ptr, buf_elements, src) };
+    unsafe { copy_with_nul(target_value_ptr, buf_elements, src) }
+}
+
+fn finish_string_result(
+    stmt_state: &mut crate::handles::stmt::StmtState,
+    truncated: bool,
+) -> SqlReturn {
     if truncated {
         post_diag(stmt_state, ERR_STRING_RIGHT_TRUNCATION);
         SQL_SUCCESS_WITH_INFO
@@ -1002,6 +1028,86 @@ fn xml_to_text(bytes: &[u8]) -> Result<String, TextError> {
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     String::from_utf16(&units).map_err(|_| TextError::Malformed)
+}
+
+/// Stack buffer that renders fixed-width values without touching the allocator.
+///
+/// 64 bytes clears every fixed-width form by a wide margin — the longest is a
+/// 36-character GUID — so the overflow path exists only for soundness.
+struct TextScratch {
+    buf: [u8; 64],
+    len: usize,
+}
+
+impl TextScratch {
+    fn new() -> Self {
+        Self {
+            buf: [0; 64],
+            len: 0,
+        }
+    }
+
+    fn as_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.buf[..self.len]).ok()
+    }
+}
+
+impl std::fmt::Write for TextScratch {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let end = self.len + s.len();
+        if end > self.buf.len() {
+            return Err(std::fmt::Error);
+        }
+        self.buf[self.len..end].copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
+/// Allocation-free overlay on [`column_value_to_text`] for the types whose
+/// rendered length is bounded.
+///
+/// `SQLGetData` renders one value per row, so the `String` those types used to
+/// return was a heap allocation and free per row to carry at most 20 digits.
+///
+/// Every other type — and any fixed-width value that somehow overflows the
+/// scratch buffer — falls through to `column_value_to_text`, so the two agree
+/// by construction.
+fn column_value_to_text_in<'a>(
+    v: &'a ColumnValues,
+    scratch: &'a mut TextScratch,
+) -> Result<Cow<'a, str>, TextError> {
+    use std::fmt::Write as _;
+
+    scratch.len = 0;
+    let rendered = match v {
+        ColumnValues::TinyInt(x) => scratch.write_str(itoa::Buffer::new().format(*x)),
+        ColumnValues::SmallInt(x) => scratch.write_str(itoa::Buffer::new().format(*x)),
+        ColumnValues::Int(x) => scratch.write_str(itoa::Buffer::new().format(*x)),
+        ColumnValues::BigInt(x) => scratch.write_str(itoa::Buffer::new().format(*x)),
+        ColumnValues::Real(x) => write!(scratch, "{x}"),
+        ColumnValues::Float(x) => write!(scratch, "{x}"),
+        ColumnValues::Decimal(x) | ColumnValues::Numeric(x) => write!(scratch, "{x}"),
+        ColumnValues::Uuid(u) => write!(scratch, "{u}"),
+        ColumnValues::String(s) => {
+            let text = s.as_utf8_str();
+            if matches!(s.encoding_type(), EncodingType::Utf8)
+                && std::str::from_utf8(&s.bytes).is_err()
+            {
+                return column_value_to_text(v).map(Cow::Owned);
+            }
+            return Ok(text);
+        }
+        ColumnValues::Bit(x) => return Ok(Cow::Borrowed(if *x { "1" } else { "0" })),
+        ColumnValues::Null => return Ok(Cow::Borrowed("")),
+        _ => return column_value_to_text(v).map(Cow::Owned),
+    };
+    if rendered.is_ok()
+        && let Some(s) = scratch.as_str()
+    {
+        return Ok(Cow::Borrowed(s));
+    }
+    column_value_to_text(v).map(Cow::Owned)
 }
 
 fn column_value_to_text(v: &ColumnValues) -> Result<String, TextError> {

@@ -6,7 +6,11 @@ publish = false
 
 [lib]
 name = "msodbcsql18"
-crate-type = ["cdylib"]
+# `cdylib` is the shipping artifact (the driver DLL). `rlib` additionally lets
+# in-repo benchmarks link the driver and call its exported entry points
+# in-process, so the ODBC layer can be measured without the Driver Manager in
+# the way. It does not affect the DLL.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 mssql-tds = { path = "../mssql-tds" }
@@ -14,6 +18,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 tracing = { version = "0.1.43", features = ["log"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 async-trait = "0.1"
+itoa = "1"
 # The azure SDK only ships a rustls-based reqwest transport (its `reqwest_rustls`
 # default), which drags in the vulnerable `ring` crate. Disable those defaults and
 # force reqwest onto native-tls (OpenSSL/Schannel), matching mssql-tds's TLS stack.
@@ -49,5 +54,12 @@ mssql-tds = { path = "../mssql-tds", features = ["test-util"] }
 # Matches the version mssql-tds resolves (workspace lock: 1.x) so the `Uuid`
 # type in tests is the same crate instance as `ColumnValues::Uuid`.
 uuid = "1"
+
+criterion = "0.5"
+dotenv = "0.15"
+
+[[bench]]
+name = "odbc_glue"
+harness = false
 
 [build-dependencies]

@@ -3,6 +3,7 @@
 
 use crate::{query::metadata::ColumnMetadata, token::tokens::SqlCollation};
 use core::fmt;
+use std::borrow::Cow;
 use std::{fmt::Debug, fmt::Display};
 use tracing::warn;
 
@@ -54,14 +55,22 @@ impl SqlString {
 
     /// Decodes the stored bytes into a Rust `String` according to the encoding type.
     pub fn to_utf8_string(&self) -> String {
+        self.as_utf8_str().into_owned()
+    }
+
+    /// Decodes the stored bytes as UTF-8 text, borrowing when possible.
+    pub fn as_utf8_str(&self) -> Cow<'_, str> {
         match self.encoding_type {
             // TODO: Investigation needed. When creating a Utf8 strings from the vector, the string is weirdly encoded.
             // UTF16 decode works better.
-            EncodingType::Utf8 => String::from_utf8(self.bytes.clone()).unwrap(),
+            EncodingType::Utf8 => match std::str::from_utf8(&self.bytes) {
+                Ok(text) => Cow::Borrowed(text),
+                Err(_) => Cow::Owned(String::from_utf8_lossy(&self.bytes).into_owned()),
+            },
             EncodingType::Utf16 => {
                 // Use encoding_rs for efficient UTF-16LE decoding without intermediate Vec<u16> allocation
                 let (decoded, _, _) = encoding_rs::UTF_16LE.decode(&self.bytes);
-                decoded.into_owned()
+                decoded
             }
             EncodingType::LcidBased(collation) => {
                 // Extract LCID from the lower 20 bits of collation.info
@@ -91,11 +100,11 @@ impl SqlString {
                     );
                 }
 
-                decoded.into_owned()
+                decoded
             }
             EncodingType::DelayedSet => {
                 // DelayedSet encoding is not defined, so we return the bytes as a UTF-8 string.
-                unimplemented!("DelayedSet encoding conversion to UTF8 not implemented");
+                Cow::Owned(String::from_utf8_lossy(&self.bytes).into_owned())
             }
         }
     }
@@ -269,6 +278,15 @@ mod tests {
         let sql_str = SqlString::new(bytes.clone(), EncodingType::Utf8);
         assert_eq!(sql_str.bytes, bytes);
         assert_eq!(sql_str.to_utf8_string(), "UTF8 String");
+    }
+
+    #[test]
+    fn test_as_utf8_str_borrows_utf8() {
+        let sql_str = SqlString::new(b"UTF8 String".to_vec(), EncodingType::Utf8);
+        assert!(matches!(
+            sql_str.as_utf8_str(),
+            std::borrow::Cow::Borrowed("UTF8 String")
+        ));
     }
 
     #[test]
