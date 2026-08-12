@@ -2,10 +2,11 @@
 // Licensed under the MIT License.
 
 use crate::core::{CancelHandle, TdsResult};
-use crate::datatypes::decoder::GenericDecoder;
-use crate::datatypes::row_writer::RowWriter;
+use crate::datatypes::decoder::{GenericDecoder, PlpColumnStream, decrypt_encrypted_column};
+use crate::datatypes::row_writer::{DiscardRowWriter, RowWriter, write_column_value};
 use crate::io::packet_reader::TdsPacketReader;
 use crate::query::metadata::ColumnMetadata;
+use crate::security::cell_decryptor::CellDecryptor;
 use crate::token::parsers::TokenParser;
 use crate::token::parsers::{
     ColInfoTokenParser, ColMetadataTokenParser, DoneInProcTokenParser, DoneProcTokenParser,
@@ -31,20 +32,152 @@ use crate::token::tokens::DoneStatus;
 #[cfg(fuzzing)]
 use tokio::time::timeout;
 
+/// Explicit, caller-supplied decode intent for a row.
+///
+/// Replaces the old `RowWriter::pause_before_first_column` /
+/// `pause_after_column` predicates: the decision of *how far to decode* now
+/// travels as an argument instead of being polled off the sink. The push
+/// consumers (Arrow / N-API / bulk) always use [`ColumnPolicy::DecodeAll`]; the ODBC
+/// pull cursor drives the other variants.
+///
+/// This enum is uniformly *column-level*: every variant answers "what should
+/// happen to each column of this row". The row-level "just position, decode
+/// nothing" decision lives separately in [`receive_row_header`] /
+/// [`RowHeader`], so it no longer has to be smuggled through here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(not(fuzzing))]
+pub(crate) enum ColumnPolicy {
+    /// Decode every column into the writer, never pause (push sinks).
+    DecodeAll,
+    /// Skip columns `< target`, decode `target`, then pause after it.
+    DecodeOne(usize),
+    /// Skip every remaining column, allocating nothing (drain the current row).
+    SkipAll,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(fuzzing)]
+pub enum ColumnPolicy {
+    DecodeAll,
+    DecodeOne(usize),
+    SkipAll,
+}
+
 /// Result of attempting to read a row directly into a [`RowWriter`].
 #[cfg(not(fuzzing))]
+#[derive(Debug)]
 pub(crate) enum RowReadResult {
     /// A row was decoded directly into the writer via `decode_into`,
     /// bypassing the intermediate `RowToken { all_values: Vec<ColumnValues> }`.
     RowWritten,
     /// A non-row token was received and needs normal handling.
     Token(Tokens),
+    /// Row decoding paused after `paused_at_column`; call `resume_row_into` to
+    /// continue from the next column.
+    ///
+    RowPaused(RowPauseState),
+    /// Row decoding paused at a PLP column before consuming payload bytes.
+    /// Use `read_active_plp_bytes` to stream chunks and then `resume_row_into`
+    /// with `plp_state.row_pause_state`.
+    ///
+    PlpPaused(PlpPauseState),
 }
 
 #[cfg(fuzzing)]
+#[derive(Debug)]
 pub enum RowReadResult {
     RowWritten,
     Token(Tokens),
+    RowPaused(RowPauseState),
+    PlpPaused(PlpPauseState),
+}
+
+/// Outcome of reading only a row *header* — the ROW/NBCROW token byte plus any
+/// NBCROW null bitmap — without decoding columns.
+///
+/// This is the row-level counterpart to the column-level [`ColumnPolicy`]. Splitting
+/// it out keeps `ColumnPolicy` uniformly column-level and gives the pull cursor
+/// ([`next_row_cursor`](crate::connection::tds_client::TdsClient::next_row_cursor))
+/// exactly the two outcomes it can act on, instead of a four-variant
+/// [`RowReadResult`] whose row-decode arms are unreachable when only the header
+/// is read.
+#[cfg(not(fuzzing))]
+pub(crate) enum RowHeader {
+    /// Positioned on a row before column 0; its columns are still on the wire,
+    /// to be pulled with `resume_row_into`.
+    Positioned(RowPauseState),
+    /// A non-row token was received instead (e.g. the terminating DONE), which
+    /// the caller handles as a result-set boundary.
+    Token(Tokens),
+}
+
+#[cfg(fuzzing)]
+pub enum RowHeader {
+    Positioned(RowPauseState),
+    Token(Tokens),
+}
+
+/// Carry-over state when [`RowWriter::pause_after_column`] returns `true`.
+///
+/// Passed back to [`TdsTokenStreamReader::resume_row_into`] to continue
+/// decoding the rest of the row from where it paused.
+#[derive(Debug)]
+#[cfg(not(fuzzing))]
+pub(crate) struct RowPauseState {
+    /// Index of the first column that has not yet been decoded.
+    pub(crate) next_column_index: usize,
+    /// Full column metadata for the row (shared with the ParserContext).
+    pub(crate) columns: Vec<ColumnMetadata>,
+    /// NBCROW null-bitmap (one bit per column, LSB-first).  `None` for plain ROW.
+    pub(crate) nbc_null_bitmap: Option<Vec<u8>>,
+    /// Optional AE decryptor needed to continue decrypting encrypted columns
+    /// after a row pause/resume boundary.
+    pub(crate) decryptor: Option<Arc<dyn CellDecryptor>>,
+}
+
+#[derive(Debug)]
+#[cfg(fuzzing)]
+pub struct RowPauseState {
+    pub next_column_index: usize,
+    pub columns: Vec<ColumnMetadata>,
+    pub nbc_null_bitmap: Option<Vec<u8>>,
+    pub decryptor: Option<Arc<dyn CellDecryptor>>,
+}
+
+/// Active PLP stream state captured when row decoding is paused at a PLP column.
+#[derive(Debug)]
+#[cfg(not(fuzzing))]
+pub(crate) struct PlpPauseState {
+    pub(crate) row_pause_state: RowPauseState,
+    pub(crate) plp_stream: PlpColumnStream,
+}
+
+#[derive(Debug)]
+#[cfg(fuzzing)]
+pub struct PlpPauseState {
+    pub row_pause_state: RowPauseState,
+    pub plp_stream: PlpColumnStream,
+}
+
+impl PlpPauseState {
+    pub(crate) fn reached_end(&self) -> bool {
+        self.plp_stream.reached_end()
+    }
+
+    /// Declared total length of the whole PLP value in wire bytes when the
+    /// server sent a known-length header; `None` for unknown-length PLP.
+    pub(crate) fn known_len(&self) -> Option<u64> {
+        self.plp_stream.known_len()
+    }
+
+    /// Cumulative wire bytes consumed from this PLP value across all chunks.
+    pub(crate) fn total_read(&self) -> usize {
+        self.plp_stream.total_read()
+    }
+
+    pub(crate) fn collation(&self) -> Option<crate::token::tokens::SqlCollation> {
+        self.plp_stream.collation()
+    }
 }
 
 #[async_trait]
@@ -62,8 +195,44 @@ pub(crate) trait TdsTokenStreamReader {
         context: &ParserContext,
         remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
+        plan: ColumnPolicy,
         writer: &mut (dyn RowWriter + Send),
     ) -> TdsResult<RowReadResult>;
+
+    /// Reads only the next row *header* — the ROW/NBCROW token byte and any
+    /// NBCROW null bitmap — pausing before column 0 without decoding columns.
+    /// Non-row tokens are returned as [`RowHeader::Token`]. Used by the pull
+    /// cursor to position on a row (`SQLFetch`) before pulling columns.
+    async fn receive_row_header(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<RowHeader>;
+
+    /// Resume a paused row decode from `pause_state.next_column_index`, applying
+    /// `plan` to the remaining columns.
+    ///
+    /// The caller is responsible for passing back the exact [`RowPauseState`]
+    /// that was returned inside `RowReadResult::RowPaused`.
+    async fn resume_row_into(
+        &mut self,
+        pause_state: RowPauseState,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+        plan: ColumnPolicy,
+        writer: &mut (dyn RowWriter + Send),
+    ) -> TdsResult<RowReadResult>;
+
+    /// Reads bytes from an active PLP stream captured by
+    /// [`RowReadResult::PlpPaused`].
+    async fn read_active_plp_bytes(
+        &mut self,
+        plp_state: &mut PlpPauseState,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+        out: &mut [u8],
+    ) -> TdsResult<usize>;
 }
 
 #[async_trait]
@@ -81,8 +250,33 @@ pub trait TdsTokenStreamReader {
         context: &ParserContext,
         remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
+        plan: ColumnPolicy,
         writer: &mut (dyn RowWriter + Send),
     ) -> TdsResult<RowReadResult>;
+
+    async fn receive_row_header(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<RowHeader>;
+
+    async fn resume_row_into(
+        &mut self,
+        pause_state: RowPauseState,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+        plan: ColumnPolicy,
+        writer: &mut (dyn RowWriter + Send),
+    ) -> TdsResult<RowReadResult>;
+
+    async fn read_active_plp_bytes(
+        &mut self,
+        plp_state: &mut PlpPauseState,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+        out: &mut [u8],
+    ) -> TdsResult<usize>;
 }
 
 #[cfg(fuzzing)]
@@ -95,6 +289,12 @@ where
     pub parser_registry: Box<R>,
 }
 
+/// Column metadata plus the optional cell decryptor needed to decode a row.
+///
+/// Returned by [`extract_row_context`] so the ROW/NBCROW decode paths can both
+/// access the column layout and the Always Encrypted decryptor (if any).
+type RowDecodeContext<'a> = (&'a [ColumnMetadata], Option<&'a Arc<dyn CellDecryptor>>);
+
 /// `ParserContext` is used to add additional context, which can be leveraged by the token parsers.
 /// One of the usecase is passing the metadata for the columns, to the row parser and to the
 /// NBC row token parser.
@@ -103,7 +303,15 @@ where
 #[derive(Debug)]
 #[cfg(not(fuzzing))]
 pub(crate) enum ParserContext {
-    ColumnMetadata(Arc<ColMetadataToken>),
+    /// Column metadata for the current result set, paired with an optional
+    /// [`CellDecryptor`] used to decrypt Always Encrypted columns while decoding
+    /// rows. The decryptor is `None` when the result set has no encrypted
+    /// columns or column encryption is not enabled.
+    ColumnMetadata(Arc<ColMetadataToken>, Option<Arc<dyn CellDecryptor>>),
+    /// Carries whether Always Encrypted (TCE) was negotiated for the connection.
+    /// Consumed by the COLMETADATA parser to decide whether to parse the CEK
+    /// table and per-column crypto metadata.
+    ColumnEncryption(bool),
     None(()),
 }
 
@@ -111,7 +319,11 @@ pub(crate) enum ParserContext {
 #[cfg(fuzzing)]
 #[allow(private_interfaces)]
 pub enum ParserContext {
-    ColumnMetadata(Arc<ColMetadataToken>),
+    ColumnMetadata(Arc<ColMetadataToken>, Option<Arc<dyn CellDecryptor>>),
+    /// Carries whether Always Encrypted (TCE) was negotiated for the connection.
+    /// Consumed by the COLMETADATA parser to decide whether to parse the CEK
+    /// table and per-column crypto metadata.
+    ColumnEncryption(bool),
     None(()),
 }
 
@@ -121,9 +333,20 @@ impl Default for ParserContext {
     }
 }
 
-fn extract_column_metadata(context: &ParserContext) -> TdsResult<&[ColumnMetadata]> {
+impl ParserContext {
+    /// Returns `true` when this context indicates Always Encrypted was
+    /// negotiated, instructing the COLMETADATA parser to parse encryption
+    /// metadata.
+    pub(crate) fn is_column_encryption_supported(&self) -> bool {
+        matches!(self, ParserContext::ColumnEncryption(true))
+    }
+}
+
+fn extract_row_context(context: &ParserContext) -> TdsResult<RowDecodeContext<'_>> {
     match context {
-        ParserContext::ColumnMetadata(metadata) => Ok(&metadata.columns),
+        ParserContext::ColumnMetadata(metadata, decryptor) => {
+            Ok((&metadata.columns, decryptor.as_ref()))
+        }
         _ => Err(crate::error::Error::ProtocolError(
             "Expected ColumnMetadata in context for row decoding".to_string(),
         )),
@@ -184,10 +407,181 @@ pub(crate) async fn receive_token_internal<R: TdsPacketReader + Send + Sync>(
     dispatch_token(reader, registry, token_type, context).await
 }
 
+/// Reads and discards one column's wire bytes without materializing a value.
+///
+/// PLP columns use the alloc-free chunk skip; fixed/short columns decode into a
+/// [`DiscardRowWriter`], which drops any transient value instead of retaining it
+/// in a row `Vec`. Encrypted columns are skipped as their raw ciphertext
+/// varbinary — no decryption is performed for a skipped column.
+async fn skip_column<R: TdsPacketReader + Send + Sync>(
+    decoder: &GenericDecoder,
+    reader: &mut R,
+    meta: &ColumnMetadata,
+    col: usize,
+) -> TdsResult<()> {
+    if meta.is_plp() {
+        if let Some(mut stream) = PlpColumnStream::begin(meta, reader).await? {
+            stream.skip_to_end(reader).await?;
+        }
+        Ok(())
+    } else {
+        // TODO(#47154): This materializes and heap-allocates the skipped column's
+        // value (SqlString/Vec/...) only to discard it. For column-wise
+        // SQLGetData that skips leading columns, this is wasteful — especially
+        // when several columns are skipped per row. Skip the bytes at the
+        // PacketReader level instead (advance past the column's length without
+        // decoding). Larger change tracked as work item 47154.
+        let mut sink = DiscardRowWriter;
+        decoder.decode_into(reader, meta, col, &mut sink).await
+    }
+}
+
+/// Builds the pause result after column `col` was decoded/skipped: either
+/// [`RowReadResult::RowPaused`] positioned on `col + 1`, or
+/// [`RowReadResult::RowWritten`] if `col` was the last column.
+fn pause_after_column(
+    col: usize,
+    columns: &[ColumnMetadata],
+    bitmap: Option<&[u8]>,
+    decryptor: Option<&Arc<dyn CellDecryptor>>,
+) -> RowReadResult {
+    if col + 1 < columns.len() {
+        RowReadResult::RowPaused(RowPauseState {
+            next_column_index: col + 1,
+            columns: columns.to_vec(),
+            nbc_null_bitmap: bitmap.map(|b| b.to_vec()),
+            decryptor: decryptor.cloned(),
+        })
+    } else {
+        RowReadResult::RowWritten
+    }
+}
+
+/// Unified per-column decode driver for ROW and NBCROW tokens.
+///
+/// `bitmap` is `Some` for NBCROW (LSB-first null bits), `None` for plain ROW.
+/// `plan` decides, per column, whether to decode it into `writer`, skip its
+/// bytes, or pause. This single loop replaces the former
+/// `decode_row_columns` / `decode_nbcrow_columns` pair and their
+/// `writer.pause_*` polling.
+async fn drive_row_columns<R: TdsPacketReader + Send + Sync>(
+    reader: &mut R,
+    columns: &[ColumnMetadata],
+    decryptor: Option<&Arc<dyn CellDecryptor>>,
+    bitmap: Option<&[u8]>,
+    start_col: usize,
+    plan: ColumnPolicy,
+    writer: &mut (dyn RowWriter + Send),
+) -> TdsResult<RowReadResult> {
+    let decoder = GenericDecoder::default();
+    for (col, meta) in columns.iter().enumerate().skip(start_col) {
+        let stop_here = matches!(plan, ColumnPolicy::DecodeOne(target) if target == col);
+        let skip = match plan {
+            ColumnPolicy::SkipAll => true,
+            ColumnPolicy::DecodeOne(target) => col < target,
+            ColumnPolicy::DecodeAll => false,
+        };
+
+        let is_null = bitmap.is_some_and(|bm| bm[col / 8] & (1 << (col % 8)) != 0);
+
+        if is_null {
+            // NBCROW null column: no payload bytes on the wire.
+            if !skip {
+                writer.write_null(col);
+            }
+            if stop_here {
+                return Ok(pause_after_column(col, columns, bitmap, decryptor));
+            }
+            continue;
+        }
+
+        if skip {
+            skip_column(&decoder, reader, meta, col).await?;
+            continue;
+        }
+
+        // At the cursor's target PLP column, pause before payload so the caller
+        // can stream chunks via `read_active_plp_bytes`.
+        if stop_here && meta.is_plp() {
+            // TODO: Add AE-aware PLP streaming path for paused row reads.
+            // Until then, fail fast to avoid streaming ciphertext bytes to callers.
+            if meta.crypto_metadata.is_some() {
+                return Err(crate::error::Error::UnimplementedFeature {
+                    feature: "Always Encrypted paused PLP streaming".to_string(),
+                    context: format!(
+                        "Encrypted PLP column '{}' cannot be streamed via read_active_plp_bytes yet.",
+                        meta.column_name
+                    ),
+                });
+            }
+            match PlpColumnStream::begin(meta, reader).await? {
+                None => {
+                    writer.write_null(col);
+                    return Ok(pause_after_column(col, columns, bitmap, decryptor));
+                }
+                Some(plp_stream) => {
+                    // `pause_after_column` reports `RowWritten` when `col` is the
+                    // last column, so construct the pause state directly instead
+                    // of destructuring its `RowPaused`. Either way the row is
+                    // complete once this trailing PLP payload is drained;
+                    // `next_column_index == columns.len()` (when `col` is last)
+                    // makes that later drain a no-op.
+                    return Ok(RowReadResult::PlpPaused(PlpPauseState {
+                        row_pause_state: RowPauseState {
+                            next_column_index: col + 1,
+                            columns: columns.to_vec(),
+                            nbc_null_bitmap: bitmap.map(|b| b.to_vec()),
+                            decryptor: decryptor.cloned(),
+                        },
+                        plp_stream,
+                    }));
+                }
+            }
+        }
+
+        decode_or_decrypt_column(&decoder, reader, meta, decryptor, col, writer).await?;
+
+        if stop_here {
+            return Ok(pause_after_column(col, columns, bitmap, decryptor));
+        }
+    }
+    Ok(RowReadResult::RowWritten)
+}
+
+async fn decode_or_decrypt_column<R: TdsPacketReader + Send + Sync>(
+    decoder: &GenericDecoder,
+    reader: &mut R,
+    meta: &ColumnMetadata,
+    decryptor: Option<&Arc<dyn CellDecryptor>>,
+    col: usize,
+    writer: &mut (dyn RowWriter + Send),
+) -> TdsResult<()> {
+    match (meta.crypto_metadata.is_some(), decryptor) {
+        (true, Some(dec)) => {
+            let value = decrypt_encrypted_column(decoder, reader, meta, dec).await?;
+            write_column_value(writer, col, value);
+        }
+        (true, None) => {
+            tracing::debug!(
+                column = %meta.column_name,
+                "Encrypted column has no column-encryption decryptor available \
+                 (Always Encrypted disabled for this command, or no key-store \
+                 provider registered); returning the raw ciphertext varbinary"
+            );
+            decoder.decode_into(reader, meta, col, writer).await?;
+        }
+        (false, _) => {
+            decoder.decode_into(reader, meta, col, writer).await?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn receive_row_into_internal<R: TdsPacketReader + Send + Sync>(
     reader: &mut R,
     registry: &impl TokenParserRegistry,
     context: &ParserContext,
+    plan: ColumnPolicy,
     writer: &mut (dyn RowWriter + Send),
 ) -> TdsResult<RowReadResult> {
     let token_type_byte = reader.read_byte().await?;
@@ -196,33 +590,100 @@ pub(crate) async fn receive_row_into_internal<R: TdsPacketReader + Send + Sync>(
 
     match token_type {
         TokenType::Row => {
-            let columns = extract_column_metadata(context)?;
-            let decoder = GenericDecoder::default();
-            for (col, meta) in columns.iter().enumerate() {
-                decoder.decode_into(reader, meta, col, writer).await?;
-            }
-            Ok(RowReadResult::RowWritten)
+            let (columns, decryptor) = extract_row_context(context)?;
+            drive_row_columns(reader, columns, decryptor, None, 0, plan, writer).await
         }
         TokenType::NbcRow => {
-            let columns = extract_column_metadata(context)?;
+            let (columns, decryptor) = extract_row_context(context)?;
             let bitmap_len = columns.len().div_ceil(8);
             let mut bitmap = vec![0u8; bitmap_len];
             reader.read_bytes(&mut bitmap).await?;
-            let decoder = GenericDecoder::default();
-            for (col, meta) in columns.iter().enumerate() {
-                if bitmap[col / 8] & (1 << (col % 8)) != 0 {
-                    writer.write_null(col);
-                } else {
-                    decoder.decode_into(reader, meta, col, writer).await?;
-                }
-            }
-            Ok(RowReadResult::RowWritten)
+            drive_row_columns(reader, columns, decryptor, Some(&bitmap), 0, plan, writer).await
         }
         _ => {
             let token = dispatch_token(reader, registry, token_type, context).await?;
             Ok(RowReadResult::Token(token))
         }
     }
+}
+
+/// Reads only the next row *header* — the ROW/NBCROW token byte plus any NBCROW
+/// null bitmap — and pauses before column 0 without decoding any column. A
+/// non-row token is returned as [`RowHeader::Token`]. This is the row-level
+/// split-out of `receive_row_into` used by the pull cursor to position on a row.
+pub(crate) async fn receive_row_header_internal<R: TdsPacketReader + Send + Sync>(
+    reader: &mut R,
+    registry: &impl TokenParserRegistry,
+    context: &ParserContext,
+) -> TdsResult<RowHeader> {
+    let token_type_byte = reader.read_byte().await?;
+    let token_type: TokenType = token_type_byte.try_into()?;
+    debug!("Parsing row header token type: {:?}", &token_type);
+
+    match token_type {
+        TokenType::Row => {
+            let (columns, decryptor) = extract_row_context(context)?;
+            Ok(RowHeader::Positioned(RowPauseState {
+                next_column_index: 0,
+                columns: columns.to_vec(),
+                nbc_null_bitmap: None,
+                decryptor: decryptor.cloned(),
+            }))
+        }
+        TokenType::NbcRow => {
+            let (columns, decryptor) = extract_row_context(context)?;
+            let bitmap_len = columns.len().div_ceil(8);
+            let mut bitmap = vec![0u8; bitmap_len];
+            reader.read_bytes(&mut bitmap).await?;
+            Ok(RowHeader::Positioned(RowPauseState {
+                next_column_index: 0,
+                columns: columns.to_vec(),
+                nbc_null_bitmap: Some(bitmap),
+                decryptor: decryptor.cloned(),
+            }))
+        }
+        _ => {
+            let token = dispatch_token(reader, registry, token_type, context).await?;
+            Ok(RowHeader::Token(token))
+        }
+    }
+}
+
+/// Resumes a paused row decode from `pause_state.next_column_index`, applying
+/// `plan` to the remaining columns.
+///
+/// Does not read a token-type byte — the token has already been consumed.
+pub(crate) async fn resume_row_into_internal<R: TdsPacketReader + Send + Sync>(
+    reader: &mut R,
+    pause_state: RowPauseState,
+    plan: ColumnPolicy,
+    writer: &mut (dyn RowWriter + Send),
+) -> TdsResult<RowReadResult> {
+    let RowPauseState {
+        next_column_index,
+        columns,
+        nbc_null_bitmap,
+        decryptor,
+    } = pause_state;
+
+    drive_row_columns(
+        reader,
+        &columns,
+        decryptor.as_ref(),
+        nbc_null_bitmap.as_deref(),
+        next_column_index,
+        plan,
+        writer,
+    )
+    .await
+}
+
+pub(crate) async fn read_active_plp_bytes_internal<R: TdsPacketReader + Send + Sync>(
+    reader: &mut R,
+    plp_state: &mut PlpPauseState,
+    out: &mut [u8],
+) -> TdsResult<usize> {
+    plp_state.plp_stream.read_into(reader, out).await
 }
 
 #[cfg(fuzzing)]
@@ -302,6 +763,7 @@ where
         context: &ParserContext,
         remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
+        plan: ColumnPolicy,
         writer: &mut (dyn RowWriter + Send),
     ) -> TdsResult<RowReadResult> {
         let cancellable = CancelHandle::run_until_cancelled(
@@ -310,8 +772,102 @@ where
                 &mut self.packet_reader,
                 &*self.parser_registry,
                 context,
+                plan,
                 writer,
             ),
+        );
+        let result = match remaining_request_timeout.as_ref() {
+            Some(t) => match timeout(*t, cancellable).await {
+                Ok(r) => r,
+                Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
+            },
+            None => cancellable.await,
+        };
+
+        match &result {
+            Ok(_) => {}
+            Err(err) => match err {
+                OperationCancelledError(_) | TimeoutError(_) => {
+                    self.cancel_read_stream_and_wait().await?;
+                }
+                _ => {}
+            },
+        }
+        result
+    }
+
+    async fn receive_row_header(
+        &mut self,
+        context: &ParserContext,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+    ) -> TdsResult<RowHeader> {
+        let cancellable = CancelHandle::run_until_cancelled(
+            cancel_handle,
+            receive_row_header_internal(&mut self.packet_reader, &*self.parser_registry, context),
+        );
+        let result = match remaining_request_timeout.as_ref() {
+            Some(t) => match timeout(*t, cancellable).await {
+                Ok(r) => r,
+                Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
+            },
+            None => cancellable.await,
+        };
+
+        match &result {
+            Ok(_) => {}
+            Err(err) => match err {
+                OperationCancelledError(_) | TimeoutError(_) => {
+                    self.cancel_read_stream_and_wait().await?;
+                }
+                _ => {}
+            },
+        }
+        result
+    }
+
+    async fn resume_row_into(
+        &mut self,
+        pause_state: RowPauseState,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+        plan: ColumnPolicy,
+        writer: &mut (dyn RowWriter + Send),
+    ) -> TdsResult<RowReadResult> {
+        let cancellable = CancelHandle::run_until_cancelled(
+            cancel_handle,
+            resume_row_into_internal(&mut self.packet_reader, pause_state, plan, writer),
+        );
+        let result = match remaining_request_timeout.as_ref() {
+            Some(t) => match timeout(*t, cancellable).await {
+                Ok(r) => r,
+                Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
+            },
+            None => cancellable.await,
+        };
+
+        match &result {
+            Ok(_) => {}
+            Err(err) => match err {
+                OperationCancelledError(_) | TimeoutError(_) => {
+                    self.cancel_read_stream_and_wait().await?;
+                }
+                _ => {}
+            },
+        }
+        result
+    }
+
+    async fn read_active_plp_bytes(
+        &mut self,
+        plp_state: &mut PlpPauseState,
+        remaining_request_timeout: Option<Duration>,
+        cancel_handle: Option<&CancelHandle>,
+        out: &mut [u8],
+    ) -> TdsResult<usize> {
+        let cancellable = CancelHandle::run_until_cancelled(
+            cancel_handle,
+            read_active_plp_bytes_internal(&mut self.packet_reader, plp_state, out),
         );
         let result = match remaining_request_timeout.as_ref() {
             Some(t) => match timeout(*t, cancellable).await {
@@ -385,7 +941,7 @@ impl Default for GenericTokenParserRegistry {
         );
         internal_registry.insert(
             TokenType::ColMetadata,
-            TokenParsers::from(ColMetadataTokenParser::default()),
+            TokenParsers::from(ColMetadataTokenParser),
         );
         internal_registry.insert(
             TokenType::Row,
@@ -486,8 +1042,12 @@ impl_from_token_parser!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::token::tokens::TokenType;
+    use crate::datatypes::sqldatatypes::{TdsDataType, TypeInfo};
+    use crate::io::packet_reader::TdsPacketReader;
+    use crate::token::tokens::{SqlCollation, TokenType};
+    use async_trait::async_trait;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     #[test]
     fn test_parser_context_default() {
@@ -578,6 +1138,291 @@ mod tests {
 
         // Test ColumnMetadata variant (would need actual ColMetadataToken to construct)
         // This tests that the variant exists and can be pattern matched
+    }
+
+    struct TestByteReader {
+        data: Vec<u8>,
+        pos: usize,
+    }
+
+    impl TestByteReader {
+        fn new(data: Vec<u8>) -> Self {
+            Self { data, pos: 0 }
+        }
+
+        fn take(&mut self, n: usize) -> TdsResult<&[u8]> {
+            if self.pos + n > self.data.len() {
+                return Err(crate::error::Error::ProtocolError(
+                    "unexpected end of test buffer".to_string(),
+                ));
+            }
+            let slice = &self.data[self.pos..self.pos + n];
+            self.pos += n;
+            Ok(slice)
+        }
+    }
+
+    #[async_trait]
+    impl TdsPacketReader for TestByteReader {
+        async fn read_byte(&mut self) -> TdsResult<u8> {
+            Ok(self.take(1)?[0])
+        }
+
+        async fn read_int16(&mut self) -> TdsResult<i16> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_uint16(&mut self) -> TdsResult<u16> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_int32(&mut self) -> TdsResult<i32> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_uint32(&mut self) -> TdsResult<u32> {
+            let raw = self.take(4)?;
+            Ok(u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]))
+        }
+
+        async fn read_int64(&mut self) -> TdsResult<i64> {
+            let raw = self.take(8)?;
+            Ok(i64::from_le_bytes([
+                raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+            ]))
+        }
+
+        async fn read_uint64(&mut self) -> TdsResult<u64> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_float32(&mut self) -> TdsResult<f32> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_float64(&mut self) -> TdsResult<f64> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_uint24(&mut self) -> TdsResult<u32> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_uint40(&mut self) -> TdsResult<u64> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_bytes(&mut self, buffer: &mut [u8]) -> TdsResult<usize> {
+            let raw = self.take(buffer.len())?;
+            buffer.copy_from_slice(raw);
+            Ok(buffer.len())
+        }
+
+        async fn skip_bytes(&mut self, count: usize) -> TdsResult<()> {
+            self.take(count)?;
+            Ok(())
+        }
+
+        async fn read_int16_big_endian(&mut self) -> TdsResult<i16> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_int32_big_endian(&mut self) -> TdsResult<i32> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_varchar_u16_length(&mut self) -> TdsResult<Option<String>> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_varchar_u8_length(&mut self) -> TdsResult<String> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_u8_varbyte(&mut self) -> TdsResult<Vec<u8>> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_u16_varbyte(&mut self) -> TdsResult<Vec<u8>> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_unicode(&mut self, _len: usize) -> TdsResult<String> {
+            unimplemented!("unused in test")
+        }
+
+        async fn read_unicode_with_byte_length(&mut self, _len: usize) -> TdsResult<String> {
+            unimplemented!("unused in test")
+        }
+
+        async fn cancel_read_stream(&mut self) -> TdsResult<()> {
+            unimplemented!("unused in test")
+        }
+
+        fn reset_reader(&mut self) {
+            self.pos = 0;
+        }
+    }
+
+    fn plp_varbinary_metadata(
+        column_name: &str,
+        crypto_metadata: Option<crate::query::metadata::CryptoMetadata>,
+    ) -> ColumnMetadata {
+        ColumnMetadata {
+            user_type: 0,
+            flags: if crypto_metadata.is_some() { 0x0800 } else { 0 },
+            data_type: TdsDataType::BigVarBinary,
+            type_info: TypeInfo::partial_len(TdsDataType::BigVarBinary, 0xFFFF, None).unwrap(),
+            column_name: column_name.to_string(),
+            multi_part_name: None,
+            crypto_metadata,
+        }
+    }
+
+    fn ae_crypto_metadata() -> crate::query::metadata::CryptoMetadata {
+        crate::query::metadata::CryptoMetadata {
+            cek_table_ordinal: 0,
+            base_data_type: TdsDataType::BigVarBinary,
+            base_type_info: TypeInfo::partial_len(TdsDataType::BigVarBinary, 0xFFFF, None).unwrap(),
+            cipher_algorithm_id: 2,
+            cipher_algorithm_name: None,
+            encryption_type: 1,
+            normalization_rule_version: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn plp_paused_state_preserves_collation_for_active_stream() {
+        let collation = SqlCollation {
+            info: 0x0409,
+            lcid_language_id: 0x0409,
+            col_flags: 0,
+            sort_id: 52,
+        };
+        let metadata = ColumnMetadata {
+            user_type: 0,
+            flags: 0,
+            type_info: TypeInfo::partial_len(TdsDataType::BigVarChar, 0xFFFF, Some(collation))
+                .unwrap(),
+            data_type: TdsDataType::BigVarChar,
+            column_name: "c1".to_string(),
+            multi_part_name: None,
+            crypto_metadata: None,
+        };
+        let context = ParserContext::ColumnMetadata(
+            Arc::new(ColMetadataToken {
+                column_count: 1,
+                columns: vec![metadata],
+                cek_table: vec![],
+            }),
+            None,
+        );
+
+        let mut packet = vec![TokenType::Row as u8];
+        packet.extend_from_slice(&(-2_i64).to_le_bytes());
+        let mut reader = TestByteReader::new(packet);
+        let registry = GenericTokenParserRegistry::default();
+        let mut writer = DiscardRowWriter;
+
+        let result = receive_row_into_internal(
+            &mut reader,
+            &registry,
+            &context,
+            ColumnPolicy::DecodeOne(0),
+            &mut writer,
+        )
+        .await
+        .unwrap();
+
+        match result {
+            RowReadResult::PlpPaused(plp_state) => {
+                assert_eq!(plp_state.collation(), Some(collation));
+                assert!(!plp_state.reached_end());
+            }
+            _ => panic!("expected PlpPaused"),
+        }
+    }
+
+    #[tokio::test]
+    async fn nbcrow_pause_and_plp_resume_path_is_exercised() {
+        let context = ParserContext::ColumnMetadata(
+            Arc::new(ColMetadataToken {
+                column_count: 2,
+                columns: vec![
+                    ColumnMetadata {
+                        user_type: 0,
+                        flags: 0,
+                        data_type: TdsDataType::Int4,
+                        type_info: TypeInfo::fixed_len(TdsDataType::Int4).unwrap(),
+                        column_name: "c1".to_string(),
+                        multi_part_name: None,
+                        crypto_metadata: None,
+                    },
+                    plp_varbinary_metadata("c2", None),
+                ],
+                cek_table: vec![],
+            }),
+            None,
+        );
+
+        let mut packet = vec![TokenType::NbcRow as u8, 0b0000_0001];
+        packet.extend_from_slice(&(-2_i64).to_le_bytes());
+        let mut reader = TestByteReader::new(packet);
+        let registry = GenericTokenParserRegistry::default();
+        let mut writer = DiscardRowWriter;
+
+        let result = receive_row_into_internal(
+            &mut reader,
+            &registry,
+            &context,
+            ColumnPolicy::DecodeOne(1),
+            &mut writer,
+        )
+        .await
+        .unwrap();
+
+        match result {
+            RowReadResult::PlpPaused(plp_state) => {
+                assert!(plp_state.collation().is_none());
+                assert!(!plp_state.reached_end());
+            }
+            _ => panic!("expected PlpPaused"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ae_paused_plp_streaming_fails_fast() {
+        let context = ParserContext::ColumnMetadata(
+            Arc::new(ColMetadataToken {
+                column_count: 1,
+                columns: vec![plp_varbinary_metadata("c1", Some(ae_crypto_metadata()))],
+                cek_table: vec![],
+            }),
+            None,
+        );
+
+        let mut reader = TestByteReader::new(vec![TokenType::Row as u8]);
+        let registry = GenericTokenParserRegistry::default();
+        let mut writer = DiscardRowWriter;
+
+        let result = receive_row_into_internal(
+            &mut reader,
+            &registry,
+            &context,
+            ColumnPolicy::DecodeOne(0),
+            &mut writer,
+        )
+        .await;
+
+        match result {
+            Err(crate::error::Error::UnimplementedFeature { feature, context }) => {
+                assert_eq!(feature, "Always Encrypted paused PLP streaming");
+                assert!(context.contains("Encrypted PLP column 'c1' cannot be streamed"));
+                assert!(context.contains("read_active_plp_bytes"));
+            }
+            Err(err) => panic!("expected UnimplementedFeature, got: {err:?}"),
+            Ok(_) => panic!("expected AE paused PLP streaming to fail"),
+        }
     }
 
     struct MockTokenParserRegistry {
