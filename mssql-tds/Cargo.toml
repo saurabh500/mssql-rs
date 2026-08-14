@@ -1,6 +1,6 @@
 [package]
 name = "mssql-tds-preview"
-version = "0.1.0-preview.11"
+version = "0.1.0-preview.12"
 edition = "2024"
 description = "Rust implementation of the TDS (Tabular Data Stream) protocol for SQL Server. Publishable fork of microsoft/mssql-rs until the official crate lands on crates.io."
 license = "MIT"
