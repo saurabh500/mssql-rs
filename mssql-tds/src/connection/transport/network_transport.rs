@@ -5,6 +5,7 @@ use crate::connection::client_context::{IPAddressPreference, TransportContext};
 use crate::connection::transport::buffers::TdsReadBuffer;
 use crate::connection::transport::extractable_stream;
 use crate::connection::transport::parallel_connect::{ParallelConnectConfig, parallel_connect};
+use crate::connection::transport::request_timeout::await_within_request_timeout;
 use crate::connection::transport::ssl_handler::SslHandler;
 use crate::connection_provider::tds_connection_provider::PARSER_REGISTRY;
 use crate::core::{
@@ -32,6 +33,7 @@ use std::cmp::min;
 use std::io::Error;
 use std::io::ErrorKind;
 use std::net::ToSocketAddrs;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{self, TcpStream};
@@ -518,6 +520,10 @@ pub(crate) struct NetworkTransport {
     /// closed or an I/O operation observes it broken. Surfaced by
     /// `connection_known_dead()` as a cheap, socket-free liveness check.
     known_dead: bool,
+    /// Reusable NBCROW null-bitmap allocation. Refilled in place for every
+    /// NBCROW row of a result set instead of reallocating per row; see
+    /// `read_nbc_bitmap`.
+    nbc_bitmap_scratch: Option<Arc<[u8]>>,
 }
 
 impl std::fmt::Debug for NetworkTransport {
@@ -618,6 +624,7 @@ impl NetworkTransport {
             extractable_stream_handle: None,
             pending_reset: ResetConnectionMode::None,
             known_dead: false,
+            nbc_bitmap_scratch: None,
         }
     }
 
@@ -1385,17 +1392,27 @@ impl TdsTokenStreamReader for NetworkTransport {
         plan: ColumnPolicy,
         writer: &mut (dyn RowWriter + Send),
     ) -> TdsResult<RowReadResult> {
-        let cancellable = CancelHandle::run_until_cancelled(
-            cancel_handle,
-            receive_row_into_internal(self, &*PARSER_REGISTRY, context, plan, writer),
+        // `self` is the packet reader, so the scratch slot has to be moved out
+        // for the duration of the read and put back afterwards. The restore
+        // below must stay unconditional, and no `?` may be introduced between
+        // these two points: an early return would drop the cached bitmap and
+        // silently cost an allocation on every subsequent row.
+        let mut nbc_bitmap_scratch = self.nbc_bitmap_scratch.take();
+        let result = await_within_request_timeout!(
+            remaining_request_timeout,
+            CancelHandle::run_until_cancelled(
+                cancel_handle,
+                receive_row_into_internal(
+                    self,
+                    &*PARSER_REGISTRY,
+                    context,
+                    plan,
+                    writer,
+                    &mut nbc_bitmap_scratch,
+                ),
+            )
         );
-        let result = match remaining_request_timeout.as_ref() {
-            Some(t) => match timeout(*t, cancellable).await {
-                Ok(r) => r,
-                Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
-            },
-            None => cancellable.await,
-        };
+        self.nbc_bitmap_scratch = nbc_bitmap_scratch;
 
         match &result {
             Ok(_) => {}
@@ -1415,17 +1432,22 @@ impl TdsTokenStreamReader for NetworkTransport {
         remaining_request_timeout: Option<Duration>,
         cancel_handle: Option<&CancelHandle>,
     ) -> TdsResult<RowHeader> {
-        let cancellable = CancelHandle::run_until_cancelled(
-            cancel_handle,
-            receive_row_header_internal(self, &*PARSER_REGISTRY, context),
+        // Same take/restore as `receive_row_into`: unconditional restore, no `?`
+        // between the two points.
+        let mut nbc_bitmap_scratch = self.nbc_bitmap_scratch.take();
+        let result = await_within_request_timeout!(
+            remaining_request_timeout,
+            CancelHandle::run_until_cancelled(
+                cancel_handle,
+                receive_row_header_internal(
+                    self,
+                    &*PARSER_REGISTRY,
+                    context,
+                    &mut nbc_bitmap_scratch,
+                ),
+            )
         );
-        let result = match remaining_request_timeout.as_ref() {
-            Some(t) => match timeout(*t, cancellable).await {
-                Ok(r) => r,
-                Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
-            },
-            None => cancellable.await,
-        };
+        self.nbc_bitmap_scratch = nbc_bitmap_scratch;
 
         match &result {
             Ok(_) => {}
@@ -1447,17 +1469,13 @@ impl TdsTokenStreamReader for NetworkTransport {
         plan: ColumnPolicy,
         writer: &mut (dyn RowWriter + Send),
     ) -> TdsResult<RowReadResult> {
-        let cancellable = CancelHandle::run_until_cancelled(
-            cancel_handle,
-            resume_row_into_internal(self, pause_state, plan, writer),
+        let result = await_within_request_timeout!(
+            remaining_request_timeout,
+            CancelHandle::run_until_cancelled(
+                cancel_handle,
+                resume_row_into_internal(self, pause_state, plan, writer),
+            )
         );
-        let result = match remaining_request_timeout.as_ref() {
-            Some(t) => match timeout(*t, cancellable).await {
-                Ok(r) => r,
-                Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
-            },
-            None => cancellable.await,
-        };
 
         match &result {
             Ok(_) => {}
@@ -1478,17 +1496,13 @@ impl TdsTokenStreamReader for NetworkTransport {
         cancel_handle: Option<&CancelHandle>,
         out: &mut [u8],
     ) -> TdsResult<usize> {
-        let cancellable = CancelHandle::run_until_cancelled(
-            cancel_handle,
-            read_active_plp_bytes_internal(self, plp_state, out),
+        let result = await_within_request_timeout!(
+            remaining_request_timeout,
+            CancelHandle::run_until_cancelled(
+                cancel_handle,
+                read_active_plp_bytes_internal(self, plp_state, out),
+            )
         );
-        let result = match remaining_request_timeout.as_ref() {
-            Some(t) => match timeout(*t, cancellable).await {
-                Ok(r) => r,
-                Err(elapsed) => Err(TimeoutError(TimeoutErrorType::Elapsed(elapsed))),
-            },
-            None => cancellable.await,
-        };
 
         match &result {
             Ok(_) => {}
