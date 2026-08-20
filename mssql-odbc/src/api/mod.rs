@@ -14,7 +14,6 @@ mod exec_common;
 mod exec_direct;
 mod execute;
 pub(crate) mod fetch;
-pub(crate) mod fetch_convert;
 pub(crate) mod free_handle;
 pub(crate) mod get_connect_attr;
 mod get_data;
@@ -33,6 +32,7 @@ pub(crate) mod set_env_attr;
 pub(crate) mod set_stmt_attr;
 pub(crate) mod sqlstate;
 mod txn;
+pub(crate) mod type_rules;
 pub(crate) mod util;
 
 // Exported ODBC entry points — the driver's public API surface.
