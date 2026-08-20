@@ -4,10 +4,11 @@
 //! Conversion from a bound application parameter buffer (`BoundParam`) to a
 //! TDS RPC parameter (`RpcParameter`).
 //!
-//! Phase 1 mirrors `SQLGetData`'s supported C types: only `SQL_C_CHAR`
-//! (→ `varchar`) and `SQL_C_WCHAR` (→ `nvarchar`). Every other C type, plus
-//! data-at-execution and default parameters, is rejected with `HYC00`; an
-//! invalid negative `StrLen_or_Ind` is rejected with `HY090`.
+//! Which C/SQL pairings reach this module is decided at bind time by
+//! [`crate::api::type_rules`] and [`crate::params::conversion_matrix`];
+//! `SQL_C_DEFAULT` has already been resolved to a concrete C type by then.
+//! Data-at-execution is rejected with `HYC00`, `SQL_DEFAULT_PARAM` with
+//! `07S01`, and an invalid negative `StrLen_or_Ind` with `HY090`.
 
 use std::slice;
 
@@ -16,42 +17,43 @@ use mssql_tds::datatypes::sqltypes::SqlType;
 use mssql_tds::message::parameters::rpc_parameters::{RpcParameter, StatusFlags};
 
 use crate::api::odbc_types::{
-    SQL_BIGINT, SQL_BINARY, SQL_BIT, SQL_C_CHAR, SQL_C_DEFAULT, SQL_C_LONG, SQL_C_WCHAR, SQL_CHAR,
-    SQL_DATA_AT_EXEC, SQL_DECIMAL, SQL_DEFAULT_PARAM, SQL_DOUBLE, SQL_FLOAT, SQL_GUID, SQL_INTEGER,
-    SQL_LEN_DATA_AT_EXEC_OFFSET, SQL_LONGVARBINARY, SQL_LONGVARCHAR, SQL_NTS, SQL_NULL_DATA,
-    SQL_NUMERIC, SQL_REAL, SQL_SMALLINT, SQL_SS_TIME2, SQL_SS_TIMESTAMPOFFSET, SQL_TINYINT,
-    SQL_TYPE_DATE, SQL_TYPE_TIME, SQL_TYPE_TIMESTAMP, SQL_VARBINARY, SQL_VARCHAR, SQL_WCHAR,
-    SQL_WLONGVARCHAR, SQL_WVARCHAR, SqlLen, SqlSmallInt,
+    SQL_C_CHAR, SQL_C_WCHAR, SQL_DATA_AT_EXEC, SQL_DEFAULT_PARAM, SQL_LEN_DATA_AT_EXEC_OFFSET,
+    SQL_NTS, SQL_NULL_DATA, SqlLen, SqlSmallInt,
 };
-use crate::api::sqlstate::ERR_INVALID_STRING_OR_BUFFER_LENGTH;
+use crate::api::sqlstate::{
+    DiagMsg, ERR_DATA_AT_EXEC_NOT_IMPLEMENTED, ERR_INVALID_STRING_OR_BUFFER_LENGTH,
+    ERR_INVALID_USE_OF_DEFAULT_PARAM, ERR_PARAM_C_TYPE_NOT_IMPLEMENTED,
+};
 use crate::params::BoundParam;
 
-/// Why a bound parameter could not be converted.
+/// Why a bound parameter could not be turned into an RPC parameter.
 ///
-/// The "not yet implemented" variants post `HYC00` via [`message`]; a bad
-/// indicator posts the canonical `HY090` diagnostic
-/// (`ERR_INVALID_STRING_OR_BUFFER_LENGTH`).
+/// Each variant carries its own SQLSTATE through [`diag`]; none of these are
+/// value-conversion failures, which arrive from
+/// [`crate::conversion::error::ConvError`] instead.
 ///
-/// [`message`]: ParamConvError::message
+/// [`diag`]: ParamBuildError::diag
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ParamConvError {
-    /// The application's C type is not supported in Phase 1.
+pub(crate) enum ParamBuildError {
+    /// Backstop only: bind time rejects any C type the conversion matrix does
+    /// not list, so reaching this means the matrix and this module disagree.
     UnsupportedCType(SqlSmallInt),
     /// The parameter uses data-at-execution (`SQLPutData`).
     DataAtExecUnsupported,
-    /// The parameter requested its default value.
-    DefaultParamUnsupported,
+    /// `StrLen_or_Ind` was `SQL_DEFAULT_PARAM` on a statement that is not a
+    /// canonical procedure call.
+    InvalidUseOfDefaultParam,
     /// `StrLen_or_Ind` is a negative value that is not a valid input length.
     InvalidLength(SqlLen),
 }
 
-impl ParamConvError {
-    pub(crate) fn message(self) -> &'static str {
+impl ParamBuildError {
+    pub(crate) fn diag(self) -> DiagMsg {
         match self {
-            Self::UnsupportedCType(_) => "Parameter C type not yet implemented",
-            Self::DataAtExecUnsupported => "Data-at-execution parameters not yet implemented",
-            Self::DefaultParamUnsupported => "Default parameters not yet implemented",
-            Self::InvalidLength(_) => ERR_INVALID_STRING_OR_BUFFER_LENGTH.text,
+            Self::UnsupportedCType(_) => ERR_PARAM_C_TYPE_NOT_IMPLEMENTED,
+            Self::DataAtExecUnsupported => ERR_DATA_AT_EXEC_NOT_IMPLEMENTED,
+            Self::InvalidUseOfDefaultParam => ERR_INVALID_USE_OF_DEFAULT_PARAM,
+            Self::InvalidLength(_) => ERR_INVALID_STRING_OR_BUFFER_LENGTH,
         }
     }
 }
@@ -63,7 +65,7 @@ impl ParamConvError {
 pub(crate) unsafe fn bound_param_to_rpc(
     name: String,
     param: &BoundParam,
-) -> Result<RpcParameter, ParamConvError> {
+) -> Result<RpcParameter, ParamBuildError> {
     let value = unsafe { bound_param_to_value(param) }?;
     Ok(RpcParameter::new(Some(name), StatusFlags::NONE, value))
 }
@@ -75,7 +77,7 @@ pub(crate) unsafe fn bound_param_to_rpc(
 /// `param.parameter_value_ptr` and `param.strlen_or_ind_ptr` must satisfy the
 /// ODBC binding contract: the value buffer is readable for the indicated
 /// length and the indicator pointer, if non-null, points to one valid `SqlLen`.
-pub(crate) unsafe fn bound_param_to_value(param: &BoundParam) -> Result<SqlType, ParamConvError> {
+pub(crate) unsafe fn bound_param_to_value(param: &BoundParam) -> Result<SqlType, ParamBuildError> {
     let indicator = if param.strlen_or_ind_ptr.is_null() {
         None
     } else {
@@ -87,14 +89,14 @@ pub(crate) unsafe fn bound_param_to_value(param: &BoundParam) -> Result<SqlType,
             return null_value(param.c_type);
         }
         if ind == SQL_DEFAULT_PARAM {
-            return Err(ParamConvError::DefaultParamUnsupported);
+            return Err(ParamBuildError::InvalidUseOfDefaultParam);
         }
         if ind == SQL_DATA_AT_EXEC || ind <= SQL_LEN_DATA_AT_EXEC_OFFSET {
-            return Err(ParamConvError::DataAtExecUnsupported);
+            return Err(ParamBuildError::DataAtExecUnsupported);
         }
         // Any remaining negative indicator  is invalid for an input parameter
         if ind < 0 && ind != SQL_NTS as SqlLen {
-            return Err(ParamConvError::InvalidLength(ind));
+            return Err(ParamBuildError::InvalidLength(ind));
         }
     }
 
@@ -113,72 +115,18 @@ pub(crate) unsafe fn bound_param_to_value(param: &BoundParam) -> Result<SqlType,
                 unsafe { read_wchar_bytes(param.parameter_value_ptr as *const u16, len_spec) };
             SqlType::NVarcharMax(Some(SqlString::new(bytes, EncodingType::Utf16)))
         }
-        other => return Err(ParamConvError::UnsupportedCType(other)),
+        other => return Err(ParamBuildError::UnsupportedCType(other)),
     };
 
     Ok(value)
 }
 
 /// Typed NULL for the supported C types.
-fn null_value(c_type: SqlSmallInt) -> Result<SqlType, ParamConvError> {
+fn null_value(c_type: SqlSmallInt) -> Result<SqlType, ParamBuildError> {
     match c_type {
         SQL_C_CHAR => Ok(SqlType::VarcharMax(None)),
         SQL_C_WCHAR => Ok(SqlType::NVarcharMax(None)),
-        other => Err(ParamConvError::UnsupportedCType(other)),
-    }
-}
-
-/// Known ODBC SQL data type identifiers (plus SQL Server extensions) accepted
-/// at bind time. Conversion support is checked separately.
-pub(crate) fn is_valid_sql_type(sql_type: SqlSmallInt) -> bool {
-    matches!(
-        sql_type,
-        SQL_CHAR
-            | SQL_VARCHAR
-            | SQL_LONGVARCHAR
-            | SQL_WCHAR
-            | SQL_WVARCHAR
-            | SQL_WLONGVARCHAR
-            | SQL_BINARY
-            | SQL_VARBINARY
-            | SQL_LONGVARBINARY
-            | SQL_DECIMAL
-            | SQL_NUMERIC
-            | SQL_SMALLINT
-            | SQL_INTEGER
-            | SQL_BIGINT
-            | SQL_TINYINT
-            | SQL_BIT
-            | SQL_REAL
-            | SQL_FLOAT
-            | SQL_DOUBLE
-            | SQL_GUID
-            | SQL_TYPE_DATE
-            | SQL_TYPE_TIME
-            | SQL_TYPE_TIMESTAMP
-            | SQL_SS_TIME2
-            | SQL_SS_TIMESTAMPOFFSET
-    )
-}
-
-/// Known ODBC C type identifiers accepted at bind time.
-pub(crate) fn is_valid_c_type(c_type: SqlSmallInt) -> bool {
-    matches!(
-        c_type,
-        SQL_C_CHAR | SQL_C_WCHAR | SQL_C_LONG | SQL_C_DEFAULT
-    )
-}
-
-/// Whether the C type → SQL type conversion is supported. Phase 1 only allows
-/// same-family character conversions: `SQL_C_CHAR` → narrow character SQL types
-/// (`CHAR`/`VARCHAR`/`LONGVARCHAR`) and `SQL_C_WCHAR` → the wide character SQL
-/// types (`WCHAR`/`WVARCHAR`/`WLONGVARCHAR`). Every other pairing is rejected
-/// (`07006`).
-pub(crate) fn is_valid_conversion(c_type: SqlSmallInt, sql_type: SqlSmallInt) -> bool {
-    match c_type {
-        SQL_C_CHAR => matches!(sql_type, SQL_CHAR | SQL_VARCHAR | SQL_LONGVARCHAR),
-        SQL_C_WCHAR => matches!(sql_type, SQL_WCHAR | SQL_WVARCHAR | SQL_WLONGVARCHAR),
-        _ => false,
+        other => Err(ParamBuildError::UnsupportedCType(other)),
     }
 }
 
@@ -288,7 +236,7 @@ mod tests {
         let mut val: i32 = 7;
         let p = param(SQL_C_LONG, &mut val as *mut i32 as *mut c_void, &mut ind);
         let err = unsafe { bound_param_to_value(&p) }.unwrap_err();
-        assert_eq!(err, ParamConvError::UnsupportedCType(SQL_C_LONG));
+        assert_eq!(err, ParamBuildError::UnsupportedCType(SQL_C_LONG));
     }
 
     #[test]
@@ -296,7 +244,7 @@ mod tests {
         let mut ind: SqlLen = SQL_DATA_AT_EXEC;
         let p = param(SQL_C_CHAR, std::ptr::null_mut(), &mut ind);
         let err = unsafe { bound_param_to_value(&p) }.unwrap_err();
-        assert_eq!(err, ParamConvError::DataAtExecUnsupported);
+        assert_eq!(err, ParamBuildError::DataAtExecUnsupported);
     }
 
     #[test]
@@ -304,26 +252,19 @@ mod tests {
         let mut ind: SqlLen = SQL_NO_TOTAL;
         let p = param(SQL_C_CHAR, std::ptr::null_mut(), &mut ind);
         let err = unsafe { bound_param_to_value(&p) }.unwrap_err();
-        assert_eq!(err, ParamConvError::InvalidLength(SQL_NO_TOTAL));
+        assert_eq!(err, ParamBuildError::InvalidLength(SQL_NO_TOTAL));
     }
 
+    /// `SQL_DEFAULT_PARAM` is only legal for a canonical procedure call, which
+    /// this driver does not support, so it is 07S01 rather than "not yet
+    /// implemented" (msodbcsql `sqlccmd.cpp` -> IDS_07_S01).
     #[test]
-    fn conversion_allows_same_family_only() {
-        assert!(is_valid_conversion(SQL_C_CHAR, SQL_VARCHAR));
-        assert!(is_valid_conversion(SQL_C_WCHAR, SQL_WVARCHAR));
-        // Cross-family, non-character, and unsupported C types are rejected.
-        assert!(!is_valid_conversion(SQL_C_CHAR, SQL_WVARCHAR));
-        assert!(!is_valid_conversion(SQL_C_WCHAR, SQL_VARCHAR));
-        assert!(!is_valid_conversion(SQL_C_CHAR, SQL_INTEGER));
-        assert!(!is_valid_conversion(SQL_C_LONG, SQL_INTEGER));
-    }
-
-    #[test]
-    fn default_param_indicator_is_rejected() {
+    fn default_param_indicator_is_invalid_use_not_unimplemented() {
         let mut ind: SqlLen = SQL_DEFAULT_PARAM;
         let p = param(SQL_C_CHAR, std::ptr::null_mut(), &mut ind);
         let err = unsafe { bound_param_to_value(&p) }.unwrap_err();
-        assert_eq!(err, ParamConvError::DefaultParamUnsupported);
+        assert_eq!(err, ParamBuildError::InvalidUseOfDefaultParam);
+        assert_eq!(err.diag().state, *b"07S01");
     }
 
     #[test]
@@ -339,7 +280,7 @@ mod tests {
         let mut ind: SqlLen = SQL_NULL_DATA;
         let p = param(SQL_C_LONG, std::ptr::null_mut(), &mut ind);
         let err = unsafe { bound_param_to_value(&p) }.unwrap_err();
-        assert_eq!(err, ParamConvError::UnsupportedCType(SQL_C_LONG));
+        assert_eq!(err, ParamBuildError::UnsupportedCType(SQL_C_LONG));
     }
 
     #[test]
